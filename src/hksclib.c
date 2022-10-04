@@ -13,6 +13,8 @@
 
 #include "./lparser.h"
 
+#include "./lundump.h"
+
 /*
 ** {======================================================
 ** Load functions
@@ -49,7 +51,7 @@ static int errfile (const char *what, const char *filename) {
   return LUA_ERRFILE;
 }
 
-static int parser(ZIO *z);
+static int parser(ZIO *z, const char *filename);
 
 int
 hksc_parsefile(const char *filename)
@@ -90,23 +92,72 @@ hksc_parsefile(const char *filename)
   /*status = hksc_load(getF, &lf, filename);*/
   ZIO z;
   luaZ_init(&z, getF, &lf);
-  status = parser(&z);
+  status = parser(&z, filename);
 
 
-  return 0;
+  return status;
 }
 
 static int
-parser(ZIO *z)
+writer(const void *p, size_t sz, void *ud)
 {
+  FILE *out = (FILE *)ud;
+  if (fwrite(p, 1, sz, out) != sz)
+    return 1;
+  else
+    return 0;
+}
+
+static int
+parser(ZIO *z, const char *filename)
+{
+  int status;
+  char *outname;
+  FILE *out;
   Mbuffer buff;
   luaZ_initbuffer(&buff);
+
+  if (filename != NULL)
+  {
+    size_t len = strlen(filename);
+    /* +5 for ".luac" */
+    outname = malloc(len + sizeof(LUAC_EXT));
+    if (!outname)
+    {
+      fprintf(stderr, "Out of memory\n");
+      exit(EXIT_FAILURE);
+    }
+
+    strncpy(outname, filename, len);
+
+    char *s = strrchr(filename, '.');
+    if (s && strcmp(s, ".lua") == 0)
+    {
+      size_t x = (size_t)(s - filename);
+      strncpy(outname + x, LUAC_EXT, sizeof(LUAC_EXT));
+    }
+    else
+      strncpy(outname + len, LUAC_EXT, sizeof(LUAC_EXT));
+
+    out = fopen(outname, "wb");
+    if (out == NULL) return errfile("open", outname);
+  }
+  else
+  {
+    fprintf(stderr, "Need a filename\n");
+    return 1;
+  }
+  printf("outname: %s\n", outname);
 
   /* used to determine of compiling or decompiling */
   /*int c = luaZ_lookahead(z);*/
 
-  Proto *tf = hksc_parser(z, &buff);
-  return 0;
+  Proto *f = hksc_parser(z, &buff);
+  /*printf("f: %p\n", f);*/
+  status = luaU_dump(f, writer, out, 1);
+  fclose(out);
+  free(outname);
+  return status;
 }
 
 int

@@ -12,7 +12,9 @@ llex.c \
 lopcodes.c \
 ltable.c \
 lfunc.c \
-lcode.c
+lcode.c \
+ldump.c \
+lundump.c
 
 ALL_O:=$(SRC:%.c=%.o)
 ALL_D:=$(SRC:%.c=%.d)

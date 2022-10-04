@@ -9,8 +9,11 @@
 
 #include <stddef.h>
 
+#define LUAC_EXT ".luac"
+
 /* same as lua_Reader but without lua_State */
 typedef const char * (*hksc_Reader) (void *ud, size_t *sz);
+typedef int (*hksc_Writer) (const void *p, size_t sz, void *ud);
 
 #ifndef LUA_CORE
 #define LUA_CORE
@@ -19,6 +22,7 @@ typedef const char * (*hksc_Reader) (void *ud, size_t *sz);
 #include "luaconf.h"
 #include "lua.h" /* typedef lua_Reader before it gets redefined */
 #define lua_Reader hksc_Reader
+#define lua_Writer hksc_Writer
 
 #undef LUA_CORE
 
