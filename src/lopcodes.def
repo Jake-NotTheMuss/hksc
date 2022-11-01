@@ -1,8 +1,8 @@
 /* -*- Mode: C -*- */
 /*
-** NAME: lopcodes.def
-** DESC: Define all opcodes here
-** NOTES: Before including this file, define the macro DEFCODE
+** lopcodes.def
+** Define all opcodes here
+** Before including this file, define the macro DEFCODE
 **
 ** See Copyright Notice in lua.h
 */

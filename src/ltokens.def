@@ -1,8 +1,8 @@
 /* -*- Mode: C -*- */
 /*
-** Name: ltokens.def
-** Desc: Define all reserved tokens here
-** Notes: Before including this file, define the macros DEFTOK and DEFTOK1.
+** ltokens.def
+** Define all reserved tokens here
+** Before including this file, define the macros DEFTOK and DEFTOK1.
 **   When adding `#define' directives inside this file, use an `#ifndef' guard
 **   to allow for multiple inclusions of this file (see below).
 **
