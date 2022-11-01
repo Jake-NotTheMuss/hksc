@@ -4,8 +4,8 @@
 ** See Copyright Notice in lua.h
 */
 
-#ifndef lerror_h
-#define lerror_h
+#ifndef ldo_h
+#define ldo_h
 
 #include <stdarg.h>
 
@@ -18,12 +18,13 @@
 
 #define hksc_luaD_setmsg(H,s) (luaE_seterrormsg(H, getstr(luaS_new(H, s))))
 
-
+/* I give the option to omit `hksc_' prefix on existing APIs */
 #define luaD_protectedparser hksc_luaD_protectedparser
 #define luaD_pcall hksc_luaD_pcall
 #define luaD_throw hksc_luaD_throw
 #define luaD_rawrunprotected hksc_luaD_rawrunprotected
 #define luaD_seterrorobj hksc_luaD_seterrorobj
+/* whereas I give the option to omit the `'luaD_' midfix on hksc extensions */
 #define hksc_setliteralmsg hksc_luaD_setliteralmsg
 #define hksc_setmsg hksc_luaD_setmsg
 #define hksc_setvfmsg hksc_luaD_setvfmsg

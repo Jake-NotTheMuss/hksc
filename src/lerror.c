@@ -11,7 +11,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define lerror_c
+#define ldo_c
 #define LUA_CORE
 
 #include "lua.h"
@@ -58,15 +58,12 @@ void hksc_luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp)
   luaE_seterrormsg(H, getstr(luaS_new(H, buf)));
 }
 
+
 void hksc_luaD_setfmsg (hksc_State *H, const char *fmt, ...) {
   va_list argp;
   va_start(argp, fmt);
   hksc_luaD_setvfmsg(H, fmt, argp);
   va_end(argp);
-}
-
-void hksc_luaD_seterrormsg (hksc_State *H, const char *msg) {
-  luaE_seterrormsg(H, getstr(luaS_new(H, msg)));
 }
 
 

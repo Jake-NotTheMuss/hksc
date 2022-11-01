@@ -23,7 +23,7 @@ name    args  description
 DEFCODE(GETFIELD, ABC, 0, 1, R, K)
 
 /* OP_TEST  A C  if not (R(A) <=> C) then pc++ */
-DEFCODE(TEST, ABC, 1, 1, R, U)
+DEFCODE(TEST, ABC, 1, 0, R, U)
 
 /* OP_CALL_I  A B C  Same as OP_CALL but checks R(A) is type TIFUNCTION */
 /* OP_CALL_C  A B C  Same as OP_CALL but checks R(A) is type TCFUNCTION */
