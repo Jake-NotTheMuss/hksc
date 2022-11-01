@@ -32,6 +32,21 @@ typedef struct stringtable {
 #define f_isLua(ci)	(!ci_func(ci)->c.isC)
 #define isLua(ci)	(ttisfunction((ci)->func) && f_isLua(ci))
 
+/*
+** int literal options
+**
+** NONE : Disable int literals, lexer will emit an error when encountered
+** LUD  : Enable only 32-bit int literals, stored as type TLIGHTUSERDATA
+** UI64 : Enable only 60-bit int literals, stored as type TUI64
+** ALL  : Enable both LUD and UI64 int literals
+*/
+#define INT_LITERALS_NONE   0
+#define INT_LITERALS_LUD    1
+#define INT_LITERALS_UI64   2
+#define INT_LITERALS_ALL    3
+
+typedef int (*lua_LineMap)(const char *, int);
+
 
 /*
 ** bytecode sharing modes
@@ -89,8 +104,9 @@ typedef struct hksc_Settings
 } hksc_Settings;
 
 /* hksc modes - either compiling source or decompiling bytecode */
-#define HKSC_MODE_COMPILE   0
-#define HKSC_MODE_DECOMPILE 1
+#define HKSC_MODE_DEFULT    0
+#define HKSC_MODE_COMPILE   1
+#define HKSC_MODE_DECOMPILE 2
 
 /*
 ** `global state', shared by all threads of this state
@@ -124,9 +140,9 @@ struct hksc_State {
 
 /* macros for getting/setting the error message of an hksc_State */
 #define hksc_luaE_geterrormsg(H) ((H)->errormsg)
-#define hksc_luaE_seterrormsg(H,msg) ((H)->errormsg = (msg))
-#define luaE_geterrormsg hksc_luaE_geterrormsg
-#define luaE_seterrormsg hksc_luaE_seterrormsg
+#define hksc_luaE_seterrormsg(H,s) ((H)->errormsg = (s))
+#define luaE_geterrormsg(H) hksc_luaE_geterrormsg(H)
+#define luaE_seterrormsg(H,s) hksc_luaE_seterrormsg(H,s)
 
 /*
 ** Union of all collectable objects

@@ -98,4 +98,6 @@ main(int argc, char **argv)
   }
 
   /* TODO: close the state */
+  hksc_close(H);
+  return 0;
 }

@@ -1,3 +1,10 @@
+/*
+** hksclib.h
+** A wrapper for the modded Lua library
+** See Copyright Notice in lua.h
+*/
+
+
 #ifndef HKSC_LIB_H
 #define HKSC_LIB_H
 

@@ -353,8 +353,8 @@
 */
 #define LUA_COMPAT_OPENLIB
 
-
-
+#include <assert.h>
+#define lua_assert assert
 /*
 @@ luai_apicheck is the assert macro used by the Lua-C API.
 ** CHANGE luai_apicheck if you want Lua to perform some checks in the

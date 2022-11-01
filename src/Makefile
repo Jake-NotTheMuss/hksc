@@ -3,22 +3,22 @@
 SRC= \
 hksc.c \
 hksclib.c \
-lparser.c \
-lzio.c \
+lctype.c \
+lcode.c \
+ldebug.c \
+ldump.c \
+lerror.c \
+lfunc.c \
+llex.c \
 lmem.c \
 lobject.c \
-lstring.c \
-llex.c \
 lopcodes.c \
-ltable.c \
-lfunc.c \
-lcode.c \
-ldump.c \
-lundump.c \
-lerror.c \
+lparser.c \
 lstate.c \
-ldebug.c \
-lctype.c
+lstring.c \
+ltable.c \
+lundump.c \
+lzio.c
 
 ALL_O:=$(SRC:%.c=%.o)
 ALL_D:=$(SRC:%.c=%.d)

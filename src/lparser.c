@@ -405,7 +405,7 @@ static void close_func (LexState *ls) {
   f->sizelocvars = fs->nlocvars;
   luaM_reallocvector(ls->H, f->upvalues, f->sizeupvalues, f->nups, TString *);
   f->sizeupvalues = f->nups;
-  lua_assert(luaG_checkcode(f));
+  /*lua_assert(luaG_checkcode(f));*/
   lua_assert(fs->bl == NULL);
   ls->fs = fs->prev;
   /*L->top -= 2;*/  /* remove table and prototype from the stack */

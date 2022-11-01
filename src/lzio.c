@@ -13,9 +13,9 @@
 #include "lua.h"
 
 #include "llimits.h"
-#include "./lmem.h"
+#include "lmem.h"
 #include "lstate.h"
-#include "./lzio.h"
+#include "lzio.h"
 
 
 int luaZ_fill (ZIO *z) {

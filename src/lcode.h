@@ -9,10 +9,10 @@
 
 #include "hksc_begin_code.h"
 
-#include "./llex.h"
-#include "./lobject.h"
-#include "./lopcodes.h"
-#include "./lparser.h"
+#include "llex.h"
+#include "lobject.h"
+#include "lopcodes.h"
+#include "lparser.h"
 
 
 /*

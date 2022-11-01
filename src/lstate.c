@@ -64,8 +64,8 @@ static void preinit_state (hksc_State *H, global_State *g) {
 
 static void close_state (hksc_State *H) {
   global_State *g = G(H);
-  /*luaC_freeall(H); */ /* collect all objects */
-  lua_assert(g->rootgc == obj2gco(H));
+  /*luaC_freeall(H);*/  /* collect all objects */
+  /*lua_assert(g->rootgc == obj2gco(H));*/
   lua_assert(g->strt.nuse == 0);
   luaM_freearray(H, G(H)->strt.hash, G(H)->strt.size, TString *);
   luaZ_freebuffer(H, &g->buff);

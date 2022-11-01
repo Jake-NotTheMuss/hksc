@@ -8,18 +8,4 @@
 #define HKSC_BEGIN_CODE_H
 
 
-/* need to include all hksc-versions of Lua headers first, so that the
-   Lua versions never get processed if accidentally included */
-/* Be mindful of inter-dependencies with headers */
-/*#include "./lmem.h"
-#include "./lzio.h"
-#include "./lobject.h"
-#include "./lparser.h"
-#include "./lfunc.h"
-#include "./ltable.h"
-#include "./lstring.h"
-#include "./lopcodes.h"
-#include "./llex.h"
-#include "./lcode.h"*/
-
 #endif /* HKSC_BEGIN_CODE_H */
