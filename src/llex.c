@@ -36,26 +36,7 @@
 
 #define currIsNewline(ls)	(ls->current == '\n' || ls->current == '\r')
 
-#if 0
-/* ORDER RESERVED */
-const char *const luaX_tokens [] = {
-    "and", "break", "do", "else", "elseif",
-    "end", "false", "for", "function", "if",
-    "in", "local", "nil", "not", "or", "repeat",
-    "return", "then", "true", "until", "while",
-    "hstructure", "hmake", "TK_INVALID",
-    /* T7 extensions */
-    "<<", ">>",
-    /* END T7 extensions */
-    "..", "...", "==", ">=", "<=", "~=",
-    "<number>", "<short_literal>", "<long_literal>",
-    "<name>", "<string>", "<eof>",
-    "<Invalid_BOM>", "<UTF8_BOM>",
-    "<UTF16LE_BOM>", "<UTF16BE_BOM>",
-    "<UTF32LE_BOM>", "<UTF32BE_BOM>",
-    NULL
-};
-#else
+
 #define DEFTOK(name, text) text,
 #define DEFTOK1(name, text) DEFTOK(name, text)
 const char *const luaX_tokens [] = {
@@ -64,8 +45,8 @@ const char *const luaX_tokens [] = {
 };
 #undef DEFTOK1
 #undef DEFTOK
-#endif
 
+/* used by luaX_token2str */
 #define FIRST_NONQUOTED_TOKEN LTOKENS_FIRST_NONQUOTED
 
 #define save_and_next(ls) (save(ls, ls->current), next(ls))
