@@ -37,18 +37,17 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 ** size and position of opcode arguments.
 */
 #define SIZE_C    9
-#define SIZE_B    9
+#define SIZE_B    8
 #define SIZE_Bx    (SIZE_C + SIZE_B)
 #define SIZE_A    8
 
-#define SIZE_OP    6
+#define SIZE_OP   7
 
-#define POS_OP    0
-#define POS_A    (POS_OP + SIZE_OP)
+#define POS_A     0
 #define POS_C    (POS_A + SIZE_A)
 #define POS_B    (POS_C + SIZE_C)
 #define POS_Bx    POS_C
-
+#define POS_OP   (POS_B + SIZE_B)
 
 /*
 ** limits for opcode arguments.
@@ -118,7 +117,7 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 */
 
 /* this bit 1 means constant (0 means register) */
-#define BITRK    (1 << (SIZE_B - 1))
+#define BITRK    (1 << (SIZE_C - 1))
 
 /* test whether value is a constant */
 #define ISK(x)    ((x) & BITRK)
@@ -153,222 +152,118 @@ typedef enum {
 /*----------------------------------------------------------------------
 name    args  description
 ------------------------------------------------------------------------*/
-HKS_OPCODE_GETFIELD, /*  A B C  R(A) := R(B)[Kst(C)] */
-HKS_OPCODE_TEST,/*  A C  if not (R(A) <=> C) then pc++      */
-HKS_OPCODE_CALL_I,
-HKS_OPCODE_CALL_C,
-HKS_OPCODE_EQ,/*  A B C  if ((R(B) == RK(C)) ~= A) then pc++    */
-HKS_OPCODE_EQ_BK,/*  A B C  if ((Kst(B) == RK(C)) ~= A) then pc++ */
-HKS_OPCODE_GETGLOBAL,/*  A Bx  R(A) := Gbl[Kst(Bx)]        */
-HKS_OPCODE_MOVE,/*  A B  R(A) := R(B)          */
-HKS_OPCODE_SELF,/*  A B C  R(A+1) := R(B); R(A) := R(B)[RK(C)]    */
-HKS_OPCODE_RETURN,/*  A B  return R(A), ... ,R(A+B-2)  (see note)  */
-HKS_OPCODE_GETTABLE_S,
-HKS_OPCODE_GETTABLE_N,
-HKS_OPCODE_GETTABLE,/*  A B C  R(A) := R(B)[RK(C)]        */
-HKS_OPCODE_LOADBOOL,/*  A B C  R(A) := (Bool)B; if (C) pc++      */
-HKS_OPCODE_TFORLOOP,/*  A C  R(A+3), ... ,R(A+3+C) := R(A)(R(A+1), R(A+2)); 
-                        if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); }  */ 
-HKS_OPCODE_SETFIELD,/*  A B C  R(A)[Kst(B)] := RK(C) */
-HKS_OPCODE_SETTABLE_S,
-HKS_OPCODE_SETTABLE_S_BK,
-HKS_OPCODE_SETTABLE_N,
-HKS_OPCODE_SETTABLE_N_BK,
-HKS_OPCODE_SETTABLE,/*  A B C  R(A)[R(B)] := RK(C)        */
-HKS_OPCODE_SETTABLE_BK,/*  A B C  R(A)[Kst(B)] := RK(C) */
-HKS_OPCODE_TAILCALL_I,
-HKS_OPCODE_TAILCALL_C,
-HKS_OPCODE_TAILCALL_M,
-HKS_OPCODE_LOADK,/*  A Bx  R(A) := Kst(Bx)          */
-HKS_OPCODE_LOADNIL,/*  A B  R(A) := ... := R(B) := nil      */
-HKS_OPCODE_SETGLOBAL,/*  A Bx  Gbl[Kst(Bx)] := R(A)        */
-HKS_OPCODE_JMP,/*  sBx  pc+=sBx          */
-HKS_OPCODE_CALL_M,
-HKS_OPCODE_CALL,/*  A B C  R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1)) */
-HKS_OPCODE_INTRINSIC_INDEX,
-HKS_OPCODE_INTRINSIC_NEWINDEX,
-HKS_OPCODE_INTRINSIC_SELF,
-HKS_OPCODE_INTRINSIC_INDEX_LITERAL,
-HKS_OPCODE_INTRINSIC_NEWINDEX_LITERAL,
-HKS_OPCODE_INTRINSIC_SELF_LITERAL,
-HKS_OPCODE_TAILCALL,/*  A B C  return R(A)(R(A+1), ... ,R(A+B-1))    */
-HKS_OPCODE_GETUPVAL,/*  A B  R(A) := UpValue[B]        */
-HKS_OPCODE_SETUPVAL,/*  A B  UpValue[B] := R(A)        */
-HKS_OPCODE_ADD,/*  A B C  R(A) := R(B) + RK(C)        */
-HKS_OPCODE_ADD_BK,/*  A B C  R(A) := Kst(B) + RK(C)        */
-HKS_OPCODE_SUB,/*  A B C  R(A) := R(B) - RK(C)        */
-HKS_OPCODE_SUB_BK,/*  A B C  R(A) := Kst(B) - RK(C)        */
-HKS_OPCODE_MUL,/*  A B C  R(A) := R(B) * RK(C)        */
-HKS_OPCODE_MUL_BK,/*  A B C  R(A) := Kst(B) * RK(C)        */
-HKS_OPCODE_DIV,/*  A B C  R(A) := R(B) / RK(C)        */
-HKS_OPCODE_DIV_BK,/*  A B C  R(A) := Kst(B) / RK(C)        */
-HKS_OPCODE_MOD,/*  A B C  R(A) := R(B) % RK(C)        */
-HKS_OPCODE_MOD_BK,/*  A B C  R(A) := Kst(B) % RK(C)        */
-HKS_OPCODE_POW,/*  A B C  R(A) := R(B) ^ RK(C)        */
-HKS_OPCODE_POW_BK,/*  A B C  R(A) := Kst(B) ^ RK(C)        */
-HKS_OPCODE_NEWTABLE,/*  A B C  R(A) := {} (size = B,C)        */
-HKS_OPCODE_UNM,/*  A B  R(A) := -R(B)          */
-HKS_OPCODE_NOT,/*  A B  R(A) := not R(B)        */
-HKS_OPCODE_LEN,/*  A B  R(A) := length of R(B)        */
-HKS_OPCODE_LT,/*  A B C  if ((R(B) <  RK(C)) ~= A) then pc++      */
-HKS_OPCODE_LT_BK,/*  A B C  if ((Kst(B) <  RK(C)) ~= A) then pc++      */
-HKS_OPCODE_LE,/*  A B C  if ((R(B) <= RK(C)) ~= A) then pc++      */
-HKS_OPCODE_LE_BK,/*  A B C  if ((Kst(B) <=  RK(C)) ~= A) then pc++      */
-
-/* CODT7 extensions */
-HKS_OPCODE_LEFT_SHIFT,/*  A B C  R(A) := R(B) << RK(C)        */
-HKS_OPCODE_LEFT_SHIFT_BK,/*  A B C  R(A) := Kst(B) << RK(C)        */
-HKS_OPCODE_RIGHT_SHIFT,/*  A B C  R(A) := R(B) >> RK(C)        */
-HKS_OPCODE_RIGHT_SHIFT_BK,/*  A B C  R(A) := Kst(B) >> RK(C)        */
-HKS_OPCODE_BIT_AND,/*  A B C  R(A) := R(B) & RK(C)        */
-HKS_OPCODE_BIT_AND_BK,/*  A B C  R(A) := Kst(B) & RK(C)        */
-HKS_OPCODE_BIT_OR,/*  A B C  R(A) := R(B) | RK(C)        */
-HKS_OPCODE_BIT_OR_BK,/*  A B C  R(A) := Kst(B) | RK(C)        */
-/* END CODT7 extensions */
-
-HKS_OPCODE_CONCAT,/*  A B C  R(A) := R(B).. ... ..R(C)      */
-HKS_OPCODE_TESTSET,/*  A B C  if (R(B) <=> C) then R(A) := R(B) else pc++  */ 
-HKS_OPCODE_FORPREP,/*  A sBx  R(A)-=R(A+2); pc+=sBx        */
-HKS_OPCODE_FORLOOP,/*  A sBx  R(A)+=R(A+2);
-      if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) }*/
-HKS_OPCODE_SETLIST,/*  A B C  R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B  */
-HKS_OPCODE_CLOSE,/*  A   close all variables in the stack up to (>=) R(A)*/
-HKS_OPCODE_CLOSURE,/*  A Bx  R(A) := closure(KPROTO[Bx], R(A), ... ,R(A+n))  */
-HKS_OPCODE_VARARG,/*  A B  R(A), R(A+1), ..., R(A+B-1) = vararg    */
-HKS_OPCODE_TAILCALL_I_R1,
-HKS_OPCODE_CALL_I_R1,
-HKS_OPCODE_SETUPVAL_R1,
-HKS_OPCODE_TEST_R1,
-HKS_OPCODE_NOT_R1,
-HKS_OPCODE_GETFIELD_R1,
-HKS_OPCODE_SETFIELD_R1,
-HKS_OPCODE_NEWSTRUCT,
-HKS_OPCODE_DATA,
-HKS_OPCODE_SETSLOTN,
-HKS_OPCODE_SETSLOTI,
-HKS_OPCODE_SETSLOT,
-HKS_OPCODE_SETSLOTS,
-HKS_OPCODE_SETSLOTMT,
-HKS_OPCODE_CHECKTYPE,/*  A Bx  type(R(A)) == Bx */
-HKS_OPCODE_CHECKTYPES,
-HKS_OPCODE_GETSLOT,
-HKS_OPCODE_GETSLOTMT,
-HKS_OPCODE_SELFSLOT,
-HKS_OPCODE_SELFSLOTMT,
-HKS_OPCODE_GETFIELD_MM,
-HKS_OPCODE_CHECKTYPE_D,
-HKS_OPCODE_GETSLOT_D,
-HKS_OPCODE_GETGLOBAL_MEM,
-HKS_OPCODE_MAX
-} HksOpCode;
-
-typedef enum {
-/*----------------------------------------------------------------------
-name    args  description
-------------------------------------------------------------------------*/
-OP_MOVE,/*  A B  R(A) := R(B)          */
-OP_LOADK,/*  A Bx  R(A) := Kst(Bx)          */
-OP_LOADBOOL,/*  A B C  R(A) := (Bool)B; if (C) pc++      */
-OP_LOADNIL,/*  A B  R(A) := ... := R(B) := nil      */
-OP_GETUPVAL,/*  A B  R(A) := UpValue[B]        */
-
+OP_GETFIELD, /*  A B C  R(A) := R(B)[Kst(C)] */
+OP_TEST,/*  A C  if not (R(A) <=> C) then pc++      */
+OP_CALL_I,
+OP_CALL_C,
+OP_EQ,/*  A B C  if ((R(B) == RK(C)) ~= A) then pc++    */
+OP_EQ_BK,/*  A B C  if ((Kst(B) == RK(C)) ~= A) then pc++ */
 OP_GETGLOBAL,/*  A Bx  R(A) := Gbl[Kst(Bx)]        */
-OP_GETTABLE,/*  A B C  R(A) := R(B)[RK(C)]        */
-
-OP_SETGLOBAL,/*  A Bx  Gbl[Kst(Bx)] := R(A)        */
-OP_SETUPVAL,/*  A B  UpValue[B] := R(A)        */
-OP_SETTABLE,/*  A B C  R(A)[RK(B)] := RK(C)        */
-
-OP_NEWTABLE,/*  A B C  R(A) := {} (size = B,C)        */
-
+OP_MOVE,/*  A B  R(A) := R(B)          */
 OP_SELF,/*  A B C  R(A+1) := R(B); R(A) := R(B)[RK(C)]    */
-
-OP_ADD,/*  A B C  R(A) := RK(B) + RK(C)        */
-OP_SUB,/*  A B C  R(A) := RK(B) - RK(C)        */
-OP_MUL,/*  A B C  R(A) := RK(B) * RK(C)        */
-OP_DIV,/*  A B C  R(A) := RK(B) / RK(C)        */
-OP_MOD,/*  A B C  R(A) := RK(B) % RK(C)        */
-OP_POW,/*  A B C  R(A) := RK(B) ^ RK(C)        */
+OP_RETURN,/*  A B  return R(A), ... ,R(A+B-2)  (see note)  */
+OP_GETTABLE_S,
+OP_GETTABLE_N,
+OP_GETTABLE,/*  A B C  R(A) := R(B)[RK(C)]        */
+OP_LOADBOOL,/*  A B C  R(A) := (Bool)B; if (C) pc++      */
+OP_TFORLOOP,/*  A C  R(A+3), ... ,R(A+3+C) := R(A)(R(A+1), R(A+2)); 
+                        if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); }  */ 
+OP_SETFIELD,/*  A B C  R(A)[Kst(B)] := RK(C) */
+OP_SETTABLE_S,
+OP_SETTABLE_S_BK,
+OP_SETTABLE_N,
+OP_SETTABLE_N_BK,
+OP_SETTABLE,/*  A B C  R(A)[R(B)] := RK(C)        */
+OP_SETTABLE_BK,/*  A B C  R(A)[Kst(B)] := RK(C) */
+OP_TAILCALL_I,
+OP_TAILCALL_C,
+OP_TAILCALL_M,
+OP_LOADK,/*  A Bx  R(A) := Kst(Bx)          */
+OP_LOADNIL,/*  A B  R(A) := ... := R(B) := nil      */
+OP_SETGLOBAL,/*  A Bx  Gbl[Kst(Bx)] := R(A)        */
+OP_JMP,/*  sBx  pc+=sBx          */
+OP_CALL_M,
+OP_CALL,/*  A B C  R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1)) */
+OP_INTRINSIC_INDEX,
+OP_INTRINSIC_NEWINDEX,
+OP_INTRINSIC_SELF,
+OP_INTRINSIC_INDEX_LITERAL,
+OP_INTRINSIC_NEWINDEX_LITERAL,
+OP_INTRINSIC_SELF_LITERAL,
+OP_TAILCALL,/*  A B C  return R(A)(R(A+1), ... ,R(A+B-1))    */
+OP_GETUPVAL,/*  A B  R(A) := UpValue[B]        */
+OP_SETUPVAL,/*  A B  UpValue[B] := R(A)        */
+OP_ADD,/*  A B C  R(A) := R(B) + RK(C)        */
+OP_ADD_BK,/*  A B C  R(A) := Kst(B) + RK(C)        */
+OP_SUB,/*  A B C  R(A) := R(B) - RK(C)        */
+OP_SUB_BK,/*  A B C  R(A) := Kst(B) - RK(C)        */
+OP_MUL,/*  A B C  R(A) := R(B) * RK(C)        */
+OP_MUL_BK,/*  A B C  R(A) := Kst(B) * RK(C)        */
+OP_DIV,/*  A B C  R(A) := R(B) / RK(C)        */
+OP_DIV_BK,/*  A B C  R(A) := Kst(B) / RK(C)        */
+OP_MOD,/*  A B C  R(A) := R(B) % RK(C)        */
+OP_MOD_BK,/*  A B C  R(A) := Kst(B) % RK(C)        */
+OP_POW,/*  A B C  R(A) := R(B) ^ RK(C)        */
+OP_POW_BK,/*  A B C  R(A) := Kst(B) ^ RK(C)        */
+OP_NEWTABLE,/*  A B C  R(A) := {} (size = B,C)        */
 OP_UNM,/*  A B  R(A) := -R(B)          */
 OP_NOT,/*  A B  R(A) := not R(B)        */
 OP_LEN,/*  A B  R(A) := length of R(B)        */
+OP_LT,/*  A B C  if ((R(B) <  RK(C)) ~= A) then pc++      */
+OP_LT_BK,/*  A B C  if ((Kst(B) <  RK(C)) ~= A) then pc++      */
+OP_LE,/*  A B C  if ((R(B) <= RK(C)) ~= A) then pc++      */
+OP_LE_BK,/*  A B C  if ((Kst(B) <=  RK(C)) ~= A) then pc++      */
+
+/* T7 extensions */
+OP_LEFT_SHIFT,/*  A B C  R(A) := R(B) << RK(C)        */
+OP_LEFT_SHIFT_BK,/*  A B C  R(A) := Kst(B) << RK(C)        */
+OP_RIGHT_SHIFT,/*  A B C  R(A) := R(B) >> RK(C)        */
+OP_RIGHT_SHIFT_BK,/*  A B C  R(A) := Kst(B) >> RK(C)        */
+OP_BIT_AND,/*  A B C  R(A) := R(B) & RK(C)        */
+OP_BIT_AND_BK,/*  A B C  R(A) := Kst(B) & RK(C)        */
+OP_BIT_OR,/*  A B C  R(A) := R(B) | RK(C)        */
+OP_BIT_OR_BK,/*  A B C  R(A) := Kst(B) | RK(C)        */
+/* END T7 extensions */
 
 OP_CONCAT,/*  A B C  R(A) := R(B).. ... ..R(C)      */
-
-OP_JMP,/*  sBx  pc+=sBx          */
-
-OP_EQ,/*  A B C  if ((RK(B) == RK(C)) ~= A) then pc++    */
-OP_LT,/*  A B C  if ((RK(B) <  RK(C)) ~= A) then pc++      */
-OP_LE,/*  A B C  if ((RK(B) <= RK(C)) ~= A) then pc++      */
-
-OP_TEST,/*  A C  if not (R(A) <=> C) then pc++      */ 
 OP_TESTSET,/*  A B C  if (R(B) <=> C) then R(A) := R(B) else pc++  */ 
-
-OP_CALL,/*  A B C  R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1)) */
-OP_TAILCALL,/*  A B C  return R(A)(R(A+1), ... ,R(A+B-1))    */
-OP_RETURN,/*  A B  return R(A), ... ,R(A+B-2)  (see note)  */
-
+OP_FORPREP,/*  A sBx  R(A)-=R(A+2); pc+=sBx        */
 OP_FORLOOP,/*  A sBx  R(A)+=R(A+2);
       if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) }*/
-OP_FORPREP,/*  A sBx  R(A)-=R(A+2); pc+=sBx        */
-
-OP_TFORLOOP,/*  A C  R(A+3), ... ,R(A+3+C) := R(A)(R(A+1), R(A+2)); 
-                        if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); }  */ 
 OP_SETLIST,/*  A B C  R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B  */
-
 OP_CLOSE,/*  A   close all variables in the stack up to (>=) R(A)*/
 OP_CLOSURE,/*  A Bx  R(A) := closure(KPROTO[Bx], R(A), ... ,R(A+n))  */
-
-OP_VARARG/*  A B  R(A), R(A+1), ..., R(A+B-1) = vararg    */
+OP_VARARG,/*  A B  R(A), R(A+1), ..., R(A+B-1) = vararg    */
+OP_TAILCALL_I_R1,
+OP_CALL_I_R1,
+OP_SETUPVAL_R1,
+OP_TEST_R1,
+OP_NOT_R1,
+OP_GETFIELD_R1,
+OP_SETFIELD_R1,
+OP_NEWSTRUCT,
+OP_DATA,
+OP_SETSLOTN,
+OP_SETSLOTI,
+OP_SETSLOT,
+OP_SETSLOTS,
+OP_SETSLOTMT,
+OP_CHECKTYPE,/*  A Bx  type(R(A)) == Bx */
+OP_CHECKTYPES,
+OP_GETSLOT,
+OP_GETSLOTMT,
+OP_SELFSLOT,
+OP_SELFSLOTMT,
+OP_GETFIELD_MM,
+OP_CHECKTYPE_D,
+OP_GETSLOT_D,
+OP_GETGLOBAL_MEM,
+/* end of opcodes */
+OP_MAX
 } OpCode;
 
-#define NUM_OPCODES  (cast(int, OP_VARARG) + 1)
+#define NUM_OPCODES (cast(int, OP_MAX))
 
-#if 0
-#undef NUM_OPCODES
-#define OpCode HksOpCode
-
-#define OP_MOVE       HKS_OPCODE_MOVE
-#define OP_LOADK      HKS_OPCODE_LOADK
-#define OP_LOADBOOL   HKS_OPCODE_LOADBOOL
-#define OP_LOADNIL    HKS_OPCODE_LOADNIL
-#define OP_GETUPVAL   HKS_OPCODE_GETUPVAL
-#define OP_GETGLOBAL  HKS_OPCODE_GETGLOBAL
-#define OP_GETTABLE   HKS_OPCODE_GETTABLE
-#define OP_SETGLOBAL  HKS_OPCODE_SETGLOBAL
-#define OP_SETUPVAL   HKS_OPCODE_SETUPVAL
-#define OP_SETTABLE   HKS_OPCODE_SETTABLE
-#define OP_NEWTABLE   HKS_OPCODE_NEWTABLE
-#define OP_SELF       HKS_OPCODE_SELF
-#define OP_ADD        HKS_OPCODE_ADD
-#define OP_SUB        HKS_OPCODE_SUB
-#define OP_MUL        HKS_OPCODE_MUL
-#define OP_DIV        HKS_OPCODE_DIV
-#define OP_MOD        HKS_OPCODE_MOD
-#define OP_POW        HKS_OPCODE_POW
-#define OP_UNM        HKS_OPCODE_UNM
-#define OP_NOT        HKS_OPCODE_NOT
-#define OP_LEN        HKS_OPCODE_LEN
-#define OP_CONCAT     HKS_OPCODE_CONCAT
-#define OP_JMP        HKS_OPCODE_JMP
-#define OP_EQ         HKS_OPCODE_EQ
-#define OP_LT         HKS_OPCODE_LT
-#define OP_LE         HKS_OPCODE_LE
-#define OP_TEST       HKS_OPCODE_TEST
-#define OP_TESTSET    HKS_OPCODE_TESTSET
-#define OP_CALL       HKS_OPCODE_CALL
-#define OP_TAILCALL   HKS_OPCODE_TAILCALL
-#define OP_RETURN     HKS_OPCODE_RETURN
-#define OP_FORLOOP    HKS_OPCODE_FORLOOP
-#define OP_FORPREP    HKS_OPCODE_FORPREP
-#define OP_TFORLOOP   HKS_OPCODE_TFORLOOP
-#define OP_SETLIST    HKS_OPCODE_SETLIST
-#define OP_CLOSE      HKS_OPCODE_CLOSE
-#define OP_CLOSURE    HKS_OPCODE_CLOSURE
-#define OP_VARARG     HKS_OPCODE_VARARG
-
-#define NUM_OPCODES (cast(int, HKS_OPCODE_MAX))
-#endif
 /*===========================================================================
   Notes:
   (*) In OP_CALL, if (B == 0) then B = top. C is the number of returns - 1,
@@ -416,7 +311,6 @@ LUAI_DATA const lu_byte luaP_opmodes[NUM_OPCODES];
 
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
-
 
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50

@@ -10,12 +10,12 @@
 #include "hksc_begin_code.h"
 
 #include "llimits.h"
-#include "./lobject.h"
-/*#include "ltable.h"*/
-#include "./lzio.h"
+#include "lobject.h"
+#include "ltable.h"
+#include "lzio.h"
 
 int hksc_parser_init(void);
-Proto *hksc_parser(ZIO *z, Mbuffer *buff);
+Proto *hksc_parser(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name);
 
 /*
 ** Expression descriptor
@@ -44,6 +44,7 @@ typedef struct expdesc {
   union {
     struct { int info, aux; } s;
     lua_Number nval;
+    lua_Literal lval;
   } u;
   int t;  /* patch list of `exit when true' */
   int f;  /* patch list of `exit when false' */
@@ -65,7 +66,7 @@ typedef struct FuncState {
   Table *h;  /* table to find (and reuse) elements in `k' */
   struct FuncState *prev;  /* enclosing function */
   struct LexState *ls;  /* lexical state */
-  struct lua_State *L;  /* copy of the Lua state */
+  struct hksc_State *H;  /* copy of the Lua state */
   struct BlockCnt *bl;  /* chain of current blocks */
   int pc;  /* next position to code (equivalent to `ncode') */
   int lasttarget;   /* `pc' of last `jump target' */
@@ -80,7 +81,7 @@ typedef struct FuncState {
 } FuncState;
 
 
-LUAI_FUNC Proto *luaY_parser (ZIO *z, Mbuffer *buff,
+LUAI_FUNC Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff,
                                             const char *name);
 
 

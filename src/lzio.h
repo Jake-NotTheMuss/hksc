@@ -29,26 +29,26 @@ typedef struct Mbuffer {
   size_t buffsize;
 } Mbuffer;
 
-#define luaZ_initbuffer(buff) ((buff)->buffer = NULL, (buff)->buffsize = 0)
+#define luaZ_initbuffer(H, buff) ((buff)->buffer = NULL, (buff)->buffsize = 0)
 
-#define luaZ_buffer(buff)  ((buff)->buffer)
-#define luaZ_sizebuffer(buff)  ((buff)->buffsize)
+#define luaZ_buffer(buff) ((buff)->buffer)
+#define luaZ_sizebuffer(buff) ((buff)->buffsize)
 #define luaZ_bufflen(buff)  ((buff)->n)
 
 #define luaZ_resetbuffer(buff) ((buff)->n = 0)
 
 
-#define luaZ_resizebuffer(buff, size) \
-  (luaM_reallocvector((buff)->buffer, (buff)->buffsize, size, char), \
+#define luaZ_resizebuffer(H, buff, size) \
+  (luaM_reallocvector(H, (buff)->buffer, (buff)->buffsize, size, char), \
   (buff)->buffsize = size)
 
-#define luaZ_freebuffer(buff)  luaZ_resizebuffer(buff, 0)
+#define luaZ_freebuffer(H, buff)  luaZ_resizebuffer(H, buff, 0)
 
 
-LUAI_FUNC char *luaZ_openspace (Mbuffer *buff, size_t n);
-LUAI_FUNC void luaZ_init (ZIO *z, lua_Reader reader,
+LUAI_FUNC char *luaZ_openspace (hksc_State *H, Mbuffer *buff, size_t n);
+LUAI_FUNC void luaZ_init (hksc_State *H, ZIO *z, lua_Reader reader,
                                         void *data);
-LUAI_FUNC size_t luaZ_read (ZIO* z, void* b, size_t n);  /* read next n bytes */
+LUAI_FUNC size_t luaZ_read (ZIO* z, void* b, size_t n); /* read next n bytes */
 LUAI_FUNC int luaZ_lookahead (ZIO *z);
 
 
@@ -60,6 +60,7 @@ struct Zio {
   const char *p;    /* current position in buffer */
   lua_Reader reader;
   void* data;      /* additional data */
+  hksc_State *H;      /* Lua state (for reader) */
 };
 
 

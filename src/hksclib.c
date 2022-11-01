@@ -8,12 +8,14 @@
 
 #include "lua.h"
 #include "lzio.h"
+#include "lstate.h"
+#include "lerror.h"
 
 #include "hksclib.h"
 
-#include "./lparser.h"
+#include "lparser.h"
 
-#include "./lundump.h"
+#include "lundump.h"
 
 /*
 ** {======================================================
@@ -29,8 +31,9 @@ typedef struct LoadF
 } LoadF;
 
 
-static const char *getF(void *ud, size_t *size)
+static const char *getF(hksc_State *H, void *ud, size_t *size)
 {
+  UNUSED(H);
   LoadF *lf = (LoadF *)ud;
 
   if (lf->extraline)
@@ -44,17 +47,16 @@ static const char *getF(void *ud, size_t *size)
   return (*size > 0) ? lf->buff : NULL;
 }
 
-
-static int errfile (const char *what, const char *filename) {
+static int errfile (hksc_State *H, const char *what, const char *filename) {
   const char *serr = strerror(errno);
-  fprintf(stderr, "cannot %s %s: %s", what, filename, serr);
+  hksc_setfmsg(H, "cannot %s %s: %s", what, filename, serr);
   return LUA_ERRFILE;
 }
 
-static int parser(ZIO *z, const char *filename);
+static int parser(hksc_State *H, ZIO *z, const char *filename);
 
 int
-hksc_parsefile(const char *filename)
+hksc_parsefile(hksc_State *H, const char *filename)
 {
   LoadF lf;
   int status, readstatus;
@@ -66,7 +68,7 @@ hksc_parsefile(const char *filename)
   else
   {
     lf.f = fopen(filename, "r");
-    if (lf.f == NULL) return errfile("open", filename);
+    if (lf.f == NULL) return errfile(H, "open", filename);
   }
 
   c = getc(lf.f);
@@ -91,16 +93,17 @@ hksc_parsefile(const char *filename)
   /* lua_load */
   /*status = hksc_load(getF, &lf, filename);*/
   ZIO z;
-  luaZ_init(&z, getF, &lf);
-  status = parser(&z, filename);
+  luaZ_init(H, &z, getF, &lf);
+  status = parser(H, &z, filename);
 
 
   return status;
 }
 
 static int
-writer(const void *p, size_t sz, void *ud)
+writer(hksc_State *H, const void *p, size_t sz, void *ud)
 {
+  UNUSED(H);
   FILE *out = (FILE *)ud;
   if (fwrite(p, 1, sz, out) != sz)
     return 1;
@@ -109,13 +112,11 @@ writer(const void *p, size_t sz, void *ud)
 }
 
 static int
-parser(ZIO *z, const char *filename)
+parser(hksc_State *H, ZIO *z, const char *filename)
 {
   int status;
   char *outname;
   FILE *out;
-  Mbuffer buff;
-  luaZ_initbuffer(&buff);
 
   if (filename != NULL)
   {
@@ -140,7 +141,7 @@ parser(ZIO *z, const char *filename)
       strncpy(outname + len, LUAC_EXT, sizeof(LUAC_EXT));
 
     out = fopen(outname, "wb");
-    if (out == NULL) return errfile("open", outname);
+    if (out == NULL) return errfile(H, "open", outname);
   }
   else
   {
@@ -152,16 +153,45 @@ parser(ZIO *z, const char *filename)
   /* used to determine of compiling or decompiling */
   /*int c = luaZ_lookahead(z);*/
 
-  Proto *f = hksc_parser(z, &buff);
+  Proto *f;
+  status = luaD_protectedparser(H, z, filename, &f);
+  if (status) return status;
+
   /*printf("f: %p\n", f);*/
-  status = luaU_dump(f, writer, out, 1);
+  status = luaU_dump(H, f, writer, out, 1);
   fclose(out);
   free(outname);
   return status;
 }
 
-int
-hksc_init(void)
+static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize) {
+  (void)ud;
+  (void)osize;
+  if (nsize == 0) {
+    free(ptr);
+    return NULL;
+  }
+  else
+    return realloc(ptr, nsize);
+}
+
+static int panic (hksc_State *H) {
+  (void)H;  /* to avoid warnings */
+  fprintf(stderr, "PANIC: unprotected error in call to Lua API (%s)\n",
+                   luaE_geterrormsg(H));
+  return 0;
+}
+
+hksc_State *
+hksc_xnewstate(void)
 {
-  return hksc_parser_init();
+  hksc_State *H = hksc_newstate(l_alloc, NULL);
+  if (H) hksc_atpanic(H, &panic);
+  else
+  {
+    fprintf(stderr, "cannot allocate a hksc_State\n");
+    exit(EXIT_FAILURE);
+  }
+
+  return H;
 }

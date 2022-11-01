@@ -9,6 +9,7 @@
 #include <locale.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "hksc_begin_code.h"
 
@@ -17,13 +18,15 @@
 
 #include "lua.h"
 
-/*#include "ldo.h"*/
-#include "./llex.h"
-#include "./lobject.h"
-#include "./lparser.h"
-/*#include "lstate.h"*/
-#include "./lstring.h"
-#include "./lzio.h"
+#include "lctype.h"
+#include "ldebug.h"
+#include "lerror.h"
+#include "llex.h"
+#include "lobject.h"
+#include "lparser.h"
+#include "lstate.h"
+#include "lstring.h"
+#include "lzio.h"
 
 
 #define next(ls) (ls->current = zgetc(ls->z))
@@ -33,21 +36,37 @@
 
 #define currIsNewline(ls)	(ls->current == '\n' || ls->current == '\r')
 
-
+#if 0
 /* ORDER RESERVED */
 const char *const luaX_tokens [] = {
     "and", "break", "do", "else", "elseif",
     "end", "false", "for", "function", "if",
     "in", "local", "nil", "not", "or", "repeat",
     "return", "then", "true", "until", "while",
-    /* Havok extensions */
-    "hstructure", "hmake",
-    /* End Havok extensions */
+    "hstructure", "hmake", "TK_INVALID",
+    /* T7 extensions */
+    "<<", ">>",
+    /* END T7 extensions */
     "..", "...", "==", ">=", "<=", "~=",
-    "<number>", "<name>", "<string>", "<eof>",
+    "<number>", "<short_literal>", "<long_literal>",
+    "<name>", "<string>", "<eof>",
+    "<Invalid_BOM>", "<UTF8_BOM>",
+    "<UTF16LE_BOM>", "<UTF16BE_BOM>",
+    "<UTF32LE_BOM>", "<UTF32BE_BOM>",
     NULL
 };
+#else
+#define DEFTOK(name, text) text,
+#define DEFTOK1(name, text) DEFTOK(name, text)
+const char *const luaX_tokens [] = {
+#include "ltokens.def"
+  NULL
+};
+#undef DEFTOK1
+#undef DEFTOK
+#endif
 
+#define FIRST_NONQUOTED_TOKEN LTOKENS_FIRST_NONQUOTED
 
 #define save_and_next(ls) (save(ls, ls->current), next(ls))
 
@@ -59,16 +78,16 @@ static void save (LexState *ls, int c) {
     if (b->buffsize >= MAX_SIZET/2)
       luaX_lexerror(ls, "lexical element too long", 0);
     newsize = b->buffsize * 2;
-    luaZ_resizebuffer(b, newsize);
+    luaZ_resizebuffer(ls->H, b, newsize);
   }
   b->buffer[b->n++] = cast(char, c);
 }
 
 
-void luaX_init (void) {
+void luaX_init (hksc_State *H) {
   int i;
   for (i=0; i<NUM_RESERVED; i++) {
-    TString *ts = luaS_new(luaX_tokens[i]);
+    TString *ts = luaS_new(H, luaX_tokens[i]);
     lua_assert(strlen(luaX_tokens[i])+1 <= TOKEN_LEN);
     ts->tsv.reserved = cast_byte(i+1);  /* reserved word */
   }
@@ -77,25 +96,21 @@ void luaX_init (void) {
 
 #define MAXSRC          80
 
-static char token2str_[32];
-
 const char *luaX_token2str (LexState *ls, int token) {
-  if (token < FIRST_RESERVED) {
-    lua_assert(token == cast(unsigned char, token));
-    if (iscntrl(token))
-    {
-      int n = snprintf(token2str_, sizeof(token2str_), "char(%d)", token);
-      token2str_[n] = '\0';
-    }
-    else
-    {
-      token2str_[0] = token;
-      token2str_[1] = '\0';
-    }
-    return token2str_;
+  if (token < FIRST_RESERVED) {  /* single-byte symbols? */
+    if (lisprint(token))
+      return luaO_pushfstring(ls->H, "'%c'", token);
+    else  /* control character */
+      return luaO_pushfstring(ls->H, "'<\\%d>'", token);
   }
-  else
-    return luaX_tokens[token-FIRST_RESERVED];
+  else {
+    const char *s = luaX_tokens[token - FIRST_RESERVED];
+    if (token < FIRST_NONQUOTED_TOKEN) /* fixed format
+                                            (symbols and reserved words)? */
+      return luaO_pushfstring(ls->H, "'%s'", s);
+    else  /* names, strings, and numerals */
+      return s;
+  }
 }
 
 
@@ -104,8 +119,10 @@ static const char *txtToken (LexState *ls, int token) {
     case TK_NAME:
     case TK_STRING:
     case TK_NUMBER:
+    case TK_SHORT_LITERAL:
+    case TK_LONG_LITERAL:
       save(ls, '\0');
-      return luaZ_buffer(ls->buff);
+      return luaO_pushfstring(ls->H, "'%s'", luaZ_buffer(ls->buff));
     default:
       return luaX_token2str(ls, token);
   }
@@ -113,13 +130,16 @@ static const char *txtToken (LexState *ls, int token) {
 
 
 void luaX_lexerror (LexState *ls, const char *msg, int token) {
-  fprintf(stderr, "LuaX_lexerror: %s (%d)\n", msg, token);
-  /*char buff[MAXSRC];
+  char buff[MAXSRC];
   luaO_chunkid(buff, getstr(ls->source), MAXSRC);
-  msg = luaO_pushfstring(ls->L, "%s:%d: %s", buff, ls->linenumber, msg);
+
   if (token)
-    luaO_pushfstring(ls->L, "%s near " LUA_QS, msg, txtToken(ls, token));
-  luaD_throw(ls->L, LUA_ERRSYNTAX);*/
+    hksc_setfmsg(ls->H, "%s:%d: %s near %s", buff,
+                       ls->linenumber, msg, txtToken(ls, token));
+  else
+    hksc_setfmsg(ls->H, "%s:%d: %s", buff, ls->linenumber, msg);
+
+  luaD_throw(ls->H, LUA_ERRSYNTAX);
 }
 
 
@@ -129,8 +149,9 @@ void luaX_syntaxerror (LexState *ls, const char *msg) {
 
 
 TString *luaX_newstring (LexState *ls, const char *str, size_t l) {
-  TString *ts = luaS_newlstr(str, l);
-  TValue *o = luaH_setstr(ls->fs->h, ts);  /* entry for `str' */
+  hksc_State *H = ls->H;
+  TString *ts = luaS_newlstr(H, str, l);
+  TValue *o = luaH_setstr(H, ls->fs->h, ts);  /* entry for `str' */
   if (ttisnil(o))
     setbvalue(o, 1);  /* make sure `str' will not be collected */
   return ts;
@@ -148,15 +169,16 @@ static void inclinenumber (LexState *ls) {
 }
 
 
-void luaX_setinput (LexState *ls, ZIO *z, TString *source) {
-  (void)source;
+void luaX_setinput (hksc_State *H, LexState *ls, ZIO *z, TString *source) {
   ls->decpoint = '.';
+  ls->H = H;
   ls->lookahead.token = TK_EOS;  /* no look-ahead token */
   ls->z = z;
   ls->fs = NULL;
   ls->linenumber = 1;
   ls->lastline = 1;
-  luaZ_resizebuffer(ls->buff, LUA_MINBUFFER);  /* initialize buffer */
+  ls->source = source;
+  luaZ_resizebuffer(ls->H, ls->buff, LUA_MINBUFFER);  /* initialize buffer */
   next(ls);  /* read first char */
 }
 
@@ -200,22 +222,87 @@ static void trydecpoint (LexState *ls, SemInfo *seminfo) {
 }
 
 
+static int numeral_type(LexState *ls)
+{
+  size_t n = ls->buff->n;
+  char *buf = ls->buff->buffer;
+
+  if (n >= 6)
+  {
+    if (buf[0] == '0' && (buf[1] == 'X' || buf[1] == 'x'))
+    {
+      /* end of string should be "hi\0" or "hl\0" */
+      char c = buf[n - 3];
+      if (c == 'H' || c == 'h')
+      {
+        c = buf[n - 2];
+        if (c == 'I' || c == 'i')
+          return TK_SHORT_LITERAL;
+        else if (c == 'L' || c == 'l')
+          return TK_LONG_LITERAL;
+      }
+    }
+  }
+  /* default */
+  return TK_NUMBER;
+}
+
 /* LUA_NUMBER */
-static void read_numeral (LexState *ls, SemInfo *seminfo) {
-  lua_assert(isdigit(ls->current));
+static int read_numeral (LexState *ls, SemInfo *seminfo) {
+  lua_assert(lisdigit(ls->current));
   do {
     save_and_next(ls);
-  } while (isdigit(ls->current) || ls->current == '.');
+  } while (lisdigit(ls->current) || ls->current == '.');
   if (check_next(ls, "Ee"))  /* `E'? */
     check_next(ls, "+-");  /* optional exponent sign */
-  while (isalnum(ls->current) || ls->current == '_')
+  while (lislalnum(ls->current) || ls->current == '_')
     save_and_next(ls);
   save(ls, '\0');
   buffreplace(ls, '.', ls->decpoint);  /* follow locale for decimal point */
-  if (!luaO_str2d(luaZ_buffer(ls->buff), &seminfo->r))  /* format error? */
-    trydecpoint(ls, seminfo); /* try to update decimal point separator */
-}
 
+  int token = numeral_type(ls);
+
+  switch (token)
+  {
+    case TK_SHORT_LITERAL:
+    case TK_LONG_LITERAL:
+    {
+      char *s = luaZ_buffer(ls->buff) + 2; /* skip "0x" */
+      size_t n = luaZ_bufflen(ls->buff);
+      char *endptr;
+      lua_Literal l = strtoull(s, &endptr, 16);
+
+      /* note that -5 is used because endptr should point to the start of
+         the suffix:
+         &s[n - 3] points to the null character (-2 for the skipped "0x")
+         and an additional -2 points to the 'h' */
+      if (endptr == s || endptr != &s[n - 5])
+      {
+        ls->buff->n--; /* don't include the null character in messages */
+        luaX_lexerror(ls, "malformed int literal", token);
+      }
+
+      /* for a long literal, need to check lowest 4 bits are 0 */
+      if (token == TK_LONG_LITERAL)
+      {
+        if ((l & 0xf) != 0)
+        {
+          ls->buff->n--; /* don't include the null character in messages */
+          luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
+                        token);
+        }
+      }
+      seminfo->l = l;
+    }
+    case TK_NUMBER:
+    {
+      if (!luaO_str2d(luaZ_buffer(ls->buff), &seminfo->r))  /* format error? */
+        trydecpoint(ls, seminfo); /* try to update decimal point separator */
+    }
+  }
+
+  return token;
+}
 
 static int skip_sep (LexState *ls) {
   int count = 0;
@@ -311,7 +398,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
           case '\r': save(ls, '\n'); inclinenumber(ls); continue;
           case EOZ: continue;  /* will raise an error next loop */
           default: {
-            if (!isdigit(ls->current))
+            if (!lisdigit(ls->current))
               save_and_next(ls);  /* handles \\, \", \', and \? */
             else {  /* \xxx */
               int i = 0;
@@ -319,7 +406,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
               do {
                 c = 10*c + (ls->current-'0');
                 next(ls);
-              } while (++i<3 && isdigit(ls->current));
+              } while (++i<3 && lisdigit(ls->current));
               if (c > UCHAR_MAX)
                 luaX_lexerror(ls, "escape sequence too large", TK_STRING);
               save(ls, c);
@@ -385,13 +472,21 @@ static int llex (LexState *ls, SemInfo *seminfo) {
       }
       case '<': {
         next(ls);
-        if (ls->current != '=') return '<';
-        else { next(ls); return TK_LE; }
+        if (ls->current == '=')
+          { next(ls); return TK_LE; }
+        /* T7 extension */
+        else if (ls->current == '<')
+          { next(ls); return TK_LEFT_SHIFT; }
+        else return '<';
       }
       case '>': {
         next(ls);
-        if (ls->current != '=') return '>';
-        else { next(ls); return TK_GE; }
+        if (ls->current == '=')
+          { next(ls); return TK_GE; }
+        /* T7 extension */
+        else if (ls->current == '>')
+          { next(ls); return TK_RIGHT_SHIFT; }
+        else return '>';
       }
       case '~': {
         next(ls);
@@ -410,35 +505,48 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             return TK_DOTS;   /* ... */
           else return TK_CONCAT;   /* .. */
         }
-        else if (!isdigit(ls->current)) return '.';
+        else if (!lisdigit(ls->current)) return '.';
         else {
-          read_numeral(ls, seminfo);
-          return TK_NUMBER;
+          int token = read_numeral(ls, seminfo);
+          lua_assert(token == TK_NUMBER);
+          return token;
         }
       }
       case EOZ: {
         return TK_EOS;
       }
       default: {
-        if (isspace(ls->current)) {
+        if (lisspace(ls->current)) {
           lua_assert(!currIsNewline(ls));
           next(ls);
           continue;
         }
-        else if (isdigit(ls->current)) {
-          read_numeral(ls, seminfo);
-          return TK_NUMBER;
+        else if (lisdigit(ls->current)) {
+          return read_numeral(ls, seminfo);
         }
-        else if (isalpha(ls->current) || ls->current == '_') {
+        else if (lislalpha(ls->current)) {
           /* identifier or reserved word */
           TString *ts;
           do {
             save_and_next(ls);
-          } while (isalnum(ls->current) || ls->current == '_');
+          } while (lislalnum(ls->current));
           ts = luaX_newstring(ls, luaZ_buffer(ls->buff),
                                   luaZ_bufflen(ls->buff));
-          if (ts->tsv.reserved > 0)  /* reserved word? */
-            return ts->tsv.reserved - 1 + FIRST_RESERVED;
+          if (ts->tsv.reserved > 0)  /* reserved word? */ {
+            int token = ts->tsv.reserved - 1 + FIRST_RESERVED;
+            /* hstructure and hmake are not supported in the cod builds */
+            if (token == TK_HSTRUCTURE || token == TK_HMAKE)
+            {
+              /* TODO: find the correct call for this */
+              luaG_runerror(ls->H,
+                "The reserved words '%s' and '%s' can "
+                "only be used when the virtual machine is built with "
+                "structure support.",
+                luaX_tokens[TK_HMAKE-FIRST_RESERVED],
+                luaX_tokens[TK_HSTRUCTURE-FIRST_RESERVED]);
+            }
+            return token;
+          }
           else {
             seminfo->ts = ts;
             return TK_NAME;

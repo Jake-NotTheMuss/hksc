@@ -15,8 +15,8 @@
 
 #include "lua.h"
 
-
-
+#include "ldebug.h"
+#include "lerror.h"
 #include "lfunc.h"
 #include "lmem.h"
 #include "lobject.h"
@@ -25,6 +25,7 @@
 #include "lzio.h"
 
 typedef struct {
+ hksc_State *H;
  ZIO* Z;
  Mbuffer* b;
  const char* name;
@@ -37,9 +38,8 @@ typedef struct {
 
 static void error(LoadState* S, const char* why)
 {
-  fprintf(stderr, "%s: %s\n", S->name, why);
- /*luaO_pushfstring(S->L,"%s: %s in precompiled chunk",S->name,why);*/
- /*luaD_throw(S->L,LUA_ERRSYNTAX);*/
+ hksc_setfmsg(S->H,"%s: %s in precompiled chunk",S->name,why);
+ luaD_throw(S->H,LUA_ERRSYNTAX);
 }
 #endif
 
@@ -84,16 +84,16 @@ static TString* LoadString(LoadState* S)
   return NULL;
  else
  {
-  char* s=luaZ_openspace(S->b,size);
+  char* s=luaZ_openspace(S->H,S->b,size);
   LoadBlock(S,s,size);
-  return luaS_newlstr(s,size-1);    /* remove trailing '\0' */
+  return luaS_newlstr(S->H,s,size-1);    /* remove trailing '\0' */
  }
 }
 
 static void LoadCode(LoadState* S, Proto* f)
 {
  int n=LoadInt(S);
- f->code=luaM_newvector(n,Instruction);
+ f->code=luaM_newvector(S->H,n,Instruction);
  f->sizecode=n;
  LoadVector(S,f->code,n,sizeof(Instruction));
 }
@@ -104,7 +104,7 @@ static void LoadConstants(LoadState* S, Proto* f)
 {
  int i,n;
  n=LoadInt(S);
- f->k=luaM_newvector(n,TValue);
+ f->k=luaM_newvector(S->H,n,TValue);
  f->sizek=n;
  for (i=0; i<n; i++) setnilvalue(&f->k[i]);
  for (i=0; i<n; i++)
@@ -131,7 +131,7 @@ static void LoadConstants(LoadState* S, Proto* f)
   }
  }
  n=LoadInt(S);
- f->p=luaM_newvector(n,Proto*);
+ f->p=luaM_newvector(S->H,n,Proto*);
  f->sizep=n;
  for (i=0; i<n; i++) f->p[i]=NULL;
  for (i=0; i<n; i++) f->p[i]=LoadFunction(S,f->source);
@@ -141,11 +141,11 @@ static void LoadDebug(LoadState* S, Proto* f)
 {
  int i,n;
  n=LoadInt(S);
- f->lineinfo=luaM_newvector(n,int);
+ f->lineinfo=luaM_newvector(S->H,n,int);
  f->sizelineinfo=n;
  LoadVector(S,f->lineinfo,n,sizeof(int));
  n=LoadInt(S);
- f->locvars=luaM_newvector(n,LocVar);
+ f->locvars=luaM_newvector(S->H,n,LocVar);
  f->sizelocvars=n;
  for (i=0; i<n; i++) f->locvars[i].varname=NULL;
  for (i=0; i<n; i++)
@@ -155,7 +155,7 @@ static void LoadDebug(LoadState* S, Proto* f)
   f->locvars[i].endpc=LoadInt(S);
  }
  n=LoadInt(S);
- f->upvalues=luaM_newvector(n,TString*);
+ f->upvalues=luaM_newvector(S->H,n,TString*);
  f->sizeupvalues=n;
  for (i=0; i<n; i++) f->upvalues[i]=NULL;
  for (i=0; i<n; i++) f->upvalues[i]=LoadString(S);
@@ -163,15 +163,15 @@ static void LoadDebug(LoadState* S, Proto* f)
 
 static Proto* LoadFunction(LoadState* S, TString* p)
 {
- Proto* f=luaF_newproto();
+ Proto* f=luaF_newproto(S->H);
  /*setptvalue2s(S->L,S->L->top,f); incr_top(S->L);*/
  f->source=LoadString(S); if (f->source==NULL) f->source=p;
- f->linedefined=LoadInt(S);
- f->lastlinedefined=LoadInt(S);
- f->nups=LoadByte(S);
- f->numparams=LoadByte(S);
+/* f->linedefined=LoadInt(S);
+ f->lastlinedefined=LoadInt(S);*/
+ f->nups=LoadInt(S);
+ f->numparams=LoadInt(S);
  f->is_vararg=LoadByte(S);
- f->maxstacksize=LoadByte(S);
+ f->maxstacksize=LoadInt(S);
  LoadCode(S,f);
  LoadConstants(S,f);
  LoadDebug(S,f);
@@ -192,7 +192,7 @@ static void LoadHeader(LoadState* S)
 /*
 ** load precompiled chunk
 */
-Proto* luaU_undump (ZIO* Z, Mbuffer* buff, const char* name)
+Proto* luaU_undump (hksc_State *H, ZIO* Z, Mbuffer* buff, const char* name)
 {
  LoadState S;
  if (*name=='@' || *name=='=')
@@ -204,7 +204,7 @@ Proto* luaU_undump (ZIO* Z, Mbuffer* buff, const char* name)
  S.Z=Z;
  S.b=buff;
  LoadHeader(&S);
- return LoadFunction(&S,luaS_newliteral("=?"));
+ return LoadFunction(&S,luaS_newliteral(H,"=?"));
 }
 
 /*
@@ -233,6 +233,7 @@ const char *const luaH_typenames[13] = {
 
 void luaU_header (char *h)
 {
+  char *h1 = h;
   int x = 1;
   memcpy(h,LUA_SIGNATURE,sizeof(LUA_SIGNATURE)-1);
   h+=sizeof(LUA_SIGNATURE)-1;

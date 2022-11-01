@@ -19,7 +19,7 @@
 
 
 /* tags for values visible from Lua */
-#define LAST_TAG  LUA_TTHREAD
+#define LAST_TAG  LUA_TUSERDEFINED
 
 #define NUM_TAGS  (LAST_TAG+1)
 
@@ -62,6 +62,7 @@ typedef union {
   GCObject *gc;
   void *p;
   lua_Number n;
+  lua_Literal l;
   int b;
 } Value;
 
@@ -150,6 +151,12 @@ typedef struct lua_TValue {
 #define setptvalue(obj,x) \
   { TValue *i_o=(obj); \
     i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TPROTO; }
+
+#define setshortvalue(obj,x) \
+  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TLIGHTUSERDATA; }
+
+#define setlongvalue(obj,x) \
+  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TUI64; }
 
 
 
@@ -366,6 +373,10 @@ LUAI_FUNC int luaO_int2fb (unsigned int x);
 LUAI_FUNC int luaO_fb2int (int x);
 LUAI_FUNC int luaO_rawequalObj (const TValue *t1, const TValue *t2);
 LUAI_FUNC int luaO_str2d (const char *s, lua_Number *result);
+LUAI_FUNC const char *luaO_pushvfstring (hksc_State *H, const char *fmt,
+                                                       va_list argp);
+LUAI_FUNC const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...);
+LUAI_FUNC void luaO_chunkid (char *out, const char *source, size_t len);
 
 #endif
 

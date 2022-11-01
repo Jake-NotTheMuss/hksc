@@ -14,14 +14,15 @@
 
 #include "llimits.h"
 #include "./lmem.h"
-/*#include "lstate.h"*/
-#include "./lzio.h" /* include hksc-version of lzio.h */
+#include "lstate.h"
+#include "./lzio.h"
 
 
 int luaZ_fill (ZIO *z) {
   size_t size;
+  hksc_State *H = z->H;
   const char *buff;
-  buff = z->reader(z->data, &size);
+  buff = z->reader(H, z->data, &size);
   if (buff == NULL || size == 0) return EOZ;
   z->n = size - 1;
   z->p = buff;
@@ -42,7 +43,8 @@ int luaZ_lookahead (ZIO *z) {
 }
 
 
-void luaZ_init (ZIO *z, lua_Reader reader, void *data) {
+void luaZ_init (hksc_State *H, ZIO *z, lua_Reader reader, void *data) {
+  z->H = H;
   z->reader = reader;
   z->data = data;
   z->n = 0;
@@ -67,10 +69,10 @@ size_t luaZ_read (ZIO *z, void *b, size_t n) {
 }
 
 /* ------------------------------------------------------------------------ */
-char *luaZ_openspace (Mbuffer *buff, size_t n) {
+char *luaZ_openspace (hksc_State *H, Mbuffer *buff, size_t n) {
   if (n > buff->buffsize) {
     if (n < LUA_MINBUFFER) n = LUA_MINBUFFER;
-    luaZ_resizebuffer(buff, n);
+    luaZ_resizebuffer(H, buff, n);
   }
   return buff->buffer;
 }

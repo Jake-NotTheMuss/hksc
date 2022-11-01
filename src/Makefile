@@ -1,4 +1,4 @@
-CFLAGS+=-I../lua
+# CFLAGS+=-I../lua
 
 SRC= \
 hksc.c \
@@ -14,7 +14,11 @@ ltable.c \
 lfunc.c \
 lcode.c \
 ldump.c \
-lundump.c
+lundump.c \
+lerror.c \
+lstate.c \
+ldebug.c \
+lctype.c
 
 ALL_O:=$(SRC:%.c=%.o)
 ALL_D:=$(SRC:%.c=%.d)

@@ -5,6 +5,7 @@
 */
 
 
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "hksc_begin_code.h"
@@ -224,7 +225,8 @@ static void freeexp (FuncState *fs, expdesc *e) {
 
 
 static int addk (FuncState *fs, TValue *k, TValue *v) {
-  TValue *idx = luaH_set(fs->h, k);
+  hksc_State *H = fs->H;
+  TValue *idx = luaH_set(H, fs->h, k);
   Proto *f = fs->f;
   int oldsize = f->sizek;
   if (ttisnumber(idx)) {
@@ -233,7 +235,7 @@ static int addk (FuncState *fs, TValue *k, TValue *v) {
   }
   else {  /* constant not found; create a new entry */
     setnvalue(idx, cast_num(fs->nk));
-    luaM_growvector(f->k, fs->nk, f->sizek, TValue,
+    luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
                     MAXARG_Bx, "constant table overflow");
     while (oldsize < f->sizek) setnilvalue(&f->k[oldsize++]);
     setobj(&f->k[fs->nk], v);
@@ -253,6 +255,21 @@ int luaK_stringK (FuncState *fs, TString *s) {
 int luaK_numberK (FuncState *fs, lua_Number r) {
   TValue o;
   setnvalue(&o, r);
+  return addk(fs, &o, &o);
+}
+
+
+int luaK_literalK(FuncState *fs, lua_Literal l, int token)
+{
+  TValue o;
+  if (token == TK_SHORT_LITERAL)
+  {
+    setshortvalue(&o, l);
+  }
+  else
+  {
+    setlongvalue(&o, l);
+  }
   return addk(fs, &o, &o);
 }
 
@@ -436,8 +453,9 @@ void luaK_exp2val (FuncState *fs, expdesc *e) {
     luaK_dischargevars(fs, e);
 }
 
-
-int luaK_exp2RK (FuncState *fs, expdesc *e) {
+static int
+luaK_exp2RK_ex(FuncState *fs, expdesc *e, int bk, int *pbk)
+{
   luaK_exp2val(fs, e);
   switch (e->k) {
     case VKNUM:
@@ -449,19 +467,27 @@ int luaK_exp2RK (FuncState *fs, expdesc *e) {
                       (e->k == VKNUM) ? luaK_numberK(fs, e->u.nval) :
                                         boolK(fs, (e->k == VTRUE));
         e->k = VK;
-        return RKASK(e->u.s.info);
+        if (bk && pbk) *pbk = 1;
+        return bk ? e->u.s.info : RKASK(e->u.s.info);
       }
       else break;
     }
     case VK: {
-      if (e->u.s.info <= MAXINDEXRK)  /* constant fit in argC? */
-        return RKASK(e->u.s.info);
+      if (e->u.s.info <= MAXINDEXRK) {  /* constant fit in argC? */
+        if (bk && pbk) *pbk = 1;
+        return bk ? e->u.s.info : RKASK(e->u.s.info);
+      }
       else break;
     }
     default: break;
   }
+  if (pbk) *pbk = 0;
   /* not a constant in the right range: put it in a register */
   return luaK_exp2anyreg(fs, e);
+}
+
+int luaK_exp2RK (FuncState *fs, expdesc *e) {
+  return luaK_exp2RK_ex(fs, e, 0, NULL);
 }
 
 
@@ -627,7 +653,7 @@ void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
   t->k = VINDEXED;
 }
 
-
+/* TODO: add T7 operators */
 static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   lua_Number v1, v2, r;
   if (!isnumeral(e1) || !isnumeral(e2)) return 0;
@@ -653,15 +679,49 @@ static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   return 1;
 }
 
-
 static void codearith (FuncState *fs, OpCode op, expdesc *e1, expdesc *e2) {
   if (constfolding(op, e1, e2))
     return;
   else {
-    int o1 = luaK_exp2RK(fs, e1);
-    int o2 = (op != OP_UNM && op != OP_LEN) ? luaK_exp2RK(fs, e2) : 0;
+    int bk;
+    int isbinop = (op != OP_UNM && op != OP_LEN);
+    int o1 = luaK_exp2RK_ex(fs, e1, isbinop, &bk);
+    int o2 = isbinop ? luaK_exp2RK(fs, e2) : 0;
     freeexp(fs, e2);
     freeexp(fs, e1);
+
+    /* Use the BK variant if argB is a K value */
+    if (bk)
+    {
+      switch (op)
+      {
+        case OP_EQ:
+        case OP_SETTABLE_S:
+        case OP_SETTABLE_N:
+        case OP_SETTABLE:
+        case OP_ADD:
+        case OP_SUB:
+        case OP_MUL:
+        case OP_DIV:
+        case OP_MOD:
+        case OP_POW:
+        case OP_LT:
+        case OP_LE:
+        /* T7 extensions */
+        case OP_LEFT_SHIFT:
+        case OP_RIGHT_SHIFT:
+        case OP_BIT_AND:
+        case OP_BIT_OR:
+        /* END T7 extensions */
+          ++op; /* BK variant must be directly after the original code */
+          break;
+        default:
+          fprintf(stderr, "Unhandled BK variant for op '%s' (%d)\n",
+                  luaP_opnames[op], (int)op);
+          break;
+      }
+    }
+
     e1->u.s.info = luaK_codeABC(fs, op, 0, o1, o2);
     e1->k = VRELOCABLE;
   }
@@ -765,6 +825,12 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
     case OPR_DIV: codearith(fs, OP_DIV, e1, e2); break;
     case OPR_MOD: codearith(fs, OP_MOD, e1, e2); break;
     case OPR_POW: codearith(fs, OP_POW, e1, e2); break;
+    /* T7 extensions */
+    case OPR_LEFT_SHIFT: codearith(fs, OP_LEFT_SHIFT, e1, e2); break;
+    case OPR_RIGHT_SHIFT: codearith(fs, OP_RIGHT_SHIFT, e1, e2); break;
+    case OPR_BIT_AND: codearith(fs, OP_BIT_AND, e1, e2); break;
+    case OPR_BIT_OR: codearith(fs, OP_BIT_OR, e1, e2); break;
+    /* END T7 extensions */
     case OPR_EQ: codecomp(fs, OP_EQ, 1, e1, e2); break;
     case OPR_NE: codecomp(fs, OP_EQ, 0, e1, e2); break;
     case OPR_LT: codecomp(fs, OP_LT, 1, e1, e2); break;
@@ -785,11 +851,11 @@ static int luaK_code (FuncState *fs, Instruction i, int line) {
   Proto *f = fs->f;
   dischargejpc(fs);  /* `pc' will change */
   /* put new instruction in code array */
-  luaM_growvector(f->code, fs->pc, f->sizecode, Instruction,
+  luaM_growvector(fs->H, f->code, fs->pc, f->sizecode, Instruction,
                   MAX_INT, "code size overflow");
   f->code[fs->pc] = i;
   /* save corresponding line information */
-  luaM_growvector(f->lineinfo, fs->pc, f->sizelineinfo, int,
+  luaM_growvector(fs->H, f->lineinfo, fs->pc, f->sizelineinfo, int,
                   MAX_INT, "code size overflow");
   f->lineinfo[fs->pc] = line;
   return fs->pc++;
@@ -818,8 +884,15 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
   if (c <= MAXARG_C)
     luaK_codeABC(fs, OP_SETLIST, base, b, c);
   else {
+    if (c > MAXARG_Bx)
+    {
+      const char *msg=
+      "Attempt to initialize a table with too many array literals. "
+      "Please split into multiple statements.";
+      /* TODO: call the correct error function */
+    }
     luaK_codeABC(fs, OP_SETLIST, base, b, 0);
-    luaK_code(fs, cast(Instruction, c), fs->ls->lastline);
+    luaK_codeABx(fs, OP_DATA, 0, c);
   }
   fs->freereg = base + 1;  /* free registers with list values */
 }

@@ -15,25 +15,25 @@
 #include "lua.h"
 
 #include "lcode.h"
-/*#include "ldebug.h"*/
-/*#include "ldo.h"*/
+#include "ldebug.h"
+#include "lerror.h"
 #include "lfunc.h"
 #include "llex.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lopcodes.h"
 #include "lparser.h"
-/*#include "lstate.h"*/
+#include "lstate.h"
 #include "lstring.h"
 
-stringtable hksc_strt = {0};
+
 #include <stdio.h>
-Proto *hksc_parser(ZIO *z, Mbuffer *buff)
+Proto *hksc_parser(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name)
 {
   printf("hksc_parser: HELLO\n");
-  return luaY_parser(z, buff, NULL);
+  return luaY_parser(H, z, buff, name);
 }
-
+#if 0
 int
 hksc_parser_init(void)
 {
@@ -45,7 +45,7 @@ hksc_parser_init(void)
   else
     return 0;
 }
-
+#endif
 
 #define hasmultret(k)		((k) == VCALL || (k) == VVARARG)
 
@@ -83,28 +83,17 @@ static void anchor_token (LexState *ls) {
 
 
 static void error_expected (LexState *ls, int token) {
-  char buf[512];
-/*  printf("called error_expected with token %d, %s\n",
-         token, (char *)luaX_token2str(ls, token));*/
-  snprintf(buf, sizeof(buf), LUA_QS " expected\n",
-    (char *)luaX_token2str(ls, token));
-  buf[sizeof(buf) - 1] = '\0';
-  luaX_syntaxerror(ls, buf);
+  luaX_syntaxerror(ls,
+      luaO_pushfstring(ls->H, "%s expected", luaX_token2str(ls, token)));
 }
 
 
 static void errorlimit (FuncState *fs, int limit, const char *what) {
-  char buf[512];
-  if (fs->f->linedefined == 0)
-    snprintf(buf, sizeof(buf),
-      "main function has more than %d %s\n", limit, what);
-  else
-    snprintf(buf, sizeof(buf),
-      "function at line %d has more than %d %s\n",
-      fs->f->linedefined, limit, what);
-  buf[sizeof(buf) - 1] = '\0';
-
-  luaX_lexerror(fs->ls, buf, 0);
+  const char *msg = (fs->f->linedefined == 0) ?
+    luaO_pushfstring(fs->H, "main function has more than %d %s", limit, what) :
+    luaO_pushfstring(fs->H, "function at line %d has more than %d %s",
+                            fs->f->linedefined, limit, what);
+  luaX_lexerror(fs->ls, msg, 0);
 }
 
 
@@ -137,11 +126,9 @@ static void check_match (LexState *ls, int what, int who, int where) {
     if (where == ls->linenumber)
       error_expected(ls, what);
     else {
-      char buf[512];
-      snprintf(buf, sizeof(buf),
-        LUA_QS " expected (to close " LUA_QS " at line %d)",
-        luaX_token2str(ls, what), luaX_token2str(ls, who), where);
-      luaX_syntaxerror(ls, buf);
+      luaX_syntaxerror(ls, luaO_pushfstring(ls->H,
+             LUA_QS " expected (to close %s at line %d)",
+              luaX_token2str(ls, what), luaX_token2str(ls, who), where));
     }
   }
 }
@@ -163,6 +150,23 @@ static void init_exp (expdesc *e, expkind k, int i) {
 }
 
 
+static void
+codeliteral (LexState *ls, expdesc *e, lua_Literal l, int token) {
+  int info = luaK_literalK(ls->fs, l, token);
+  /* TODO: check compiler settings for int literal settings */
+  if (token == TK_SHORT_LITERAL)
+  {
+    /* TODO: short literals are of type TLIGHTUSERDATA */
+    init_exp(e, VK, info);
+  }
+  else
+  {
+    /* TODO: long literals are of type TUI64 */
+    init_exp(e, VK, info);
+  }
+  /*e->u.lval = l;*/
+}
+
 static void codestring (LexState *ls, expdesc *e, TString *s) {
   init_exp(e, VK, luaK_stringK(ls->fs, s));
 }
@@ -177,7 +181,7 @@ static int registerlocalvar (LexState *ls, TString *varname) {
   FuncState *fs = ls->fs;
   Proto *f = fs->f;
   int oldsize = f->sizelocvars;
-  luaM_growvector(f->locvars, fs->nlocvars, f->sizelocvars,
+  luaM_growvector(ls->H, f->locvars, fs->nlocvars, f->sizelocvars,
                   LocVar, SHRT_MAX, "too many local variables");
   while (oldsize < f->sizelocvars) f->locvars[oldsize++].varname = NULL;
   f->locvars[fs->nlocvars].varname = varname;
@@ -225,7 +229,7 @@ static int indexupvalue (FuncState *fs, TString *name, expdesc *v) {
   }
   /* new one */
   luaY_checklimit(fs, f->nups + 1, LUAI_MAXUPVALUES, "upvalues");
-  luaM_growvector(f->upvalues, f->nups, f->sizeupvalues,
+  luaM_growvector(fs->H, f->upvalues, f->nups, f->sizeupvalues,
                   TString *, MAX_INT, "");
   while (oldsize < f->sizeupvalues) f->upvalues[oldsize++] = NULL;
   f->upvalues[f->nups] = name;
@@ -312,7 +316,7 @@ static void enterlevel (LexState *ls) {
 }
 
 
-#define leavelevel(ls)	/*((ls)->L->nCcalls--)*/ (void)0
+#define leavelevel(ls)	/*((ls)->L->nCcalls--)*/ ((void)0)
 
 
 static void enterblock (FuncState *fs, BlockCnt *bl, lu_byte isbreakable) {
@@ -344,7 +348,7 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
   Proto *f = fs->f;
   int oldsize = f->sizep;
   int i;
-  luaM_growvector(f->p, fs->np, f->sizep, Proto *,
+  luaM_growvector(ls->H, f->p, fs->np, f->sizep, Proto *,
                   MAXARG_Bx, "constant table overflow");
   while (oldsize < f->sizep) f->p[oldsize++] = NULL;
   f->p[fs->np++] = func->f;
@@ -358,10 +362,12 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
 
 
 static void open_func (LexState *ls, FuncState *fs) {
-  Proto *f = luaF_newproto();
+  hksc_State *H = ls->H;
+  Proto *f = luaF_newproto(H);
   fs->f = f;
   fs->prev = ls->fs;  /* linked list of funcstates */
   fs->ls = ls;
+  fs->H = H;
   ls->fs = fs;
   fs->pc = 0;
   fs->lasttarget = -1;
@@ -373,7 +379,7 @@ static void open_func (LexState *ls, FuncState *fs) {
   fs->nactvar = 0;
   fs->bl = NULL;
   f->maxstacksize = 2;  /* registers 0/1 are always valid */
-  fs->h = luaH_new(0, 0);
+  fs->h = luaH_new(H, 0, 0);
   /* anchor table of constants and prototype (to avoid being collected) */
 /*  sethvalue2s(L, L->top, fs->h);
   incr_top(L);
@@ -387,17 +393,17 @@ static void close_func (LexState *ls) {
   Proto *f = fs->f;
   removevars(ls, 0);
   luaK_ret(fs, 0, 0);  /* final return */
-  luaM_reallocvector(f->code, f->sizecode, fs->pc, Instruction);
+  luaM_reallocvector(ls->H, f->code, f->sizecode, fs->pc, Instruction);
   f->sizecode = fs->pc;
-  luaM_reallocvector(f->lineinfo, f->sizelineinfo, fs->pc, int);
+  luaM_reallocvector(ls->H, f->lineinfo, f->sizelineinfo, fs->pc, int);
   f->sizelineinfo = fs->pc;
-  luaM_reallocvector(f->k, f->sizek, fs->nk, TValue);
+  luaM_reallocvector(ls->H, f->k, f->sizek, fs->nk, TValue);
   f->sizek = fs->nk;
-  luaM_reallocvector(f->p, f->sizep, fs->np, Proto *);
+  luaM_reallocvector(ls->H, f->p, f->sizep, fs->np, Proto *);
   f->sizep = fs->np;
-  luaM_reallocvector(f->locvars, f->sizelocvars, fs->nlocvars, LocVar);
+  luaM_reallocvector(ls->H, f->locvars, f->sizelocvars, fs->nlocvars, LocVar);
   f->sizelocvars = fs->nlocvars;
-  luaM_reallocvector(f->upvalues, f->sizeupvalues, f->nups, TString *);
+  luaM_reallocvector(ls->H, f->upvalues, f->sizeupvalues, f->nups, TString *);
   f->sizeupvalues = f->nups;
   lua_assert(luaG_checkcode(f));
   lua_assert(fs->bl == NULL);
@@ -408,12 +414,11 @@ static void close_func (LexState *ls) {
 }
 
 
-Proto *luaY_parser (ZIO *z, Mbuffer *buff, const char *name) {
-  (void)name;
+Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   struct LexState lexstate;
   struct FuncState funcstate;
   lexstate.buff = buff;
-  luaX_setinput(&lexstate, z, NULL);
+  luaX_setinput(H, &lexstate, z, luaS_new(H, name));
   open_func(&lexstate, &funcstate);
   funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
   luaX_next(&lexstate);  /* read first token */
@@ -762,6 +767,11 @@ static void simpleexp (LexState *ls, expdesc *v) {
       v->u.nval = ls->t.seminfo.r;
       break;
     }
+    case TK_SHORT_LITERAL:
+    case TK_LONG_LITERAL: {
+      codeliteral(ls, v, ls->t.seminfo.l, ls->t.token);
+      break;
+    }
     case TK_STRING: {
       codestring(ls, v, ls->t.seminfo.ts);
       break;
@@ -823,6 +833,12 @@ static BinOpr getbinopr (int op) {
     case '%': return OPR_MOD;
     case '^': return OPR_POW;
     case TK_CONCAT: return OPR_CONCAT;
+    /* T7 extensions */
+    case TK_LEFT_SHIFT: return OPR_LEFT_SHIFT;
+    case TK_RIGHT_SHIFT: return OPR_RIGHT_SHIFT;
+    case '&': return OPR_BIT_AND;
+    case '|': return OPR_BIT_OR;
+    /* END T7 extensions */
     case TK_NE: return OPR_NE;
     case TK_EQ: return OPR_EQ;
     case '<': return OPR_LT;
@@ -835,13 +851,16 @@ static BinOpr getbinopr (int op) {
   }
 }
 
-
 static const struct {
   lu_byte left;  /* left priority for each binary operator */
   lu_byte right; /* right priority */
 } priority[] = {  /* ORDER OPR */
    {6, 6}, {6, 6}, {7, 7}, {7, 7}, {7, 7},  /* `+' `-' `/' `%' */
    {10, 9}, {5, 4},                 /* power and concat (right associative) */
+/* T7 extensions */
+   {5, 5}, {5, 5},                  /* shift left and shift right */
+   {4, 4}, {4, 4},                  /* '&' and '|' */
+/* END T7 extensions */
    {3, 3}, {3, 3},                  /* equality and inequality */
    {3, 3}, {3, 3}, {3, 3}, {3, 3},  /* order */
    {2, 2}, {1, 1}                   /* logical (and/or) */

@@ -28,6 +28,10 @@
 typedef enum BinOpr {
   OPR_ADD, OPR_SUB, OPR_MUL, OPR_DIV, OPR_MOD, OPR_POW,
   OPR_CONCAT,
+/* T7 extensions */
+  OPR_LEFT_SHIFT, OPR_RIGHT_SHIFT,
+  OPR_BIT_AND, OPR_BIT_OR,
+/* END T7 extensions */
   OPR_NE, OPR_EQ,
   OPR_LT, OPR_LE, OPR_GT, OPR_GE,
   OPR_AND, OPR_OR,
@@ -53,6 +57,7 @@ LUAI_FUNC void luaK_reserveregs (FuncState *fs, int n);
 LUAI_FUNC void luaK_checkstack (FuncState *fs, int n);
 LUAI_FUNC int luaK_stringK (FuncState *fs, TString *s);
 LUAI_FUNC int luaK_numberK (FuncState *fs, lua_Number r);
+LUAI_FUNC int luaK_literalK(FuncState *fs, lua_Literal l, int token);
 LUAI_FUNC void luaK_dischargevars (FuncState *fs, expdesc *e);
 LUAI_FUNC int luaK_exp2anyreg (FuncState *fs, expdesc *e);
 LUAI_FUNC void luaK_exp2nextreg (FuncState *fs, expdesc *e);

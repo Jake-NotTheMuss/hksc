@@ -19,7 +19,8 @@
 LUAI_FUNC void luaU_header (char* h);
 
 /* dump one chunk; from ldump.c */
-LUAI_FUNC int luaU_dump (const Proto* f, lua_Writer w, void* data, int strip);
+LUAI_FUNC int luaU_dump (hksc_State *H,
+                         const Proto* f, lua_Writer w, void* data, int strip);
 
 #ifdef luac_c
 /* print one chunk; from print.c */

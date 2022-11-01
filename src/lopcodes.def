@@ -1,0 +1,262 @@
+/* -*- Mode: C -*- */
+/*
+** NAME: lopcodes.def
+** DESC: Define all opcodes here
+** NOTES: Before including this file, define the macro DEFCODE
+**
+** See Copyright Notice in lua.h
+*/
+
+/*
+** #define DEFCODE(name, mode, test, seta, bmode, cmode)
+** NAME is the name of the operation, e.g. GETFIELD
+** MODE is the mode of the operation (ABC, ABx, or AsBx)
+** TEST is 1 if the operation is a test (e.g. EQ), 0 otherwise
+** SETA is 1 if the operation writes to register A, 0 otherwise
+** BMODE is the mode of argument B (N, U, R, or K) (see lopcodes.h)
+** CMODE is the mode of argument C
+*/
+
+/*----------------------------------------------------------------------
+name    args  description
+------------------------------------------------------------------------*/
+/* OP_GETFIELD   A B C  R(A) := R(B)[Kst(C)] */
+DEFCODE(GETFIELD, ABC, 0, 1, R, K)
+
+/* OP_TEST  A C  if not (R(A) <=> C) then pc++ */
+DEFCODE(TEST, ABC, 1, 1, R, U)
+
+/* OP_CALL_I  A B C  Same as OP_CALL but checks R(A) is type TIFUNCTION */
+/* OP_CALL_C  A B C  Same as OP_CALL but checks R(A) is type TCFUNCTION */
+DEFCODE(CALL_I, ABC, 0, 1, U, U)
+DEFCODE(CALL_C, ABC, 0, 1, U, U)
+
+/* OP_EQ  A B C  if ((R(B) == RK(C)) ~= A) then pc++ */
+/* OP_EQ_BK  A B C  if((Kst(B) == RK(C)) ~= A) then pc++ */
+DEFCODE(EQ, ABC, 1, 0, R, K)
+DEFCODE(EQ_BK, ABC, 1, 0, K, K)
+
+/* OP_GETGLOBAL  A Bx  R(A) := Gbl[Kst(Bx)] */
+DEFCODE(GETGOBAL, ABx, 0, 1, K, N)
+
+/* OP_MOVE  A B  R(A) := R(B) */
+DEFCODE(MOVE, ABC, 0, 1, R, N)
+
+/* OP_SELF  A B C  R(A+1) := R(B); R(A) := R(B)[RK(C)] */
+DEFCODE(SELF, ABC, 0, 1, R, K)
+
+/* OP_RETURN  A B  return R(A), ... ,R(A+B-2)  (see note) */
+DEFCODE(RETURN, ABC, 0, 0, U, N)
+
+/* OP_GETTABLE_S  ??? */
+/* OP_GETTABLE_N  ??? */
+/* OP_GETTABLE  A B C  R(A) := R(B)[RK(C)] */
+DEFCODE(GETTABLE_S, ABC, 0, 1, R, K)
+DEFCODE(GETTABLE_N, ABC, 0, 1, R, K)
+DEFCODE(GETTABLE, ABC, 0, 1, R, K)
+
+/* OP_LOADBOOL  A B C  R(A) := (Bool)B; if (C) pc++ */
+DEFCODE(LOADBOOL, ABC, 0, 1, U, U)
+
+/* OP_TFORLOOP  A C  R(A+3), ...,R(A+3+C) := R(A)(R(A+1), R(A+2));
+   if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); } */
+DEFCODE(TFORLOOP, ABC, 1, 0, N, U)
+
+/* OP_SETFIELD  A B C  R(A)[Kst(B)] := RK(C) */
+DEFCODE(SETFIELD, ABC, 0, 1, K, K)
+
+/* OP_SETTABL_S ??? */
+/* OP_SETTABL_S_BK ??? */
+/* OP_SETTABL_N ??? */
+/* OP_SETTABL_N_BK ??? */
+DEFCODE(SETTABLE_S, ABC, 0, 0, R, K)
+DEFCODE(SETTABLE_S_BK, ABC, 0, 0, K, K)
+DEFCODE(SETTABLE_N, ABC, 0, 0, R, K)
+DEFCODE(SETTABLE_N_BK, ABC, 0, 0, K, K)
+/* OP_SETTABLE  A B C  R(A)[R(B)] := RK(C) */
+/* OP_SETTABLE_BK  A B C  R(A)[Kst(B)] := RK(C) */
+DEFCODE(SETTABLE, ABC, 0, 0, R, K)
+DEFCODE(SETTABLE_BK, ABC, 0, 0, K, K)
+
+/* OP_TAILCALL_I  A B C
+   Same as OP_TAILCALL but checks R(A) is type TIFUNCTION */
+/* OP_TAILCALL_C  A B C
+   Same as OP_TAILCALL but checks R(A) is type TCFUNCTION */
+DEFCODE(TAILCALL_I, ABC, 0, 1, U, U)
+DEFCODE(TAILCALL_C, ABC, 0, 1, U, U)
+
+/* OP_TAILCALL_M ??? */
+DEFCODE(TAILCALL_M, ABC, 0, 1)
+
+/* OP_LOADK  A Bx  R(A) := Kst(Bx) */
+DEFCODE(LOADK, ABx, 0, 1, K, N)
+
+/* OP_LOADNIL  A B  R(A) := ... := R(B) := nil */
+DEFCODE(LOADNIL, ABC, 0, 1, R, N)
+
+/* OP_SETGLOBAL  A Bx  Gbl[Kst(Bx)] := R(A) */
+DEFCODE(SETGLOBAL, ABx, 0, 0, K, N)
+
+/* OP_JMP  sBx  pc+=sBx */
+DEFCODE(JMP, AsBx, 0, 0, R, N)
+
+/* OP_CALL_M ??? */
+DEFCODE(CALL_M, ABC, 0, 1)
+
+/* OP_CALL  A B C  R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1)) */
+DEFCODE(CALL, ABC, 0, 1, U, U)
+
+/* ??? */
+DEFCODE(INTRINSIC_INDEX, ABC, 0, 1)
+DEFCODE(INTRINSIC_NEWINDEX, ABC, 0, 1)
+DEFCODE(INTRINSIC_SELF, ABC, 0, 1)
+DEFCODE(INTRINSIC_INDEX_LITERAL, ABC, 0, 1)
+DEFCODE(INTRINSIC_NEWINDEX_LITERAL, ABC, 0, 1)
+DEFCODE(INTRINSIC_SELF_LITERAL, ABC, 0, 1)
+
+/* OP_TAILCALL  A B C  return R(A)(R(A+1), ... ,R(A+B-1)) */
+DEFCODE(TAILCALL, ABC, 0, 1, U, U)
+
+/* OP_GETUPVAL  A B  R(A) := UpValue[B] */
+DEFCODE(GETUPVAL, ABC, 0, 1, U, N)
+/* OP_SETUPVAL  A B  UpValue[B] := R(A) */
+DEFCODE(SETUPVAL, ABC, 0, 0, U, N)
+
+/* OP_ADD  A B C  R(A) := R(B) + RK(C) */
+/* OP_ADD_BK  A B C  R(A) := Kst(B) + RK(C) */
+DEFCODE(ADD, ABC, 0, 1, R, K)
+DEFCODE(ADD_BK, ABC, 0, 1, K, K)
+
+/* OP_SUB  A B C  R(A) := R(B) - RK(C) */
+/* OP_SUB_BK  A B C  R(A) := Kst(B) - RK(C) */
+DEFCODE(SUB, ABC, 0, 1, R, K)
+DEFCODE(SUB_BK, ABC, 0, 1, K, K)
+
+/* OP_MUL  A B C  R(A) := R(B) * RK(C) */
+/* OP_MUL_BK  A B C  R(A) := Kst(B) * RK(C) */
+DEFCODE(MUL, ABC, 0, 1, R, K)
+DEFCODE(MUL_BK, ABC, 0, 1, K, K)
+
+/* OP_DIV  A B C  R(A) := R(B) / RK(C) */
+/* OP_DIV_BK  A B C  R(A) := Kst(B) / RK(C) */
+DEFCODE(DIV, ABC, 0, 1, R, K)
+DEFCODE(DIV_BK, ABC, 0, 1, K, K)
+
+/* OP_MOD  A B C  R(A) := R(B) % RK(C) */
+/* OP_MOD_BK  A B C  R(A) := Kst(B) % RK(C) */
+DEFCODE(MOD, ABC, 0, 1, R, K)
+DEFCODE(MOD_BK, ABC, 0, 1, K, K)
+
+/* OP_POW  A B C  R(A) := R(B) ^ RK(C) */
+/* OP_POW_BK  A B C  R(A) := Kst(B) ^ RK(C) */
+DEFCODE(POW, ABC, 0, 1, R, K)
+DEFCODE(POW_BK, ABC, 0, 1, K, K)
+
+/* OP_NEWTABLE  A B C  R(A) := {} (size = B,C) */
+DEFCODE(NEWTABLE, ABC, 0, 1, U, U)
+
+/* OP_UNM  A B  R(A) := -R(B) */
+DEFCODE(UNM, ABC, 0, 1, R, N)
+
+/* OP_NOT  A B  R(A) := not R(B) */
+DEFCODE(NOT, ABC, 0, 1, R, N)
+
+/* OP_LEN  A B  R(A) := length og R(B) */
+DEFCODE(LEN, ABC, 0, 1, R, N)
+
+/* OP_LT  A B C  if ((R(B) < RK(C)) ~= A) then pc++ */
+/* OP_LT_BK  A B C  if ((Kst(B) < RK(C)) ~= A) then pc++ */
+DEFCODE(LT, ABC, 1, 0, R, K)
+DEFCODE(LT_BK, ABC, 1, 0, K, K)
+
+/* OP_LE  A B C  if ((R(B) <= RK(C)) ~= A) then pc++ */
+/* OP_LE_BK  A B C  if ((Kst(B) <= RK(C)) ~= A) then pc++ */
+DEFCODE(LE, ABC, 1, 0, R, K)
+DEFCODE(LE_BK, ABC, 1, 0, K, K)
+
+/* BEGIN T7 extensions */
+
+/* OP_LEFT_SHIFT  A B C  R(A) := R(B) << RK(C) */
+/* OP_LEFT_SHIFT_BK  A B C  R(A) := Kst(B) << RK(C) */
+DEFCODE(LEFT_SHIFT, ABC, 0, 1, R, K)
+DEFCODE(LEFT_SHIFT_BK, ABC, 0, 1, K, K)
+
+/* OP_RIGHT_SHIFT  A B C  R(A) := R(B) >> RK(C) */
+/* OP_RIGHT_SHIFT_BK  A B C  R(A) := Kst(B) >> RK(C) */
+DEFCODE(OP_RIGHT_SHIFT, ABC, 0, 1, R, K)
+DEFCODE(OP_RIGHT_SHIFT_BK, ABC, 0, 1, K, K)
+
+/* OP_BIT_AND  A B C  R(A) := R(B) & RK(C) */
+/* OP_BIT_AND_BK  A B C  R(A) := Kst(B) & RK(C) */
+DEFCODE(OP_BIT_AND, ABC, 0, 1, R, K)
+DEFCODE(OP_BIT_AND_BK, ABC, 0, 1, K, K)
+
+/* OP_BIT_OR  A B C  R(A) := R(B) | RK(C) */
+/* OP_BIT_OR_BK  A B C  R(A) := Kst(B) | RK(C) */
+DEFCODE(OP_BIT_OR, ABC, 0, 1, R, K)
+DEFCODE(OP_BIT_OR_BK, ABC, 0, 1, K, K)
+
+/* END T7 extensions */
+
+/* OP_CONCAT  A B C  R(A) := R(B).. ... ..R(C) */
+DEFCODE(CONCAT, ABC, 0, 1, R, R)
+
+/* OP_TESTSET  A B C  if (R(B) <=> C) then R(A) := R(B) else pc++ */
+DEFCODE(TESTSET, ABC, 1, 1, R, U)
+
+/* OP_FORPREP  A sBX  R(A)-=R(A+2); pc+=sBx */
+DEFCODE(FORPREP, AsBx, 0, 1, R, N)
+/* OP_FORLOOP  A sBx  R(A)+=R(A+2);
+       if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) } */
+DEFCODE(FORLOOP, AsBx, 0, 1, R, N)
+
+/* OP_SETLIST  A B C  R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B */
+DEFCODE(SETLIST, ABC, 0, 0, U, U)
+
+/* OP_CLOSE  A   close all variables in the stack up to (>=) R(A) */
+DEFCODE(CLOSE, ABC, 0, 0, N, N)
+
+/* OP_CLOSURE  A Bx  R(A) := closure(KPROTO[Bx], R(A), ... ,R(A+n)) */
+DEFCODE(CLOSURE, ABx, 0, 1, U, N)
+
+/* OP_VARARG  A B  R(A), R(A+1), ..., R(A+B-1) = vararg */
+DEFCODE(VARARG, ABC, 0, 1, U, N)
+
+/* R1 variants */
+DEFCODE(TAILCALL_I_R1, ABC, 0, 1, U, U)
+DEFCODE(CALL_I_R1, ABC, 0, 1, U, U)
+DEFCODE(SETUPVAL_R1, ABC, 0, 1, U, N)
+DEFCODE(TEST_R1, ABC, 0, 1, R, U)
+DEFCODE(NOT_R1, ABC, 0, 1, R, N)
+DEFCODE(GETFIELD_R1, ABC, 0, 1, R, K)
+DEFCODE(SETFIELD_R1, ABC, 0, 1, K, K)
+
+
+/* ??? */
+DEFCODE(NEWSTRUCT, ABC, 0, 1)
+
+/* OP_DATA  A Bx  (see note) */
+DEFCODE(DATA, ABx, 0, 1, U, N)
+
+DEFCODE(SETSLOTN, ABC, 0, 1)
+DEFCODE(SETSLOTI, ABC, 0, 1)
+DEFCODE(SETSLOT, ABC, 0, 1)
+DEFCODE(SETSLOTS, ABC, 0, 1)
+DEFCODE(SETSLOTMT, ABC, 0, 1)
+
+/* OP_CHECKTYPE  A Bx  assert(type(R(A)) == Bx) */
+DEFCODE(CHECKTYPE, ABx, 0, 1, U, N)
+
+/* ??? */
+DEFCODE(CHECKTYPES, ABC, 0, 1)
+
+DEFCODE(GETSLOT, ABC, 0, 1)
+DEFCODE(GETSLOTMT, ABC, 0, 1)
+DEFCODE(SELFSLOT, ABC, 0, 1)
+DEFCODE(SELFSLOTMT, ABC, 0, 1)
+DEFCODE(GETFIELD_MM, ABC, 0, 1)
+DEFCODE(CHECKTYPE_D, ABC, 0, 1)
+DEFCODE(GETSLOT_D, ABC, 0, 1)
+DEFCODE(GETGLOBAL_MEM, ABx, 0, 1)
+
+/* end of opcodes */

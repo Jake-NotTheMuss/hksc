@@ -16,9 +16,11 @@
 #include "lua.h"
 
 #include "lobject.h"
+#include "lstate.h"
 #include "lundump.h"
 
 typedef struct {
+ hksc_State *H;
  lua_Writer writer;
  void* data;
  int strip;
@@ -32,7 +34,7 @@ static void DumpBlock(const void* b, size_t size, DumpState* D)
 {
  if (D->status==0)
  {
-  D->status=(*D->writer)(b,size,D->data);
+  D->status=(*D->writer)(D->H,b,size,D->data);
  }
 }
 
@@ -47,6 +49,11 @@ static void DumpInt(int x, DumpState* D)
  DumpVar(x,D);
 }
 
+static void DumpSize(size_t x, DumpState *D)
+{
+ DumpVar(x, D);
+}
+
 static void DumpNumber(lua_Number x, DumpState* D)
 {
  DumpVar(x,D);
@@ -54,7 +61,7 @@ static void DumpNumber(lua_Number x, DumpState* D)
 
 static void DumpVector(const void* b, int n, size_t size, DumpState* D)
 {
- DumpInt(n,D);
+ /*DumpInt(n,D);*/
  DumpMem(b,n,size,D);
 }
 
@@ -125,19 +132,29 @@ static void DumpDebug(const Proto* f, DumpState* D)
  DumpInt(n,D);
  for (i=0; i<n; i++) DumpString(f->upvalues[i],D);
 }
-
 static void DumpFunction(const Proto* f, const TString* p, DumpState* D)
 {
- DumpString((f->source==p || D->strip) ? NULL : f->source,D);
- DumpInt(f->linedefined,D);
- DumpInt(f->lastlinedefined,D);
- DumpChar(f->nups,D);
- DumpChar(f->numparams,D);
+ /*DumpString((f->source==p || D->strip) ? NULL : f->source,D);*/
+/* DumpInt(f->linedefined,D);
+ DumpInt(f->lastlinedefined,D);*/
+ DumpInt(f->nups,D);
+ DumpInt(f->numparams,D);
  DumpChar(f->is_vararg,D);
- DumpChar(f->maxstacksize,D);
+ DumpInt(f->maxstacksize,D);
+ DumpSize(f->sizecode,D);
+ /*DumpInt(f->sizek,D);*/
+ /* TODO: Havok pads the file to 4-byte alignment with '_' (0x5f) */
+ DumpChar(0x5f,D);
  DumpCode(f,D);
  DumpConstants(f,D);
- DumpDebug(f,D);
+/* DumpDebug(f,D);*/
+
+ printf("nups: %d\n", (int)(f->nups));
+ printf("numparams: %d\n", (int)(f->numparams));
+ printf("is_vararg: %d\n", (int)(f->is_vararg));
+ printf("maxstacksize: %d\n", (int)(f->maxstacksize));
+ printf("sizecode: %d\n", (int)(f->sizecode));
+ printf("sizek: %d\n", (int)(f->sizek));
 }
 
 static void DumpHeader(DumpState* D)
@@ -150,9 +167,11 @@ static void DumpHeader(DumpState* D)
 /*
 ** dump Lua function as precompiled chunk
 */
-int luaU_dump (const Proto* f, lua_Writer w, void* data, int strip)
+int luaU_dump (hksc_State *H, const Proto* f, lua_Writer w, void* data,
+               int strip)
 {
  DumpState D;
+ D.H=H;
  D.writer=w;
  D.data=data;
  D.strip=strip;

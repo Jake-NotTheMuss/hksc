@@ -22,8 +22,8 @@
 
 
 
-Closure *luaF_newCclosure (int nelems, Table *e) {
-  Closure *c = cast(Closure *, luaM_malloc(sizeCclosure(nelems)));
+Closure *luaF_newCclosure (hksc_State *H, int nelems, Table *e) {
+  Closure *c = cast(Closure *, luaM_malloc(H, sizeCclosure(nelems)));
   /*luaC_link(L, obj2gco(c), LUA_TFUNCTION);*/
   c->c.isC = 1;
   c->c.env = e;
@@ -32,8 +32,8 @@ Closure *luaF_newCclosure (int nelems, Table *e) {
 }
 
 
-Closure *luaF_newLclosure (int nelems, Table *e) {
-  Closure *c = cast(Closure *, luaM_malloc(sizeLclosure(nelems)));
+Closure *luaF_newLclosure (hksc_State *H, int nelems, Table *e) {
+  Closure *c = cast(Closure *, luaM_malloc(H, sizeLclosure(nelems)));
   /*luaC_link(L, obj2gco(c), LUA_TFUNCTION);*/
   c->l.isC = 0;
   c->l.env = e;
@@ -43,8 +43,8 @@ Closure *luaF_newLclosure (int nelems, Table *e) {
 }
 
 
-UpVal *luaF_newupval () {
-  UpVal *uv = luaM_new(UpVal);
+UpVal *luaF_newupval (hksc_State *H) {
+  UpVal *uv = luaM_new(H, UpVal);
   /*luaC_link(L, obj2gco(uv), LUA_TUPVAL);*/
   uv->v = &uv->u.value;
   setnilvalue(uv->v);
@@ -52,7 +52,7 @@ UpVal *luaF_newupval () {
 }
 
 
-UpVal *luaF_findupval (StkId level) {
+UpVal *luaF_findupval (hksc_State *H, StkId level) {
   return NULL;
 }
 
@@ -64,18 +64,18 @@ static void unlinkupval (UpVal *uv) {
 }
 
 
-void luaF_freeupval (UpVal *uv) {
+void luaF_freeupval (hksc_State *H, UpVal *uv) {
 
 }
 
 
-void luaF_close (StkId level) {
+void luaF_close (hksc_State *H, StkId level) {
 
 }
 
 
-Proto *luaF_newproto () {
-  Proto *f = luaM_new(Proto);
+Proto *luaF_newproto (hksc_State *H) {
+  Proto *f = luaM_new(H, Proto);
   /*luaC_link(L, obj2gco(f), LUA_TPROTO);*/
   f->k = NULL;
   f->sizek = 0;
@@ -100,21 +100,21 @@ Proto *luaF_newproto () {
 }
 
 
-void luaF_freeproto (Proto *f) {
-  luaM_freearray(f->code, f->sizecode, Instruction);
-  luaM_freearray(f->p, f->sizep, Proto *);
-  luaM_freearray(f->k, f->sizek, TValue);
-  luaM_freearray(f->lineinfo, f->sizelineinfo, int);
-  luaM_freearray(f->locvars, f->sizelocvars, struct LocVar);
-  luaM_freearray(f->upvalues, f->sizeupvalues, TString *);
-  luaM_free(f);
+void luaF_freeproto (hksc_State *H, Proto *f) {
+  luaM_freearray(H, f->code, f->sizecode, Instruction);
+  luaM_freearray(H, f->p, f->sizep, Proto *);
+  luaM_freearray(H, f->k, f->sizek, TValue);
+  luaM_freearray(H, f->lineinfo, f->sizelineinfo, int);
+  luaM_freearray(H, f->locvars, f->sizelocvars, struct LocVar);
+  luaM_freearray(H, f->upvalues, f->sizeupvalues, TString *);
+  luaM_free(H, f);
 }
 
 
-void luaF_freeclosure (Closure *c) {
+void luaF_freeclosure (hksc_State *H, Closure *c) {
   int size = (c->c.isC) ? sizeCclosure(c->c.nupvalues) :
                           sizeLclosure(c->l.nupvalues);
-  luaM_freemem(c, size);
+  luaM_freemem(H, c, size);
 }
 
 

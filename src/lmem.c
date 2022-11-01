@@ -5,8 +5,6 @@
 */
 
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stddef.h>
 
 #include "hksc_begin_code.h"
@@ -16,8 +14,11 @@
 
 #include "lua.h"
 
+#include "ldebug.h"
+#include "lerror.h"
 #include "lmem.h"
 #include "lobject.h"
+#include "lstate.h"
 
 
 
@@ -44,13 +45,13 @@
 #define MINSIZEARRAY	4
 
 
-void *luaM_growaux_ (void *block, int *size, size_t size_elems,
+void *luaM_growaux_ (hksc_State *H, void *block, int *size, size_t size_elems,
                      int limit, const char *errormsg) {
   void *newblock;
   int newsize;
   if (*size >= limit/2) {  /* cannot double it? */
     if (*size >= limit)  /* cannot grow even a little? */
-      /*luaG_runerror(L, errormsg)*/fprintf(stderr, "%s\n", errormsg);
+      luaG_runerror(H, errormsg);
     newsize = limit;  /* still have at least one free place */
   }
   else {
@@ -58,47 +59,30 @@ void *luaM_growaux_ (void *block, int *size, size_t size_elems,
     if (newsize < MINSIZEARRAY)
       newsize = MINSIZEARRAY;  /* minimum size */
   }
-  newblock = luaM_reallocv(block, *size, newsize, size_elems);
+  newblock = luaM_reallocv(H, block, *size, newsize, size_elems);
   *size = newsize;  /* update only when everything else is OK */
   return newblock;
 }
 
 
-void *luaM_toobig (void) {
-  /*luaG_runerror(L, "memory allocation error: block too big");*/
-  fprintf(stderr, "memory allocation error: block too big\n");
+void *luaM_toobig (hksc_State *H) {
+  luaG_runerror(H, "memory allocation error: block too big");
   return NULL;  /* to avoid warnings */
 }
 
-static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize)
-{
-  (void)ud;
-  (void)osize;
-  if (nsize == 0) {
-    free(ptr);
-    return NULL;
-  }
-  else
-    return realloc(ptr, nsize);
-}
+
 
 /*
 ** generic allocation routine.
 */
-void *luaM_realloc_ (void *block, size_t osize, size_t nsize) {
+void *luaM_realloc_ (hksc_State *H, void *block, size_t osize, size_t nsize) {
+  global_State *g = G(H);
   lua_assert((osize == 0) == (block == NULL));
-  block = l_alloc(NULL, block, osize, nsize);
-  if (nsize == 0)
-  {
-    free(block);
-    block = NULL;
-  }
-  else
-    block = realloc(block, nsize);
+  block = (*g->frealloc)(g->ud, block, osize, nsize);
   if (block == NULL && nsize > 0)
-    /*luaD_throw(L, LUA_ERRMEM)*/;
+    luaD_throw(H, LUA_ERRMEM);
   lua_assert((nsize == 0) == (block == NULL));
-  /*g->totalbytes = (g->totalbytes - osize) + nsize;*/
+  g->totalbytes = (g->totalbytes - osize) + nsize;
   return block;
 }
 

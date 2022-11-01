@@ -18,16 +18,17 @@
 
 #include "lmem.h"
 #include "lobject.h"
+#include "lstate.h"
 #include "lstring.h"
 
 
-void luaS_resize (int newsize) {
+void luaS_resize (hksc_State *H, int newsize) {
   GCObject **newhash;
   stringtable *tb;
   int i;
 
-  newhash = luaM_newvector(newsize, GCObject *);
-  tb = &hksc_strt;
+  newhash = luaM_newvector(H, newsize, GCObject *);
+  tb = &G(H)->strt;
   for (i=0; i<newsize; i++) newhash[i] = NULL;
   /* rehash */
   for (i=0; i<tb->size; i++) {
@@ -42,39 +43,39 @@ void luaS_resize (int newsize) {
       p = next;
     }
   }
-  luaM_freearray(tb->hash, tb->size, TString *);
+  luaM_freearray(H, tb->hash, tb->size, TString *);
   tb->size = newsize;
   tb->hash = newhash;
-  printf("resized hksc_strt to %d bytes\n", newsize);
+  printf("resized G(H)->strt to %d bytes\n", newsize);
 }
 
 
-static TString *newlstr (const char *str, size_t l,
+static TString *newlstr (hksc_State *H, const char *str, size_t l,
                                        unsigned int h) {
   TString *ts;
   stringtable *tb;
   if (l+1 > (MAX_SIZET - sizeof(TString))/sizeof(char))
-    luaM_toobig();
-  ts = cast(TString *, luaM_malloc((l+1)*sizeof(char)+sizeof(TString)));
+    luaM_toobig(H);
+  ts = cast(TString *, luaM_malloc(H, (l+1)*sizeof(char)+sizeof(TString)));
   ts->tsv.len = l;
   ts->tsv.hash = h;
-  /*ts->tsv.marked = luaC_white(G(L));*/
+
   ts->tsv.tt = LUA_TSTRING;
   ts->tsv.reserved = 0;
   memcpy(ts+1, str, l*sizeof(char));
   ((char *)(ts+1))[l] = '\0';  /* ending 0 */
-  tb = &hksc_strt;
+  tb = &G(H)->strt;
   h = lmod(h, tb->size);
   ts->tsv.next = tb->hash[h];  /* chain new entry */
   tb->hash[h] = obj2gco(ts);
   tb->nuse++;
   if (tb->nuse > cast(lu_int32, tb->size) && tb->size <= MAX_INT/2)
-    luaS_resize(tb->size*2);  /* too crowded */
+    luaS_resize(H, tb->size*2);  /* too crowded */
   return ts;
 }
 
 
-TString *luaS_newlstr (const char *str, size_t l) {
+TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
   char *__str = strndup(str, l);
   printf("encountered string '%s'\n", __str);
   free(__str);
@@ -85,7 +86,7 @@ TString *luaS_newlstr (const char *str, size_t l) {
   size_t l1;
   for (l1=l; l1>=step; l1-=step)  /* compute hash */
     h = h ^ ((h<<5)+(h>>2)+cast(unsigned char, str[l1-1]));
-  for (o = hksc_strt.hash[lmod(h, hksc_strt.size)];
+  for (o = G(H)->strt.hash[lmod(h, G(H)->strt.size)];
        o != NULL;
        o = o->gch.next) {
     TString *ts = rawgco2ts(o);
@@ -96,6 +97,6 @@ TString *luaS_newlstr (const char *str, size_t l) {
     }
   }
 
-  return newlstr(str, l, h);  /* not found */
+  return newlstr(H, str, l, h);  /* not found */
 }
 

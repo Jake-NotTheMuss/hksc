@@ -66,9 +66,9 @@ cannot(const char *what, const char *name, int doexit)
 }
 
 static int
-dofile(const char *filename)
+dofile(hksc_State *H, const char *filename)
 {
-  return hksc_parsefile(filename);
+  return hksc_parsefile(H, filename);
 }
 
 int
@@ -87,9 +87,15 @@ main(int argc, char **argv)
 
   if (output_file == NULL) output_file = Output;
 
-  hksc_init();
+  hksc_State *H = hksc_xnewstate();
 
   /* compile files */
   for (i = 0; i < argc; i++)
-    dofile(argv[i]);
+  {
+    int status = dofile(H, argv[i]);
+    if (status)
+      fprintf(stderr, "%s\n", luaE_geterrormsg(H));
+  }
+
+  /* TODO: close the state */
 }

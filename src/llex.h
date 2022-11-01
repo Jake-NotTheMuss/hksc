@@ -13,32 +13,23 @@
 #include "lzio.h"
 
 
-#define FIRST_RESERVED  257
+#define FIRST_RESERVED  0x400001
+
+#define DEFTOK1(name, text) name = FIRST_RESERVED,
+#define DEFTOK(name, text) name,
+enum RESERVED {
+#include "ltokens.def"
+};
+#undef DEFTOK1
+#undef DEFTOK
+
+#define LAST_RESERVED LTOKENS_LAST_RESERVED_WORD
 
 /* maximum length of a reserved word */
-#define TOKEN_LEN (sizeof("hstructure")/sizeof(char))
-
-
-/*
-* WARNING: if you change the order of this enumeration,
-* grep "ORDER RESERVED"
-*/
-enum RESERVED {
-  /* terminal symbols denoted by reserved words */
-  TK_AND = FIRST_RESERVED, TK_BREAK,
-  TK_DO, TK_ELSE, TK_ELSEIF, TK_END, TK_FALSE, TK_FOR, TK_FUNCTION,
-  TK_IF, TK_IN, TK_LOCAL, TK_NIL, TK_NOT, TK_OR, TK_REPEAT,
-  TK_RETURN, TK_THEN, TK_TRUE, TK_UNTIL, TK_WHILE,
-  /* Havok extensions */
-  TK_HSTRUCTURE, TK_HMAKE,
-  /* End Havok extensions */
-  /* other terminal symbols */
-  TK_CONCAT, TK_DOTS, TK_EQ, TK_GE, TK_LE, TK_NE, TK_NUMBER,
-  TK_NAME, TK_STRING, TK_EOS
-};
+#define TOKEN_LEN (sizeof(LTOKENS_LONGEST_TOKEN)/sizeof(char))
 
 /* number of reserved words */
-#define NUM_RESERVED  (cast(int, TK_HMAKE-FIRST_RESERVED+1))
+#define NUM_RESERVED  (cast(int, LAST_RESERVED-FIRST_RESERVED+1))
 
 
 /* array with token `names' */
@@ -47,6 +38,7 @@ LUAI_DATA const char *const luaX_tokens [];
 
 typedef union {
   lua_Number r;
+  lua_Literal l;
   TString *ts;
 } SemInfo;  /* semantics information */
 
@@ -64,14 +56,16 @@ typedef struct LexState {
   Token t;  /* current token */
   Token lookahead;  /* look ahead token */
   struct FuncState *fs;  /* `FuncState' is private to the parser */
+  struct hksc_State *H;
   ZIO *z;  /* input stream */
   Mbuffer *buff;  /* buffer for tokens */
+  TString *source;  /* current source name */
   char decpoint;  /* locale decimal point */
 } LexState;
 
 
-LUAI_FUNC void luaX_init (void);
-LUAI_FUNC void luaX_setinput (LexState *LS, ZIO *z,
+LUAI_FUNC void luaX_init (hksc_State *H);
+LUAI_FUNC void luaX_setinput (hksc_State *H, LexState *LS, ZIO *z,
                               TString *source);
 LUAI_FUNC TString *luaX_newstring (LexState *LS, const char *str, size_t l);
 LUAI_FUNC void luaX_next (LexState *ls);
