@@ -9,6 +9,7 @@ ldebug.c \
 ldump.c \
 lerror.c \
 lfunc.c \
+lgc.c \
 llex.c \
 lmem.c \
 lobject.c \

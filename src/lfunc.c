@@ -7,76 +7,22 @@
 
 #include <stddef.h>
 
-#include "hksc_begin_code.h"
-
 #define lfunc_c
 #define LUA_CORE
 
 #include "lua.h"
 
 #include "lfunc.h"
-/*#include "lgc.h"*/
+#include "lgc.h"
 #include "lmem.h"
 #include "lobject.h"
-/*#include "lstate.h"*/
+#include "lstate.h"
 
-
-
-Closure *luaF_newCclosure (hksc_State *H, int nelems, Table *e) {
-  Closure *c = cast(Closure *, luaM_malloc(H, sizeCclosure(nelems)));
-  /*luaC_link(L, obj2gco(c), LUA_TFUNCTION);*/
-  c->c.isC = 1;
-  c->c.env = e;
-  c->c.nupvalues = cast_byte(nelems);
-  return c;
-}
-
-
-Closure *luaF_newLclosure (hksc_State *H, int nelems, Table *e) {
-  Closure *c = cast(Closure *, luaM_malloc(H, sizeLclosure(nelems)));
-  /*luaC_link(L, obj2gco(c), LUA_TFUNCTION);*/
-  c->l.isC = 0;
-  c->l.env = e;
-  c->l.nupvalues = cast_byte(nelems);
-  while (nelems--) c->l.upvals[nelems] = NULL;
-  return c;
-}
-
-
-UpVal *luaF_newupval (hksc_State *H) {
-  UpVal *uv = luaM_new(H, UpVal);
-  /*luaC_link(L, obj2gco(uv), LUA_TUPVAL);*/
-  uv->v = &uv->u.value;
-  setnilvalue(uv->v);
-  return uv;
-}
-
-
-UpVal *luaF_findupval (hksc_State *H, StkId level) {
-  return NULL;
-}
-
-
-static void unlinkupval (UpVal *uv) {
-  lua_assert(uv->u.l.next->u.l.prev == uv && uv->u.l.prev->u.l.next == uv);
-  uv->u.l.next->u.l.prev = uv->u.l.prev;  /* remove from `uvhead' list */
-  uv->u.l.prev->u.l.next = uv->u.l.next;
-}
-
-
-void luaF_freeupval (hksc_State *H, UpVal *uv) {
-
-}
-
-
-void luaF_close (hksc_State *H, StkId level) {
-
-}
 
 
 Proto *luaF_newproto (hksc_State *H) {
   Proto *f = luaM_new(H, Proto);
-  /*luaC_link(L, obj2gco(f), LUA_TPROTO);*/
+  luaC_link(H, obj2gco(f), LUA_TPROTO);
   f->k = NULL;
   f->sizek = 0;
   f->p = NULL;
@@ -108,13 +54,6 @@ void luaF_freeproto (hksc_State *H, Proto *f) {
   luaM_freearray(H, f->locvars, f->sizelocvars, struct LocVar);
   luaM_freearray(H, f->upvalues, f->sizeupvalues, TString *);
   luaM_free(H, f);
-}
-
-
-void luaF_freeclosure (hksc_State *H, Closure *c) {
-  int size = (c->c.isC) ? sizeCclosure(c->c.nupvalues) :
-                          sizeLclosure(c->l.nupvalues);
-  luaM_freemem(H, c, size);
 }
 
 

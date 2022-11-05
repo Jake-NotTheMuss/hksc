@@ -35,15 +35,11 @@ typedef struct stringtable {
 /*
 ** int literal options
 **
-** NONE : Disable int literals, lexer will emit an error when encountered
 ** LUD  : Enable only 32-bit int literals, stored as type TLIGHTUSERDATA
 ** UI64 : Enable only 60-bit int literals, stored as type TUI64
-** ALL  : Enable both LUD and UI64 int literals
 */
-#define INT_LITERALS_NONE   0
-#define INT_LITERALS_LUD    1
-#define INT_LITERALS_UI64   2
-#define INT_LITERALS_ALL    3
+#define INT_LITERALS_LUD    (1 << 0)
+#define INT_LITERALS_UI64   (1 << 1)
 
 typedef int (*lua_LineMap)(const char *, int);
 
@@ -55,9 +51,9 @@ typedef int (*lua_LineMap)(const char *, int);
 ** ON   :
 ** SECURE :
 */
-#define HKSC_SHARING_OFF  0
-#define HKSC_SHARING_ON   1
-#define HKSC_SHARING_SECURE 2
+#define HKSC_SHARING_MODE_OFF  0
+#define HKSC_SHARING_MODE_ON   1
+#define HKSC_SHARING_MODE_SECURE 2
 
 
 /*
@@ -88,23 +84,23 @@ typedef int (*lua_LineMap)(const char *, int);
 typedef struct hksc_Settings
 {
   /* general settings */
-  int endian; /* bytecode endianness */
-  int sharing_format; /* bytecode sharing format, default = INPLACE */
-  int sharing_mode; /* bytecode sharing mode, default = ON */
+  lu_byte endian; /* bytecode endianness */
+  lu_byte sharing_format; /* bytecode sharing format, default = INPLACE */
+  lu_byte sharing_mode; /* bytecode sharing mode, default = ON */
 
   /* compiler-specific settings */
-  int emit_struct; /* whether `hstructure' and `hmake' should be emitted */
-  int literals; /* int literal setting */
+  lu_byte emit_struct; /* whether `hstructure' and `hmake' should be emitted */
+  lu_byte literals; /* int literal setting */
   const char **strip_names;
   /*lua_LineMap debug_map;*/
 
   /* decompiler-specific settings */
-  int ignore_debug; /* ignore debug info if present */
-  int match_line_info; /* emit statements according to the line mapping */
+  lu_byte ignore_debug; /* ignore debug info if present */
+  lu_byte match_line_info; /* emit statements according to the line mapping */
 } hksc_Settings;
 
 /* hksc modes - either compiling source or decompiling bytecode */
-#define HKSC_MODE_DEFULT    0
+#define HKSC_MODE_DEFAULT   0
 #define HKSC_MODE_COMPILE   1
 #define HKSC_MODE_DECOMPILE 2
 
@@ -113,12 +109,23 @@ typedef struct hksc_Settings
 */
 typedef struct global_State {
   int mode; /* compiling or decompiling? */
+  hksc_Settings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
   lua_Alloc frealloc;  /* function to reallocate memory */
   void *ud;         /* auxiliary data to `frealloc' */
+  lu_byte currentwhite;
+  lu_byte gcstate;  /* state of garbage collector */
+  int sweepstrgc;  /* position of sweep in `strt' */
+  GCObject *rootgc;  /* list of all collectable objects */
+  GCObject *livegc; /* list of live objects */
+  GCObject *deadgc; /* list of dead objects */
+  GCObject *persgc; /* list of fixed (persistent) objects */
+  GCObject **sweepgc;  /* position of sweep in `rootgc' */
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem totalbytes;  /* number of bytes currently allocated */
   lu_mem estimate;  /* an estimate of number of bytes actually in use */
+  lu_mem gcdept;  /* how much GC is `behind schedule' */
+  int gcstepmul;  /* GC `granularity' */
   lua_CFunction panic;  /* to be called in unprotected errors */
   struct hksc_State *mainthread;
 } global_State;
@@ -127,22 +134,44 @@ typedef struct global_State {
 ** `per thread' state
 */
 struct hksc_State {
+  CommonHeader;
+  lu_byte status;
   global_State *h_G;
-  void *pcall_result; /* return value of last pcall'd function */
+  unsigned short nCcalls;  /* number of nested C calls, used by parser */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
-  unsigned short nCcalls;  /* number of nested C calls, used by parser */
-  lu_byte status;
 };
 
 
-#define G(H)	(H->h_G)
+#define G(H)	((H)->h_G)
+#define Settings(H) ((H)->h_G->settings)
 
 /* macros for getting/setting the error message of an hksc_State */
 #define hksc_luaE_geterrormsg(H) ((H)->errormsg)
 #define hksc_luaE_seterrormsg(H,s) ((H)->errormsg = (s))
 #define luaE_geterrormsg(H) hksc_luaE_geterrormsg(H)
 #define luaE_seterrormsg(H,s) hksc_luaE_seterrormsg(H,s)
+
+#define hksc_luaE_mode(H) ((H)->mode)
+#define luaE_mode(H) hksc_luaE_mode(H)
+
+/* macros for setting compiler options */
+#define hksc_setendian(H,v) (Settings(H).endian = (v))
+#define hksc_setsharingfmt(H,v) (Settings(H).sharing_format = (v))
+#define hksc_setsharingmode(H,v) (Settings(H).sharing_mode = (v))
+#define hksc_setemitstruct(H,v) (Settings(H).emit_struct = (v))
+#define hksc_setliterals(H,v) (Settings(H).literals = (v))
+#define hksc_setignoredebug(H,v) (Settings(H).ignore_debug = (v))
+#define hksc_setmatchlineinfo(H,v) (Settings(H).match_line_info = (v))
+
+#define hksc_enableliterallud(H) (Settings(H).literals = INT_LITERALS_LUD)
+#define hksc_enableliteralui64(H) (Settings(H).literals = INT_LITERALS_UI64)
+#define hksc_enableliterals(H) \
+  (Settings(H).literals = INT_LITERALS_LUD | INT_LITERALS_UI64)
+
+#define hksc_ludenabled(H) (Settings(H).literals & INT_LITERALS_LUD)
+#define hksc_ui64enabled(H) (Settings(H).literals & INT_LITERALS_UI64)
+#define hksc_literalsenabled(H) (hksc_ludenabled(H) && hksc_ui64enabled(H))
 
 /*
 ** Union of all collectable objects

@@ -150,21 +150,8 @@ static void init_exp (expdesc *e, expkind k, int i) {
 }
 
 
-static void
-codeliteral (LexState *ls, expdesc *e, lua_Literal l, int token) {
-  int info = luaK_literalK(ls->fs, l, token);
-  /* TODO: check compiler settings for int literal settings */
-  if (token == TK_SHORT_LITERAL)
-  {
-    /* TODO: short literals are of type TLIGHTUSERDATA */
-    init_exp(e, VK, info);
-  }
-  else
-  {
-    /* TODO: long literals are of type TUI64 */
-    init_exp(e, VK, info);
-  }
-  /*e->u.lval = l;*/
+static void codeliteral (LexState *ls, expdesc *e, lua_Literal l, int token) {
+  init_exp(e, VK, luaK_literalK(ls->fs, l, token));
 }
 
 static void codestring (LexState *ls, expdesc *e, TString *s) {
@@ -311,12 +298,12 @@ static void adjust_assign (LexState *ls, int nvars, int nexps, expdesc *e) {
 
 
 static void enterlevel (LexState *ls) {
-/*  if (++ls->L->nCcalls > LUAI_MAXCCALLS)
-	luaX_lexerror(ls, "chunk has too many syntax levels", 0);*/
+  if (++ls->H->nCcalls > LUAI_MAXCCALLS)
+	luaX_lexerror(ls, "chunk has too many syntax levels", 0);
 }
 
 
-#define leavelevel(ls)	/*((ls)->L->nCcalls--)*/ ((void)0)
+#define leavelevel(ls)	((ls)->H->nCcalls--)
 
 
 static void enterblock (FuncState *fs, BlockCnt *bl, lu_byte isbreakable) {
@@ -352,7 +339,6 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
                   MAXARG_Bx, "constant table overflow");
   while (oldsize < f->sizep) f->p[oldsize++] = NULL;
   f->p[fs->np++] = func->f;
-  /*luaC_objbarrier(ls->L, f, func->f);*/
   init_exp(v, VRELOCABLE, luaK_codeABx(fs, OP_CLOSURE, 0, fs->np-1));
   for (i=0; i<func->f->nups; i++) {
     OpCode o = (func->upvalues[i].k == VLOCAL) ? OP_MOVE : OP_GETUPVAL;
@@ -380,11 +366,6 @@ static void open_func (LexState *ls, FuncState *fs) {
   fs->bl = NULL;
   f->maxstacksize = 2;  /* registers 0/1 are always valid */
   fs->h = luaH_new(H, 0, 0);
-  /* anchor table of constants and prototype (to avoid being collected) */
-/*  sethvalue2s(L, L->top, fs->h);
-  incr_top(L);
-  setptvalue2s(L, L->top, f);
-  incr_top(L);*/
 }
 
 

@@ -119,44 +119,45 @@ typedef struct lua_TValue {
 /* Macros to set values */
 #define setnilvalue(obj) ((obj)->tt=LUA_TNIL)
 
-#define setnvalue(obj,x) \
-  { TValue *i_o=(obj); i_o->value.n=(x); i_o->tt=LUA_TNUMBER; }
+#define setnvalue(obj,x) do \
+  { TValue *i_o=(obj); i_o->value.n=(x); i_o->tt=LUA_TNUMBER; } while(0)
 
-#define setpvalue(obj,x) \
-  { TValue *i_o=(obj); i_o->value.p=(x); i_o->tt=LUA_TLIGHTUSERDATA; }
+#define setpvalue(obj,x) do \
+  { TValue *i_o=(obj); i_o->value.p=(x); i_o->tt=LUA_TLIGHTUSERDATA; } while(0)
 
-#define setbvalue(obj,x) \
-  { TValue *i_o=(obj); i_o->value.b=(x); i_o->tt=LUA_TBOOLEAN; }
+#define setbvalue(obj,x) do \
+  { TValue *i_o=(obj); i_o->value.b=(x); i_o->tt=LUA_TBOOLEAN; } while(0)
 
-#define setsvalue(obj,x) \
+#define setsvalue(obj,x) do \
   { TValue *i_o=(obj); \
-    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TSTRING; }
+    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TSTRING; } while(0)
 
-#define setuvalue(obj,x) \
+#define setuvalue(obj,x) do \
   { TValue *i_o=(obj); \
-    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TUSERDATA; }
+    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TUSERDATA; } while(0)
 
-#define setthvalue(obj,x) \
+#define setthvalue(obj,x) do \
   { TValue *i_o=(obj); \
-    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TTHREAD; }
+    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TTHREAD; } while (0)
 
-#define setclvalue(obj,x) \
+#define setclvalue(obj,x) do \
   { TValue *i_o=(obj); \
-    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TFUNCTION; }
+    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TFUNCTION; } while (0)
 
-#define sethvalue(obj,x) \
+#define sethvalue(obj,x) do \
   { TValue *i_o=(obj); \
-    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TTABLE; }
+    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TTABLE; } while (0)
 
-#define setptvalue(obj,x) \
+#define setptvalue(obj,x) do \
   { TValue *i_o=(obj); \
-    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TPROTO; }
+    i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TPROTO; } while (0)
 
-#define setshortvalue(obj,x) \
-  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TLIGHTUSERDATA; }
+#define setshortvalue(obj,x) do \
+  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TLIGHTUSERDATA; } \
+  while (0)
 
-#define setlongvalue(obj,x) \
-  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TUI64; }
+#define setlongvalue(obj,x) do \
+  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TUI64; } while (0)
 
 
 

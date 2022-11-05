@@ -12,7 +12,6 @@
 #include "lstate.h"
 
 
-/*LUAI_FUNC void luaG_errormsg (hksc_State *H);*/
 LUAI_FUNC void luaG_runerror (hksc_State *H, const char *fmt, ...);
 
 #endif

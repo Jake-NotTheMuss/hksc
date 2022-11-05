@@ -83,11 +83,16 @@ main(int argc, char **argv)
   else if (argc > 1 &&
            output_file != NULL &&
            output_file != Output)
-    ;
+    usage("'-o' option used with multiple input files");
 
   if (output_file == NULL) output_file = Output;
 
-  hksc_State *H = hksc_xnewstate();
+  hksc_State *H = hksI_newstate();
+  if (!H)
+  {
+    fprintf(stderr, "cannot allocate an hksc_State\n");
+    exit(EXIT_FAILURE);
+  }
 
   /* compile files */
   for (i = 0; i < argc; i++)
@@ -97,7 +102,11 @@ main(int argc, char **argv)
       fprintf(stderr, "%s\n", luaE_geterrormsg(H));
   }
 
+  printf("hksc: closing hksc_State\n");
+
   /* TODO: close the state */
   hksc_close(H);
+
+  printf("hksc: closed hksc_State\nExiting with code 0\n");
   return 0;
 }

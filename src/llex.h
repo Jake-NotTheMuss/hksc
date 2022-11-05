@@ -18,7 +18,7 @@
 #define DEFTOK1(name, text) name = FIRST_RESERVED,
 #define DEFTOK(name, text) name,
 enum RESERVED {
-#include "ltokens.def"
+#include "ltoken.def"
 };
 #undef DEFTOK1
 #undef DEFTOK

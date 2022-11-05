@@ -24,7 +24,7 @@
 #define luaD_throw hksc_luaD_throw
 #define luaD_rawrunprotected hksc_luaD_rawrunprotected
 #define luaD_seterrorobj hksc_luaD_seterrorobj
-/* whereas I give the option to omit the `'luaD_' midfix on hksc extensions */
+/* whereas I give the option to omit the `luaD_' midfix on hksc extensions */
 #define hksc_setliteralmsg hksc_luaD_setliteralmsg
 #define hksc_setmsg hksc_luaD_setmsg
 #define hksc_setvfmsg hksc_luaD_setvfmsg

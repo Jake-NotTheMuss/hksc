@@ -9,8 +9,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "hksc_begin_code.h"
-
 #define lstring_c
 #define LUA_CORE
 
@@ -22,11 +20,14 @@
 #include "lstring.h"
 
 
+
 void luaS_resize (hksc_State *H, int newsize) {
   GCObject **newhash;
   stringtable *tb;
   int i;
-
+  /* TODO: see if this can be an assertion */
+  if (G(H)->gcstate == GCSsweepstring)
+    return;  /* cannot resize during GC traverse */
   newhash = luaM_newvector(H, newsize, GCObject *);
   tb = &G(H)->strt;
   for (i=0; i<newsize; i++) newhash[i] = NULL;
@@ -59,7 +60,7 @@ static TString *newlstr (hksc_State *H, const char *str, size_t l,
   ts = cast(TString *, luaM_malloc(H, (l+1)*sizeof(char)+sizeof(TString)));
   ts->tsv.len = l;
   ts->tsv.hash = h;
-
+  ts->tsv.marked = luaC_live(G(H));
   ts->tsv.tt = LUA_TSTRING;
   ts->tsv.reserved = 0;
   memcpy(ts+1, str, l*sizeof(char));
@@ -92,11 +93,10 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
     TString *ts = rawgco2ts(o);
     if (ts->tsv.len == l && (memcmp(str, getstr(ts), l) == 0)) {
       /* string may be dead */
-      /*if (isdead(G(L), o)) changewhite(o);*/
+      if (isdead(G(L), o)) makelive(o);
       return ts;
     }
   }
-
   return newlstr(H, str, l, h);  /* not found */
 }
 

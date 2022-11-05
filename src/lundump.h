@@ -36,6 +36,12 @@ LUAI_FUNC int luaU_dump (hksc_State *H,
 /* size of header of binary files */
 #define LUAC_HEADERSIZE		238
 
+#define BYTECODE_STRIPPING_NONE 0
+#define BYTECODE_STRIPPING_PROFILING 1
+#define BYTECODE_STRIPPING_ALL 2
+#define BYTECODE_STRIPPING_DEBUG_ONLY 3
+#define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
+
 /* for data alignment in header */
 #define ALIGN(p,n) (void *)(((long)(p) + (n)-1) & ~((n)-1))
 

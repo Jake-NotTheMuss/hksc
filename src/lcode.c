@@ -17,13 +17,14 @@
 
 #include "lcode.h"
 /*#include "ldebug.h"*/
-/*#include "ldo.h"*/
+/*#include "lerror.h"*/
 /*#include "lgc.h"*/
 #include "llex.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lopcodes.h"
 #include "lparser.h"
+#include "lstate.h"
 #include "ltable.h"
 
 
@@ -259,17 +260,16 @@ int luaK_numberK (FuncState *fs, lua_Number r) {
 }
 
 
-int luaK_literalK(FuncState *fs, lua_Literal l, int token)
+int luaK_literalK(FuncState *fs, lua_Literal l, int type)
 {
   TValue o;
-  if (token == TK_SHORT_LITERAL)
-  {
+  lua_assert(type == TK_SHORT_LITERAL || type == TK_LONG_LITERAL);
+  if (type == TK_SHORT_LITERAL && hksc_ludenabled(fs->H))
     setshortvalue(&o, l);
-  }
-  else
-  {
+  else if (type == TK_LONG_LITERAL && hksc_ui64enabled(fs->H))
     setlongvalue(&o, l);
-  }
+  else
+    luaX_syntaxerror(fs->ls, "int literals not enabled in compiler options");
   return addk(fs, &o, &o);
 }
 
@@ -335,6 +335,8 @@ void luaK_dischargevars (FuncState *fs, expdesc *e) {
       freereg(fs, e->u.s.info);
       e->u.s.info = luaK_codeABC(fs, OP_GETTABLE, 0, e->u.s.info, e->u.s.aux);
       e->k = VRELOCABLE;
+      luaK_codeABx(fs, OP_DATA, 0, 0); /* ??? */
+      luaK_codeABx(fs, OP_DATA, 0, 0);
       break;
     }
     case VVARARG:

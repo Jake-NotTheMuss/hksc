@@ -4,18 +4,21 @@
 #include <string.h>
 #include <errno.h>
 
-#include "hksc_begin_code.h"
-
-#include "lua.h"
-#include "lzio.h"
-#include "lstate.h"
-#include "lerror.h"
-
 #include "hksclib.h"
 
-#include "lparser.h"
+#define LUA_CORE
 
+#include "luaconf.h"
+#include "lua.h"
+
+#include "lerror.h"
+#include "lgc.h"
+#include "lparser.h"
+#include "lstate.h"
+#include "lstring.h"
 #include "lundump.h"
+#include "lzio.h"
+
 
 /*
 ** {======================================================
@@ -55,16 +58,84 @@ static int errfile (hksc_State *H, const char *what, const char *filename) {
 
 static int parser(hksc_State *H, ZIO *z, const char *filename);
 
+
+typedef int (*hksc_Operation)(hksc_State *H, void *ud);
+
+#if 0
+static int
+do_operation(hksc_State *H, hksc_Operation fn, void *ud)
+{
+  int status;
+  global_State *g = G(H);
+  lua_assert(g->gcstate == GCSpause); /* GC only occurs between operations */
+  lua_assert(g->livegc == NULL); /* should have no live objects */
+  luaC_checkGC(H); /* maybe collect garbage */
+
+  status = (*fn)(H, ud);
+
+
+  return status;
+}
+#endif
+
+#if 0
+static int open_infile(hksc_State *H, LoadF *lf, const char *name, int *pmode)
+{
+  lf->extraline = 0;
+
+  if (name == NULL)
+  {
+    hksc_setliteralmsg(H, "NULL filename supplied to hksc_parsefile");
+    return LUA_ERRFILE;
+  }
+  else
+  {
+    lf->f = fopen(name, "r");
+    if (lf->f == NULL) return errfile(H, "open", name);
+  }
+
+  c = getc(lf->f);
+  if (c == '#') /* Unix exec. file? */
+  {
+    lf->extraline = 1;
+    while ((c = getc(lf->f)) != EOF && c != '\n') ; /* skip first line */
+    if (c == '\n') c = getc(lf->f);
+  }
+
+  if (c == LUA_SIGNATURE[0]) /* binary file? */
+  {
+    *pmode = HKSC_MODE_DECOMPILE;
+    fclose(lf->f);
+    fprintf(stderr,
+      "%s is already a pre-compiled Lua file, skipping\n",
+      name);
+    return 1;
+  }
+
+  ungetc(c, lf->f);
+}
+#endif
+
 int
 hksc_parsefile(hksc_State *H, const char *filename)
 {
+  /* temporarily put here to test GC */
+  lua_assert(G(H)->gcstate == GCSpause); /* GC only occurs between operations */
+  /*lua_assert(g->livegc == NULL);*/ /* should have no live objects */
+  luaC_newcycle(H);
+  luaC_checkGC(H); /* maybe collect garbage */
+
+
   LoadF lf;
   int status, readstatus;
   int c;
   lf.extraline = 0;
 
   if (filename == NULL)
-    lf.f = stdin;
+  {
+    hksc_setliteralmsg(H, "NULL filename supplied to hksc_parsefile");
+    return LUA_ERRFILE;
+  }
   else
   {
     lf.f = fopen(filename, "r");
@@ -183,15 +254,9 @@ static int panic (hksc_State *H) {
 }
 
 hksc_State *
-hksc_xnewstate(void)
+hksI_newstate(void)
 {
   hksc_State *H = hksc_newstate(l_alloc, NULL);
   if (H) hksc_atpanic(H, &panic);
-  else
-  {
-    fprintf(stderr, "cannot allocate a hksc_State\n");
-    exit(EXIT_FAILURE);
-  }
-
   return H;
 }

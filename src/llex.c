@@ -37,10 +37,10 @@
 #define currIsNewline(ls)	(ls->current == '\n' || ls->current == '\r')
 
 
+#define DEFTOK1(name, text) text,
 #define DEFTOK(name, text) text,
-#define DEFTOK1(name, text) DEFTOK(name, text)
 const char *const luaX_tokens [] = {
-#include "ltokens.def"
+#include "ltoken.def"
   NULL
 };
 #undef DEFTOK1
@@ -69,6 +69,7 @@ void luaX_init (hksc_State *H) {
   int i;
   for (i=0; i<NUM_RESERVED; i++) {
     TString *ts = luaS_new(H, luaX_tokens[i]);
+    luaS_fix(ts);  /* reserved words are never collected */
     lua_assert(strlen(luaX_tokens[i])+1 <= TOKEN_LEN);
     ts->tsv.reserved = cast_byte(i+1);  /* reserved word */
   }
@@ -266,7 +267,7 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
       /* for a long literal, need to check lowest 4 bits are 0 */
       if (token == TK_LONG_LITERAL)
       {
-        if ((l & 0xf) != 0)
+        if (l & 0xf)
         {
           ls->buff->n--; /* don't include the null character in messages */
           luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
@@ -274,6 +275,7 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
         }
       }
       seminfo->l = l;
+      break;
     }
     case TK_NUMBER:
     {
@@ -520,9 +522,8 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             {
               /* TODO: find the correct call for this */
               luaG_runerror(ls->H,
-                "The reserved words '%s' and '%s' can "
-                "only be used when the virtual machine is built with "
-                "structure support.",
+                "The reserved words '%s' and '%s' can only be used when "
+                "the virtual machine is built with structure support.",
                 luaX_tokens[TK_HMAKE-FIRST_RESERVED],
                 luaX_tokens[TK_HSTRUCTURE-FIRST_RESERVED]);
             }

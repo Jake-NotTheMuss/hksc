@@ -137,13 +137,6 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 #define NO_REG    MAXARG_A
 
 
-/*
-** R(x) - register
-** Kst(x) - constant (in constant table)
-** RK(x) == if ISK(x) then Kst(INDEXK(x)) else R(x)
-*/
-
-
 #define DEFCODE(name, m, t, a, b, c) OP_##name,
 typedef enum {
 #include "lopcodes.def"
@@ -153,26 +146,6 @@ typedef enum {
 
 
 #define NUM_OPCODES (cast(int, OP_MAX))
-
-/*===========================================================================
-  Notes:
-  (*) In OP_CALL, if (B == 0) then B = top. C is the number of returns - 1,
-      and can be 0: OP_CALL then sets `top' to last_result+1, so
-      next open instruction (OP_CALL, OP_RETURN, OP_SETLIST) may use `top'.
-
-  (*) In OP_VARARG, if (B == 0) then use actual number of varargs and
-      set top (like in OP_CALL with C == 0).
-
-  (*) In OP_RETURN, if (B == 0) then return up to `top'
-
-  (*) In OP_SETLIST, if (B == 0) then B = `top';
-      if (C == 0) then next `instruction' is real C
-
-  (*) For comparisons, A specifies what condition the test should accept
-      (true or false).
-
-  (*) All `skips' (pc++) assume that next instruction is a jump
-===========================================================================*/
 
 
 /*

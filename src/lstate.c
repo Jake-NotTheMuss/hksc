@@ -16,13 +16,12 @@
 #include "ldebug.h"
 #include "lerror.h"
 #include "lfunc.h"
-/*#include "lgc.h"*/
+#include "lgc.h"
 #include "llex.h"
 #include "lmem.h"
 #include "lstate.h"
 #include "lstring.h"
 #include "ltable.h"
-/*#include "ltm.h"*/
 
 
 #define state_size(x)	(sizeof(x) + LUAI_EXTRASPACE)
@@ -46,9 +45,9 @@ static void f_luaopen (hksc_State *H, void *ud) {
   global_State *g = G(H);
   UNUSED(ud);
   luaS_resize(H, MINSTRTABSIZE);  /* initial size of string table */
-  /*luaT_init(H);*/
   luaX_init(H);
   luaS_fix(luaS_newliteral(H, MEMERRMSG));
+  /*g->GCthreshold = 4*g->totalbytes;*/
 }
 
 
@@ -58,19 +57,34 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->nCcalls = 0;
   H->status = 0;
   H->errormsg = NULL;
-  H->pcall_result = NULL;
 }
 
 
 static void close_state (hksc_State *H) {
   global_State *g = G(H);
-  /*luaC_freeall(H);*/  /* collect all objects */
-  /*lua_assert(g->rootgc == obj2gco(H));*/
+  luaC_freeall(H);  /* collect all objects */
+  lua_assert(g->rootgc == NULL /*obj2gco(H)*/);
   lua_assert(g->strt.nuse == 0);
   luaM_freearray(H, G(H)->strt.hash, G(H)->strt.size, TString *);
   luaZ_freebuffer(H, &g->buff);
   lua_assert(g->totalbytes == sizeof(LG));
   (*g->frealloc)(g->ud, fromstate(H), state_size(LG), 0);
+}
+
+static void
+hksc_default_settings(hksc_Settings *settings)
+{
+  /* general settings */
+  settings->endian = HKSC_DEFAULT_ENDIAN;
+  settings->sharing_format = HKSC_BYTECODE_DEFAULT;
+  settings->sharing_mode = HKSC_SHARING_MODE_OFF;
+  /* compiler settings */
+  settings->emit_struct = 0;
+  settings->literals = INT_LITERALS_LUD | INT_LITERALS_UI64;
+  settings->strip_names = NULL;
+  /* decompiler settings */
+  settings->ignore_debug = 0;
+  settings->match_line_info = 1;
 }
 
 
@@ -120,32 +134,32 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   if (h == NULL) return NULL;
   H = tostate(h);
   g = &((LG *)H)->g;
-
+  H->tt = LUA_TTHREAD;
+  g->currentwhite = bit2mask(LIVEBIT, FIXEDBIT);
+  H->marked = luaC_live(g);
+  set2bits(H->marked, FIXEDBIT, SFIXEDBIT);
   preinit_state(H, g);
-
   g->frealloc = f;
   g->ud = ud;
-
   g->mainthread = H;
   g->strt.size = 0;
   g->strt.nuse = 0;
   g->strt.hash = NULL;
-
+  g->mode = HKSC_MODE_DEFAULT;
+  hksc_default_settings(&g->settings);
   luaZ_initbuffer(H, &g->buff);
-
   g->panic = NULL;
-
+  g->gcstate = GCSpause;
+  /*g->rootgc = obj2gco(H);*/
+  g->rootgc = NULL;
+  g->sweepstrgc = 0;
+  g->sweepgc = &g->rootgc;
   g->totalbytes = sizeof(LG);
-
-  f_luaopen(H, NULL);
-
-/*  if (luaD_rawrunprotected(H, f_luaopen, NULL) != 0) {
-     memory allocation error: free partial state 
+  if (luaD_rawrunprotected(H, f_luaopen, NULL) != 0) {
+    /* memory allocation error: free partial state */
     close_state(H);
     H = NULL;
   }
-  else*/
-    /*luai_userstateopen(H);*/
   return H;
 }
 

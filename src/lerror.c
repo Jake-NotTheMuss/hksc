@@ -133,16 +133,17 @@ struct SParser {  /* data to `f_parser' */
   ZIO *z;
   Mbuffer buff;  /* buffer to be used by the scanner */
   const char *name;
-  Proto *f;
+  Proto *result; /* return value of the parser, stored here because
+               there is no Lua stack */
 };
-#if 1
+
 static void f_parser (hksc_State *H, void *ud) {
   int i;
   Proto *tf;
   Closure *cl;
   struct SParser *p = cast(struct SParser *, ud);
   tf = hksc_parser(H, p->z, &p->buff, p->name);
-  p->f = tf;
+  p->result = tf;
 #if 0
   int c = luaZ_lookahead(p->z);
   tf = ((c == LUA_SIGNATURE[0]) ? luaU_undump : luaY_parser)(H, p->z,
@@ -164,7 +165,8 @@ int hksc_luaD_protectedparser (hksc_State *H, ZIO *z, const char *name,
   luaZ_initbuffer(H, &p.buff);
   status = luaD_pcall(H, f_parser, &p);
   luaZ_freebuffer(H, &p.buff);
-  *pf = p.f;
+  lua_assert(pf != NULL);
+  *pf = p.result;
   return (status);
 }
-#endif
+

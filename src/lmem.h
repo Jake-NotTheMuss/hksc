@@ -7,7 +7,6 @@
 #ifndef lmem_h
 #define lmem_h
 
-#include "hksc_begin_code.h"
 
 #include <stddef.h>
 

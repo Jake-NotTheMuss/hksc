@@ -30,7 +30,7 @@
 
 #include "ldebug.h"
 #include "lerror.h"
-/*#include "lgc.h"*/
+#include "lgc.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
@@ -358,6 +358,7 @@ static void rehash (hksc_State *H, Table *t, const TValue *ek) {
 
 Table *luaH_new (hksc_State *H, int narray, int nhash) {
   Table *t = luaM_new(H, Table);
+  luaC_link(H, obj2gco(t), LUA_TTABLE);
   t->metatable = NULL;
   t->flags = cast_byte(~0);
   /* temporary values (kept only if some malloc fails) */
@@ -423,7 +424,6 @@ static TValue *newkey (hksc_State *H, Table *t, const TValue *key) {
     }
   }
   gkey(mp)->value = key->value; gkey(mp)->tt = key->tt;
-  /*luaC_barriert(t, key);*/
   lua_assert(ttisnil(gval(mp)));
   return gval(mp);
 }

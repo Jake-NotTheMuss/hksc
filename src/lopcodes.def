@@ -16,6 +16,29 @@
 ** CMODE is the mode of argument C
 */
 
+/*
+TODO for researching opcodes
+
+OP_CHECKTYPES: see if this is can be emitted with multiple asignments
+    with the same type checks, e.g. `local a:string, b:string = callfunc();'
+
+OP_INTRINSIC_*: this may bypass metatable queries
+INDEX corresponds to GETTABLE
+NEWINDEX corresponds to SETTABLE
+SELF correspons to SELF
+the `_LITERAL' variants may just be const variants, but I don't know for sure
+
+
+*/
+
+
+/*
+** R(x) - register
+** Kst(x) - constant (in constant table)
+** RK(x) == if ISK(x) then Kst(INDEXK(x)) else R(x)
+*/
+
+
 /*----------------------------------------------------------------------
 name    args  description
 ------------------------------------------------------------------------*/
@@ -121,32 +144,32 @@ DEFCODE(GETUPVAL, ABC, 0, 1, U, N)
 /* OP_SETUPVAL  A B  UpValue[B] := R(A) */
 DEFCODE(SETUPVAL, ABC, 0, 0, U, N)
 
-/* OP_ADD  A B C  R(A) := R(B) + RK(C) */
+/* OP_ADD     A B C  R(A) := R(B) + RK(C) */
 /* OP_ADD_BK  A B C  R(A) := Kst(B) + RK(C) */
 DEFCODE(ADD, ABC, 0, 1, R, K)
 DEFCODE(ADD_BK, ABC, 0, 1, K, K)
 
-/* OP_SUB  A B C  R(A) := R(B) - RK(C) */
+/* OP_SUB     A B C  R(A) := R(B) - RK(C) */
 /* OP_SUB_BK  A B C  R(A) := Kst(B) - RK(C) */
 DEFCODE(SUB, ABC, 0, 1, R, K)
 DEFCODE(SUB_BK, ABC, 0, 1, K, K)
 
-/* OP_MUL  A B C  R(A) := R(B) * RK(C) */
+/* OP_MUL     A B C  R(A) := R(B) * RK(C) */
 /* OP_MUL_BK  A B C  R(A) := Kst(B) * RK(C) */
 DEFCODE(MUL, ABC, 0, 1, R, K)
 DEFCODE(MUL_BK, ABC, 0, 1, K, K)
 
-/* OP_DIV  A B C  R(A) := R(B) / RK(C) */
+/* OP_DIV     A B C  R(A) := R(B) / RK(C) */
 /* OP_DIV_BK  A B C  R(A) := Kst(B) / RK(C) */
 DEFCODE(DIV, ABC, 0, 1, R, K)
 DEFCODE(DIV_BK, ABC, 0, 1, K, K)
 
-/* OP_MOD  A B C  R(A) := R(B) % RK(C) */
+/* OP_MOD     A B C  R(A) := R(B) % RK(C) */
 /* OP_MOD_BK  A B C  R(A) := Kst(B) % RK(C) */
 DEFCODE(MOD, ABC, 0, 1, R, K)
 DEFCODE(MOD_BK, ABC, 0, 1, K, K)
 
-/* OP_POW  A B C  R(A) := R(B) ^ RK(C) */
+/* OP_POW     A B C  R(A) := R(B) ^ RK(C) */
 /* OP_POW_BK  A B C  R(A) := Kst(B) ^ RK(C) */
 DEFCODE(POW, ABC, 0, 1, R, K)
 DEFCODE(POW_BK, ABC, 0, 1, K, K)
@@ -163,39 +186,47 @@ DEFCODE(NOT, ABC, 0, 1, R, N)
 /* OP_LEN  A B  R(A) := length og R(B) */
 DEFCODE(LEN, ABC, 0, 1, R, N)
 
-/* OP_LT  A B C  if ((R(B) < RK(C)) ~= A) then pc++ */
+/* OP_LT     A B C  if ((R(B) < RK(C)) ~= A) then pc++ */
 /* OP_LT_BK  A B C  if ((Kst(B) < RK(C)) ~= A) then pc++ */
 DEFCODE(LT, ABC, 1, 0, R, K)
 DEFCODE(LT_BK, ABC, 1, 0, K, K)
 
-/* OP_LE  A B C  if ((R(B) <= RK(C)) ~= A) then pc++ */
+/* OP_LE     A B C  if ((R(B) <= RK(C)) ~= A) then pc++ */
 /* OP_LE_BK  A B C  if ((Kst(B) <= RK(C)) ~= A) then pc++ */
 DEFCODE(LE, ABC, 1, 0, R, K)
 DEFCODE(LE_BK, ABC, 1, 0, K, K)
 
-/* BEGIN T7 extensions */
+/* begin T7 extensions */
+/******************************************************************************/
+#ifndef LOPCODES_FIRST_T7
+# define LOPCODES_FIRST_T7 OP_LEFT_SHIFT
+#endif /* LOPCODES_FIRST_T7 */
 
-/* OP_LEFT_SHIFT  A B C  R(A) := R(B) << RK(C) */
+/* OP_LEFT_SHIFT     A B C  R(A) := R(B) << RK(C) */
 /* OP_LEFT_SHIFT_BK  A B C  R(A) := Kst(B) << RK(C) */
 DEFCODE(LEFT_SHIFT, ABC, 0, 1, R, K)
 DEFCODE(LEFT_SHIFT_BK, ABC, 0, 1, K, K)
 
-/* OP_RIGHT_SHIFT  A B C  R(A) := R(B) >> RK(C) */
+/* OP_RIGHT_SHIFT     A B C  R(A) := R(B) >> RK(C) */
 /* OP_RIGHT_SHIFT_BK  A B C  R(A) := Kst(B) >> RK(C) */
 DEFCODE(RIGHT_SHIFT, ABC, 0, 1, R, K)
 DEFCODE(RIGHT_SHIFT_BK, ABC, 0, 1, K, K)
 
-/* OP_BIT_AND  A B C  R(A) := R(B) & RK(C) */
+/* OP_BIT_AND     A B C  R(A) := R(B) & RK(C) */
 /* OP_BIT_AND_BK  A B C  R(A) := Kst(B) & RK(C) */
 DEFCODE(BIT_AND, ABC, 0, 1, R, K)
 DEFCODE(BIT_AND_BK, ABC, 0, 1, K, K)
 
-/* OP_BIT_OR  A B C  R(A) := R(B) | RK(C) */
+/* OP_BIT_OR     A B C  R(A) := R(B) | RK(C) */
 /* OP_BIT_OR_BK  A B C  R(A) := Kst(B) | RK(C) */
 DEFCODE(BIT_OR, ABC, 0, 1, R, K)
 DEFCODE(BIT_OR_BK, ABC, 0, 1, K, K)
 
-/* END T7 extensions */
+#ifndef LOPCODES_LAST_T7
+# define LOPCODES_LAST_T7 OP_BIT_OR_BK
+#endif /* LOPCODES_LAST_T7 */
+/******************************************************************************/
+/* end T7 extensions */
 
 /* OP_CONCAT  A B C  R(A) := R(B).. ... ..R(C) */
 DEFCODE(CONCAT, ABC, 0, 1, R, R)
@@ -244,10 +275,10 @@ DEFCODE(SETSLOTS, ABC, 0, 1, U, U)
 DEFCODE(SETSLOTMT, ABC, 0, 1, U, U)
 
 /* OP_CHECKTYPE  A Bx  assert(type(R(A)) == Bx) */
-DEFCODE(CHECKTYPE, ABx, 0, 1, U, N)
+DEFCODE(CHECKTYPE, ABx, 0, 0, U, N)
 
 /* ??? */
-DEFCODE(CHECKTYPES, ABC, 0, 1, U, U)
+DEFCODE(CHECKTYPES, ABC, 0, 0, U, U)
 
 DEFCODE(GETSLOT, ABC, 0, 1, U, U)
 DEFCODE(GETSLOTMT, ABC, 0, 1, U, U)
@@ -259,3 +290,23 @@ DEFCODE(GETSLOT_D, ABC, 0, 1, U, U)
 DEFCODE(GETGLOBAL_MEM, ABx, 0, 1, U, U)
 
 /* end of opcodes */
+
+/*===========================================================================
+  Notes:
+  (*) In OP_CALL, if (B == 0) then B = top. C is the number of returns - 1,
+      and can be 0: OP_CALL then sets `top' to last_result+1, so
+      next open instruction (OP_CALL, OP_RETURN, OP_SETLIST) may use `top'.
+
+  (*) In OP_VARARG, if (B == 0) then use actual number of varargs and
+      set top (like in OP_CALL with C == 0).
+
+  (*) In OP_RETURN, if (B == 0) then return up to `top'
+
+  (*) In OP_SETLIST, if (B == 0) then B = `top';
+      if (C == 0) then next `instruction' is real C
+
+  (*) For comparisons, A specifies what condition the test should accept
+      (true or false).
+
+  (*) All `skips' (pc++) assume that next instruction is a jump
+===========================================================================*/

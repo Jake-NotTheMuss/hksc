@@ -7,8 +7,6 @@
 
 #include <stddef.h>
 
-#include "hksc_begin_code.h"
-
 #define lmem_c
 #define LUA_CORE
 

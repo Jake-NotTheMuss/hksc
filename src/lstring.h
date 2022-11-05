@@ -11,6 +11,7 @@
 
 #include "hksc_begin_code.h"
 
+#include "lgc.h"
 #include "lobject.h"
 #include "lstate.h"
 
@@ -22,7 +23,7 @@
 #define luaS_newliteral(H, s) (luaS_newlstr(H, "" s, \
                                  (sizeof(s)/sizeof(char))-1))
 
-#define luaS_fix(s) /*l_setbit((s)->tsv.marked, FIXEDBIT)*/
+#define luaS_fix(s) l_setbit((s)->tsv.marked, FIXEDBIT)
 
 LUAI_FUNC void luaS_resize (hksc_State *H, int newsize);
 LUAI_FUNC TString *luaS_newlstr (hksc_State *H, const char *str, size_t l);
