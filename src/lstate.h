@@ -127,6 +127,9 @@ typedef struct global_State {
   lu_mem gcdept;  /* how much GC is `behind schedule' */
   int gcstepmul;  /* GC `granularity' */
   lua_CFunction panic;  /* to be called in unprotected errors */
+#if 0
+  hksc_LogFunction log;  /* callback for logging debug messages */
+#endif
   struct hksc_State *mainthread;
 } global_State;
 

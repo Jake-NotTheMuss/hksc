@@ -14,7 +14,7 @@
 #include "lua.h"
 
 #include "ldebug.h"
-#include "lerror.h"
+#include "ldo.h"
 #include "lfunc.h"
 #include "lgc.h"
 #include "llex.h"
@@ -125,6 +125,16 @@ lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf) {
   return old;
 }
 
+#if 0
+hksc_LogFunction hksc_logfunc (hksc_State *H, lua_LogFunction logf) {
+  lua_LogFunction old;
+  /*lua_lock(H);*/
+  old = G(H)->log;
+  G(H)->log = logf;
+  /*lua_unlock(H);*/
+  return old;
+}
+#endif
 
 hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   int i;
@@ -136,7 +146,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   g = &((LG *)H)->g;
   H->tt = LUA_TTHREAD;
   g->currentwhite = bit2mask(LIVEBIT, FIXEDBIT);
-  H->marked = luaC_live(g);
+  H->marked = luaC_white(g);
   set2bits(H->marked, FIXEDBIT, SFIXEDBIT);
   preinit_state(H, g);
   g->frealloc = f;

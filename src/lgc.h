@@ -4,6 +4,29 @@
 ** See Copyright Notice in lua.h
 */
 
+/*******************************************************************************
+  The garbage collector was heavily simplified for the needs of hksc. There are
+  3 object types that are used by the library: strings, tables, and prototypes.
+
+  Like in Lua, strings that are needed for the entire duration of the Lua state
+  can be fixed (marked with FIXEDBIT) and can thus avoid normal collection.
+
+  Notably, there is now no need for `white', `gray', and `black' descriptors, as
+  traversable objects in hksc (tables and prototypes) are, from the collector's
+  perspective, already dead from the moment they are created.
+
+  Only strings have a `liveness', whereas tables and prototypes are given a new
+  mark, TEMPBIT. Tables and prototypes are marked as temporary because they are
+  only needed during a single compilation procedure. Afterward, they can not
+  serve a further purpose. Thus, they are always collected before each new
+  compilation procedure begins, which is when the collector performs a cycle.
+
+  Along with collecting all temporary objects, the collector also marks all
+  non-fixed strings for collection on each cycle, in the propogation phase. The
+  collector will then perform a string sweep if total memory usage is above a
+  given threshold.
+*******************************************************************************/
+
 #ifndef lgc_h
 #define lgc_h
 
@@ -14,10 +37,10 @@
 /*
 ** Possible states of the Garbage Collector
 */
-#define GCSpause  0
-#define GCSpropagate  1
-#define GCSsweepstring  2
-#define GCSsweep  3
+#define GCSpause        0 /* inactive */
+#define GCSpropagate    1 /* marking unfixed strings */
+#define GCSsweepstring  2 /* sweeping string lists */
+#define GCSsweep        3 /* sweeping GC list */
 
 
 /*
@@ -39,18 +62,21 @@
 
 /*
 ** Layout for bit use in `marked' field:
-** bit 0 - object is alive
-** bit 1 - object is fixed (should not be collected)
-** bit 2 - object is "super" fixed (only the main thread)
+** bit 0 - object is alive (used for strings)
+** bit 1 - object is temporary (all tables and prototypes are temporary)
+** bit 2 - object is fixed (should not be collected)
+** bit 3 - object is "super" fixed (only the main thread)
 */
 
 
 #define LIVEBIT 0
-#define FIXEDBIT  1
-#define SFIXEDBIT 2
+#define TEMPBIT 1
+#define FIXEDBIT  2
+#define SFIXEDBIT 3
 
 #define islive(g,x)       testbit((x)->gch.marked, LIVEBIT)
 #define isdead(g,x)       (!islive(g,x))
+#define istemp(g,x)       testbit((x)->gch.marked, TEMPBIT)
 #define isfixed(g,x)      testbit((x)->gch.marked, FIXEDBIT)
 
 #define otherwhite(g) (g->currentwhite ^ bitmask(LIVEBIT))
@@ -58,16 +84,15 @@
 #define makelive(x)  l_setbit((x)->gch.marked, LIVEBIT)
 #define makedead(x)  resetbit((x)->gch.marked, LIVEBIT)
 
-#define luaC_live(g) cast(lu_byte, bitmask(LIVEBIT))
+#define luaC_white(g) cast(lu_byte, bitmask(LIVEBIT))
 
 
-#define luaC_checkGC(H) { \
+#define luaC_checkGC(H) do { \
   /*if (G(H)->totalbytes >= G(H)->GCthreshold) */\
-  luaC_step(H); }
+  luaC_step(H); } while (0)
 
 LUAI_FUNC void luaC_freeall (hksc_State *H);
 LUAI_FUNC void luaC_step (hksc_State *H);
-LUAI_FUNC void luaC_fullgc (hksc_State *H);
 LUAI_FUNC void luaC_link (hksc_State *H, GCObject *o, lu_byte tt);
 LUAI_FUNC void luaC_newcycle (hksc_State *H);
 

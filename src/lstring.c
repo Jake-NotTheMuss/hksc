@@ -60,7 +60,7 @@ static TString *newlstr (hksc_State *H, const char *str, size_t l,
   ts = cast(TString *, luaM_malloc(H, (l+1)*sizeof(char)+sizeof(TString)));
   ts->tsv.len = l;
   ts->tsv.hash = h;
-  ts->tsv.marked = luaC_live(G(H));
+  ts->tsv.marked = luaC_white(G(H));
   ts->tsv.tt = LUA_TSTRING;
   ts->tsv.reserved = 0;
   memcpy(ts+1, str, l*sizeof(char));

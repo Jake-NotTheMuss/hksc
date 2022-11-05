@@ -29,7 +29,7 @@
 #include "lua.h"
 
 #include "ldebug.h"
-#include "lerror.h"
+#include "ldo.h"
 #include "lgc.h"
 #include "lmem.h"
 #include "lobject.h"

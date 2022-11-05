@@ -11,7 +11,7 @@
 #include "luaconf.h"
 #include "lua.h"
 
-#include "lerror.h"
+#include "ldo.h"
 #include "lgc.h"
 #include "lparser.h"
 #include "lstate.h"

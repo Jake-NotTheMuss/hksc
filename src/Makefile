@@ -6,8 +6,8 @@ hksclib.c \
 lctype.c \
 lcode.c \
 ldebug.c \
+ldo.c \
 ldump.c \
-lerror.c \
 lfunc.c \
 lgc.c \
 llex.c \

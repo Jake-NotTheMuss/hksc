@@ -20,7 +20,7 @@
 
 #include "lctype.h"
 #include "ldebug.h"
-#include "lerror.h"
+#include "ldo.h"
 #include "llex.h"
 #include "lobject.h"
 #include "lparser.h"

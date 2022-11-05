@@ -12,7 +12,7 @@
 #include "lua.h"
 
 #include "ldebug.h"
-#include "lerror.h"
+#include "ldo.h"
 #include "lfunc.h"
 #include "lgc.h"
 #include "lmem.h"
@@ -52,13 +52,14 @@ static void freeobj (hksc_State *H, GCObject *o) {
 }
 
 
-#define sweepwholelist(H,p) sweeplist(H,p,MAX_LUMEM)
+#define sweepwholelist(H,p) sweeptemplist(H,p,MAX_LUMEM)
 #define sweepwholestringlist(H,p) sweepstringlist(H,p,MAX_LUMEM)
 
-static GCObject **sweeplist (hksc_State *H, GCObject **p, lu_mem count) {
+static GCObject **sweeptemplist (hksc_State *H, GCObject **p, lu_mem count) {
   GCObject *curr;
   global_State *g = G(H);
   while ((curr = *p) != NULL && count-- > 0) {
+    lua_assert(istemp(g, curr));
     *p = curr->gch.next;
     if (curr == g->rootgc)  /* is the first element of the list? */
       g->rootgc = curr->gch.next;  /* adjust first */
@@ -92,7 +93,7 @@ static GCObject **sweepstringlist (hksc_State *H, GCObject **p, lu_mem count) {
   return p;
 }
 
-#if 0
+
 static void checkSizes (hksc_State *H) {
   global_State *g = G(H);
   /* check size of string hash */
@@ -105,7 +106,7 @@ static void checkSizes (hksc_State *H) {
     luaZ_resizebuffer(H, &g->buff, newsize);
   }
 }
-#endif
+
 
 void luaC_freeall (hksc_State *H) {
   global_State *g = G(H);
@@ -137,9 +138,9 @@ void luaC_newcycle (hksc_State *H)
 {
   global_State *g = G(H);
   g->gcstate = GCSpropagate;
-  markstrings(H); /* mark any non-fixed strings as dead */
+  markstrings(H); /* mark non-fixed strings */
   g->gcstate = GCSsweep;
-  sweepwholelist(H, &g->rootgc); /* free all tables and prototypes */
+  sweepwholelist(H, &g->rootgc); /* free all temporary objects */
   g->gcstate = GCSpause;
 }
 
@@ -152,6 +153,8 @@ void luaC_step (hksc_State *H) {
   /* for now, just free everything */
   for (i = 0; i < g->strt.size; i++)  /* free all string lists */
     sweepwholestringlist(H, &g->strt.hash[i]);
+
+  checkSizes(H);
 
   g->gcstate = GCSpause;
 #if 0
@@ -184,8 +187,7 @@ void luaC_link (hksc_State *H, GCObject *o, lu_byte tt) {
   global_State *g = G(H);
   o->gch.next = g->rootgc;
   g->rootgc = o;
-  /*o->gch.marked = luaC_white(g);*/
-  /*o->gch.marked = 0;*/
+  o->gch.marked = bitmask(TEMPBIT);
   o->gch.tt = tt;
 }
 

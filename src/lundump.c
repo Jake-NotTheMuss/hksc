@@ -16,7 +16,7 @@
 #include "lua.h"
 
 #include "ldebug.h"
-#include "lerror.h"
+#include "ldo.h"
 #include "lfunc.h"
 #include "lmem.h"
 #include "lobject.h"

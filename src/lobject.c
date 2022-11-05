@@ -17,7 +17,7 @@
 
 #include "lua.h"
 
-#include "lerror.h"
+#include "ldo.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
