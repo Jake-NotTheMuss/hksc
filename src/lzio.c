@@ -22,7 +22,9 @@ int luaZ_fill (ZIO *z) {
   size_t size;
   hksc_State *H = z->H;
   const char *buff;
+  lua_unlock(H);
   buff = z->reader(H, z->data, &size);
+  lua_lock(H);
   if (buff == NULL || size == 0) return EOZ;
   z->n = size - 1;
   z->p = buff;

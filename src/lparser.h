@@ -31,13 +31,33 @@ typedef enum {
   VLOCAL,	/* info = local register */
   VUPVAL,       /* info = index of upvalue in `upvalues' */
   VGLOBAL,	/* info = index of table; aux = index of global name in `k' */
+  VSLOT,  /* ??? */
   VINDEXED,	/* info = table register; aux = index register (or `k') */
   VJMP,		/* info = instruction pc */
   VRELOCABLE,	/* info = instruction pc */
   VNONRELOC,	/* info = result register */
   VCALL,	/* info = instruction pc */
-  VVARARG	/* info = instruction pc */
+  VVARARG,	/* info = instruction pc */
+  VINTRINSIC  /* ??? */
 } expkind;
+
+
+#define exptype(e) ((e)->inferred_type)
+
+#define expisnil(e)  (exptype(e) == LUA_TNIL)
+#define expisboolean(e)  (exptype(e) == LUA_TBOOLEAN)
+#define expislud(e)  (exptype(e) == LUA_TLIGHTUSERDATA)
+#define expisnumber(e)  (exptype(e) == LUA_TNUMBER)
+#define expisstring(e)  (exptype(e) == LUA_TSTRING)
+#define expistable(e)  (exptype(e) == LUA_TTABLE)
+#define expisfunction(e)  (exptype(e) == LUA_TFUNCTION || \
+                          expisifunction(e) || expiscfunction(e))
+#define expisuserdata(e)  (exptype(e) == LUA_TUSERDATA)
+#define expisthread(e)  (exptype(e) == LUA_TTHREAD)
+#define expisifunction(e)  (exptype(e) == LUA_TIFUNCTION)
+#define expiscfunction(e)  (exptype(e) == LUA_TCFUNCTION)
+#define expisui64(e)  (exptype(e) == LUA_TUI64)
+#define expisstruct(e)  (exptype(e) == LUA_TSTRUCT)
 
 typedef struct expdesc {
   expkind k;
@@ -48,6 +68,13 @@ typedef struct expdesc {
   } u;
   int t;  /* patch list of `exit when true' */
   int f;  /* patch list of `exit when false' */
+  int inferred_type;
+#if 0
+  void *struct_lookup_chain;
+  int inferred_type;
+  void *inferred_proto;
+  struct namepart name;
+#endif
 } expdesc;
 
 

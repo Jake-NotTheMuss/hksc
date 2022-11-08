@@ -19,7 +19,7 @@
 
 
 /* tags for values visible from Lua */
-#define LAST_TAG  LUA_TUSERDEFINED
+#define LAST_TAG  (LUA_NUM_TYPE_OBJECTS-1)
 
 #define NUM_TAGS  (LAST_TAG+1)
 
@@ -88,6 +88,10 @@ typedef struct lua_TValue {
 #define ttisuserdata(o)  (ttype(o) == LUA_TUSERDATA)
 #define ttisthread(o)  (ttype(o) == LUA_TTHREAD)
 #define ttislightuserdata(o)  (ttype(o) == LUA_TLIGHTUSERDATA)
+#define ttisui64(o)  (ttype(o) == LUA_TUI64)
+#define ttisstruct(o)  (ttype(o) == LUA_TSTRUCT)
+#define ttisifunction(o)  (ttype(o) == LUA_TIFUNCTION)
+#define ttiscfunction(o)  (ttype(o) == LUA_TCFUNCTION)
 
 /* Macros to access values */
 #define ttype(o)  ((o)->tt)
@@ -240,6 +244,7 @@ typedef struct Proto {
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
   TString  *source;
+  TString  *name;
   int sizeupvalues;
   int sizek;  /* size of `k' */
   int sizecode;
@@ -315,8 +320,8 @@ typedef union Closure {
 } Closure;
 
 
-#define iscfunction(o)  (ttype(o) == LUA_TFUNCTION && clvalue(o)->c.isC)
-#define isLfunction(o)  (ttype(o) == LUA_TFUNCTION && !clvalue(o)->c.isC)
+#define iscfunction(o)  (ttiscfunction(o))
+#define isLfunction(o)  (ttisifunction(o))
 
 
 /*

@@ -9,6 +9,7 @@
 
 #include "hksc_begin_code.h"
 
+#include "lmem.h"
 #include "lobject.h"
 #include "lzio.h"
 
@@ -49,6 +50,34 @@ typedef struct Token {
 } Token;
 
 
+/*
+** name-part types
+*/
+#define NAMEPART_NONE (-1)
+#define NAMEPART_NAME  0 /* regular variable name */
+#define NAMEPART_FIELD 1 /* field name */
+#define NAMEPART_SELF  2 /* self field name */
+
+typedef struct namepart {
+  struct namepart *next; /* next in chain */
+  TString *ts; /* part of the name */
+  int type; /* the type of this part */
+} namepart;
+
+
+/*
+** macros for creating/deleting new namepart objects (used by parser)
+*/
+#define luaX_newnamepart(H) (luaM_new(H, struct namepart))
+#define luaX_freenamepart(H,n) (luaM_free(H,n))
+
+typedef struct NamePartList {
+  struct namepart *first; /* first in chain */
+  struct namepart *free; /* first unused */
+  struct namepart *curr; /* last used in chain */
+} NamePartList;
+
+
 typedef struct LexState {
   int current;  /* current character (charint) */
   int linenumber;  /* input line counter */
@@ -57,6 +86,7 @@ typedef struct LexState {
   Token lookahead;  /* look ahead token */
   struct FuncState *fs;  /* `FuncState' is private to the parser */
   struct hksc_State *H;
+  NamePartList nplist;
   ZIO *z;  /* input stream */
   Mbuffer *buff;  /* buffer for tokens */
   TString *source;  /* current source name */

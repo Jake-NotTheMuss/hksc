@@ -21,6 +21,9 @@
 
 
 
+TString *luaS_mainchunk = NULL;
+
+
 void luaS_resize (hksc_State *H, int newsize) {
   GCObject **newhash;
   stringtable *tb;
@@ -77,9 +80,12 @@ static TString *newlstr (hksc_State *H, const char *str, size_t l,
 
 
 TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
-  char *__str = strndup(str, l);
-  printf("encountered string '%s'\n", __str);
-  free(__str);
+#if 0
+  {char *str_x = strndup(str, l);
+    if (!str_x) {fprintf(stderr,"strndup returned NULL\n"); exit(EXIT_FAILURE);}
+  printf("encountered string \"%s\"\n", str_x);
+  free(str_x);}
+#endif
 
   GCObject *o;
   unsigned int h = cast(unsigned int, l);  /* seed */

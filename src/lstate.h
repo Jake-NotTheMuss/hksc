@@ -117,9 +117,6 @@ typedef struct global_State {
   lu_byte gcstate;  /* state of garbage collector */
   int sweepstrgc;  /* position of sweep in `strt' */
   GCObject *rootgc;  /* list of all collectable objects */
-  GCObject *livegc; /* list of live objects */
-  GCObject *deadgc; /* list of dead objects */
-  GCObject *persgc; /* list of fixed (persistent) objects */
   GCObject **sweepgc;  /* position of sweep in `rootgc' */
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem totalbytes;  /* number of bytes currently allocated */
@@ -140,7 +137,7 @@ struct hksc_State {
   CommonHeader;
   lu_byte status;
   global_State *h_G;
-  unsigned short nCcalls;  /* number of nested C calls, used by parser */
+  unsigned short nCcalls;  /* number of nested C calls */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
 };

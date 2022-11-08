@@ -25,8 +25,11 @@
 
 #define luaS_fix(s) l_setbit((s)->tsv.marked, FIXEDBIT)
 
+#define MAINCHUNKNAME "(main chunk)"
+
+LUAI_DATA TString *luaS_mainchunk;
+
 LUAI_FUNC void luaS_resize (hksc_State *H, int newsize);
 LUAI_FUNC TString *luaS_newlstr (hksc_State *H, const char *str, size_t l);
-
 
 #endif

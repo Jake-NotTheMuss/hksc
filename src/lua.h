@@ -86,7 +86,8 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 #define LUA_TCFUNCTION  10
 #define LUA_TUI64       11
 #define LUA_TSTRUCT     12
-#define LUA_TUSERDEFINED  13
+
+#define LUA_NUM_TYPE_OBJECTS 14
 
 
 /* minimum Lua stack available to a C function */

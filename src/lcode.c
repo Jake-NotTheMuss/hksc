@@ -16,9 +16,9 @@
 #include "lua.h"
 
 #include "lcode.h"
-/*#include "ldebug.h"*/
-/*#include "ldo.h"*/
-/*#include "lgc.h"*/
+#include "ldebug.h"
+#include "ldo.h"
+#include "lgc.h"
 #include "llex.h"
 #include "lmem.h"
 #include "lobject.h"
@@ -455,9 +455,8 @@ void luaK_exp2val (FuncState *fs, expdesc *e) {
     luaK_dischargevars(fs, e);
 }
 
-static int
-luaK_exp2RK_ex(FuncState *fs, expdesc *e, int bk, int *pbk)
-{
+
+int luaK_exp2RK (FuncState *fs, expdesc *e) {
   luaK_exp2val(fs, e);
   switch (e->k) {
     case VKNUM:
@@ -469,27 +468,19 @@ luaK_exp2RK_ex(FuncState *fs, expdesc *e, int bk, int *pbk)
                       (e->k == VKNUM) ? luaK_numberK(fs, e->u.nval) :
                                         boolK(fs, (e->k == VTRUE));
         e->k = VK;
-        if (bk && pbk) *pbk = 1;
-        return bk ? e->u.s.info : RKASK(e->u.s.info);
+        return RKASK(e->u.s.info);
       }
       else break;
     }
     case VK: {
-      if (e->u.s.info <= MAXINDEXRK) {  /* constant fit in argC? */
-        if (bk && pbk) *pbk = 1;
-        return bk ? e->u.s.info : RKASK(e->u.s.info);
-      }
+      if (e->u.s.info <= MAXINDEXRK)  /* constant fit in argC? */
+        return RKASK(e->u.s.info);
       else break;
     }
     default: break;
   }
-  if (pbk) *pbk = 0;
   /* not a constant in the right range: put it in a register */
   return luaK_exp2anyreg(fs, e);
-}
-
-int luaK_exp2RK (FuncState *fs, expdesc *e) {
-  return luaK_exp2RK_ex(fs, e, 0, NULL);
 }
 
 
@@ -674,6 +665,16 @@ static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
     case OP_POW: r = luai_numpow(v1, v2); break;
     case OP_UNM: r = luai_numunm(v1); break;
     case OP_LEN: return 0;  /* no constant folding for 'len' */
+    case OP_LEFT_SHIFT:
+      r = cast(lua_Number, (cast(int, v1) << (cast(lu_byte, v2) & 0x1f)));
+      break;
+    case OP_RIGHT_SHIFT:
+      r = cast(lua_Number, (cast(int, v1) >> (cast(lu_byte, v2) & 0x1f)));
+      break;
+    case OP_BIT_AND:
+      r = cast(lua_Number, (cast(int, v1) & cast(int, v2))); break;
+    case OP_BIT_OR:
+      r = cast(lua_Number, (cast(int, v1) | cast(int, v2))); break;
     default: lua_assert(0); r = 0; break;
   }
   if (luai_numisnan(r)) return 0;  /* do not attempt to produce NaN */
@@ -685,47 +686,42 @@ static void codearith (FuncState *fs, OpCode op, expdesc *e1, expdesc *e2) {
   if (constfolding(op, e1, e2))
     return;
   else {
-    int bk;
-    int isbinop = (op != OP_UNM && op != OP_LEN);
-    int o1 = luaK_exp2RK_ex(fs, e1, isbinop, &bk);
-    int o2 = isbinop ? luaK_exp2RK(fs, e2) : 0;
+    int o1 = luaK_exp2RK(fs, e1);
+    int o2 = (op != OP_UNM && op != OP_LEN) ? luaK_exp2RK(fs, e2) : 0;
     freeexp(fs, e2);
     freeexp(fs, e1);
-
-    /* Use the BK variant if argB is a K value */
-    if (bk)
-    {
-      switch (op)
-      {
-        case OP_EQ:
-        case OP_SETTABLE_S:
-        case OP_SETTABLE_N:
-        case OP_SETTABLE:
-        case OP_ADD:
-        case OP_SUB:
-        case OP_MUL:
-        case OP_DIV:
-        case OP_MOD:
-        case OP_POW:
-        case OP_LT:
-        case OP_LE:
-        /* T7 extensions */
-        case OP_LEFT_SHIFT:
-        case OP_RIGHT_SHIFT:
-        case OP_BIT_AND:
-        case OP_BIT_OR:
-        /* END T7 extensions */
-          ++op; /* BK variant must be directly after the original code */
-          break;
-        default:
-          fprintf(stderr, "Unhandled BK variant for op '%s' (%d)\n",
-                  luaP_opnames[op], (int)op);
-          break;
-      }
-    }
-
     e1->u.s.info = luaK_codeABC(fs, op, 0, o1, o2);
     e1->k = VRELOCABLE;
+    switch (op) {
+      case OP_ADD:
+      case OP_SUB:
+      case OP_MUL:
+      case OP_DIV:
+      case OP_MOD:
+      case OP_POW:
+      case OP_UNM:
+      case OP_LEFT_SHIFT:
+      case OP_RIGHT_SHIFT:
+      case OP_BIT_AND:
+      case OP_BIT_OR: {
+        if (!expisnumber(e1) || !expisnumber(e2))
+          exptype(e1) = LUA_TNONE;
+        break;
+      }
+      case OP_LEN: {
+        if (expisstring(e1) || expistable(e1) ||
+            exptype(e1) == (LUA_NUM_TYPE_OBJECTS-1))
+          exptype(e1) = LUA_TNUMBER;
+        break;
+      }
+      case OP_CONCAT: {
+        if ((expisnumber(e1) || expisstring(e1)) &&
+            (expisnumber(e2) || expisstring(e2)))
+          exptype(e1) = LUA_TSTRING;
+        break;
+      }
+      default: break;
+    }
   }
 }
 
@@ -827,12 +823,10 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
     case OPR_DIV: codearith(fs, OP_DIV, e1, e2); break;
     case OPR_MOD: codearith(fs, OP_MOD, e1, e2); break;
     case OPR_POW: codearith(fs, OP_POW, e1, e2); break;
-    /* T7 extensions */
     case OPR_LEFT_SHIFT: codearith(fs, OP_LEFT_SHIFT, e1, e2); break;
     case OPR_RIGHT_SHIFT: codearith(fs, OP_RIGHT_SHIFT, e1, e2); break;
     case OPR_BIT_AND: codearith(fs, OP_BIT_AND, e1, e2); break;
     case OPR_BIT_OR: codearith(fs, OP_BIT_OR, e1, e2); break;
-    /* END T7 extensions */
     case OPR_EQ: codecomp(fs, OP_EQ, 1, e1, e2); break;
     case OPR_NE: codecomp(fs, OP_EQ, 0, e1, e2); break;
     case OPR_LT: codecomp(fs, OP_LT, 1, e1, e2); break;
@@ -860,14 +854,26 @@ static int luaK_code (FuncState *fs, Instruction i, int line) {
   luaM_growvector(fs->H, f->lineinfo, fs->pc, f->sizelineinfo, int,
                   MAX_INT, "code size overflow");
   f->lineinfo[fs->pc] = line;
+#if 0
+  OpCode o = GET_OPCODE(i);
+  if (getOpMode(o) == iABC)
+    printf("OP_%-14s  %d  %d  %d\n", getOpName(o),GETARG_A(i),GETARG_B(i),GETARG_C(i));
+  else if (getOpMode(o) == iABx)
+    printf("OP_%-14s  %d  %d\n", getOpName(o),GETARG_A(i),GETARG_Bx(i));
+  else
+    printf("OP_%-14s  %d  %d\n", getOpName(o),GETARG_A(i),GETARG_sBx(i));
+#endif
   return fs->pc++;
 }
-
+#define PRINT_ABC() printf("OP_%-14s  %d  %d  %d\n", getOpName(o), a,( b&0xff), c)
+#define PRINT_ABx() printf("OP_%-14s  %d  %d\n", getOpName(o), a, bc)
+#define PRINT_AsBx() printf("OP_%14s  %d  %d\n", getOpName(o), a, bc-MAXARG_sBx)
 
 int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
   lua_assert(getOpMode(o) == iABC);
   lua_assert(getBMode(o) != OpArgN || b == 0);
   lua_assert(getCMode(o) != OpArgN || c == 0);
+  PRINT_ABC();
   return luaK_code(fs, CREATE_ABC(o, a, b, c), fs->ls->lastline);
 }
 
@@ -875,6 +881,8 @@ int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
 int luaK_codeABx (FuncState *fs, OpCode o, int a, unsigned int bc) {
   lua_assert(getOpMode(o) == iABx || getOpMode(o) == iAsBx);
   lua_assert(getCMode(o) == OpArgN);
+  if (getOpMode(o) == iAsBx) PRINT_AsBx();
+  else PRINT_ABx();
   return luaK_code(fs, CREATE_ABx(o, a, bc), fs->ls->lastline);
 }
 
@@ -891,6 +899,7 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
       const char *msg=
       "Attempt to initialize a table with too many array literals. "
       "Please split into multiple statements.";
+      luaG_runerror(fs->H, msg);
       /* TODO: call the correct error function */
     }
     luaK_codeABC(fs, OP_SETLIST, base, b, 0);

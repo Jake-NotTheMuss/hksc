@@ -8,8 +8,6 @@
 #ifndef lzio_h
 #define lzio_h
 
-#include "hksc_begin_code.h"
-
 #include "lua.h"
 
 #include "lmem.h"

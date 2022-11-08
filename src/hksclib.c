@@ -13,6 +13,7 @@
 
 #include "ldo.h"
 #include "lgc.h"
+#include "lobject.h"
 #include "lparser.h"
 #include "lstate.h"
 #include "lstring.h"
@@ -225,7 +226,7 @@ parser(hksc_State *H, ZIO *z, const char *filename)
   /*int c = luaZ_lookahead(z);*/
 
   Proto *f;
-  status = luaD_protectedparser(H, z, filename, &f);
+  status = luaD_protectedparser(H, z, luaO_pushfstring(H, "@%s", filename), &f);
   if (status) return status;
 
   /*printf("f: %p\n", f);*/

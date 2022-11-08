@@ -137,7 +137,7 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 #define NO_REG    MAXARG_A
 
 
-#define DEFCODE(name, m, t, a, b, c) OP_##name,
+#define DEFCODE(name,m,t,a,b,c,mr1,ur1,vr1) OP_##name,
 typedef enum {
 #include "lopcodes.def"
   OP_MAX
@@ -151,29 +151,47 @@ typedef enum {
 /*
 ** masks for instruction properties. The format is:
 ** bits 0-1: op mode
-** bits 2-3: C arg mode
-** bits 4-5: B arg mode
-** bit 6: instruction set register A
-** bit 7: operator is a test
+** bits 2-4: C arg mode
+** bits 5-7: B arg mode
+** bit 8: instruction uses register A
+** bit 9: operator is a test
+** bit 10: operator makes R1
+** bit 11-12: R1 mode
+** bit 13-19: R1 version
 */  
 
 enum OpArgMask {
   OpArgN,  /* argument is not used */
   OpArgU,  /* argument is used */
+  OpArgUK, /* ??? TODO: */
   OpArgR,  /* argument is a register or a jump offset */
-  OpArgK   /* argument is a constant or register/constant */
+  OpArgRK, /* argument is a register/constant */
+  OpArgK,  /* argument is a constant */
+  OpArgR1UseRegister
 };
 
-LUAI_DATA const lu_byte luaP_opmodes[NUM_OPCODES];
+/* R1 modes */
+enum OpR1Mode {
+  NR1, /* not an R1 instruction */
+  R1A,
+  R1B
+};
+
+
+LUAI_DATA const lu_int32 luaP_opmodes[NUM_OPCODES];
 
 #define getOpMode(m)  (cast(enum OpMode, luaP_opmodes[m] & 3))
-#define getBMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m] >> 4) & 3))
-#define getCMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m] >> 2) & 3))
-#define testAMode(m)  (luaP_opmodes[m] & (1 << 6))
-#define testTMode(m)  (luaP_opmodes[m] & (1 << 7))
+#define getBMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m] >> 5) & 7))
+#define getCMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m] >> 2) & 7))
+#define testAMode(m)  (luaP_opmodes[m] & (1 << 8))
+#define testTMode(m)  (luaP_opmodes[m] & (1 << 9))
+#define opMakesR1(m)  (luaP_opmodes[m] & (1 << 10))
+#define getR1Mode(m)  (cast(enum OpR1Mode, (luaP_opmodes[m] >> 11) & 3))
+#define getR1Version(m)  (cast(OpCode, (luaP_opmodes[m] >> 13) & 127))
 
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
+#define getOpName(m)  (luaP_opnames[m])
 
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50

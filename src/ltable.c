@@ -21,8 +21,6 @@
 #include <math.h>
 #include <string.h>
 
-#include "hksc_begin_code.h"
-
 #define ltable_c
 #define LUA_CORE
 

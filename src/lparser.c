@@ -7,8 +7,6 @@
 
 #include <string.h>
 
-#include "hksc_begin_code.h"
-
 #define lparser_c
 #define LUA_CORE
 
@@ -30,7 +28,7 @@
 #include <stdio.h>
 Proto *hksc_parser(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name)
 {
-  printf("hksc_parser: HELLO\n");
+  /*printf("hksc_parser: HELLO\n");*/
   return luaY_parser(H, z, buff, name);
 }
 #if 0
@@ -143,19 +141,24 @@ static TString *str_checkname (LexState *ls) {
 }
 
 
-static void init_exp (expdesc *e, expkind k, int i) {
+#define init_exp(e,k,i) init_typed_exp(e,k,i,LUA_TNONE)
+
+static void init_typed_exp (expdesc *e, expkind k, int i, int type) {
   e->f = e->t = NO_JUMP;
   e->k = k;
   e->u.s.info = i;
+  e->inferred_type = type;
 }
 
 
 static void codeliteral (LexState *ls, expdesc *e, lua_Literal l, int token) {
-  init_exp(e, VK, luaK_literalK(ls->fs, l, token));
+  int type = (token == TK_SHORT_LITERAL) ? LUA_TLIGHTUSERDATA : LUA_TUI64;
+  init_typed_exp(e, VK, luaK_literalK(ls->fs, l, token), type);
 }
 
+
 static void codestring (LexState *ls, expdesc *e, TString *s) {
-  init_exp(e, VK, luaK_stringK(ls->fs, s));
+  init_typed_exp(e, VK, luaK_stringK(ls->fs, s), LUA_TSTRING);
 }
 
 
@@ -177,12 +180,18 @@ static int registerlocalvar (LexState *ls, TString *varname) {
 }
 
 
+#define check_typed(ls) if ((ls)->t.token == ':') \
+  luaG_runerror((ls)->H, "Cannot use typed local variables when the virtual " \
+              "machine is built without structures")
+
+
 #define new_localvarliteral(ls,v,n) \
   new_localvar(ls, luaX_newstring(ls, "" v, (sizeof(v)/sizeof(char))-1), n)
 
 
 static void new_localvar (LexState *ls, TString *name, int n) {
   FuncState *fs = ls->fs;
+  check_typed(ls);
   luaY_checklimit(fs, fs->nactvar+n+1, LUAI_MAXVARS, "local variables");
   fs->actvar[fs->nactvar+n] = cast(unsigned short, registerlocalvar(ls, name));
 }
@@ -269,11 +278,12 @@ static int singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
 }
 
 
-static void singlevar (LexState *ls, expdesc *var) {
+static TString *singlevar (LexState *ls, expdesc *var) {
   TString *varname = str_checkname(ls);
   FuncState *fs = ls->fs;
   if (singlevaraux(fs, varname, var, 1) == VGLOBAL)
     var->u.s.info = luaK_stringK(fs, varname);  /* info points to global name */
+  return varname;
 }
 
 
@@ -340,17 +350,86 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
   while (oldsize < f->sizep) f->p[oldsize++] = NULL;
   f->p[fs->np++] = func->f;
   init_exp(v, VRELOCABLE, luaK_codeABx(fs, OP_CLOSURE, 0, fs->np-1));
+  /*if (func->f->nups > 0) printf("pushclosure: upvalues for '%s'\n", 
+      (func->f->name) ? getstr(func->f->name) : "<anonymous>");*/
   for (i=0; i<func->f->nups; i++) {
     OpCode o = (func->upvalues[i].k == VLOCAL) ? OP_MOVE : OP_GETUPVAL;
-    luaK_codeABC(fs, o, 0, func->upvalues[i].info, 0);
+    /*printf("  upvalues[%d]\n"
+    "    -->name: %s\n"
+    "    -->kind: %s\n", i, getstr(func->f->upvalues[i]),
+    (func->upvalues[i].k == VLOCAL) ? "LOCAL" : "UPVALUE");*/
+    int a = (func->upvalues[i].k == VLOCAL) ? 1 : 2;
+    luaK_codeABx(fs, OP_DATA, a, func->upvalues[i].info);
+    /*luaK_codeABC(fs, o, 0, func->upvalues[i].info, 0);*/
   }
+  /*if (func->f->nups > 0)printf("\n");*/
+}
+
+
+static void addnamepart (LexState *ls, TString *ts, int type) {
+  lua_assert(type != NAMEPART_NONE);
+  if (type == NAMEPART_NAME) /* regular name can only be first in the list */
+    lua_assert(ls->nplist.free == ls->nplist.first);
+  if (ls->nplist.free) { /* slot available? */
+    lua_assert(ls->nplist.curr == NULL ||
+                ls->nplist.curr->next == ls->nplist.free);
+    ls->nplist.curr = ls->nplist.free;
+    ls->nplist.curr->ts = ts;
+    ls->nplist.curr->type = type;
+    ls->nplist.free = ls->nplist.curr->next;
+  } else { /* need to allocate */
+    struct namepart *np = luaX_newnamepart(ls->H);
+    np->next = NULL;
+    np->ts = ts;
+    np->type = type;
+    if (ls->nplist.curr != NULL)
+      ls->nplist.curr->next = np;
+    ls->nplist.curr = np; /* set new current */
+    if (ls->nplist.first == NULL) /* empty list? */
+      ls->nplist.first = ls->nplist.curr; /* set first in chain */
+  }
+}
+#define MAX_FUNCNAME 512
+
+static TString *buildfuncname (LexState *ls) {
+  if (!ls->nplist.first) return NULL; /* anonymous function */
+  char buf[MAX_FUNCNAME];
+  size_t len = 0;
+  struct namepart *np = ls->nplist.first;
+  for (; np != NULL && np != ls->nplist.free; np = np->next) {
+    TString *ts = np->ts;
+    int type = np->type;
+    if (type == NAMEPART_FIELD)
+      buf[len++] = '.';
+    else if (type == NAMEPART_SELF)
+      buf[len++] = ':';
+    size_t l = ts->tsv.len;
+    if (l >= MAX_FUNCNAME - len)
+      l = MAX_FUNCNAME - len;
+    memcpy(buf+len,getstr(ts),l);
+    len+=l;
+  }
+  if (len >= MAX_FUNCNAME)
+    len = MAX_FUNCNAME - 1;
+  buf[len] = '\0';
+  ls->nplist.free = ls->nplist.first; /* discharge name parts */
+  ls->nplist.curr = NULL;
+  if (len != 0)
+    return luaS_newlstr(ls->H, buf, len);
+  else
+    return NULL;
 }
 
 
 static void open_func (LexState *ls, FuncState *fs) {
+  TString *name;
   hksc_State *H = ls->H;
   Proto *f = luaF_newproto(H);
   fs->f = f;
+  if (ls->fs == NULL) /* main chunk */
+    name = luaS_mainchunk;
+  else
+    name = buildfuncname(ls);
   fs->prev = ls->fs;  /* linked list of funcstates */
   fs->ls = ls;
   fs->H = H;
@@ -364,6 +443,8 @@ static void open_func (LexState *ls, FuncState *fs) {
   fs->nlocvars = 0;
   fs->nactvar = 0;
   fs->bl = NULL;
+  f->source = ls->source;
+  f->name = name;
   f->maxstacksize = 2;  /* registers 0/1 are always valid */
   fs->h = luaH_new(H, 0, 0);
 }
@@ -389,7 +470,6 @@ static void close_func (LexState *ls) {
   /*lua_assert(luaG_checkcode(f));*/
   lua_assert(fs->bl == NULL);
   ls->fs = fs->prev;
-  /*L->top -= 2;*/  /* remove table and prototype from the stack */
   /* last token read was anchored in defunct function; must reanchor it */
   if (fs) anchor_token(ls);
 }
@@ -398,7 +478,11 @@ static void close_func (LexState *ls) {
 Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   struct LexState lexstate;
   struct FuncState funcstate;
+  lua_assert(luaS_mainchunk != NULL);
   lexstate.buff = buff;
+  lexstate.nplist.first = NULL;
+  lexstate.nplist.free = NULL;
+  lexstate.nplist.curr = NULL;
   luaX_setinput(H, &lexstate, z, luaS_new(H, name));
   open_func(&lexstate, &funcstate);
   funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
@@ -406,6 +490,15 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   chunk(&lexstate);
   check(&lexstate, TK_EOS);
   close_func(&lexstate);
+  /* free name parts list */
+  {
+    struct namepart *np = lexstate.nplist.first;
+    while (np != NULL) {
+      struct namepart *next = np->next;
+      luaX_freenamepart(H, np);
+      np = next;
+    }
+  }
   lua_assert(funcstate.prev == NULL);
   lua_assert(funcstate.f->nups == 0);
   lua_assert(lexstate.fs == NULL);
@@ -419,13 +512,19 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
 /*============================================================*/
 
 
-static void field (LexState *ls, expdesc *v) {
+static void field (LexState *ls, expdesc *v, int nptype) {
   /* field -> ['.' | ':'] NAME */
   FuncState *fs = ls->fs;
+  TString *np;
   expdesc key;
   luaK_exp2anyreg(fs, v);
   luaX_next(ls);  /* skip the dot or colon */
+  np = ls->t.seminfo.ts; /* get the name now, it gets skipped in checkname() */
   checkname(ls, &key);
+  if (nptype != NAMEPART_NONE) {
+    lua_assert(nptype == NAMEPART_FIELD || nptype == NAMEPART_SELF);
+    addnamepart(ls, np, nptype); /* add the name part to the chain */
+  }
   luaK_indexed(fs, v, &key);
 }
 
@@ -518,7 +617,7 @@ static void constructor (LexState *ls, expdesc *t) {
   struct ConsControl cc;
   cc.na = cc.nh = cc.tostore = 0;
   cc.t = t;
-  init_exp(t, VRELOCABLE, pc);
+  init_typed_exp(t, VRELOCABLE, pc, LUA_TTABLE);
   init_exp(&cc.v, VVOID, 0);  /* no value (yet) */
   luaK_exp2nextreg(ls->fs, t);  /* fix it at stack top (for gc) */
   checknext(ls, '{');
@@ -622,6 +721,7 @@ static int explist1 (LexState *ls, expdesc *v) {
 
 
 static void funcargs (LexState *ls, expdesc *f) {
+  OpCode o; /* opcode to use in the call instruction */
   FuncState *fs = ls->fs;
   expdesc args;
   int base, nparams;
@@ -663,7 +763,9 @@ static void funcargs (LexState *ls, expdesc *f) {
       luaK_exp2nextreg(fs, &args);  /* close last argument */
     nparams = fs->freereg - (base+1);
   }
-  init_exp(f, VCALL, luaK_codeABC(fs, OP_CALL, base, nparams+1, 2));
+  o = (f->inferred_type == LUA_TIFUNCTION) ? OP_CALL_I :
+      (f->inferred_type == LUA_TCFUNCTION) ? OP_CALL_C : OP_CALL;
+  init_exp(f, VCALL, luaK_codeABC(fs, o, base, nparams+1, 2));
   luaK_fixline(fs, line);
   fs->freereg = base+1;  /* call remove function and arguments and leaves
                             (unless changed) one result */
@@ -710,7 +812,7 @@ static void primaryexp (LexState *ls, expdesc *v) {
   for (;;) {
     switch (ls->t.token) {
       case '.': {  /* field */
-        field(ls, v);
+        field(ls, v, NAMEPART_NONE);
         break;
       }
       case '[': {  /* `[' exp1 `]' */
@@ -744,7 +846,7 @@ static void simpleexp (LexState *ls, expdesc *v) {
                   constructor | FUNCTION body | primaryexp */
   switch (ls->t.token) {
     case TK_NUMBER: {
-      init_exp(v, VKNUM, 0);
+      init_typed_exp(v, VKNUM, 0, LUA_TNUMBER);
       v->u.nval = ls->t.seminfo.r;
       break;
     }
@@ -758,15 +860,15 @@ static void simpleexp (LexState *ls, expdesc *v) {
       break;
     }
     case TK_NIL: {
-      init_exp(v, VNIL, 0);
+      init_typed_exp(v, VNIL, 0, LUA_TNIL);
       break;
     }
     case TK_TRUE: {
-      init_exp(v, VTRUE, 0);
+      init_typed_exp(v, VTRUE, 0, LUA_TBOOLEAN);
       break;
     }
     case TK_FALSE: {
-      init_exp(v, VFALSE, 0);
+      init_typed_exp(v, VFALSE, 0, LUA_TBOOLEAN);
       break;
     }
     case TK_DOTS: {  /* vararg */
@@ -814,12 +916,10 @@ static BinOpr getbinopr (int op) {
     case '%': return OPR_MOD;
     case '^': return OPR_POW;
     case TK_CONCAT: return OPR_CONCAT;
-    /* T7 extensions */
     case TK_LEFT_SHIFT: return OPR_LEFT_SHIFT;
     case TK_RIGHT_SHIFT: return OPR_RIGHT_SHIFT;
     case '&': return OPR_BIT_AND;
     case '|': return OPR_BIT_OR;
-    /* END T7 extensions */
     case TK_NE: return OPR_NE;
     case TK_EQ: return OPR_EQ;
     case '<': return OPR_LT;
@@ -1192,7 +1292,9 @@ static void ifstat (LexState *ls, int line) {
 static void localfunc (LexState *ls) {
   expdesc v, b;
   FuncState *fs = ls->fs;
-  new_localvar(ls, str_checkname(ls), 0);
+  TString *name = str_checkname(ls);
+  new_localvar(ls, name, 0);
+  addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
   init_exp(&v, VLOCAL, fs->freereg);
   luaK_reserveregs(fs, 1);
   adjustlocalvars(ls, 1);
@@ -1225,12 +1327,13 @@ static void localstat (LexState *ls) {
 static int funcname (LexState *ls, expdesc *v) {
   /* funcname -> NAME {field} [`:' NAME] */
   int needself = 0;
-  singlevar(ls, v);
+  TString *name = singlevar(ls, v);
+  addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
   while (ls->t.token == '.')
-    field(ls, v);
+    field(ls, v, NAMEPART_FIELD);
   if (ls->t.token == ':') {
     needself = 1;
-    field(ls, v);
+    field(ls, v, NAMEPART_SELF);
   }
   return needself;
 }

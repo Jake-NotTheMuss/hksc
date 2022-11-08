@@ -47,6 +47,8 @@ static void f_luaopen (hksc_State *H, void *ud) {
   luaS_resize(H, MINSTRTABSIZE);  /* initial size of string table */
   luaX_init(H);
   luaS_fix(luaS_newliteral(H, MEMERRMSG));
+  luaS_mainchunk = luaS_newliteral(H, MAINCHUNKNAME);
+  luaS_fix(luaS_mainchunk);
   /*g->GCthreshold = 4*g->totalbytes;*/
 }
 
@@ -70,6 +72,7 @@ static void close_state (hksc_State *H) {
   lua_assert(g->totalbytes == sizeof(LG));
   (*g->frealloc)(g->ud, fromstate(H), state_size(LG), 0);
 }
+
 
 static void
 hksc_default_settings(hksc_Settings *settings)
@@ -118,10 +121,10 @@ void luaE_freethread (hksc_State *H, hksc_State *H1) {
 
 lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf) {
   lua_CFunction old;
-  /*lua_lock(H);*/
+  lua_lock(H);
   old = G(H)->panic;
   G(H)->panic = panicf;
-  /*lua_unlock(H);*/
+  lua_unlock(H);
   return old;
 }
 
@@ -176,7 +179,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
 void hksc_close (hksc_State *H) {
   H = G(H)->mainthread;  /* only the main thread can be closed */
   /*luai_userstateclose(H);*/
-  /*lua_lock(H);*/
+  lua_lock(H);
   close_state(H);
 }
 

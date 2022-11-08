@@ -10,8 +10,6 @@
 
 #include "lstate.h"
 
-typedef struct hksc_State hksc_State;
-
 
 LUAI_FUNC hksc_State *hksI_newstate(void);
 LUAI_FUNC int hksc_parsefile(hksc_State *H, const char *filename);

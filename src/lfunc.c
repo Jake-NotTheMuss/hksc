@@ -42,6 +42,7 @@ Proto *luaF_newproto (hksc_State *H) {
   f->linedefined = 0;
   f->lastlinedefined = 0;
   f->source = NULL;
+  f->name = NULL;
   return f;
 }
 

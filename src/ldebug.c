@@ -29,7 +29,7 @@
 void luaG_runerror (hksc_State *H, const char *fmt, ...) {
   va_list argp;
   va_start(argp, fmt);
-  hksc_setvfmsg(H, fmt, argp);
+  hksc_setmsg(H, luaO_pushvfstring(H, fmt, argp));
   va_end(argp);
   luaD_throw(H, LUA_ERRRUN);
 }

@@ -31,7 +31,7 @@ typedef enum BinOpr {
 /* T7 extensions */
   OPR_LEFT_SHIFT, OPR_RIGHT_SHIFT,
   OPR_BIT_AND, OPR_BIT_OR,
-/* END T7 extensions */
+/* end of T7 extensions */
   OPR_NE, OPR_EQ,
   OPR_LT, OPR_LE, OPR_GT, OPR_GE,
   OPR_AND, OPR_OR,
