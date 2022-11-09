@@ -8,8 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "hksc_begin_code.h"
-
 #define lundump_c
 #define LUA_CORE
 
@@ -182,11 +180,11 @@ static Proto* LoadFunction(LoadState* S, TString* p)
 
 static void LoadHeader(LoadState* S)
 {
- char h[LUAC_HEADERSIZE];
+/* char h[LUAC_HEADERSIZE];
  char s[LUAC_HEADERSIZE];
  luaU_header(h);
  LoadBlock(S,s,LUAC_HEADERSIZE);
- IF (memcmp(h,s,LUAC_HEADERSIZE)!=0, "bad header");
+ IF (memcmp(h,s,LUAC_HEADERSIZE)!=0, "bad header");*/
 }
 
 /*
@@ -210,57 +208,19 @@ Proto* luaU_undump (hksc_State *H, ZIO* Z, Mbuffer* buff, const char* name)
 /*
 * make header
 */
-void luaU_header2 (char* h)
+void luaU_header (char* h, int endianswap)
 {
  int x=1;
  memcpy(h,LUA_SIGNATURE,sizeof(LUA_SIGNATURE)-1);
  h+=sizeof(LUA_SIGNATURE)-1;
  *h++=(char)LUAC_VERSION;
  *h++=(char)LUAC_FORMAT;
- *h++=(char)*(char*)&x;        /* endianness */
- *h++=(char)sizeof(int);
- *h++=(char)sizeof(size_t);
- *h++=(char)sizeof(Instruction);
- *h++=(char)sizeof(lua_Number);
+ *h++=(char)endianswap;        /* endianness */
+ *h++=(char)HKSC_SIZE_INT;
+ *h++=(char)HKSC_SIZE_SIZE;
+ *h++=(char)HKSC_SIZE_INSTR;
+ *h++=(char)HKSC_SIZE_NUMBER;
  *h++=(char)(((lua_Number)0.5)==0);    /* is lua_Number integral? */
-}
-
-const char *const luaH_typenames[13] = {
-  "TNIL", "TBOOLEAN", "TLIGHTUSERDATA", "TNUMBER",
-  "TSTRING", "TTABLE", "TFUNCTION", "TUSERDATA", "TTHREAD",
-  "TIFUNCTION", "TCFUNCTION", "TUI64", "TSTRUCT"
-};
-
-void luaU_header (char *h)
-{
-  char *h1 = h;
-  int x = 1;
-  memcpy(h,LUA_SIGNATURE,sizeof(LUA_SIGNATURE)-1);
-  h+=sizeof(LUA_SIGNATURE)-1;
-  *h++=(char)LUAC_VERSION;
-  *h++=(char)0xe;
-  *h++=(char)*(char*)&x;
-  *h++=(char)4;
-  *h++=(char)8;
-  *h++=(char)4;
-  *h++=(char)4;
-  *h++=(char)(((lua_Number)0.5)==0);    /* is lua_Number integral? */
-  *h++=(char)0;
-
-  /* constants */
-  h = ALIGN(h,4);
-  *(int *)h = 0xd;
-  h += 4;
-
-  int i = 0;
-  for (i = 0; i < 13; i++)
-  {
-    const char *const type = luaH_typenames[i];
-    size_t typesz = strlen(type) + 1;
-
-    *(int *)h = i; h += 4;
-    *(int *)h = typesz; h += 4;
-    strcpy(h, type);
-    h += typesz;
-  }
+  *h++=(char)0; /* ??? "game byte"? */
+  *h++=(char)0; /* TODO: true if in shared state (ON or SECURE) */
 }

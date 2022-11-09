@@ -6,15 +6,16 @@
 
 #ifndef lstate_h
 #define lstate_h
-#include "hksc_begin_code.h"
 
 #include "lua.h"
 
 #include "lobject.h"
-
 #include "lzio.h"
 
 
+
+
+struct lua_longjmp;  /* defined in ldo.c */
 
 
 
@@ -27,29 +28,19 @@ typedef struct stringtable {
 
 
 
-#define curr_func(H)	(clvalue(H->ci->func))
-#define ci_func(ci)	(clvalue((ci)->func))
-#define f_isLua(ci)	(!ci_func(ci)->c.isC)
-#define isLua(ci)	(ttisfunction((ci)->func) && f_isLua(ci))
-
 /*
 ** int literal options
-**
-** LUD  : Enable only 32-bit int literals, stored as type TLIGHTUSERDATA
-** UI64 : Enable only 60-bit int literals, stored as type TUI64
 */
-#define INT_LITERALS_LUD    (1 << 0)
-#define INT_LITERALS_UI64   (1 << 1)
-
-typedef int (*lua_LineMap)(const char *, int);
+#define INT_LITERALS_NONE   0 /* disable all literals */
+#define INT_LITERALS_LUD    1 /* enable LUD literal constants */
+#define INT_LITERALS_32BIT  INT_LITERALS_LUD
+#define INT_LITERALS_UI64   2 /* enable UI64 literal constants */
+#define INT_LITERALS_64BIT  INT_LITERALS_UI64
+#define INT_LITERALS_ALL    3 /* enable all literals */
 
 
 /*
 ** bytecode sharing modes
-**
-** OFF  :
-** ON   :
-** SECURE :
 */
 #define HKSC_SHARING_MODE_OFF  0
 #define HKSC_SHARING_MODE_ON   1
@@ -58,10 +49,6 @@ typedef int (*lua_LineMap)(const char *, int);
 
 /*
 ** bytecode sharing formats
-**
-** DEFAULT  :
-** INPLACE  :
-** REFERENCED :
 */
 #define HKSC_BYTECODE_DEFAULT  0
 #define HKSC_BYTECODE_INPLACE  1
@@ -69,14 +56,12 @@ typedef int (*lua_LineMap)(const char *, int);
 
 /*
 ** bytecode endianness
-**
-** DEFAULT  : Dump/undump code as system endianness
-** BIG      : Dump/undump code as big endian
-** LITTLE   : Dump/undump code as little endian
 */
 #define HKSC_DEFAULT_ENDIAN   0
 #define HKSC_BIG_ENDIAN       1
 #define HKSC_LITTLE_ENDIAN    2
+
+/*typedef int (*lua_LineMap)(const char *, int);*/
 
 /*
 ** global settings shared by all states
@@ -91,6 +76,7 @@ typedef struct hksc_Settings
   /* compiler-specific settings */
   lu_byte emit_struct; /* whether `hstructure' and `hmake' should be emitted */
   lu_byte literals; /* int literal setting */
+  lu_byte strip; /* bytecode stripping level */
   const char **strip_names;
   /*lua_LineMap debug_map;*/
 
@@ -99,10 +85,12 @@ typedef struct hksc_Settings
   lu_byte match_line_info; /* emit statements according to the line mapping */
 } hksc_Settings;
 
-/* hksc modes - either compiling source or decompiling bytecode */
-#define HKSC_MODE_DEFAULT   0
-#define HKSC_MODE_COMPILE   1
-#define HKSC_MODE_DECOMPILE 2
+/*
+** hksc modes
+*/
+#define HKSC_MODE_DEFAULT   0 /* infer from content of first file */
+#define HKSC_MODE_COMPILE   1 /* compiling source */
+#define HKSC_MODE_DECOMPILE 2 /* decompiling bytecode */
 
 /*
 ** `global state', shared by all threads of this state
@@ -137,6 +125,7 @@ struct hksc_State {
   CommonHeader;
   lu_byte status;
   global_State *h_G;
+  Proto *last_result;
   unsigned short nCcalls;  /* number of nested C calls */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
@@ -144,7 +133,8 @@ struct hksc_State {
 
 
 #define G(H)	((H)->h_G)
-#define Settings(H) ((H)->h_G->settings)
+#define Settings(H) (G(H)->settings)
+
 
 /* macros for getting/setting the error message of an hksc_State */
 #define hksc_luaE_geterrormsg(H) ((H)->errormsg)
@@ -152,22 +142,28 @@ struct hksc_State {
 #define luaE_geterrormsg(H) hksc_luaE_geterrormsg(H)
 #define luaE_seterrormsg(H,s) hksc_luaE_seterrormsg(H,s)
 
-#define hksc_luaE_mode(H) ((H)->mode)
+#define hksc_luaE_mode(H) (G(H)->mode)
 #define luaE_mode(H) hksc_luaE_mode(H)
 
 /* macros for setting compiler options */
-#define hksc_setendian(H,v) (Settings(H).endian = (v))
-#define hksc_setsharingfmt(H,v) (Settings(H).sharing_format = (v))
-#define hksc_setsharingmode(H,v) (Settings(H).sharing_mode = (v))
-#define hksc_setemitstruct(H,v) (Settings(H).emit_struct = (v))
-#define hksc_setliterals(H,v) (Settings(H).literals = (v))
-#define hksc_setignoredebug(H,v) (Settings(H).ignore_debug = (v))
-#define hksc_setmatchlineinfo(H,v) (Settings(H).match_line_info = (v))
+#define hksc_setEndian(H,v) (Settings(H).endian = (v))
+#define hksc_setSharingFmt(H,v) (Settings(H).sharing_format = (v))
+#define hksc_setSharingMode(H,v) (Settings(H).sharing_mode = (v))
+#define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
+#define hksc_setLiterals(H,v) (Settings(H).literals = (v))
+#define hksc_setStrip(H,v) (Settings(H).strip = (v))
+#define hksc_setIgnoreDebug(H,v) (Settings(H).ignore_debug = (v))
+#define hksc_setMatchLineInfo(H,v) (Settings(H).match_line_info = (v))
 
-#define hksc_enableliterallud(H) (Settings(H).literals = INT_LITERALS_LUD)
-#define hksc_enableliteralui64(H) (Settings(H).literals = INT_LITERALS_UI64)
-#define hksc_enableliterals(H) \
-  (Settings(H).literals = INT_LITERALS_LUD | INT_LITERALS_UI64)
+#define hksc_getEndian(H) (Settings(H).endian)
+#define hksc_getSharingFmt(H) (Settings(H).sharing_format)
+#define hksc_getSharingMode(H) (Settings(H).sharing_mode)
+#define hksc_getEmitStruct(H) (Settings(H).emit_struct)
+#define hksc_getLiterals(H) (Settings(H).literals)
+#define hksc_getStrip(H) (Settings(H).strip)
+#define hksc_getIgnoreDebug(H) (Settings(H).ignore_debug)
+#define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
+
 
 #define hksc_ludenabled(H) (Settings(H).literals & INT_LITERALS_LUD)
 #define hksc_ui64enabled(H) (Settings(H).literals & INT_LITERALS_UI64)
@@ -212,6 +208,7 @@ LUAI_FUNC lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf);
 
 LUAI_FUNC hksc_State *hksc_newstate (lua_Alloc f, void *ud);
 LUAI_FUNC void hksc_close (hksc_State *H);
+LUAI_FUNC void luaE_clearerr (hksc_State *H);
 
 #endif
 

@@ -95,6 +95,7 @@ LUAI_FUNC void luaC_freeall (hksc_State *H);
 LUAI_FUNC void luaC_step (hksc_State *H);
 LUAI_FUNC void luaC_link (hksc_State *H, GCObject *o, lu_byte tt);
 LUAI_FUNC void luaC_newcycle (hksc_State *H);
+LUAI_FUNC void luaC_printstrings (hksc_State *H);
 
 
 #endif

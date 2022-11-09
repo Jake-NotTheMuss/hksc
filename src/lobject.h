@@ -98,6 +98,8 @@ typedef struct lua_TValue {
 #define gcvalue(o)  check_exp(iscollectable(o), (o)->value.gc)
 #define pvalue(o)  check_exp(ttislightuserdata(o), (o)->value.p)
 #define nvalue(o)  check_exp(ttisnumber(o), (o)->value.n)
+#define hivalue(o)  check_exp(ttislightuserdata(o), (o)->value.l)
+#define hlvalue(o)  check_exp(ttisui64(o), (o)->value.l)
 #define rawtsvalue(o)  check_exp(ttisstring(o), &(o)->value.gc->ts)
 #define tsvalue(o)  (&rawtsvalue(o)->tsv)
 #define rawuvalue(o)  check_exp(ttisuserdata(o), &(o)->value.gc->u)
@@ -213,8 +215,12 @@ typedef union TString {
   } tsv;
 } TString;
 
+/* TODO: */
+#define LUA_MAXSTRLEN ((size_t)1<<((sizeof(size_t)*CHAR_BIT)-2))
 
 #define getstr(ts)  cast(const char *, (ts) + 1)
+#define getstrlen(ts)  cast(size_t, (ts)->tsv.len & (LUA_MAXSTRLEN-1))
+#define setstrlen(ts,l)  ((ts)->tsv.len = ((l) & (LUA_MAXSTRLEN-1)))
 #define svalue(o)       getstr(tsvalue(o))
 
 
@@ -245,6 +251,7 @@ typedef struct Proto {
   TString **upvalues;  /* upvalue names */
   TString  *source;
   TString  *name;
+  lu_int32 hash;
   int sizeupvalues;
   int sizek;  /* size of `k' */
   int sizecode;

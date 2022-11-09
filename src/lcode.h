@@ -7,8 +7,6 @@
 #ifndef lcode_h
 #define lcode_h
 
-#include "hksc_begin_code.h"
-
 #include "llex.h"
 #include "lobject.h"
 #include "lopcodes.h"

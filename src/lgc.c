@@ -30,14 +30,13 @@
 #define setthreshold(g)  (g->GCthreshold = (g->estimate/100) * g->gcpause)
 
 
-static void freestring (hksc_State *H, GCObject *o)
-{
+static void freestring (hksc_State *H, GCObject *o) {
   lua_assert(o->gch.tt == LUA_TSTRING);
   G(H)->strt.nuse--;
   luaM_freemem(H, o, sizestring(gco2ts(o)));
 }
 
-#include <stdio.h>
+
 static void freeobj (hksc_State *H, GCObject *o) {
   switch (o->gch.tt) {
     case LUA_TPROTO: luaF_freeproto(H, gco2p(o)); break;
@@ -47,7 +46,7 @@ static void freeobj (hksc_State *H, GCObject *o) {
       /*luaE_freethread(H, gco2th(o));*/
       break;
     }
-    default: printf("type: %d\n", (int)o->gch.tt); lua_assert(0);
+    default: lua_assert(0);
   }
 }
 
@@ -189,5 +188,10 @@ void luaC_link (hksc_State *H, GCObject *o, lu_byte tt) {
   g->rootgc = o;
   o->gch.marked = bitmask(TEMPBIT);
   o->gch.tt = tt;
+}
+
+
+void luaC_printstrings (hksc_State *H) {
+  
 }
 

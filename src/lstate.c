@@ -59,6 +59,7 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->nCcalls = 0;
   H->status = 0;
   H->errormsg = NULL;
+  H->last_result = NULL;
 }
 
 
@@ -181,5 +182,11 @@ void hksc_close (hksc_State *H) {
   /*luai_userstateclose(H);*/
   lua_lock(H);
   close_state(H);
+}
+
+
+void luaE_clearerr (hksc_State *H) {
+  H->status = 0;
+  H->errormsg = NULL;
 }
 

@@ -106,3 +106,16 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
   return newlstr(H, str, l, h);  /* not found */
 }
 
+lu_int32 luaS_dbhashlstr (hksc_State *H, const char *str, size_t l) {
+  lu_int32 hash = 5381;
+  size_t i = 0;
+  UNUSED(H);
+  while (i < l) {
+    hash = hash * 33 + str[i];
+    /* NOTE/TODO: T6 and early versions of T7 incremented i by 2 each loop.
+       Current T7 increments by 1, except the PS3 and XBOX360 versions */
+    i+=1;
+  }
+  return hash;
+}
+

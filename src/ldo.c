@@ -49,7 +49,7 @@ struct lua_longjmp {
   volatile int status;  /* error code */
 };
 
-void hksc_luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp)
+void luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp)
 {
   char buf[512];
   vsnprintf(buf, sizeof(buf), fmt, argp);
@@ -59,15 +59,15 @@ void hksc_luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp)
 }
 
 
-void hksc_luaD_setfmsg (hksc_State *H, const char *fmt, ...) {
+void luaD_setfmsg (hksc_State *H, const char *fmt, ...) {
   va_list argp;
   va_start(argp, fmt);
-  hksc_luaD_setvfmsg(H, fmt, argp);
+  luaD_setvfmsg(H, fmt, argp);
   va_end(argp);
 }
 
 
-void hksc_luaD_seterrorobj (hksc_State *H, int errcode) {
+void luaD_seterrorobj (hksc_State *H, int errcode) {
   switch (errcode) {
     case LUA_ERRMEM: {
       luaE_seterrormsg(H, getstr(luaS_newliteral(H, MEMERRMSG)));
@@ -86,7 +86,7 @@ void hksc_luaD_seterrorobj (hksc_State *H, int errcode) {
   }
 }
 
-void hksc_luaD_throw (hksc_State *H, int errcode) {
+void luaD_throw (hksc_State *H, int errcode) {
   if (H->errorJmp) {
     H->errorJmp->status = errcode;
     LUAI_THROW(H, H->errorJmp);
@@ -101,7 +101,7 @@ void hksc_luaD_throw (hksc_State *H, int errcode) {
   }
 }
 
-int hksc_luaD_rawrunprotected (hksc_State *H, Pfunc f, void *ud) {
+int luaD_rawrunprotected (hksc_State *H, Pfunc f, void *ud) {
   struct lua_longjmp lj;
   lj.status = 0;
   lj.previous = H->errorJmp;  /* chain new error handler */
@@ -114,7 +114,7 @@ int hksc_luaD_rawrunprotected (hksc_State *H, Pfunc f, void *ud) {
 }
 
 
-int hksc_luaD_pcall (hksc_State *H, Pfunc func, void *u) {
+int luaD_pcall (hksc_State *H, Pfunc func, void *u) {
   int status;
   unsigned short oldnCcalls = H->nCcalls;
   /*ptrdiff_t old_errfunc = H->errfunc;*/
@@ -133,8 +133,6 @@ struct SParser {  /* data to `f_parser' */
   ZIO *z;
   Mbuffer buff;  /* buffer to be used by the scanner */
   const char *name;
-  Proto *result; /* return value of the parser, stored here because
-               there is no Lua stack */
 };
 
 static void f_parser (hksc_State *H, void *ud) {
@@ -142,31 +140,23 @@ static void f_parser (hksc_State *H, void *ud) {
   Proto *tf;
   Closure *cl;
   struct SParser *p = cast(struct SParser *, ud);
-  tf = hksc_parser(H, p->z, &p->buff, p->name);
-  p->result = tf;
-#if 0
   int c = luaZ_lookahead(p->z);
+#if 0
   tf = ((c == LUA_SIGNATURE[0]) ? luaU_undump : luaY_parser)(H, p->z,
                                                              &p->buff, p->name);
-  cl = luaF_newLclosure(H, tf->nups, hvalue(gt(H)));
-  cl->l.p = tf;
-  for (i = 0; i < tf->nups; i++)  /* initialize eventual upvalues */
-    cl->l.upvals[i] = luaF_newupval(H);
-  setclvalue(H, H->top, cl);
-  incr_top(H);
 #endif
+  tf = luaY_parser(H, p->z, &p->buff, p->name);
+  lua_assert(H->last_result == NULL);
+  H->last_result = tf;
 }
 
-int hksc_luaD_protectedparser (hksc_State *H, ZIO *z, const char *name,
-                               Proto **pf) {
+int luaD_protectedparser (hksc_State *H, ZIO *z, const char *name) {
   struct SParser p;
   int status;
   p.z = z; p.name = name;
   luaZ_initbuffer(H, &p.buff);
   status = luaD_pcall(H, f_parser, &p);
   luaZ_freebuffer(H, &p.buff);
-  lua_assert(pf != NULL);
-  *pf = p.result;
   return (status);
 }
 

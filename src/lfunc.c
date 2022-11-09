@@ -17,6 +17,7 @@
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
+#include "lstring.h"
 
 
 
@@ -43,6 +44,7 @@ Proto *luaF_newproto (hksc_State *H) {
   f->lastlinedefined = 0;
   f->source = NULL;
   f->name = NULL;
+  f->hash = 0;
   return f;
 }
 
@@ -55,6 +57,21 @@ void luaF_freeproto (hksc_State *H, Proto *f) {
   luaM_freearray(H, f->locvars, f->sizelocvars, struct LocVar);
   luaM_freearray(H, f->upvalues, f->sizeupvalues, TString *);
   luaM_free(H, f);
+}
+
+
+void luaF_makehash (hksc_State *H, Proto *f) {
+  char *str;
+  size_t size = f->source->tsv.len;
+  lua_assert(size != 0);
+  if (f->name)
+    size += f->name->tsv.len;
+  str = luaM_newvector(H, size, char);
+  memcpy(str, getstr(f->source), f->source->tsv.len);
+  if (f->name)
+    memcpy(str+f->source->tsv.len, getstr(f->name), f->name->tsv.len);
+  f->hash = luaS_dbhashlstr(H,str,size);
+  luaM_freearray(H, str, size, char);
 }
 
 

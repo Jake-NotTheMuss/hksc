@@ -23,6 +23,10 @@
 
 /* default extension of pre-compiled Lua files */
 #define LUAC_EXT ".luac"
+/* default extension of source Lua files */
+#define LUA_EXT  ".lua"
+/* default extension of decompiled Lua files */
+#define LUADEC_EXT  ".dec.lua"
 
 /* mark for precompiled code (`<esc>Lua') */
 #define	LUA_SIGNATURE	"\033Lua"
