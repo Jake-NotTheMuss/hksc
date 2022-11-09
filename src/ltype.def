@@ -3,8 +3,7 @@
 ** ltype.def
 ** Define all Lua types here
 ** Before including this file, define the macro DEFTYPE
-** When adding `#define' directives inside this file, use an `#ifndef' guard
-**   to allow for multiple inclusions of this file
+** Keep in sync with lua.h
 ** See Copyright Notice in lua.h
 */
 

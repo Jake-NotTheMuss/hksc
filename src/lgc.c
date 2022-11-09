@@ -136,7 +136,7 @@ static void markstrings(hksc_State *H)
 void luaC_newcycle (hksc_State *H)
 {
   global_State *g = G(H);
-  g->gcstate = GCSpropagate;
+  g->gcstate = GCSmarking;
   markstrings(H); /* mark non-fixed strings */
   g->gcstate = GCSsweep;
   sweepwholelist(H, &g->rootgc); /* free all temporary objects */

@@ -38,7 +38,7 @@
 ** Possible states of the Garbage Collector
 */
 #define GCSpause        0 /* inactive */
-#define GCSpropagate    1 /* marking strings */
+#define GCSmarking    1 /* marking strings */
 #define GCSsweepstring  2 /* sweeping string lists */
 #define GCSsweep        3 /* sweeping temp list */
 

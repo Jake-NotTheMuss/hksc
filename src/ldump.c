@@ -26,7 +26,7 @@
 typedef struct {
   hksc_State *H;
   lua_Writer writer;
-  void* data;
+  void *data;
   size_t pos;
   int strip;
   int status;
@@ -36,7 +36,7 @@ typedef struct {
 #define DumpMem(b,n,size,D)	DumpBlock(b,(n)*(size),D)
 #define DumpVar(x,D)	 	DumpMem(&x,1,sizeof(x),D)
 
-static void DumpBlock(const void* b, size_t size, DumpState* D)
+static void DumpBlock(const void *b, size_t size, DumpState *D)
 {
   if (D->status==0)
   {
@@ -45,13 +45,13 @@ static void DumpBlock(const void* b, size_t size, DumpState* D)
   }
 }
 
-static void DumpChar(int y, DumpState* D)
+static void DumpChar(int y, DumpState *D)
 {
   char x=(char)y;
   DumpVar(x,D);
 }
 
-static void DumpInt(int x, DumpState* D)
+static void DumpInt(int x, DumpState *D)
 {
   DumpVar(x,D);
 }
@@ -61,18 +61,18 @@ static void DumpSize(size_t x, DumpState *D)
   DumpVar(x, D);
 }
 
-static void DumpNumber(lua_Number x, DumpState* D)
+static void DumpNumber(lua_Number x, DumpState *D)
 {
   DumpVar(x,D);
 }
 
-static void DumpVector(const void* b, int n, size_t size, DumpState* D)
+static void DumpVector(const void *b, int n, size_t size, DumpState *D)
 {
   DumpInt(n,D);
   DumpMem(b,n,size,D);
 }
 
-static void DumpString(const TString* s, DumpState* D)
+static void DumpString(const TString *s, DumpState *D)
 {
   if (s==NULL || getstr(s)==NULL)
   {
@@ -94,7 +94,7 @@ static void DumpUI64(const lua_Literal x, DumpState *D)
 
 /*#define DumpCode(f,D)	 DumpVector(f->code,f->sizecode,sizeof(Instruction),D)*/
 
-static void DumpFunction(const Proto* f, const TString* p, DumpState* D);
+static void DumpFunction(const Proto *f, const TString *p, DumpState *D);
 
 static void DumpCode(const Proto *f, DumpState *D)
 {
@@ -113,13 +113,13 @@ static void DumpCode(const Proto *f, DumpState *D)
   ;
 }
 
-static void DumpConstants(const Proto* f, DumpState* D)
+static void DumpConstants(const Proto *f, DumpState *D)
 {
   int i,n=f->sizek;
   DumpInt(n,D); /* number of constants */
   for (i=0; i<n; i++)
   {
-    const TValue* o=&f->k[i];
+    const TValue *o=&f->k[i];
     DumpChar(ttype(o),D);
     switch (ttype(o))
     {
@@ -153,7 +153,7 @@ static void DumpConstants(const Proto* f, DumpState* D)
   }
 }
 
-static void DumpDebug(const Proto* f, const TString *p, DumpState* D)
+static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
   if (D->strip == BYTECODE_STRIPPING_ALL) {
@@ -206,7 +206,7 @@ static void DumpDebug(const Proto* f, const TString *p, DumpState* D)
 }
 
 
-static void DumpFunction(const Proto* f, const TString* p, DumpState* D)
+static void DumpFunction(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
   if (needsfuncinfo(D)) {
@@ -224,7 +224,7 @@ static void DumpFunction(const Proto* f, const TString* p, DumpState* D)
   for (i=0; i<n; i++) DumpFunction(f->p[i],f->source,D);
 }
 
-static void DumpHeader(DumpState* D)
+static void DumpHeader(DumpState *D)
 {
   if (needsfuncinfo(D)) {
     char h[LUAC_HEADERSIZE];
@@ -232,7 +232,7 @@ static void DumpHeader(DumpState* D)
     DumpBlock(h,LUAC_HEADERSIZE,D);
     DumpInt(LUAC_NUMTYPES,D); /* number of types */
 #define DEFTYPE(t) \
-    DumpInt(LUA_##t,D); /* type index */ \
+    DumpInt(LUA_##t,D); /* type id */ \
     DumpInt((int)sizeof(#t),D); /* size of type name */ \
     DumpMem(#t,sizeof(#t),sizeof(char),D); /* type name */
 #include "ltype.def"
@@ -243,7 +243,7 @@ static void DumpHeader(DumpState* D)
 /*
 ** dump Lua function as precompiled chunk
 */
-int luaU_dump (hksc_State *H, const Proto* f, lua_Writer w, void* data)
+int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
   DumpState D;
   D.H=H;

@@ -13,19 +13,19 @@
 #include "lzio.h"
 
 /* load one chunk; from lundump.c */
-LUAI_FUNC Proto* luaU_undump (hksc_State *H, ZIO* Z, Mbuffer* buff,
-                              const char* name);
+LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
+                              const char *name);
 
 /* make header; from lundump.c */
-LUAI_FUNC void luaU_header (char* h, int endianswap);
+LUAI_FUNC void luaU_header (char *h, int endianswap);
 
 /* dump one chunk; from ldump.c */
 LUAI_FUNC int luaU_dump (hksc_State *H,
-                         const Proto* f, lua_Writer w, void* data);
+                         const Proto *f, lua_Writer w, void *data);
 
 #ifdef luac_c
 /* print one chunk; from print.c */
-LUAI_FUNC void luaU_print (const Proto* f, int full);
+LUAI_FUNC void luaU_print (const Proto *f, int full);
 #endif
 
 /* for header of binary files -- this is Lua 5.1 */
@@ -35,7 +35,22 @@ LUAI_FUNC void luaU_print (const Proto* f, int full);
 #define LUAC_FORMAT		14
 
 /* size of header of binary files */
-#define LUAC_HEADERSIZE		14
+#define LUAC_HEADERSIZE		sizeof(HkscHeader)
+
+typedef struct HkscHeader {
+  char signature[sizeof(LUA_SIGNATURE)-1]; /* Lua binary signature */
+  char version;     /* Lua version */
+  char format;      /* Lua format */
+  char endianswap;  /* true if need to swap endianness */
+  char sizeint;     /* size of int */
+  char sizesize;    /* size of size_t */
+  char sizeinstr;   /* size of Instruction */
+  char sizenumber;  /* size of lua_Number */
+  char numberisint; /* true if lua_Number is integral */
+  char compatmask;  /* compatibility flags */ /*TODO: See HKS_COMPATIBILITY_BIT
+                          (TODO is only here so you remeber to delete this) */
+  char sharedstate;
+} HkscHeader;
 
 /* number of types in header of binary files */
 #define LUAC_NUMTYPES (LUA_TSTRUCT+1)
@@ -47,6 +62,32 @@ LUAI_FUNC void luaU_print (const Proto* f, int full);
 #define BYTECODE_STRIPPING_ALL 2
 #define BYTECODE_STRIPPING_DEBUG_ONLY 3
 #define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
+
+/* TODO: These are compatibility bits
+  HKS_GETGLOBAL_MEMOIZATION
+  HKS_STRUCTURE_EXTENSION_ON
+  HKS_SELF
+  HKS_WITHDOUBLES
+  HKS_WITHNATIVEINT
+  -----
+  HKS_COMPATIBILITY_BIT_MEMOIZATION
+  HKS_COMPATIBILITY_BIT_STRUCTURES
+  HKS_COMPATIBILITY_BIT_SELF
+  HKS_COMPATIBILITY_BIT_DOUBLES
+  HKS_COMPATIBILITY_BIT_NATIVEINT
+Note: Civ6 settings are 0xb == 01011:
+  MEMOIZATION:  ON
+  STRUCTURES:   ON
+  SELF:         OFF
+  DOUBLES:      ON
+  NATIVEINT:    OFF
+Note: CoD settings are 0:
+  MEMOIZATION:  OFF
+  STRUCTURES:   OFF
+  SELF:         OFF
+  DOUBLES:      OFF
+  NATIVEINT:    OFF
+*/
 
 /*
 ** macros for testing stripping level properties
