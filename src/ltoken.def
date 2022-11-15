@@ -71,7 +71,7 @@ DEFTOK(TK_NE,             "~=")
 /* the remaining tokens are of variable format and are not to be quoted as
    literal strings in error messages */
 #ifndef LAST_FIXED_FORMAT_TOKEN
-# define LAST_FIXED_FORMAT_TOKEN TK_NUMBER
+# define LAST_FIXED_FORMAT_TOKEN TK_NE
 #endif /* LAST_FIXED_FORMAT_TOKEN */
 
 DEFTOK(TK_NUMBER,         "<number>")
