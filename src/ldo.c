@@ -136,11 +136,10 @@ struct SParser {  /* data to `f_parser' */
 };
 
 static void f_parser (hksc_State *H, void *ud) {
-  int i;
   Proto *tf;
-  Closure *cl;
   struct SParser *p = cast(struct SParser *, ud);
   int c = luaZ_lookahead(p->z);
+  (void)c;
 #if 0
   tf = ((c == LUA_SIGNATURE[0]) ? luaU_undump : luaY_parser)(H, p->z,
                                                              &p->buff, p->name);

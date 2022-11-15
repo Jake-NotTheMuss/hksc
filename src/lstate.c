@@ -49,6 +49,7 @@ static void f_luaopen (hksc_State *H, void *ud) {
   luaS_fix(luaS_newliteral(H, MEMERRMSG));
   luaS_mainchunk = luaS_newliteral(H, MAINCHUNKNAME);
   luaS_fix(luaS_mainchunk);
+  (void)g;
   /*g->GCthreshold = 4*g->totalbytes;*/
 }
 
@@ -79,12 +80,11 @@ static void
 hksc_default_settings(hksc_Settings *settings)
 {
   /* general settings */
-  settings->endian = HKSC_DEFAULT_ENDIAN;
   settings->sharing_format = HKSC_BYTECODE_DEFAULT;
   settings->sharing_mode = HKSC_SHARING_MODE_OFF;
   /* compiler settings */
   settings->emit_struct = 0;
-  settings->literals = INT_LITERALS_LUD | INT_LITERALS_UI64;
+  settings->enable_int_literals = INT_LITERALS_NONE;
   settings->strip_names = NULL;
   /* decompiler settings */
   settings->ignore_debug = 0;
@@ -145,6 +145,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   hksc_State *H;
   global_State *g;
   void *h = (*f)(ud, NULL, 0, state_size(LG));
+  (void)i;
   if (h == NULL) return NULL;
   H = tostate(h);
   g = &((LG *)H)->g;
@@ -160,6 +161,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   g->strt.nuse = 0;
   g->strt.hash = NULL;
   g->mode = HKSC_MODE_DEFAULT;
+  g->endianness = HKSC_DEFAULT_ENDIAN;
   hksc_default_settings(&g->settings);
   luaZ_initbuffer(H, &g->buff);
   g->panic = NULL;

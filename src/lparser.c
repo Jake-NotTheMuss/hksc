@@ -151,7 +151,7 @@ static void init_typed_exp (expdesc *e, expkind k, int i, int type) {
 }
 
 
-static void codeliteral (LexState *ls, expdesc *e, lua_Literal l, int token) {
+static void codeliteral (LexState *ls, expdesc *e, lu_int64 l, int token) {
   int type = (token == TK_SHORT_LITERAL) ? LUA_TLIGHTUSERDATA : LUA_TUI64;
   init_typed_exp(e, VK, luaK_literalK(ls->fs, l, token), type);
 }
@@ -353,7 +353,8 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
   /*if (func->f->nups > 0) printf("pushclosure: upvalues for '%s'\n", 
       (func->f->name) ? getstr(func->f->name) : "<anonymous>");*/
   for (i=0; i<func->f->nups; i++) {
-    OpCode o = (func->upvalues[i].k == VLOCAL) ? OP_MOVE : OP_GETUPVAL;
+/*    OpCode o = (func->upvalues[i].k == VLOCAL) ? OP_MOVE : OP_GETUPVAL;
+    (void)o;*/
     /*printf("  upvalues[%d]\n"
     "    -->name: %s\n"
     "    -->kind: %s\n", i, getstr(func->f->upvalues[i]),
@@ -392,18 +393,19 @@ static void addnamepart (LexState *ls, TString *ts, int type) {
 #define MAX_FUNCNAME 512
 
 static TString *buildfuncname (LexState *ls) {
-  if (!ls->nplist.first) return NULL; /* anonymous function */
   char buf[MAX_FUNCNAME];
   size_t len = 0;
   struct namepart *np = ls->nplist.first;
+  if (!ls->nplist.first) return NULL; /* anonymous function */
   for (; np != NULL && np != ls->nplist.free; np = np->next) {
+    size_t l;
     TString *ts = np->ts;
     int type = np->type;
     if (type == NAMEPART_FIELD)
       buf[len++] = '.';
     else if (type == NAMEPART_SELF)
       buf[len++] = ':';
-    size_t l = ts->tsv.len;
+    l = ts->tsv.len;
     if (l >= MAX_FUNCNAME - len)
       l = MAX_FUNCNAME - len;
     memcpy(buf+len,getstr(ts),l);
@@ -500,6 +502,7 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
       np = next;
     }
   }
+  luaK_optimize_function(H, funcstate.f);
   lua_assert(funcstate.prev == NULL);
   lua_assert(funcstate.f->nups == 0);
   lua_assert(lexstate.fs == NULL);
@@ -917,10 +920,12 @@ static BinOpr getbinopr (int op) {
     case '%': return OPR_MOD;
     case '^': return OPR_POW;
     case TK_CONCAT: return OPR_CONCAT;
+#ifdef LUA_CODT7 /* T7 extensions */
     case TK_LEFT_SHIFT: return OPR_LEFT_SHIFT;
     case TK_RIGHT_SHIFT: return OPR_RIGHT_SHIFT;
     case '&': return OPR_BIT_AND;
     case '|': return OPR_BIT_OR;
+#endif /* LUA_CODT7 */
     case TK_NE: return OPR_NE;
     case TK_EQ: return OPR_EQ;
     case '<': return OPR_LT;

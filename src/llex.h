@@ -7,8 +7,6 @@
 #ifndef llex_h
 #define llex_h
 
-#include "hksc_begin_code.h"
-
 #include "lmem.h"
 #include "lobject.h"
 #include "lzio.h"
@@ -16,18 +14,24 @@
 
 #define FIRST_RESERVED  0x400001
 
-#define DEFTOK1(name, text) name = FIRST_RESERVED,
+#define DEFTOKFIRST(name, text) name = FIRST_RESERVED,
 #define DEFTOK(name, text) name,
 enum RESERVED {
 #include "ltoken.def"
+  TK_MAX
 };
-#undef DEFTOK1
+#undef DEFTOKFIRST
 #undef DEFTOK
 
-#define LAST_RESERVED LTOKENS_LAST_RESERVED_WORD
 
 /* maximum length of a reserved word */
-#define TOKEN_LEN (sizeof(LTOKENS_LONGEST_TOKEN)/sizeof(char))
+#define DEFTOK(name, text) char buf_##name[sizeof(text)];
+union max_token_length {
+#include "ltoken.def"
+};
+#undef DEFTOK
+
+#define TOKEN_LEN (sizeof(union max_token_length)/sizeof(char))
 
 /* number of reserved words */
 #define NUM_RESERVED  (cast(int, LAST_RESERVED-FIRST_RESERVED+1))
@@ -39,7 +43,7 @@ LUAI_DATA const char *const luaX_tokens [];
 
 typedef union {
   lua_Number r;
-  lua_Literal l;
+  lu_int64 l;
   TString *ts;
 } SemInfo;  /* semantics information */
 
@@ -53,7 +57,7 @@ typedef struct Token {
 /*
 ** name-part types
 */
-#define NAMEPART_NONE (-1)
+#define NAMEPART_NONE  (-1)
 #define NAMEPART_NAME  0 /* regular variable name */
 #define NAMEPART_FIELD 1 /* field name */
 #define NAMEPART_SELF  2 /* self field name */

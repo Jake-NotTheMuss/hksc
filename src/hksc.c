@@ -30,9 +30,8 @@ static int dumping=1;     /* dump bytecodes? */
 static int mode=HKSC_MODE_DEFAULT; /* compiling or decompiling? */
 
 /* parser settings */
-static int strip=BYTECODE_STRIPPING_NONE; /* bytecode stripping level */
-static int literals=INT_LITERALS_NONE; /* int literal options */
-static int hksc_status=0;
+static int striplevel=BYTECODE_STRIPPING_NONE; /* bytecode stripping level */
+static int literals_enabled=INT_LITERALS_NONE; /* int literal options */
 static const char *progname=HKSC_NAME;
 static const char *output=NULL;
 
@@ -51,23 +50,26 @@ static void print_usage(void)
    "  -d       Run Hksc in decompile mode\n"
    "  -h       Print this message and exit\n"
    "  -l       List (use -l -l for full listing)\n"
-   "  -L type  Enable int literals of the type given by <type>\n"
+   "  -L type  Enable int literals_enabled of the type given by <type>\n"
    "  -o name  Output to file 'name'\n"
    "  -p       Parse only\n"
    "  -s mode  Use bytecode stripping mode <mode>\n"
    "  -v       Show version information\n"
-   "  --       Stop handling options\n"
+   "  --       Stop handling options\n", progname);
+  fputs(
    "\nInt literal options (to use with '-L')\n"
-   "  I or 32  [32BIT] Enable 32-bit int literals\n"
-   "  L or 64  [64BIT] Enable 64-bit int literals\n"
-   "  A        [ALL] Enable all int literals\n"
-   "\nBytecode stripping modes (to use with '-s'):\n"
+   "  I or 32  [32BIT] Enable 32-bit int literals_enabled\n"
+   "  L or 64  [64BIT] Enable 64-bit int literals_enabled\n"
+   "  A        [ALL] Enable all int literals_enabled\n"
+   "\nBytecode stripping levels (to use with '-s'):\n"
    "  N or 0   [NONE] Include all debug information in dump\n"
    "  P or 1   [PROFILING] \n"
-   "  A or 2   [ALL] Strip debug information\n"
+   "  A or 2   [ALL] Strip all debug information\n"
+#ifdef LUA_COD
    "  D or 3   [DEBUG_ONLY] Only dump debug information\n"
-   "  C or 4   [CALLSTACK_RECONSTRUCTION] \n",
-   progname);
+   "  C or 4   [CALLSTACK_RECONSTRUCTION] \n"
+#endif /* LUA_COD */
+   , stderr);
 }
 
 static void usage(const char *message)
@@ -88,7 +90,7 @@ static void print_version(void)
 }
 
 #define IS(s) (strcmp(argv[i],s)==0)
-#define HAS(s) (strncmp(argv[i],s,sizeof(s)-1)==0)
+#define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
 #define CHECKARGC if (i >= argc) usage("argument expected")
 
 static int doargs(int argc, char *argv[])
@@ -132,14 +134,14 @@ static int doargs(int argc, char *argv[])
         goto badliteralarg;
       switch (*mode) {
         case 'I': case 'i': case '3':
-          if (*mode == '3' && mode[1] != '2') goto badliteralarg;
-          literals=INT_LITERALS_LUD; break;
+          if (mode[0] == '3' && mode[1] != '2') goto badliteralarg;
+          literals_enabled=INT_LITERALS_LUD; break;
         case 'L': case 'l': case '6':
-          if (*mode == '6' && mode[1] != '4') goto badliteralarg;
-          literals=INT_LITERALS_UI64; break;
-        case 'A':
+          if (mode[0] == '6' && mode[1] != '4') goto badliteralarg;
+          literals_enabled=INT_LITERALS_UI64; break;
+        case 'A': case 'a':
           if (mode[1] != 0) goto badliteralarg;
-          literals=INT_LITERALS_ALL; break;
+          literals_enabled=INT_LITERALS_ALL; break;
         default:
           goto badliteralarg;
       }
@@ -168,15 +170,15 @@ static int doargs(int argc, char *argv[])
         goto badstriparg;
       switch (*mode) {
         case 'N': case 'n': case '0':
-          strip=BYTECODE_STRIPPING_NONE; break;
+          striplevel=BYTECODE_STRIPPING_NONE; break;
         case 'P': case 'p': case '1':
-          strip=BYTECODE_STRIPPING_PROFILING; break;
+          striplevel=BYTECODE_STRIPPING_PROFILING; break;
         case 'A': case 'a': case '2':
-          strip=BYTECODE_STRIPPING_ALL; break;
+          striplevel=BYTECODE_STRIPPING_ALL; break;
         case 'D': case 'd': case '3':
-          strip=BYTECODE_STRIPPING_DEBUG_ONLY; break;
+          striplevel=BYTECODE_STRIPPING_DEBUG_ONLY; break;
         case 'C': case 'c': case '4':
-          strip=BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION; break;
+          striplevel=BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION; break;
         default:
           goto badstriparg;
       }
@@ -196,7 +198,7 @@ static int doargs(int argc, char *argv[])
     if (i==argc) exit(EXIT_SUCCESS);
   }
   if (c && d) /* both compile and decompile mode specified? */
-    usage("both '-c' and '-d' given; Hksc can only be run in one state");
+    usage("both '-c' and '-d' given; Hksc can only be run in one mode");
   else if (c)
     mode=HKSC_MODE_COMPILE;
   else if (d)
@@ -214,12 +216,10 @@ static int doargs(int argc, char *argv[])
 ** parser loop functions
 */
 #define DECL_PARSER_LOOP_FUNC(name, expr) \
-static int name (hksc_State *H, int argc, char *argv[]) \
-{ \
+static int name (hksc_State *H, int argc, char *argv[]) { \
   int i,status,error=0; \
   for (i=0; i<argc; i++) { \
-    status = (expr); \
-    error |= status; \
+    error |= (status = (expr)); \
     if (status) { \
       if (status == LUA_ERRSYNTAX){ \
         fprintf(stderr, "%s\n", luaE_geterrormsg(H)); \
@@ -227,16 +227,16 @@ static int name (hksc_State *H, int argc, char *argv[]) \
       } \
       else { \
         fprintf(stderr, "%s: %s\n", progname, luaE_geterrormsg(H)); \
-        break; \
+        break; /* non-syntax errors are fatal */ \
       } \
     } \
   } \
   return error; \
 }
 
-/* parseonly: parse but do not dump */
+/* parse but do not dump */
 DECL_PARSER_LOOP_FUNC(parseonly, hksI_parser_file(H, argv[i]))
-/* parseanddump: parse and dump (output is NULL if multiple input files) */
+/* parse and dump (output is NULL if multiple input files) */
 DECL_PARSER_LOOP_FUNC(parseanddump, hksI_parser_file2file(H, argv[i], output))
 
 
@@ -252,8 +252,8 @@ int main(int argc, char *argv[])
     usage("'-o' option used with multiple input files");
   H = hksI_newstate(mode);
   if (H==NULL) fatal("cannot create state: not enough memory");
-  hksc_setStrip(H,strip); /* set bytecode stripping level */
-  hksc_setLiterals(H,literals); /* set int literal option */
+  hksc_setBytecodeStrippingLevel(H,striplevel);
+  hksc_setIntLiteralsEnabled(H,literals_enabled);
   if (!dumping)
     status=parseonly(H,argc,argv);
   else

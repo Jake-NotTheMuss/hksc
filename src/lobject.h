@@ -11,8 +11,6 @@
 
 #include <stdarg.h>
 
-#include "hksc_begin_code.h"
-
 
 #include "llimits.h"
 #include "lua.h"
@@ -53,6 +51,12 @@ typedef struct GCheader {
 } GCheader;
 
 
+#ifdef LUA_UI64_S
+struct lua_ui64_s { /* typedefined as lu_int64 */
+  lu_int32 high; /* bits 33-64 */
+  lu_int32 low; /* bits 1-32 */
+};
+#endif /* LUA_UI64_S */
 
 
 /*
@@ -62,7 +66,7 @@ typedef union {
   GCObject *gc;
   void *p;
   lua_Number n;
-  lua_Literal l;
+  lu_int64 l;
   int b;
 } Value;
 
@@ -123,7 +127,7 @@ typedef struct lua_TValue {
 
 
 /* Macros to set values */
-#define setnilvalue(obj) ((obj)->tt=LUA_TNIL)
+#define setnilvalue(obj) do { (obj)->tt=LUA_TNIL; } while (0)
 
 #define setnvalue(obj,x) do \
   { TValue *i_o=(obj); i_o->value.n=(x); i_o->tt=LUA_TNUMBER; } while(0)
@@ -158,11 +162,7 @@ typedef struct lua_TValue {
   { TValue *i_o=(obj); \
     i_o->value.gc=cast(GCObject *, (x)); i_o->tt=LUA_TPROTO; } while (0)
 
-#define setshortvalue(obj,x) do \
-  { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TLIGHTUSERDATA; } \
-  while (0)
-
-#define setlongvalue(obj,x) do \
+#define setui64value(obj,x) do \
   { TValue *i_o=(obj); i_o->value.l=(x); i_o->tt=LUA_TUI64; } while (0)
 
 
@@ -386,6 +386,10 @@ LUAI_FUNC int luaO_int2fb (unsigned int x);
 LUAI_FUNC int luaO_fb2int (int x);
 LUAI_FUNC int luaO_rawequalObj (const TValue *t1, const TValue *t2);
 LUAI_FUNC int luaO_str2d (const char *s, lua_Number *result);
+#ifdef LUA_UI64_S
+LUAI_FUNC struct lua_ui64_s luaO_str2ui64(const char *s, char **endptr,
+                                          size_t n);
+#endif /* LUA_UI64_S */
 LUAI_FUNC const char *luaO_pushvfstring (hksc_State *H, const char *fmt,
                                                        va_list argp);
 LUAI_FUNC const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...);

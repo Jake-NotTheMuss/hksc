@@ -64,7 +64,7 @@ typedef struct expdesc {
   union {
     struct { int info, aux; } s;
     lua_Number nval;
-    lua_Literal lval;
+    lu_int64 lval;
   } u;
   int t;  /* patch list of `exit when true' */
   int f;  /* patch list of `exit when false' */

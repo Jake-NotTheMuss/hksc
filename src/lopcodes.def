@@ -8,15 +8,15 @@
 
 /*
 ** #define DEFCODE(name, mode, test, useRA, bmode, cmode, makeR1, useR1, r1)
-** name is the name of the operation, e.g. GETFIELD
-** mode is the mode of the operation (ABC, ABx, or AsBx)
-** test is 1 if the operation is a test, 0 otherwise
-** useRA is 1 if the operation uses argument A as a register, 0 otherwise
-** bmode is the mode of argument B (see lopcodes.h)
-** cmode is the mode of argument C
-** makeR1 is 1 if the operation requires the next to be R1 in non-shared states
-** useR1 is the R1 mode of the operation (only for R1 versions, see lopcodes.h)
-** r1 is the R1 version of the operation (OP_MAX if there is none)
+**   <name> is the name of the operation, e.g. GETFIELD
+**   <mode> is the mode of the operation (ABC, ABx, or AsBx)
+**   <test> is 1 if the operation is a test, 0 otherwise
+**   <useRA> is 1 if the operation uses argument A as a register, 0 otherwise
+**   <bmode> is the mode of argument B (see lopcodes.h)
+**   <cmode> is the mode of argument C
+**   <makeR1> is 1 if the operation requires the next to be R1 in non-shared states
+**   <useR1> is the R1 mode of the operation (for R1 versions, see lopcodes.h)
+**   <r1> is the R1 version of the operation (OP_MAX if there is none)
 */
 
 /*
@@ -72,8 +72,7 @@ DEFCODE_R1(GETFIELD, ABC, 0, 1, R, K, 1)
 /* OP_TEST  A C  if not (R(A) <=> C) then pc++ */
 DEFCODE_R1(TEST, ABC, 1, 1, N, U, 0)
 
-/* OP_CALL_I  A B C  Same as OP_CALL but checks R(A) is type TIFUNCTION */
-/* OP_CALL_C  A B C  Same as OP_CALL but checks R(A) is type TCFUNCTION */
+/* OP_CALL */
 DEFCODE_R1(CALL_I, ABC, 0, 1, U, U, 0)
 DEFCODE1(CALL_C, ABC, 0, 1, U, U, 0)
 
@@ -94,8 +93,6 @@ DEFCODE1(SELF, ABC, 0, 1, R, RK, 1)
 /* OP_RETURN  A B  return R(A), ... ,R(A+B-2)  (see note) */
 DEFCODE1(RETURN, ABC, 0, 1, U, N, 0)
 
-/* OP_GETTABLE_S  ??? */
-/* OP_GETTABLE_N  ??? */
 /* OP_GETTABLE  A B C  R(A) := R(B)[RK(C)] */
 DEFCODE1(GETTABLE_S, ABC, 0, 1, R, RK, 0)
 DEFCODE1(GETTABLE_N, ABC, 0, 1, R, RK, 0)
@@ -111,23 +108,16 @@ DEFCODE1(TFORLOOP, ABC, 1, 1, N, U, 0)
 /* OP_SETFIELD  A B C  R(A)[Kst(B)] := RK(C) */
 DEFCODE_R1(SETFIELD, ABC, 0, 1, K, RK, 0)
 
-/* OP_SETTABL_S ??? */
-/* OP_SETTABL_S_BK ??? */
-/* OP_SETTABL_N ??? */
-/* OP_SETTABL_N_BK ??? */
+/* OP_SETTABLE  A B C  R(A)[R(B)] := RK(C) */
+/* OP_SETTABLE_BK  A B C  R(A)[Kst(B)] := RK(C) */
 DEFCODE1(SETTABLE_S, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SETTABLE_S_BK, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SETTABLE_N, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SETTABLE_N_BK, ABC, 0, 1, RK, RK, 0)
-/* OP_SETTABLE  A B C  R(A)[R(B)] := RK(C) */
-/* OP_SETTABLE_BK  A B C  R(A)[Kst(B)] := RK(C) */
 DEFCODE1(SETTABLE, ABC, 0, 0, RK, RK, 0)
 DEFCODE1(SETTABLE_BK, ABC, 0, 0, RK, RK, 0)
 
-/* OP_TAILCALL_I  A B C
-   Same as OP_TAILCALL but checks R(A) is type TIFUNCTION */
-/* OP_TAILCALL_C  A B C
-   Same as OP_TAILCALL but checks R(A) is type TCFUNCTION */
+/* OP_TAILCALL  A B C */
 DEFCODE_R1(TAILCALL_I, ABC, 0, 1, U, U, 0)
 DEFCODE1(TAILCALL_C, ABC, 0, 1, U, U, 0)
 
@@ -222,9 +212,7 @@ DEFCODE1(LE_BK, ABC, 1, 0, K, K, 0)
 
 /* begin T7 extensions */
 /******************************************************************************/
-#ifndef LOPCODES_FIRST_T7_EXT
-# define LOPCODES_FIRST_T7_EXT OP_LEFT_SHIFT
-#endif /* LOPCODES_FIRST_T7_EXT */
+#ifdef LUA_CODT7
 
 /* OP_LEFT_SHIFT     A B C  R(A) := R(B) << RK(C) */
 /* OP_LEFT_SHIFT_BK  A B C  R(A) := Kst(B) << RK(C) */
@@ -246,9 +234,7 @@ DEFCODE1(BIT_AND_BK, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(BIT_OR, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(BIT_OR_BK, ABC, 0, 1, RK, RK, 0)
 
-#ifndef LOPCODES_LAST_T7_EXT
-# define LOPCODES_LAST_T7_EXT OP_BIT_OR_BK
-#endif /* LOPCODES_LAST_T7_EXT */
+#endif /* LUA_CODT7 */
 /******************************************************************************/
 /* end T7 extensions */
 
@@ -289,7 +275,7 @@ DEFCODE_R1V(SETFIELD_R1, ABC, 0, 1, K, RK, 0, R1A)
 /* ??? */
 DEFCODE1(NEWSTRUCT, ABC, 0, 1, U, U, 1)
 
-/* OP_DATA  A Bx  (see note) */
+/* OP_DATA  A Bx  extra information used by the VM */
 DEFCODE1(DATA, ABx, 0, 1, UK, N, 0)
 
 DEFCODE1(SETSLOTN, ABC, 0, 1, N, U, 0)
@@ -298,7 +284,7 @@ DEFCODE1(SETSLOT, ABC, 0, 1, U, RK, 0)
 DEFCODE1(SETSLOTS, ABC, 0, 1, U, R, 0)
 DEFCODE1(SETSLOTMT, ABC, 0, 1, U, RK, 0)
 
-/* OP_CHECKTYPE  A Bx  assert(type(R(A)) == Bx) */
+/* OP_CHECKTYPE  A Bx  error if type of R(A) is not Bx */
 DEFCODE1(CHECKTYPE, ABx, 0, 1, U, N, 0)
 
 /* ??? */

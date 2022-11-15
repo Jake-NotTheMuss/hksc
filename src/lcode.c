@@ -7,8 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-
-#include "hksc_begin_code.h"
+#include <string.h> /* memset */
 
 #define lcode_c
 #define LUA_CORE
@@ -260,14 +259,16 @@ int luaK_numberK (FuncState *fs, lua_Number r) {
 }
 
 
-int luaK_literalK(FuncState *fs, lua_Literal l, int type)
+int luaK_literalK(FuncState *fs, lu_int64 l, int type)
 {
   TValue o;
   lua_assert(type == TK_SHORT_LITERAL || type == TK_LONG_LITERAL);
-  if (type == TK_SHORT_LITERAL && hksc_ludenabled(fs->H))
-    setshortvalue(&o, l);
-  else if (type == TK_LONG_LITERAL && hksc_ui64enabled(fs->H))
-    setlongvalue(&o, l);
+  if (type == TK_SHORT_LITERAL &&
+      (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
+    setpvalue(&o, lua_ui64tolud(l));
+  else if (type == TK_LONG_LITERAL &&
+           (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64))
+    setui64value(&o, l);
   else
     luaX_syntaxerror(fs->ls, "int literals not enabled in compiler options");
   return addk(fs, &o, &o);
@@ -823,10 +824,12 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
     case OPR_DIV: codearith(fs, OP_DIV, e1, e2); break;
     case OPR_MOD: codearith(fs, OP_MOD, e1, e2); break;
     case OPR_POW: codearith(fs, OP_POW, e1, e2); break;
+#ifdef LUA_CODT7 /* T7 extensions */
     case OPR_LEFT_SHIFT: codearith(fs, OP_LEFT_SHIFT, e1, e2); break;
     case OPR_RIGHT_SHIFT: codearith(fs, OP_RIGHT_SHIFT, e1, e2); break;
     case OPR_BIT_AND: codearith(fs, OP_BIT_AND, e1, e2); break;
     case OPR_BIT_OR: codearith(fs, OP_BIT_OR, e1, e2); break;
+#endif /* LUA_CODT7 */
     case OPR_EQ: codecomp(fs, OP_EQ, 1, e1, e2); break;
     case OPR_NE: codecomp(fs, OP_EQ, 0, e1, e2); break;
     case OPR_LT: codecomp(fs, OP_LT, 1, e1, e2); break;
@@ -854,15 +857,6 @@ static int luaK_code (FuncState *fs, Instruction i, int line) {
   luaM_growvector(fs->H, f->lineinfo, fs->pc, f->sizelineinfo, int,
                   MAX_INT, "code size overflow");
   f->lineinfo[fs->pc] = line;
-#if 0
-  OpCode o = GET_OPCODE(i);
-  if (getOpMode(o) == iABC)
-    printf("OP_%-14s  %d  %d  %d\n", getOpName(o),GETARG_A(i),GETARG_B(i),GETARG_C(i));
-  else if (getOpMode(o) == iABx)
-    printf("OP_%-14s  %d  %d\n", getOpName(o),GETARG_A(i),GETARG_Bx(i));
-  else
-    printf("OP_%-14s  %d  %d\n", getOpName(o),GETARG_A(i),GETARG_sBx(i));
-#endif
   return fs->pc++;
 }
 #define PRINT_ABC() printf("OP_%-14s  %d  %d  %d\n", getOpName(o), a,( b&0xff), c)
@@ -906,5 +900,113 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
     luaK_codeABx(fs, OP_DATA, 0, c);
   }
   fs->freereg = base + 1;  /* free registers with list values */
+}
+
+
+/*
+** Code optimization
+*/
+
+/*
+** Identify `leaders' in a function's bytecode
+*/
+static void identify_leaders (int sizecode, Instruction *code,
+                              lu_byte *properties) {
+  int i;
+  memset(properties, 0, sizecode);
+  for (i = 0; i < sizecode; i++) {
+    Instruction instr = code[i];
+    OpCode op = GET_OPCODE(instr);
+    if (testTMode(op) || (op == OP_LOADBOOL && GETARG_C(instr) != 0)) {
+      lua_assert(i < (sizecode - 2));
+      properties[i+1] = 1; /* jump instruction is leader */
+      properties[i+2] = 1; /* true-target is leader */
+    } else if (op == OP_JMP || op == OP_FORLOOP || op == OP_FORPREP) {
+      int offs = GETARG_sBx(instr);
+      lua_assert(0 <= i+1+offs && i+1+offs < sizecode);
+      properties[i+1] = 1; /* next instruction is leader */
+      properties[i+1+offs] = 1; /* jump target (maybe false-target) is leader */
+    }
+  }
+}
+
+
+/*
+** Set the opcode of an instruction (keeps BK bit)
+*/
+static Instruction set_opcode (Instruction instr, OpCode newop) {
+  OpCode oldop = GET_OPCODE(instr);
+  if (getOpMode(oldop) == iABC &&
+      (getBMode(oldop) == OpArgUK || getBMode(oldop) == OpArgRK))
+    newop = cast(OpCode, newop | (oldop & 1)); /* BK */
+  SET_OPCODE(instr, newop);
+  return instr;
+}
+
+
+/*
+** Optimize the code sequence of a function
+*/
+static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
+                                        int sizecode, TValue *k, int sizek) {
+  int i;
+  lu_byte *properties;
+  for (i = 0; i < sizecode; i++) {
+    OpCode op = GET_OPCODE(code[i]);
+    switch (op) {
+      case OP_GETTABLE: { /* GETTABLE_S or GETFIELD */
+        int c = GETARG_C(code[i]);
+        if (!ISK(c) || !ttisstring(&k[c]))
+          code[i] = set_opcode(code[i], OP_GETTABLE_S);
+        else
+          SET_OPCODE(code[i], OP_GETFIELD);
+        break;
+      }
+      case OP_SETTABLE:
+      case OP_SETTABLE_BK: { /* SETTABLE_S or SETFIELD */
+        int c = GETARG_C(code[i]);
+        if (!ISK(c) || !ttisstring(&k[c]))
+          code[i] = set_opcode(code[i], OP_SETTABLE_S);
+        else
+          SET_OPCODE(code[i], OP_SETFIELD);
+        break;
+      }
+      case OP_CALL: /* CALL_I */
+        code[i] = set_opcode(code[i], OP_CALL_I);
+        break;
+      case OP_TAILCALL: /* TAILCALL_I */
+        code[i] = set_opcode(code[i], OP_TAILCALL_I);
+        break;
+      default: break;
+    }
+  }
+  properties = luaM_newvector(H, sizecode, lu_byte);
+  identify_leaders(sizecode, code, properties);
+  for (i = 1; i < sizecode; i++) {
+    if (properties[i] == 0) { /* current instruction is not a leader */
+      int prevIndex = i-1;
+      OpCode prev = GET_OPCODE(code[prevIndex]);
+      OpCode curr = GET_OPCODE(code[i]);
+      OpCode r1Version;
+      while (prev == OP_DATA && prevIndex > 0) /* data codes do not count */
+        prev = GET_OPCODE(code[--prevIndex]);
+      if (testMakeR1(prev)) {
+        r1Version = getR1Version(curr);
+        if (r1Version != OP_MAX &&
+          ((getR1Mode(r1Version) == R1A && GETARG_A(prev) == GETARG_A(curr)) ||
+           (getR1Mode(r1Version) == R1B && GETARG_B(prev) == GETARG_B(curr))))
+          code[i] = set_opcode(code[i], r1Version); /* set code to R1 version */
+      }
+    }
+  }
+  luaM_freearray(H, properties, sizecode, lu_byte);
+}
+
+
+void luaK_optimize_function (hksc_State *H, Proto *f) {
+  int i,n;
+  specialize_instruction_sequence(H, f->code, f->sizecode, f->k, f->sizek);
+  n=f->sizep;
+  for (i=0; i<n; i++) luaK_optimize_function(H, f->p[i]);
 }
 

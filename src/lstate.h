@@ -69,13 +69,12 @@ typedef struct stringtable {
 typedef struct hksc_Settings
 {
   /* general settings */
-  lu_byte endian; /* bytecode endianness */
   lu_byte sharing_format; /* bytecode sharing format, default = INPLACE */
   lu_byte sharing_mode; /* bytecode sharing mode, default = ON */
 
   /* compiler-specific settings */
   lu_byte emit_struct; /* whether `hstructure' and `hmake' should be emitted */
-  lu_byte literals; /* int literal setting */
+  lu_byte enable_int_literals; /* int literal setting */
   lu_byte strip; /* bytecode stripping level */
   const char **strip_names;
   /*lua_LineMap debug_map;*/
@@ -97,6 +96,7 @@ typedef struct hksc_Settings
 */
 typedef struct global_State {
   int mode; /* compiling or decompiling? */
+  int endianness; /* bytecode endianness */
   hksc_Settings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
   lua_Alloc frealloc;  /* function to reallocate memory */
@@ -146,28 +146,22 @@ struct hksc_State {
 #define luaE_mode(H) hksc_luaE_mode(H)
 
 /* macros for setting compiler options */
-#define hksc_setEndian(H,v) (Settings(H).endian = (v))
-#define hksc_setSharingFmt(H,v) (Settings(H).sharing_format = (v))
-#define hksc_setSharingMode(H,v) (Settings(H).sharing_mode = (v))
 #define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
-#define hksc_setLiterals(H,v) (Settings(H).literals = (v))
-#define hksc_setStrip(H,v) (Settings(H).strip = (v))
+#define hksc_setIntLiteralsEnabled(H,v) (Settings(H).enable_int_literals = (v))
+#define hksc_setBytecodeStrippingLevel(H,v) (Settings(H).strip = (v))
 #define hksc_setIgnoreDebug(H,v) (Settings(H).ignore_debug = (v))
 #define hksc_setMatchLineInfo(H,v) (Settings(H).match_line_info = (v))
 
-#define hksc_getEndian(H) (Settings(H).endian)
 #define hksc_getSharingFmt(H) (Settings(H).sharing_format)
 #define hksc_getSharingMode(H) (Settings(H).sharing_mode)
 #define hksc_getEmitStruct(H) (Settings(H).emit_struct)
-#define hksc_getLiterals(H) (Settings(H).literals)
+#define hksc_getIntLiteralsEnabled(H) (Settings(H).enable_int_literals)
 #define hksc_getStrip(H) (Settings(H).strip)
 #define hksc_getIgnoreDebug(H) (Settings(H).ignore_debug)
 #define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
 
+#define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
 
-#define hksc_ludenabled(H) (Settings(H).literals & INT_LITERALS_LUD)
-#define hksc_ui64enabled(H) (Settings(H).literals & INT_LITERALS_UI64)
-#define hksc_literalsenabled(H) (hksc_ludenabled(H) && hksc_ui64enabled(H))
 
 /*
 ** Union of all collectable objects

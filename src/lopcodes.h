@@ -148,23 +148,11 @@ typedef enum {
 #define NUM_OPCODES (cast(int, OP_MAX))
 
 
-/*
-** masks for instruction properties. The format is:
-** bits 0-1: op mode
-** bits 2-4: C arg mode
-** bits 5-7: B arg mode
-** bit 8: instruction uses register A
-** bit 9: operator is a test
-** bit 10: operator makes R1
-** bit 11-12: R1 mode
-** bit 13-19: R1 version
-*/  
-
 enum OpArgMask {
   OpArgN,  /* argument is not used */
   OpArgU,  /* argument is used */
-  OpArgUK, /* ??? TODO: */
-  OpArgR,  /* argument is a register or a jump offset */
+  OpArgUK, /* argument is a used constant or a jump offset: */
+  OpArgR,  /* argument is a register */
   OpArgRK, /* argument is a register/constant */
   OpArgK,  /* argument is a constant */
   OpArgR1UseRegister
@@ -178,16 +166,31 @@ enum OpR1Mode {
 };
 
 
-LUAI_DATA const lu_int32 luaP_opmodes[NUM_OPCODES];
+/*
+** instruction properties
+*/
+struct OpCodeDesc {
+  enum OpMode mode;
+  enum OpArgMask opc;
+  enum OpArgMask opb;
+  lu_byte useRA;
+  lu_byte test;
+  lu_byte makeR1;
+  enum OpR1Mode r1Mode;
+  OpCode r1Version;
+};
 
-#define getOpMode(m)  (cast(enum OpMode, luaP_opmodes[m] & 3))
-#define getBMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m] >> 5) & 7))
-#define getCMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m] >> 2) & 7))
-#define testAMode(m)  (luaP_opmodes[m] & (1 << 8))
-#define testTMode(m)  (luaP_opmodes[m] & (1 << 9))
-#define opMakesR1(m)  (luaP_opmodes[m] & (1 << 10))
-#define getR1Mode(m)  (cast(enum OpR1Mode, (luaP_opmodes[m] >> 11) & 3))
-#define getR1Version(m)  (cast(OpCode, (luaP_opmodes[m] >> 13) & 127))
+
+LUAI_DATA const struct OpCodeDesc luaP_opmodes[NUM_OPCODES];
+
+#define getOpMode(m)  (luaP_opmodes[m].mode)
+#define getCMode(m)   (luaP_opmodes[m].opc)
+#define getBMode(m)   (luaP_opmodes[m].opb)
+#define testAMode(m)  (luaP_opmodes[m].useRA)
+#define testTMode(m)  (luaP_opmodes[m].test)
+#define testMakeR1(m) (luaP_opmodes[m].makeR1)
+#define getR1Mode(m)  (luaP_opmodes[m].r1Mode)
+#define getR1Version(m) (luaP_opmodes[m].r1Version)
 
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */

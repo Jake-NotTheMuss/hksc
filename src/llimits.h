@@ -16,12 +16,11 @@
 
 
 typedef LUAI_UINT32 lu_int32;
+typedef LUAI_UINT64 lu_int64;
 
 typedef LUAI_UMEM lu_mem;
 
 typedef LUAI_MEM l_mem;
-
-
 
 /* chars used as small naturals (so that `char' is reserved for characters) */
 typedef unsigned char lu_byte;

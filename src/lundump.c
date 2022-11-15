@@ -209,8 +209,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
 */
 void luaU_header (char *h, int endianswap)
 {
-  int x=1;
-  lua_assert(LUAC_HEADERSIZE == 14);
+  lua_assert(LUAC_HEADERSIZE == 14); /* TODO: this could be a compile-time assert */
   memcpy(h,LUA_SIGNATURE,sizeof(LUA_SIGNATURE)-1);
   h+=sizeof(LUA_SIGNATURE)-1;
   *h++=(char)LUAC_VERSION;
@@ -221,7 +220,7 @@ void luaU_header (char *h, int endianswap)
   *h++=(char)HKSC_SIZE_INSTR;
   *h++=(char)HKSC_SIZE_NUMBER;
   *h++=(char)(((lua_Number)0.5)==0);    /* is lua_Number integral? */
-  *h++=(char)0; /* ??? "game byte"? */
+  *h++=(char)0; /* TODO: compatibility bits (currentl hardcoded for Cod) */
   *h++=(char)0; /* TODO: true if in shared state (ON or SECURE) */
 }
 

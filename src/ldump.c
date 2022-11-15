@@ -12,8 +12,6 @@
 #define ldump_c
 #define LUA_CORE
 
-#include "hksc_begin_code.h"
-
 #include "lua.h"
 
 #include "lobject.h"
@@ -23,18 +21,43 @@
 /* for TStrings which may be NULL */
 #define ts2txt(ts) (((ts) != NULL && getstr(ts) != NULL) ? getstr(ts) : "")
 
+/* macros for testing stripping level properties */
+#ifdef LUA_COD
+# define needfuncinfo(D) ((D)->striplevel == BYTECODE_STRIPPING_NONE || \
+  (D)->striplevel == BYTECODE_STRIPPING_PROFILING || \
+  (D)->striplevel == BYTECODE_STRIPPING_ALL)
+# define needdebuginfo(D) ((D)->striplevel == BYTECODE_STRIPPING_NONE || \
+  (D)->striplevel == BYTECODE_STRIPPING_DEBUG_ONLY)
+#else /* !LUA_COD */
+# define needfuncinfo(D) 1
+# define needdebuginfo(D) ((D)->striplevel == BYTECODE_STRIPPING_NONE)
+#endif /* LUA_COD */
+
 typedef struct {
   hksc_State *H;
   lua_Writer writer;
   void *data;
   size_t pos;
-  int strip;
+  int striplevel;
   int status;
-  int endianswap;
+  int swapendian;
 } DumpState;
 
 #define DumpMem(b,n,size,D)	DumpBlock(b,(n)*(size),D)
 #define DumpVar(x,D)	 	DumpMem(&x,1,sizeof(x),D)
+
+#define correctendianness(D,x) \
+  if ((D)->swapendian) swapendianness((char *)&x,sizeof(x))
+
+static void swapendianness(char *x, size_t n) {
+  size_t i = 0;
+  while (n-- != 0) {
+    char t = x[i];
+    x[i] = x[n];
+    x[n] = t;
+    i++;
+  }
+}
 
 static void DumpBlock(const void *b, size_t size, DumpState *D)
 {
@@ -51,48 +74,91 @@ static void DumpChar(int y, DumpState *D)
   DumpVar(x,D);
 }
 
-static void DumpInt(int x, DumpState *D)
+static void DumpInt(int x, DumpState* D)
 {
+  correctendianness(D,x);
   DumpVar(x,D);
 }
 
 static void DumpSize(size_t x, DumpState *D)
 {
+  correctendianness(D,x);
   DumpVar(x, D);
 }
 
 static void DumpNumber(lua_Number x, DumpState *D)
 {
+  correctendianness(D,x);
   DumpVar(x,D);
 }
-
+/*
 static void DumpVector(const void *b, int n, size_t size, DumpState *D)
 {
   DumpInt(n,D);
   DumpMem(b,n,size,D);
-}
+}*/
 
 static void DumpString(const TString *s, DumpState *D)
 {
   if (s==NULL || getstr(s)==NULL)
   {
-    size_t size=0;
-    DumpVar(size,D);
+    DumpSize(0,D);
   }
   else
   {
     size_t size=s->tsv.len+1;		/* include trailing '\0' */
-    DumpVar(size,D);
+    DumpSize(size,D);
     DumpBlock(getstr(s),size,D);
   }
 }
 
-static void DumpUI64(const lua_Literal x, DumpState *D)
+static void DumpUI64(const lu_int64 x, DumpState *D)
 {
-  DumpVar(x,D);
+  char bytes[8];
+#ifdef LUA_UI64_S
+#define ui64_byte0 (x.low & 0xff)
+#define ui64_byte1 ((x.low >> 8) & 0xff)
+#define ui64_byte2 ((x.low >> 16) & 0xff)
+#define ui64_byte3 ((x.low >> 24) & 0xff)
+#define ui64_byte4 (x.high & 0xff)
+#define ui64_byte5 ((x.high >> 8) & 0xff)
+#define ui64_byte6 ((x.high >> 16) & 0xff)
+#define ui64_byte7 ((x.high >> 24) & 0xff)
+#else
+#define ui64_byte0 (x & 0xff)
+#define ui64_byte1 ((x >> 8) & 0xff)
+#define ui64_byte2 ((x >> 16) & 0xff)
+#define ui64_byte3 ((x >> 24) & 0xff)
+#define ui64_byte4 ((x >> 32) & 0xff)
+#define ui64_byte5 ((x >> 40) & 0xff)
+#define ui64_byte6 ((x >> 48) & 0xff)
+#define ui64_byte7 ((x >> 56) & 0xff)
+#endif
+  {
+    int y=1;
+    if ((char)*(char *)&y == 0) { /* big endian */
+      bytes[0] = ui64_byte7;
+      bytes[1] = ui64_byte6;
+      bytes[2] = ui64_byte5;
+      bytes[3] = ui64_byte4;
+      bytes[4] = ui64_byte3;
+      bytes[5] = ui64_byte2;
+      bytes[6] = ui64_byte1;
+      bytes[7] = ui64_byte0;
+    } else { /* little endian */
+      bytes[0] = ui64_byte0;
+      bytes[1] = ui64_byte1;
+      bytes[2] = ui64_byte2;
+      bytes[3] = ui64_byte3;
+      bytes[4] = ui64_byte4;
+      bytes[5] = ui64_byte5;
+      bytes[6] = ui64_byte6;
+      bytes[7] = ui64_byte7;
+    }
+  }
+  correctendianness(D,bytes);
+  DumpVar(bytes,D);
 }
-
-/*#define DumpCode(f,D)	 DumpVector(f->code,f->sizecode,sizeof(Instruction),D)*/
 
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D);
 
@@ -100,17 +166,20 @@ static void DumpCode(const Proto *f, DumpState *D)
 {
   char buf[HKSC_SIZE_INSTR];
   size_t npadding;
-  size_t i = 0;
   memset(buf, 0x5f, HKSC_SIZE_INSTR-1);
   buf[HKSC_SIZE_INSTR-1] = '\0';
   DumpSize(f->sizecode,D); /* number of instructions */
   npadding = aligned2instr(D->pos) - D->pos;
   DumpMem(buf,npadding,sizeof(char),D); /* align to next instruction */
-  if (!D->endianswap) /* not swapping endianness */
+  if (!D->swapendian) /* not swapping endianness */
     DumpMem(f->code, f->sizecode, sizeof(Instruction), D);
-  else /* need to swap endianness */
-    lua_assert(0); /* TODO; */
-  ;
+  else { /* need to swap endianness */
+    int i;
+    for (i = 0; i < f->sizecode; i++) {
+      swapendianness((char *)(f->code+i),HKSC_SIZE_INSTR);
+      DumpMem(f->code+i,1,HKSC_SIZE_INSTR,D);
+    }
+  }
 }
 
 static void DumpConstants(const Proto *f, DumpState *D)
@@ -132,7 +201,7 @@ static void DumpConstants(const Proto *f, DumpState *D)
         break;
       case LUA_TLIGHTUSERDATA:
         DumpChar(LUA_TLIGHTUSERDATA,D);
-        DumpSize(hivalue(o),D);
+        DumpSize(cast(size_t, pvalue(o)),D);
         break;
       case LUA_TNUMBER:
         DumpChar(LUA_TNUMBER,D);
@@ -156,14 +225,14 @@ static void DumpConstants(const Proto *f, DumpState *D)
 static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
-  if (D->strip == BYTECODE_STRIPPING_ALL) {
+  if (D->striplevel == BYTECODE_STRIPPING_ALL) {
     DumpInt(1,D);
     DumpVar(f->hash,D);
-  } else if (D->strip == BYTECODE_STRIPPING_PROFILING) {
+  } else if (D->striplevel == BYTECODE_STRIPPING_PROFILING) {
     DumpInt(1,D);
-    DumpInt(0,D); /* no line info */
-    DumpInt(0,D); /* no locals */
-    DumpInt(0,D); /* no upvals */
+    DumpInt(0,D); /* striplevel line info */
+    DumpInt(0,D); /* striplevel local names */
+    DumpInt(0,D); /* striplevel upval names */
     DumpInt(f->linedefined,D);
     DumpInt(f->lastlinedefined,D);
     if (p == NULL) /* main chunk */
@@ -171,7 +240,7 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
     else
       DumpString(NULL,D);
     DumpString(f->name,D);
-  } else if (D->strip == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
+  } else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
     n=f->sizelineinfo;
     for (i=0; i<n; i++) {
       const char *line = luaO_pushfstring(D->H, "%u,%u,%s,%u,%s\n", f->hash, i,
@@ -209,7 +278,7 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
-  if (needsfuncinfo(D)) {
+  if (needfuncinfo(D)) {
     DumpInt(f->nups,D); /* number of upvalues */
     DumpInt(f->numparams,D); /* number of parameters */
     DumpChar(f->is_vararg,D); /* vararg flags */
@@ -219,16 +288,16 @@ static void DumpFunction(const Proto *f, const TString *p, DumpState *D)
   }
   DumpDebug(f,p,D);
   n=f->sizep;
-  if (needsfuncinfo(D))
+  if (needfuncinfo(D))
     DumpInt(n,D); /* number of child functions */
   for (i=0; i<n; i++) DumpFunction(f->p[i],f->source,D);
 }
 
 static void DumpHeader(DumpState *D)
 {
-  if (needsfuncinfo(D)) {
+  if (needfuncinfo(D)) {
     char h[LUAC_HEADERSIZE];
-    luaU_header(h, D->endianswap);
+    luaU_header(h, D->swapendian);
     DumpBlock(h,LUAC_HEADERSIZE,D);
     DumpInt(LUAC_NUMTYPES,D); /* number of types */
 #define DEFTYPE(t) \
@@ -245,14 +314,18 @@ static void DumpHeader(DumpState *D)
 */
 int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
+  int x=1;
   DumpState D;
   D.H=H;
   D.writer=w;
   D.data=data;
   D.pos=0;
-  D.strip=hksc_getStrip(H);
+  D.striplevel=hksc_getStrip(H);
   D.status=0;
-  D.endianswap=0;
+  if ((char)*(char*)&x == 0) /* big endian */
+    D.swapendian=(G(H)->endianness==HKSC_LITTLE_ENDIAN);
+  else /* little endian */
+    D.swapendian=(G(H)->endianness==HKSC_BIG_ENDIAN);
   DumpHeader(&D);
   DumpFunction(f,NULL,&D);
   return D.status;

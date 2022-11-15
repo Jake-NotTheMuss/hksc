@@ -9,6 +9,10 @@
 #ifndef lua_h
 #define lua_h
 
+/* make these configurable in luaconf.h */
+#define LUA_COD /* general cod compatibility */
+#define LUA_CODT7 /* T7 compatibility */
+
 #include <stdarg.h>
 #include <stddef.h>
 
@@ -113,14 +117,6 @@ typedef LUA_NUMBER lua_Number;
 /* type for integer functions */
 typedef LUA_INTEGER lua_Integer;
 
-#if 0
-/* type for long/short literals */
-typedef LUA_LITERAL lua_Literal;
-#endif
-/* TOOD: make this configurable in luaconf.h */
-#include <inttypes.h>
-/* int literal type */
-typedef uint64_t lua_Literal;
 
 /*
 ** state manipulation

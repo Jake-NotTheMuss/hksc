@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include "hkscconf.h" /* process Hksc configuration first */
 
 /*
 ** ==================================================================
@@ -57,70 +58,6 @@
 #define LUA_USE_POPEN
 #define LUA_USE_ULONGJMP
 #endif
-
-
-/*
-@@ LUA_PATH_DEFAULT is the default path that Lua uses to look for
-@* Lua libraries.
-@@ LUA_CPATH_DEFAULT is the default path that Lua uses to look for
-@* C libraries.
-** CHANGE them if your machine has a non-conventional directory
-** hierarchy or if you want to install your libraries in
-** non-conventional directories.
-*/
-#if defined(_WIN32)
-/*
-** In Windows, any exclamation mark ('!') in the path is replaced by the
-** path of the directory of the executable file of the current process.
-*/
-#define LUA_LDIR	"!\\lua\\"
-#define LUA_CDIR	"!\\"
-#define LUA_PATH_DEFAULT  \
-		".\\?.lua;"  LUA_LDIR"?.lua;"  LUA_LDIR"?\\init.lua;" \
-		             LUA_CDIR"?.lua;"  LUA_CDIR"?\\init.lua"
-#define LUA_CPATH_DEFAULT \
-	".\\?.dll;"  LUA_CDIR"?.dll;" LUA_CDIR"loadall.dll"
-
-#else
-#define LUA_ROOT	"/usr/local/"
-#define LUA_LDIR	LUA_ROOT "share/lua/5.1/"
-#define LUA_CDIR	LUA_ROOT "lib/lua/5.1/"
-#define LUA_PATH_DEFAULT  \
-		"./?.lua;"  LUA_LDIR"?.lua;"  LUA_LDIR"?/init.lua;" \
-		            LUA_CDIR"?.lua;"  LUA_CDIR"?/init.lua"
-#define LUA_CPATH_DEFAULT \
-	"./?.so;"  LUA_CDIR"?.so;" LUA_CDIR"loadall.so"
-#endif
-
-
-/*
-@@ LUA_DIRSEP is the directory separator (for submodules).
-** CHANGE it if your machine does not use "/" as the directory separator
-** and is not Windows. (On Windows Lua automatically uses "\".)
-*/
-#if defined(_WIN32)
-#define LUA_DIRSEP	"\\"
-#else
-#define LUA_DIRSEP	"/"
-#endif
-
-
-/*
-@@ LUA_PATHSEP is the character that separates templates in a path.
-@@ LUA_PATH_MARK is the string that marks the substitution points in a
-@* template.
-@@ LUA_EXECDIR in a Windows path is replaced by the executable's
-@* directory.
-@@ LUA_IGMARK is a mark to ignore all before it when bulding the
-@* luaopen_ function name.
-** CHANGE them if for some reason your system cannot use those
-** characters. (E.g., if one of those characters is a common character
-** in file/directory names.) Probably you do not need to change them.
-*/
-#define LUA_PATHSEP	";"
-#define LUA_PATH_MARK	"?"
-#define LUA_EXECDIR	"!"
-#define LUA_IGMARK	"-"
 
 
 /*
@@ -404,6 +341,7 @@
 #define LUAI_MAXINT32	INT_MAX
 #define LUAI_UMEM	size_t
 #define LUAI_MEM	ptrdiff_t
+#define LUA_INT_FRMLEN "" /* no length specifier */
 #else
 /* 16-bit ints */
 #define LUAI_UINT32	unsigned long
@@ -411,26 +349,53 @@
 #define LUAI_MAXINT32	LONG_MAX
 #define LUAI_UMEM	unsigned long
 #define LUAI_MEM	long
+#define LUA_INT_FRMLEN "l" /* %ld */
 #endif
 
 
 /*
-@@ LUAI_MAXCALLS limits the number of nested calls.
-** CHANGE it if you need really deep recursive calls. This limit is
-** arbitrary; its only purpose is to stop infinite recursion before
-** exhausting memory.
+** UI64 type
 */
-#define LUAI_MAXCALLS	20000
 
+#if defined(LUA_WIN)
+/* in Windows, can use specific Windows types */
+#define LUAI_UINT64 unsigned __int64
+#define LUA_UI64_FMT "%I64x"
+#define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n));
+#define lua_str2ui64(s,p) _strtoui64((s), (p), 16)
+#elif !defined(LUA_ANSI) && defined(__STDC_VERSION__) && \
+  __STDC_VERSION__ >= 199901L
+/* use C99 types */
+#include <inttypes.h>
+#define LUAI_UINT64 uintmax_t
+#define LUA_UI64_FMT PRIxMAX
+#define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n))
+#define lua_str2ui64(s,p,n) strtoumax((s), (p), 16)
+#elif ((ULONG_MAX >> 62) >= 3) /* long is 64 bits? */
+/* use unsigned long type */
+#define LUAI_UINT64 unsigned long
+#define LUA_UI64_FMT "%lx"
+#define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n))
+#define lua_str2ui64(s,p,n) strtoul((s), (p), 16)
+#else
+#define LUA_UI64_S
+/* C89 */
+#define LUAI_UINT64 struct lua_ui64_s
+#define LUA_UI64_FMT "%.0" LUA_INT_FRMLEN "x%08" LUA_INT_FRMLEN "x" 
+#define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n).high, (n).low)
+#define lua_str2ui64(s,p,n) luaO_str2ui64((s), (p), (n))
+#endif
 
-/*
-@@ LUAI_MAXCSTACK limits the number of Lua stack slots that a C function
-@* can use.
-** CHANGE it if you need lots of (Lua) stack space for your C
-** functions. This limit is arbitrary; its only purpose is to stop C
-** functions to consume unlimited stack space.
-*/
-#define LUAI_MAXCSTACK	2048
+#ifdef LUA_UI64_S
+#define lua_ui64_testlow4bits(x) (((x).low & 0xf) != 0)
+#define lua_ui64tolud(x) (cast(void *, cast(size_t, (x).low) | \
+  (cast(size_t, (x).high) << 32)))
+#else
+#define lua_ui64_testlow4bits(x) (((x) & 0xf) != 0)
+#define lua_ui64tolud(x) (cast(void *, (x)))
+#endif /* LUA_UI64_S */
+
+#define LUAI_MAXUI642STR 17 /* 16 hex digits and \0 */
 
 
 
@@ -488,12 +453,12 @@
 ** ===================================================================
 */
 
-#ifndef HKS_COD_COMPAT
-#define LUA_NUMBER_DOUBLE
-#define LUA_NUMBER	double
-#else /* HKS_COD_COMPAT */
-#define LUA_NUMBER  float
-#endif /* HKS_COD_COMPAT */
+#if HKSC_WITHDOUBLES
+# define LUA_NUMBER_DOUBLE
+# define LUA_NUMBER  double
+#else /* !LUA_WITHDOUBLES */
+# define LUA_NUMBER  float
+#endif /* LUA_WITHDOUBLES */
 
 /*
 @@ LUAI_UACNUMBER is the result of an 'usual argument conversion'
@@ -544,6 +509,7 @@
 ** in C is extremely slow, so any alternative is worth trying.
 */
 
+/* TODO: make this work with both `float' and `double' (used in ltable.c) */
 /* On a Pentium, resort to a trick */
 #if defined(LUA_NUMBER_DOUBLE) && !defined(LUA_ANSI) && !defined(__SSE2__) && \
     (defined(__i386) || defined (_M_IX86) || defined(__i386__))

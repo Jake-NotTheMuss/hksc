@@ -21,16 +21,12 @@ const char *const luaP_opnames[NUM_OPCODES+1] = {
 #undef DEFCODE
 
 
-#define opmode(m,t,a,b,c,mr1,ur1,vr1) \
-  (((vr1)<<13) | ((ur1)<<11) | ((mr1)<<10) | ((t)<<9) | ((a)<<8) | \
-    ((b)<<5) | ((c)<<2) | (m))
-
 /*
 ** opcode modes
 */
 #define DEFCODE(name,mode,test,useRA,bmode,cmode,makeR1,useR1,r1Version) \
-  opmode(i##mode,test,useRA,OpArg##bmode,OpArg##cmode,makeR1,useR1,r1Version),
-const lu_int32 luaP_opmodes[NUM_OPCODES] = {
+  {i##mode,OpArg##cmode,OpArg##bmode,useRA,test,makeR1,useR1,r1Version},
+const struct OpCodeDesc luaP_opmodes[NUM_OPCODES] = {
 #include "lopcodes.def"
 };
 #undef DEFCODE

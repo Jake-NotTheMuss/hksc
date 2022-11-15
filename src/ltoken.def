@@ -2,7 +2,7 @@
 /*
 ** ltoken.def
 ** Define all reserved tokens here
-** Before including this file, define the macros DEFTOK and DEFTOK1.
+** Before including this file, define the macros DEFTOK and DEFTOKFIRST.
 ** When adding `#define' directives inside this file, use an `#ifndef' guard
 **   to allow for multiple inclusions of this file
 ** See Copyright Notice in lua.h
@@ -10,15 +10,20 @@
 
 /*
 ** #define DEFTOK(name, text)
-** #define DEFTOK1(name, text)
-** NAME is the name of the token, e.g. TK_AND
-** TEXT is the string which is printed in messages, e.g. "and" for TK_AND
+** #define DEFTOKFIRST(name, text)
+** <name> is the name of the token, e.g. TK_AND
+** <text> is the string which is printed in messages, e.g. "and" for TK_AND
 */
+
+#ifndef DEFTOKFIRST
+# define NO_DEFTOKFIRST /* so this file knows to undef it at the end */
+# define DEFTOKFIRST DEFTOK
+#endif /* !DEFTOKFIRST */
 
 
 /* terminal symbols denoted by reserved words */
-/* NOTE: the first reserved token uses DEFTOK1, all others use DEFTOK */
-DEFTOK1(TK_AND,           "and")
+/* NOTE: the first reserved token uses DEFTOKFIRST, all others use DEFTOK */
+DEFTOKFIRST(TK_AND,       "and")
 DEFTOK(TK_BREAK,          "break")
 DEFTOK(TK_DO,             "do")
 DEFTOK(TK_ELSE,           "else")
@@ -42,19 +47,20 @@ DEFTOK(TK_WHILE,          "while")
 DEFTOK(TK_HSTRUCTURE,     "hstructure")
 DEFTOK(TK_HMAKE,          "hmake")
 
-/* END of reserved words */
-#ifndef LTOKENS_LAST_RESERVED_WORD
-# define LTOKENS_LAST_RESERVED_WORD TK_HMAKE
-#endif /* LTOKENS_LAST_RESERVED_WORD */
+/* end of reserved words */
+
+#ifndef LAST_RESERVED
+# define LAST_RESERVED TK_HMAKE
+#endif /* LAST_RESERVED */
 
 /* invalid token */
 DEFTOK(TK_INVALID,        "INVALID")
 
 /* other terminal symbols */
-/* BEGIN T7 extensions */
+#ifdef LUA_CODT7 /* T7 extensions */
 DEFTOK(TK_LEFT_SHIFT,     "<<")
 DEFTOK(TK_RIGHT_SHIFT,    ">>")
-/* END T7 extensions */
+#endif /* LUA_CODT7 */
 DEFTOK(TK_CONCAT,         "..")
 DEFTOK(TK_DOTS,           "...")
 DEFTOK(TK_EQ,             "==")
@@ -62,11 +68,11 @@ DEFTOK(TK_GE,             ">=")
 DEFTOK(TK_LE,             "<=")
 DEFTOK(TK_NE,             "~=")
 
-/* the remaining tokens are of variable format and are not to be
-   quoted as literal strings in error messages */
-#ifndef LTOKENS_FIRST_NONQUOTED
-# define LTOKENS_FIRST_NONQUOTED TK_NUMBER
-#endif /* LTOKENS_FIRST_NONQUOTED */
+/* the remaining tokens are of variable format and are not to be quoted as
+   literal strings in error messages */
+#ifndef LAST_FIXED_FORMAT_TOKEN
+# define LAST_FIXED_FORMAT_TOKEN TK_NUMBER
+#endif /* LAST_FIXED_FORMAT_TOKEN */
 
 DEFTOK(TK_NUMBER,         "<number>")
 DEFTOK(TK_SHORT_LITERAL,  "<short_literal>")
@@ -83,7 +89,9 @@ DEFTOK(TK_UTF16BE_BOM,    "<UTF16BE_BOM>")
 DEFTOK(TK_UTF32LE_BOM,    "<UTF32LE_BOM>")
 DEFTOK(TK_UTF32BE_BOM,    "<UTF32BE_BOM>")
 
-/* END of reserved tokens */
-#ifndef LTOKENS_LONGEST_TOKEN
-# define LTOKENS_LONGEST_TOKEN "<short_literal>"
-#endif /* LTOKENS_LONGEST_TOKEN */
+/* end of reserved tokens */
+
+#ifdef NO_DEFTOKFIRST
+# undef DEFTOKFIRST
+# undef NO_DEFTOKFIRST
+#endif /* NO_DEFTOKFIRST */

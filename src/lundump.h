@@ -37,31 +37,35 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 /* size of header of binary files */
 #define LUAC_HEADERSIZE		sizeof(HkscHeader)
 
+/* this is an offline compiler - bytecode is not shared */
+#define LUAC_SHARED_BYTECODE 0
+
 typedef struct HkscHeader {
   char signature[sizeof(LUA_SIGNATURE)-1]; /* Lua binary signature */
   char version;     /* Lua version */
   char format;      /* Lua format */
-  char endianswap;  /* true if need to swap endianness */
+  char endianswap;  /* true if need to swap endianness when loading/dumping */
   char sizeint;     /* size of int */
   char sizesize;    /* size of size_t */
   char sizeinstr;   /* size of Instruction */
   char sizenumber;  /* size of lua_Number */
   char numberisint; /* true if lua_Number is integral */
-  char compatmask;  /* compatibility flags */ /*TODO: See HKS_COMPATIBILITY_BIT
-                          (TODO is only here so you remeber to delete this) */
-  char sharedstate;
+  char compatmask;  /* compatibility flags */
+  char sharedstate; /* true if compiled in a shared state */
 } HkscHeader;
 
 /* number of types in header of binary files */
-#define LUAC_NUMTYPES (LUA_TSTRUCT+1)
+#define LUAC_NUMTYPES (LUA_NUM_TYPE_OBJECTS-1)
 
 
 /* bytecode stripping levels */
 #define BYTECODE_STRIPPING_NONE 0
 #define BYTECODE_STRIPPING_PROFILING 1
 #define BYTECODE_STRIPPING_ALL 2
+#ifdef LUA_COD /* Cod extensions */
 #define BYTECODE_STRIPPING_DEBUG_ONLY 3
 #define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
+#endif /* LUA_COD */
 
 /* TODO: These are compatibility bits
   HKS_GETGLOBAL_MEMOIZATION
@@ -89,31 +93,24 @@ Note: CoD settings are 0:
   NATIVEINT:    OFF
 */
 
-/*
-** macros for testing stripping level properties
-*/
-#define needsfuncinfo(D) ((D)->strip == BYTECODE_STRIPPING_NONE || \
-  (D)->strip == BYTECODE_STRIPPING_PROFILING || \
-  (D)->strip == BYTECODE_STRIPPING_ALL)
 
-#define needsdebuginfo(D) ((D)->strip == BYTECODE_STRIPPING_NONE || \
-  (D)->strip == BYTECODE_STRIPPING_DEBUG_ONLY)
+#define aligned2type(x,size) (((x) + ((size)-1)) & ~((size)-1))
+#define aligned2nativetype(x,t) aligned2type(x,sizeof(t))
 
-#define aligned2instr(x) \
-  (((x) + (HKSC_SIZE_INSTR-1)) & ~(HKSC_SIZE_INSTR-1))
+#define aligned2int(x)     aligned2type(x,HKSC_SIZE_INT)
+#define aligned2size(x)    aligned2type(x,HKSC_SIZE_SIZE)
+#define aligned2instr(x)   aligned2type(x,HKSC_SIZE_INSTR)
+#define aligned2number(x)  aligned2type(x,HKSC_SIZE_NUMBER)
 
-#ifdef CODT7_COMPAT
-/* hardcoded to match cod */
-# define HKSC_SIZE_INT    4
-# define HKSC_SIZE_SIZE   8
-# define HKSC_SIZE_INSTR  4
-# define HKSC_SIZE_NUMBER 4
-#else /* !CODT7_COMPAT */
-# define HKSC_SIZE_INT    sizeof(int)
-# define HKSC_SIZE_SIZE   sizeof(size_t)
-# define HKSC_SIZE_INSTR  sizeof(Instruction)
-# define HKSC_SIZE_NUMBER sizeof(lua_Number)
-#endif /* CODT7_COMPAT */
+#ifndef LUA_MULTIPLAT_COMPAT /* use native host sizes */
+# define HKSC_SIZE_INT     sizeof(int)
+# define HKSC_SIZE_SIZE    sizeof(size_t)
+# define HKSC_SIZE_INSTR   sizeof(Instruction)
+# define HKSC_SIZE_NUMBER  sizeof(lua_Number)
+#else
+/* TODO: use explicit sizes from dump settings */
+#error "Unimplemented"
+#endif
 
 /* for data alignment in header */
 #define ALIGN(p,n) (void *)(((long)(p) + (n)-1) & ~((n)-1))

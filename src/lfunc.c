@@ -62,16 +62,16 @@ void luaF_freeproto (hksc_State *H, Proto *f) {
 
 void luaF_makehash (hksc_State *H, Proto *f) {
   char *str;
-  size_t size = f->source->tsv.len;
-  lua_assert(size != 0);
+  size_t len = f->source->tsv.len;
+  lua_assert(len != 0);
   if (f->name)
-    size += f->name->tsv.len;
-  str = luaM_newvector(H, size, char);
+    len += f->name->tsv.len;
+  str = luaM_newvector(H, len, char);
   memcpy(str, getstr(f->source), f->source->tsv.len);
   if (f->name)
     memcpy(str+f->source->tsv.len, getstr(f->name), f->name->tsv.len);
-  f->hash = luaS_dbhashlstr(H,str,size);
-  luaM_freearray(H, str, size, char);
+  f->hash = luaS_dbhashlstr(H,str,len);
+  luaM_freearray(H, str, len, char);
 }
 
 

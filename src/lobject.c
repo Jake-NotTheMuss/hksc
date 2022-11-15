@@ -4,7 +4,6 @@
 ** See Copyright Notice in lua.h
 */
 
-#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +16,7 @@
 
 #include "lua.h"
 
+#include "lctype.h"
 #include "ldo.h"
 #include "lmem.h"
 #include "lobject.h"
@@ -95,10 +95,43 @@ int luaO_str2d (const char *s, lua_Number *result) {
   if (*endptr == 'x' || *endptr == 'X')  /* maybe an hexadecimal constant? */
     *result = cast_num(strtoul(s, &endptr, 16));
   if (*endptr == '\0') return 1;  /* most common case */
-  while (isspace(cast(unsigned char, *endptr))) endptr++;
+  while (lisspace(cast(unsigned char, *endptr))) endptr++;
   if (*endptr != '\0') return 0;  /* invalid trailing characters? */
   return 1;
 }
+
+
+#ifdef LUA_UI64_S
+struct lua_ui64_s luaO_str2ui64(const char *s, char **endptr, size_t n) {
+  struct lua_ui64_s literal;
+  const char *lowptr; /* start of low 32 bits */
+  char *s1 = cast(char *, s);
+  if (n > 8) { /* exceeds 32 bits */
+    char *saveptr = s1+n-8;
+    char save = *saveptr;
+    *saveptr = '\0'; /* just get the high part */
+    literal.high = cast(lu_int32, strtoul(s, endptr, 16));
+    *saveptr = save;
+    lowptr = cast(const char *, saveptr);
+    if (*endptr != saveptr) {
+      literal.low = literal.high;
+      literal.high = 0;
+      return literal; /* conversion failed */
+    }
+    if (n > 16) { /* too big to fit in 64 bits */
+      literal.low = literal.high = ~cast(lu_int32, 0); /* overflow */
+      /* complete the conversion to know if it succeeds or not */
+      strtoul(lowptr, endptr, 16);
+      return literal;
+    }
+  } else {
+    literal.high = 0; /* fits in 32 bits */
+    lowptr = s;
+  }
+  literal.low = cast(lu_int32, strtoul(lowptr, endptr, 16));
+  return literal;
+}
+#endif /* LUA_UI64_S */
 
 
 const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {

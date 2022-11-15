@@ -26,10 +26,10 @@
 typedef enum BinOpr {
   OPR_ADD, OPR_SUB, OPR_MUL, OPR_DIV, OPR_MOD, OPR_POW,
   OPR_CONCAT,
-/* T7 extensions */
+#ifdef LUA_CODT7 /* T7 extensions */
   OPR_LEFT_SHIFT, OPR_RIGHT_SHIFT,
   OPR_BIT_AND, OPR_BIT_OR,
-/* end of T7 extensions */
+#endif /* LUA_CODT7 */
   OPR_NE, OPR_EQ,
   OPR_LT, OPR_LE, OPR_GT, OPR_GE,
   OPR_AND, OPR_OR,
@@ -55,7 +55,7 @@ LUAI_FUNC void luaK_reserveregs (FuncState *fs, int n);
 LUAI_FUNC void luaK_checkstack (FuncState *fs, int n);
 LUAI_FUNC int luaK_stringK (FuncState *fs, TString *s);
 LUAI_FUNC int luaK_numberK (FuncState *fs, lua_Number r);
-LUAI_FUNC int luaK_literalK(FuncState *fs, lua_Literal l, int type);
+LUAI_FUNC int luaK_literalK(FuncState *fs, lu_int64 l, int type);
 LUAI_FUNC void luaK_dischargevars (FuncState *fs, expdesc *e);
 LUAI_FUNC int luaK_exp2anyreg (FuncState *fs, expdesc *e);
 LUAI_FUNC void luaK_exp2nextreg (FuncState *fs, expdesc *e);
@@ -77,6 +77,7 @@ LUAI_FUNC void luaK_prefix (FuncState *fs, UnOpr op, expdesc *v);
 LUAI_FUNC void luaK_infix (FuncState *fs, BinOpr op, expdesc *v);
 LUAI_FUNC void luaK_posfix (FuncState *fs, BinOpr op, expdesc *v1, expdesc *v2);
 LUAI_FUNC void luaK_setlist (FuncState *fs, int base, int nelems, int tostore);
+LUAI_FUNC void luaK_optimize_function (hksc_State *H, Proto *f);
 
 
 #endif

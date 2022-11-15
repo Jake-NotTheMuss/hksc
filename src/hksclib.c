@@ -23,21 +23,21 @@
 
 
 
-#define hasluaext(n,l) (hasext(n,l,LUA_EXT))
-#define hasluacext(n,l) (hasext(n,l,LUAC_EXT))
+#define hasluaext(s,l) (hasext(s,l,LUA_EXT))
+#define hasluacext(s,l) (hasext(s,l,LUAC_EXT))
 
 #define MAXEXT 32 /* arbitrary limit on the length of file extensions */
 
 static int hasext(const char *name, size_t namelen, const char *ext) {
-  char buf[MAXEXT];
-  size_t len;
+  char buff[MAXEXT];
+  size_t n;
   size_t extlen = strlen(ext);
   lua_assert(extlen < MAXEXT);
   if (namelen < extlen || extlen < 2) return 0;
-  for (len = 0; len < extlen; len++)
-    buf[len]=ltolower(name[namelen-(extlen-len)]);
-  buf[len]='\0';
-  return (strcmp(buf, ext) == 0);
+  for (n = 0; n < extlen; n++)
+    buff[n]=ltolower(name[namelen-(extlen-n)]);
+  buff[n]='\0';
+  return (strcmp(buff, ext) == 0);
 }
 
 #define MAXLUACNAME 512
@@ -46,24 +46,24 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
 ** generate a name for a new compiled Lua file
 */
 static const char *lua2luac(hksc_State *H, const char *name) {
-  char buf[MAXLUACNAME];
-  size_t len = 0;
+  char buff[MAXLUACNAME];
+  size_t n = 0;
   size_t namelen = strlen(name);
   if (hasluaext(name,namelen) && namelen < (MAXLUACNAME-1)) {
     /* already has lua extension, just append `c' to the name */
-    memcpy(buf, name, namelen);
-    len+=namelen;
-    buf[len++]=(name[namelen-1] == 'A') ? 'C' : 'c';
+    memcpy(buff, name, namelen);
+    n+=namelen;
+    buff[n++]=(name[namelen-1] == 'A') ? 'C' : 'c';
   } else {
     if ((namelen+sizeof(LUAC_EXT)) >= MAXLUACNAME)
-      namelen = MAXLUACNAME-1-sizeof(LUAC_EXT);
-    memcpy(buf, name, namelen);
-    len+=namelen;
-    memcpy(buf+len, LUAC_EXT, sizeof(LUAC_EXT));
-    len+=sizeof(LUAC_EXT);
+      namelen = MAXLUACNAME-sizeof(LUAC_EXT);
+    memcpy(buff, name, namelen);
+    n+=namelen;
+    memcpy(buff+n, LUAC_EXT, sizeof(LUAC_EXT)-1);
+    n+=sizeof(LUAC_EXT)-1;
   }
-  buf[len]='\0';
-  return getstr(luaS_newlstr(H, buf, len));
+  buff[n]='\0';
+  return getstr(luaS_newlstr(H, buff, n));
 }
 
 
@@ -71,21 +71,21 @@ static const char *lua2luac(hksc_State *H, const char *name) {
 ** generate a name for a new decompiled Lua file
 */
 static const char *luac2luadec(hksc_State *H, const char *name) {
-  char buf[MAXLUACNAME];
-  size_t len = 0;
+  char buff[MAXLUACNAME];
+  size_t n = 0;
   size_t namelen = strlen(name);
   if (hasluacext(name,namelen)) /* `*.luac'? */
-    namelen-=sizeof(LUAC_EXT); /* remove `.luac' */
+    namelen-=sizeof(LUAC_EXT)-1; /* remove `.luac' */
   else if (hasluaext(name,namelen)) /* `*.lua'? */
-    namelen-=sizeof(LUA_EXT); /* remove `.lua' */
+    namelen-=sizeof(LUA_EXT)-1; /* remove `.lua' */
   if ((namelen+sizeof(LUADEC_EXT)) >= MAXLUACNAME)
-    namelen = MAXLUACNAME-1-sizeof(LUADEC_EXT);
-  memcpy(buf, name, namelen);
-  len+=namelen;
-  memcpy(buf+len, LUADEC_EXT, sizeof(LUADEC_EXT));
-  len+=sizeof(LUADEC_EXT);
-  buf[len]='\0';
-  return getstr(luaS_newlstr(H, buf, len));
+    namelen = MAXLUACNAME-sizeof(LUADEC_EXT);
+  memcpy(buff, name, namelen);
+  n+=namelen;
+  memcpy(buff+n, LUADEC_EXT, sizeof(LUADEC_EXT)-1);
+  n+=sizeof(LUADEC_EXT)-1;
+  buff[n]='\0';
+  return getstr(luaS_newlstr(H, buff, n));
 }
 
 /*
@@ -165,7 +165,7 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
 static int loadfile(hksc_State *H, const char *filename) {
   LoadF lf;
   const char *chunkname;
-  int status, readstatus;
+  int status;
   int c;
   lf.extraline = 0;
   if (filename == NULL) {
@@ -243,22 +243,24 @@ static int loadbuffer (hksc_State *H, const char *buff, size_t size,
 /* }====================================================== */
 
 
+/* put here all logic to be run at the start of a parser cycle */
 #define startcycle(H) do { \
-  global_State *g_ = G(H); \
-  lua_assert(g_->gcstate == GCSpause); /* GC only occurs between operations */ \
+  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */ \
   luaC_newcycle(H); /* collect old prototypes and tables */ \
   luaC_checkGC(H); /* maybe collect garbage */ \
   } while (0)
 
 
+/* put here all logic to be run at the end of a parser cycle */
 #define endcycle(H) do { \
+  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */ \
   (H)->last_result = NULL; /* will be collected, remove dangling pointer */ \
   } while (0)
 
 
 static int writer_2file(hksc_State *H, const void *p, size_t sz, void *ud) {
-  UNUSED(H);
   FILE *out = (FILE *)ud;
+  UNUSED(H);
   if (fwrite(p, 1, sz, out) != sz)
     return 1;
   else
@@ -267,17 +269,37 @@ static int writer_2file(hksc_State *H, const void *p, size_t sz, void *ud) {
 
 
 typedef struct WriteS {
-  char *buf;
-  size_t size; /* toatal size */
+  char *buff;
+  size_t alloc; /* total size */
   size_t pos; /* number of bytes written */
 } WriteS;
 
 
 static int writer_2buf(hksc_State *H, const void *p, size_t sz, void *ud) {
+  size_t osize, nsize, alloc;
+  hksc_DumpCtx *ctx = (hksc_DumpCtx *)ud;
   UNUSED(H);
-  WriteS *ws = (WriteS *)ud;
-  memcpy(ws->buf + ws->pos, p, sz);
-  ws->pos += sz;
+  lua_assert(ctx->size <= ctx->alloc);
+  osize = ctx->size;
+  nsize = osize + sz;
+  if (ctx->alloc < nsize) { /* need to allocate more space */
+    void *newbuff;
+    if (ctx->alloc == 0)
+      alloc = 32;
+    else if (ctx->alloc < 128)
+      alloc = ctx->alloc * 2; /* double when small */
+    else
+      alloc = (ctx->alloc * 3 / 2); /* grow slower when large */
+    if (alloc < nsize)
+      alloc = nsize; /* if this is still too small, set it to the right size */
+    newbuff = (*ctx->frealloc)(ctx->ud, ctx->buff, ctx->alloc, alloc);
+    if (newbuff == NULL)
+      return LUA_ERRMEM; /* allocation failed */
+    ctx->alloc = alloc;
+    ctx->buff = newbuff;
+  }
+  memcpy(ctx->buff + ctx->size, p, sz);
+  ctx->size += sz;
   return 0;
 }
 
@@ -287,7 +309,7 @@ static int dump2file(hksc_State *H, const char *inname, const char *outname) {
   Proto *f;
   FILE *out;
   f = H->last_result;
-  if (f == NULL) return H->status; /* error during parsing, do not dump */
+  lua_assert(f != NULL); /* parse errors should be caught before calling */
   if (outname == NULL) { /* generate an output name if needed */
     if (luaE_mode(H) == HKSC_MODE_COMPILE)
       outname = lua2luac(H, inname);
@@ -303,15 +325,11 @@ static int dump2file(hksc_State *H, const char *inname, const char *outname) {
 }
 
 
-static int dump2buf(hksc_State *H, char *buf, size_t size) {
+static int dump2buff(hksc_State *H, hksc_DumpCtx *ctx) {
   int status;
-  WriteS ws;
   Proto *f = H->last_result;
-  if (f == NULL) return H->status; /* error during parsing, do not dump */
-  ws.buf = buf;
-  ws.size = size;
-  ws.pos = 0;
-  status = luaU_dump(H, f, writer_2buf, &ws);
+  lua_assert(f != NULL); /* parse errors should be caught before calling */
+  status = luaU_dump(H, f, writer_2buf, ctx);
   return status;
 }
 
@@ -332,11 +350,37 @@ int hksI_parser_file(hksc_State *H, const char *filename) {
 }
 
 
-int hksI_parser_buf(hksc_State *H, const char *buf, size_t size,
-                    const char *source) {
+int hksI_parser_buff(hksc_State *H, const char *buff, size_t size,
+                     const char *source) {
   int status;
   startcycle(H);
-  status = loadbuffer(H, buf, size, source);
+  status = loadbuffer(H, buff, size, source);
+  endcycle(H);
+  return status;
+}
+
+
+int hksI_parser_file_dump(hksc_State *H, const char *filename,
+                          hksc_DumpFunction dumpf, void *ud) {
+  int status;
+  startcycle(H);
+  status = loadfile(H, filename); /* parse file */
+  if (status) goto err;
+  status = (*dumpf)(H, H->last_result, ud);
+  err:
+  endcycle(H);
+  return status;
+}
+
+
+int hksI_parser_buff_dump(hksc_State *H, const char *buff, size_t size,
+                    const char *source, hksc_DumpFunction dumpf, void *ud) {
+  int status;
+  startcycle(H);
+  status = loadbuffer(H, buff, size, source);
+  if (status) goto err;
+  status = (*dumpf)(H, H->last_result, ud);
+  err:
   endcycle(H);
   return status;
 }
@@ -346,7 +390,6 @@ int hksI_parser_buf(hksc_State *H, const char *buf, size_t size,
 int hksI_parser_file2file(hksc_State *H, const char *filename,
                           const char *outname) {
   int status;
-  Proto *f;
   startcycle(H);
   status = loadfile(H, filename); /* parse file */
   if (status) goto err;
@@ -357,44 +400,39 @@ int hksI_parser_file2file(hksc_State *H, const char *filename,
 }
 
 
-int hksI_parser_file2buf(hksc_State *H, const char *filename, char *out,
-                         size_t outsize) {
+int hksI_parser_buff2file(hksc_State *H, const char *buff, size_t size,
+                          const char *source, const char *outname) {
   int status;
-  Proto *f;
-  lua_assert(out != NULL && outsize != 0);
+  startcycle(H);
+  status = loadbuffer(H, buff, size, source); /* parse buffer */
+  if (status) goto err;
+  status = dump2file(H, source, outname); /* dump to output file */
+  err:
+  endcycle(H);
+  return status;
+}
+
+
+int hksI_parser_file2buff(hksc_State *H, const char *filename,
+                          hksc_DumpCtx *ctx) {
+  int status;
   startcycle(H);
   status = loadfile(H, filename); /* parse file */
   if (status) goto err;
-  status = dump2buf(H, out, outsize); /* dump to output file */
+  status = dump2buff(H, ctx); /* dump to output buffer */
   err:
   endcycle(H);
   return status;
 }
 
 
-int hksI_parser_buf2file(hksc_State *H, const char *buf, size_t size,
-                         const char *source, const char *outname) {
+int hksI_parser_buff2buff(hksc_State *H, const char *buff, size_t size,
+                          const char *source, hksc_DumpCtx *ctx) {
   int status;
-  Proto *f;
   startcycle(H);
-  status = loadbuffer(H, buf, size, source); /* parse buffer */
+  status = loadbuffer(H, buff, size, source); /* parse buffer */
   if (status) goto err;
-  status = dump2file(H, source, outname); /* dump to output buffer */
-  err:
-  endcycle(H);
-  return status;
-}
-
-
-int hksI_parser_buf2buf(hksc_State *H, const char *buf, size_t size,
-                        const char *source, char *out, size_t outsize) {
-  int status;
-  Proto *f;
-  lua_assert(out != NULL && outsize != 0);
-  startcycle(H);
-  status = loadbuffer(H, buf, size, source); /* parse buffer */
-  if (status) goto err;
-  status = dump2buf(H, out, outsize); /* dump to output buffer */
+  status = dump2buff(H, ctx); /* dump to output buffer */
   err:
   endcycle(H);
   return status;
@@ -403,6 +441,26 @@ int hksI_parser_buf2buf(hksc_State *H, const char *buf, size_t size,
 
 
 /* }====================================================== */
+
+
+void hksI_dumpctx_init(hksc_State *H, hksc_DumpCtx *ctx) {
+  ctx->H = H;
+  if (ctx->frealloc == NULL)
+    ctx->frealloc = G(H)->frealloc;
+  if (ctx->ud == NULL)
+    ctx->ud = G(H)->ud;
+  ctx->buff = NULL;
+  ctx->alloc = 0;
+  ctx->size = 0;
+}
+
+
+void hksI_dumpctx_free(hksc_State *H, hksc_DumpCtx *ctx) {
+  void *p = (*ctx->frealloc)(ctx->ud, ctx->buff, ctx->alloc, 0);
+  lua_assert(p == NULL);
+  ctx->buff = p;
+  ctx->alloc = ctx->size = 0;
+}
 
 
 static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize) {
