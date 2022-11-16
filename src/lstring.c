@@ -106,16 +106,38 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
   return newlstr(H, str, l, h);  /* not found */
 }
 
-lu_int32 luaS_dbhashlstr (hksc_State *H, const char *str, size_t l) {
+/*
+** Function name hashes (Cod extension)
+*/
+#ifdef LUA_COD
+
+/*
+** NOTE: T6 and early versions of T7 incremented i by 2 on each iteration when
+** computing the hash. The PS3 and Xbox versions of T7 still use the older
+** version (increment by 2), while current versions on PC, Orbis, and Durango
+** increment by 1.
+*/
+
+static lu_int32 codhash (hksc_State *H, const char *str, size_t l, size_t step)
+{
   lu_int32 hash = 5381;
   size_t i = 0;
   UNUSED(H);
   while (i < l) {
     hash = hash * 33 + str[i];
-    /* NOTE/TODO: T6 and early versions of T7 incremented i by 2 each loop.
-       Current T7 increments by 1, except the PS3 and XBOX360 versions */
-    i+=1;
+    i += step;
   }
   return hash;
 }
+
+/* increment i by 1 each iteration */
+lu_int32 luaS_dbhashlstr (hksc_State *H, const char *str, size_t l) {
+  return codhash(H, str, l, 1);
+}
+
+/* increment i by 2 each iteration */
+lu_int32 luaS_dbhashlstr2 (hksc_State *H, const char *str, size_t l) {
+  return codhash(H, str, l, 2);
+}
+#endif /* LUA_COD */
 

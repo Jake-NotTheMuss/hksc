@@ -18,7 +18,7 @@
 #define DEFTOK(name, text) name,
 enum RESERVED {
 #include "ltoken.def"
-  TK_MAX
+  MAX_RESERVED
 };
 #undef DEFTOKFIRST
 #undef DEFTOK

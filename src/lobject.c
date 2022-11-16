@@ -81,6 +81,13 @@ int luaO_rawequalObj (const TValue *t1, const TValue *t2) {
       return bvalue(t1) == bvalue(t2);  /* boolean true must be 1 !! */
     case LUA_TLIGHTUSERDATA:
       return pvalue(t1) == pvalue(t2);
+    case LUA_TUI64:
+#ifdef LUA_UI64_S
+      return hlvalue(t1).high == hlvalue(t2).high &&
+              hlvalue(t1).low == hlvalue(t2).low;
+#else
+      return hlvalue(t1) == hlvalue(t2);
+#endif
     default:
       lua_assert(iscollectable(t1));
       return gcvalue(t1) == gcvalue(t2);

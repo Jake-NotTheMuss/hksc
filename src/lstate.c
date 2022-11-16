@@ -132,10 +132,10 @@ lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf) {
 #if 0
 hksc_LogFunction hksc_logfunc (hksc_State *H, lua_LogFunction logf) {
   lua_LogFunction old;
-  /*lua_lock(H);*/
+  lua_lock(H);
   old = G(H)->log;
   G(H)->log = logf;
-  /*lua_unlock(H);*/
+  lua_unlock(H);
   return old;
 }
 #endif
@@ -176,12 +176,14 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
     close_state(H);
     H = NULL;
   }
+  else
+    luai_userstateopen(H);
   return H;
 }
 
 void hksc_close (hksc_State *H) {
   H = G(H)->mainthread;  /* only the main thread can be closed */
-  /*luai_userstateclose(H);*/
+  luai_userstateclose(H);
   lua_lock(H);
   close_state(H);
 }

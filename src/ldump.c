@@ -63,8 +63,10 @@ static void DumpBlock(const void *b, size_t size, DumpState *D)
 {
   if (D->status==0)
   {
+    lua_unlock(D->H);
     D->status=(*D->writer)(D->H,b,size,D->data);
     D->pos+=size;
+    lua_lock(D->H);
   }
 }
 
@@ -114,50 +116,28 @@ static void DumpString(const TString *s, DumpState *D)
 
 static void DumpUI64(const lu_int64 x, DumpState *D)
 {
-  char bytes[8];
+  int y=1;
+  char buf[LUAI_MAXUI642STR];
+  lua_ui642str(buf,x);
+  printf("Dumping UI64 value: 0x%s\n", buf);
+  lua_assert(sizeof(lu_int64) == 8); /* needs to be exact */
 #ifdef LUA_UI64_S
-#define ui64_byte0 (x.low & 0xff)
-#define ui64_byte1 ((x.low >> 8) & 0xff)
-#define ui64_byte2 ((x.low >> 16) & 0xff)
-#define ui64_byte3 ((x.low >> 24) & 0xff)
-#define ui64_byte4 (x.high & 0xff)
-#define ui64_byte5 ((x.high >> 8) & 0xff)
-#define ui64_byte6 ((x.high >> 16) & 0xff)
-#define ui64_byte7 ((x.high >> 24) & 0xff)
-#else
-#define ui64_byte0 (x & 0xff)
-#define ui64_byte1 ((x >> 8) & 0xff)
-#define ui64_byte2 ((x >> 16) & 0xff)
-#define ui64_byte3 ((x >> 24) & 0xff)
-#define ui64_byte4 ((x >> 32) & 0xff)
-#define ui64_byte5 ((x >> 40) & 0xff)
-#define ui64_byte6 ((x >> 48) & 0xff)
-#define ui64_byte7 ((x >> 56) & 0xff)
-#endif
-  {
-    int y=1;
-    if ((char)*(char *)&y == 0) { /* big endian */
-      bytes[0] = ui64_byte7;
-      bytes[1] = ui64_byte6;
-      bytes[2] = ui64_byte5;
-      bytes[3] = ui64_byte4;
-      bytes[4] = ui64_byte3;
-      bytes[5] = ui64_byte2;
-      bytes[6] = ui64_byte1;
-      bytes[7] = ui64_byte0;
-    } else { /* little endian */
-      bytes[0] = ui64_byte0;
-      bytes[1] = ui64_byte1;
-      bytes[2] = ui64_byte2;
-      bytes[3] = ui64_byte3;
-      bytes[4] = ui64_byte4;
-      bytes[5] = ui64_byte5;
-      bytes[6] = ui64_byte6;
-      bytes[7] = ui64_byte7;
-    }
+  if (((char)*(char *)&y == 0) != D->swapendian) { /* big endian */
+    correctendianness(D,x.high);
+    DumpVar(x.high,D);
+    correctendianness(D,x.low);
+    DumpVar(x.low,D);
+  } else { /* little endian */
+    correctendianness(D,x.low);
+    DumpVar(x.low,D);
+    correctendianness(D,x.high);
+    DumpVar(x.high,D);
   }
-  correctendianness(D,bytes);
-  DumpVar(bytes,D);
+#else
+  (void)y;
+  correctendianness(D,x);
+  DumpVar(x,D);
+#endif
 }
 
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D);

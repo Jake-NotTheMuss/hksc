@@ -290,8 +290,8 @@
 */
 #define LUA_COMPAT_OPENLIB
 
-#include <assert.h>
-#define lua_assert assert
+
+
 /*
 @@ luai_apicheck is the assert macro used by the Lua-C API.
 ** CHANGE luai_apicheck if you want Lua to perform some checks in the
@@ -366,12 +366,11 @@
 #elif !defined(LUA_ANSI) && defined(__STDC_VERSION__) && \
   __STDC_VERSION__ >= 199901L
 /* use C99 types */
-#include <inttypes.h>
-#define LUAI_UINT64 uintmax_t
-#define LUA_UI64_FMT PRIxMAX
+#define LUAI_UINT64 unsigned long long
+#define LUA_UI64_FMT "%llx"
 #define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n))
-#define lua_str2ui64(s,p,n) strtoumax((s), (p), 16)
-#elif ((ULONG_MAX >> 62) >= 3) /* long is 64 bits? */
+#define lua_str2ui64(s,p,n) strtoull((s), (p), 16)
+#elif 0 && ((ULONG_MAX >> 62) >= 3) /* long is 64 bits? */
 /* use unsigned long type */
 #define LUAI_UINT64 unsigned long
 #define LUA_UI64_FMT "%lx"
@@ -379,7 +378,7 @@
 #define lua_str2ui64(s,p,n) strtoul((s), (p), 16)
 #else
 #define LUA_UI64_S
-/* C89 */
+/* C89 with no builtin 64-bit types */
 #define LUAI_UINT64 struct lua_ui64_s
 #define LUA_UI64_FMT "%.0" LUA_INT_FRMLEN "x%08" LUA_INT_FRMLEN "x" 
 #define lua_ui642str(s,n) luaO_ui64_s_2str((s), (n))

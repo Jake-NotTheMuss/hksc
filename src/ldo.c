@@ -94,7 +94,7 @@ void luaD_throw (hksc_State *H, int errcode) {
   else {
     H->status = cast_byte(errcode);
     if (G(H)->panic) {
-      /*lua_unlock(H);*/
+      lua_unlock(H);
       G(H)->panic(H);
     }
     exit(EXIT_FAILURE);

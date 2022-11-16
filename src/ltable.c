@@ -51,6 +51,11 @@
 #define hashstr(t,str)  hashpow2(t, (str)->tsv.hash)
 #define hashboolean(t,p)        hashpow2(t, p)
 
+#ifdef LUA_UI64_S
+#define hashui64(t,l)  hashpow2(t, (l).high)
+#else
+#define hashui64(t,l)  hashpow2(t, (l))
+#endif
 
 /*
 ** for some types, it is better to avoid modulus by power of 2, as
@@ -106,6 +111,8 @@ static Node *mainposition (const Table *t, const TValue *key) {
       return hashboolean(t, bvalue(key));
     case LUA_TLIGHTUSERDATA:
       return hashpointer(t, pvalue(key));
+    case LUA_TUI64:
+      return hashui64(t, hlvalue(key));
     default:
       return hashpointer(t, gcvalue(key));
   }
@@ -323,12 +330,6 @@ static void resize (hksc_State *H, Table *t, int nasize, int nhsize) {
 }
 
 
-void luaH_resizearray (hksc_State *H, Table *t, int nasize) {
-  int nsize = (t->node == dummynode) ? 0 : sizenode(t);
-  resize(H, t, nasize, nsize);
-}
-
-
 static void rehash (hksc_State *H, Table *t, const TValue *ek) {
   int nasize, na;
   int nums[MAXBITS+1];  /* nums[i] = number of keys between 2^(i-1) and 2^i */
@@ -526,3 +527,14 @@ TValue *luaH_setstr (hksc_State *H, Table *t, TString *key) {
   }
 }
 
+
+
+#if defined(LUA_DEBUG)
+
+Node *luaH_mainposition (const Table *t, const TValue *key) {
+  return mainposition(t, key);
+}
+
+int luaH_isdummy (Node *n) { return n == dummynode; }
+
+#endif

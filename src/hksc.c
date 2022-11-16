@@ -5,7 +5,7 @@
 */
 
 #define hksc_c
-#define LUA_CORE
+/* #define LUA_CORE */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,10 +47,11 @@ static void print_usage(void)
    "usage: %s [options] [filenames]\n"
    "Available options are:\n"
    "  -c       Run Hksc in compile mode\n"
+   "  --config Print Hksc configuration\n"
    "  -d       Run Hksc in decompile mode\n"
    "  -h       Print this message and exit\n"
    "  -l       List (use -l -l for full listing)\n"
-   "  -L type  Enable int literals_enabled of the type given by <type>\n"
+   "  -L type  Enable int literals of the type given by <type>\n"
    "  -o name  Output to file 'name'\n"
    "  -p       Parse only\n"
    "  -s mode  Use bytecode stripping mode <mode>\n"
@@ -58,9 +59,9 @@ static void print_usage(void)
    "  --       Stop handling options\n", progname);
   fputs(
    "\nInt literal options (to use with '-L')\n"
-   "  I or 32  [32BIT] Enable 32-bit int literals_enabled\n"
-   "  L or 64  [64BIT] Enable 64-bit int literals_enabled\n"
-   "  A        [ALL] Enable all int literals_enabled\n"
+   "  I or 32  [32BIT] Enable 32-bit int literals\n"
+   "  L or 64  [64BIT] Enable 64-bit int literals\n"
+   "  A        [ALL] Enable all int literals\n"
    "\nBytecode stripping levels (to use with '-s'):\n"
    "  N or 0   [NONE] Include all debug information in dump\n"
    "  P or 1   [PROFILING] \n"
@@ -89,6 +90,22 @@ static void print_version(void)
   );
 }
 
+#define HKSC_YESNO(x) ((HKSC_##x) ? "YES" : "NO")
+
+static void print_config(void)
+{
+  print_version();
+  fputs("\nHksc configuration:\n", stdout);
+  fprintf(stdout, "  WITH GLOBAL MEMOIZATION   %s\n",
+          HKSC_YESNO(GETGLOBAL_MEMOIZATION));
+  fprintf(stdout, "  WITH STRUCTURES           %s\n",
+          HKSC_YESNO(STRUCTURE_EXTENSION_ON));
+  fprintf(stdout, "  WITH SELF                 %s\n", HKSC_YESNO(SELF));
+  fprintf(stdout, "  WITH DOUBLES              %s\n", HKSC_YESNO(WITHDOUBLES));
+  fprintf(stdout, "  WITH NATIVE INT           %s\n",
+          HKSC_YESNO(WITHNATIVEINT));
+}
+
 #define IS(s) (strcmp(argv[i],s)==0)
 #define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
 #define CHECKARGC if (i >= argc) usage("argument expected")
@@ -98,6 +115,7 @@ static int doargs(int argc, char *argv[])
   int i;
   int striparg=0;
   int version=0;
+  int info=0;
   int c=0,d=0; /* uses of `-c' and `-d' */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
@@ -115,6 +133,7 @@ static int doargs(int argc, char *argv[])
       break;
 #endif
     else if (IS("-c")) ++c; /* specifies compile mode */
+    else if (IS("--config")) ++info;
     else if (IS("-d")) ++d; /* specified decompile mode */
     else if (IS("-h") || IS("--help")) { /* print help message and exit */
       print_usage();
@@ -192,9 +211,10 @@ static int doargs(int argc, char *argv[])
     else
       usage(argv[i]);
   }
-  if (version)
+  if (version || info)
   {
-    print_version();
+    if (!info) print_version();
+    else print_config();
     if (i==argc) exit(EXIT_SUCCESS);
   }
   if (c && d) /* both compile and decompile mode specified? */
