@@ -14,8 +14,6 @@
 #include "ltable.h"
 #include "lzio.h"
 
-int hksc_parser_init(void);
-Proto *hksc_parser(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name);
 
 /*
 ** Expression descriptor
@@ -71,9 +69,7 @@ typedef struct expdesc {
   int inferred_type;
 #if 0
   void *struct_lookup_chain;
-  int inferred_type;
   void *inferred_proto;
-  struct namepart name;
 #endif
 } expdesc;
 

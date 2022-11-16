@@ -386,10 +386,12 @@ LUAI_FUNC int luaO_int2fb (unsigned int x);
 LUAI_FUNC int luaO_fb2int (int x);
 LUAI_FUNC int luaO_rawequalObj (const TValue *t1, const TValue *t2);
 LUAI_FUNC int luaO_str2d (const char *s, lua_Number *result);
-#ifdef LUA_UI64_S
-LUAI_FUNC struct lua_ui64_s luaO_str2ui64(const char *s, char **endptr,
+#ifdef LUA_UI64_S /* special UI64 functions for C89 */
+LUAI_FUNC struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr,
                                           size_t n);
+LUAI_FUNC int luaO_ui64_s_2str(char *str, struct lua_ui64_s literal);
 #endif /* LUA_UI64_S */
+LUAI_FUNC int luaO_str2ui64(const char *s,const char *suffix,lu_int64 *result);
 LUAI_FUNC const char *luaO_pushvfstring (hksc_State *H, const char *fmt,
                                                        va_list argp);
 LUAI_FUNC const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...);

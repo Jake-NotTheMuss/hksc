@@ -194,8 +194,7 @@ static void trydecpoint (LexState *ls, SemInfo *seminfo) {
 }
 
 
-static int numeral_type(LexState *ls)
-{
+static int numeral_type(LexState *ls) {
   char *s = luaZ_buffer(ls->buff);
   size_t n = luaZ_bufflen(ls->buff);
   if (n >= sizeof("0x0hl") && /* minimum size of a valid int literal */
@@ -209,6 +208,7 @@ static int numeral_type(LexState *ls)
   }
   return TK_NUMBER; /* default */
 }
+
 
 /* LUA_NUMBER */
 static int read_numeral (LexState *ls, SemInfo *seminfo) {
@@ -227,20 +227,17 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
   switch (token) {
     case TK_SHORT_LITERAL:
     case TK_LONG_LITERAL: {
-      char *endptr;
+      lu_int64 literal;
       char *s = luaZ_buffer(ls->buff) + 2; /* skip `0x' */
-      size_t n = luaZ_bufflen(ls->buff) - 5; /* skip `0x' and `hl\0' */
-      lu_int64 literal = lua_str2ui64(s,&endptr,n);
-      if (endptr == s || endptr != s+n) {
+      char *suffix = s + luaZ_bufflen(ls->buff) - 5; /* start of `hl\0' */
+      if (!luaO_str2ui64(s, suffix, &literal)) { /* conversion failed */
         ls->buff->n--; /* don't include the null character in messages */
         luaX_lexerror(ls, "malformed int literal", token);
       }
-      if (token == TK_LONG_LITERAL) {
-        if (lua_ui64_testlow4bits(literal)) {
-          ls->buff->n--; /* don't include the null character in messages */
-          luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
-                        token);
-        }
+      if (token == TK_LONG_LITERAL && lua_ui64_testlow4bits(literal)) {
+        ls->buff->n--; /* don't include the null character in messages */
+        luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
+                      token);
       }
       seminfo->l = literal;
       break;
@@ -248,6 +245,7 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
     case TK_NUMBER: {
       if (!luaO_str2d(luaZ_buffer(ls->buff), &seminfo->r))  /* format error? */
         trydecpoint(ls, seminfo); /* try to update decimal point separator */
+      break;
     }
   }
   return token;

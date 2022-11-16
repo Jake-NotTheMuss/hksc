@@ -25,26 +25,6 @@
 #include "lstring.h"
 
 
-#include <stdio.h>
-Proto *hksc_parser(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name)
-{
-  /*printf("hksc_parser: HELLO\n");*/
-  return luaY_parser(H, z, buff, name);
-}
-#if 0
-int
-hksc_parser_init(void)
-{
-  luaS_resize(MINSTRTABSIZE);  /* initial size of string table */
-  luaX_init();
-
-  if (hksc_strt.hash == NULL)
-    return 1;
-  else
-    return 0;
-}
-#endif
-
 #define hasmultret(k)		((k) == VCALL || (k) == VVARARG)
 
 #define getlocvar(fs, i)	((fs)->f->locvars[(fs)->actvar[i]])
@@ -350,72 +330,89 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
   while (oldsize < f->sizep) f->p[oldsize++] = NULL;
   f->p[fs->np++] = func->f;
   init_exp(v, VRELOCABLE, luaK_codeABx(fs, OP_CLOSURE, 0, fs->np-1));
-  /*if (func->f->nups > 0) printf("pushclosure: upvalues for '%s'\n", 
-      (func->f->name) ? getstr(func->f->name) : "<anonymous>");*/
   for (i=0; i<func->f->nups; i++) {
-/*    OpCode o = (func->upvalues[i].k == VLOCAL) ? OP_MOVE : OP_GETUPVAL;
-    (void)o;*/
-    /*printf("  upvalues[%d]\n"
-    "    -->name: %s\n"
-    "    -->kind: %s\n", i, getstr(func->f->upvalues[i]),
-    (func->upvalues[i].k == VLOCAL) ? "LOCAL" : "UPVALUE");*/
     int a = (func->upvalues[i].k == VLOCAL) ? 1 : 2;
     luaK_codeABx(fs, OP_DATA, a, func->upvalues[i].info);
-    /*luaK_codeABC(fs, o, 0, func->upvalues[i].info, 0);*/
-  }
-  /*if (func->f->nups > 0)printf("\n");*/
-}
-
-
-static void addnamepart (LexState *ls, TString *ts, int type) {
-  lua_assert(type != NAMEPART_NONE);
-  if (type == NAMEPART_NAME) /* regular name can only be first in the list */
-    lua_assert(ls->nplist.free == ls->nplist.first);
-  if (ls->nplist.free) { /* slot available? */
-    lua_assert(ls->nplist.curr == NULL ||
-                ls->nplist.curr->next == ls->nplist.free);
-    ls->nplist.curr = ls->nplist.free;
-    ls->nplist.curr->ts = ts;
-    ls->nplist.curr->type = type;
-    ls->nplist.free = ls->nplist.curr->next;
-  } else { /* need to allocate */
-    struct namepart *np = luaX_newnamepart(ls->H);
-    np->next = NULL;
-    np->ts = ts;
-    np->type = type;
-    if (ls->nplist.curr != NULL)
-      ls->nplist.curr->next = np;
-    ls->nplist.curr = np; /* set new current */
-    if (ls->nplist.first == NULL) /* empty list? */
-      ls->nplist.first = ls->nplist.curr; /* set first in chain */
   }
 }
+
+/* name-part types */
+#define NAMEPART_NONE  (-1)
+#define NAMEPART_NAME  0 /* regular variable name */
+#define NAMEPART_FIELD 1 /* field name */
+#define NAMEPART_SELF  2 /* self field name */
+
+typedef struct NamePart {
+  TString *name;
+  int type;
+} NamePart;
+
+struct FuncNameStack {
+  struct NamePart *names;
+  int used;
+  int alloc;
+};
+
 #define MAX_FUNCNAME 512
 
+/* add a name to the current list of name parts */
+static void addnamepart (LexState *ls, TString *name, int type) {
+  NamePart *namepart;
+  struct FuncNameStack *stk = ls->funcnamestack;
+  lua_assert(stk != NULL);
+  lua_assert(type != NAMEPART_NONE);
+  if (type == NAMEPART_NAME) /* regular names can only be first in the list */
+    lua_assert(stk->used == 0);
+  else
+    lua_assert(stk->used > 0);
+  lua_assert(stk->used <= stk->alloc);
+  if (stk->used >= (MAX_FUNCNAME/2))
+    return; /* it won't be used anyway */
+  if (stk->used == stk->alloc)
+    luaM_growvector(ls->H, stk->names, stk->used, stk->alloc, NamePart,
+                    MAX_INT, "too many parts to function name");
+  namepart = &stk->names[stk->used++];
+  namepart->name = name;
+  namepart->type = type;
+}
+
+
+/* free the entire name part stack */
+static void freefuncnamestack (LexState *ls) {
+  struct FuncNameStack *stk = ls->funcnamestack;
+  lua_assert(stk != NULL);
+  if (stk->names != NULL)
+    luaM_freearray(ls->H, stk->names, stk->alloc, NamePart);
+  stk->names = NULL;
+  stk->alloc = stk->used = 0;
+}
+
+
+/* build a function name from the current name part stack */
 static TString *buildfuncname (LexState *ls) {
   char buf[MAX_FUNCNAME];
+  int i;
   size_t len = 0;
-  struct namepart *np = ls->nplist.first;
-  if (!ls->nplist.first) return NULL; /* anonymous function */
-  for (; np != NULL && np != ls->nplist.free; np = np->next) {
+  struct FuncNameStack *stk = ls->funcnamestack;
+  lua_assert(stk != NULL);
+  for (i = 0; i < stk->used; i++) {
     size_t l;
-    TString *ts = np->ts;
-    int type = np->type;
+    TString *name = stk->names[i].name;
+    int type = stk->names[i].type;
     if (type == NAMEPART_FIELD)
       buf[len++] = '.';
     else if (type == NAMEPART_SELF)
       buf[len++] = ':';
-    l = ts->tsv.len;
+    l = name->tsv.len;
     if (l >= MAX_FUNCNAME - len)
       l = MAX_FUNCNAME - len;
-    memcpy(buf+len,getstr(ts),l);
+    memcpy(buf+len,getstr(name),l);
     len+=l;
   }
   if (len >= MAX_FUNCNAME)
     len = MAX_FUNCNAME - 1;
   buf[len] = '\0';
-  ls->nplist.free = ls->nplist.first; /* discharge name parts */
-  ls->nplist.curr = NULL;
+  stk->used = 0; /* discharge name parts */
   if (len != 0)
     return luaS_newlstr(ls->H, buf, len);
   else
@@ -481,11 +478,12 @@ static void close_func (LexState *ls) {
 Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   struct LexState lexstate;
   struct FuncState funcstate;
+  struct FuncNameStack funcnamestack;
   lua_assert(luaS_mainchunk != NULL);
   lexstate.buff = buff;
-  lexstate.nplist.first = NULL;
-  lexstate.nplist.free = NULL;
-  lexstate.nplist.curr = NULL;
+  lexstate.funcnamestack = &funcnamestack;
+  funcnamestack.names = NULL;
+  funcnamestack.used = funcnamestack.alloc = 0;
   luaX_setinput(H, &lexstate, z, luaS_new(H, name));
   open_func(&lexstate, &funcstate);
   funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
@@ -493,15 +491,7 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   chunk(&lexstate);
   check(&lexstate, TK_EOS);
   close_func(&lexstate);
-  /* free name parts list */
-  {
-    struct namepart *np = lexstate.nplist.first;
-    while (np != NULL) {
-      struct namepart *next = np->next;
-      luaX_freenamepart(H, np);
-      np = next;
-    }
-  }
+  freefuncnamestack(&lexstate);
   luaK_optimize_function(H, funcstate.f);
   lua_assert(funcstate.prev == NULL);
   lua_assert(funcstate.f->nups == 0);

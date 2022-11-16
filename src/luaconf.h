@@ -382,8 +382,8 @@
 /* C89 */
 #define LUAI_UINT64 struct lua_ui64_s
 #define LUA_UI64_FMT "%.0" LUA_INT_FRMLEN "x%08" LUA_INT_FRMLEN "x" 
-#define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n).high, (n).low)
-#define lua_str2ui64(s,p,n) luaO_str2ui64((s), (p), (n))
+#define lua_ui642str(s,n) luaO_ui64_s_2str((s), (n))
+#define lua_str2ui64(s,p,n) luaO_str2ui64_s((s), (p), (n))
 #endif
 
 #ifdef LUA_UI64_S

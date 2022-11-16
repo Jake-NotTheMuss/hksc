@@ -102,7 +102,7 @@ int luaO_str2d (const char *s, lua_Number *result) {
 
 
 #ifdef LUA_UI64_S
-struct lua_ui64_s luaO_str2ui64(const char *s, char **endptr, size_t n) {
+struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr, size_t n) {
   struct lua_ui64_s literal;
   const char *lowptr; /* start of low 32 bits */
   char *s1 = cast(char *, s);
@@ -113,15 +113,17 @@ struct lua_ui64_s luaO_str2ui64(const char *s, char **endptr, size_t n) {
     literal.high = cast(lu_int32, strtoul(s, endptr, 16));
     *saveptr = save;
     lowptr = cast(const char *, saveptr);
-    if (*endptr != saveptr) {
-      literal.low = literal.high;
-      literal.high = 0;
-      return literal; /* conversion failed */
+    if (*endptr != saveptr) { /* conversion failed */
+      badconversion:
+      literal.low = literal.high & 0xffffffff;
+      literal.high = (literal.high >> 16 >> 16) & 0xffffffff;
+      return literal;
     }
     if (n > 16) { /* too big to fit in 64 bits */
-      literal.low = literal.high = ~cast(lu_int32, 0); /* overflow */
       /* complete the conversion to know if it succeeds or not */
       strtoul(lowptr, endptr, 16);
+      if (*endptr != s1+n) goto badconversion;
+      literal.low = literal.high = ~cast(lu_int32, 0); /* overflow */
       return literal;
     }
   } else {
@@ -131,7 +133,23 @@ struct lua_ui64_s luaO_str2ui64(const char *s, char **endptr, size_t n) {
   literal.low = cast(lu_int32, strtoul(lowptr, endptr, 16));
   return literal;
 }
+
+#define UI64_FORMAT_LOW "%" LUA_INT_FRMLEN "x"
+#define UI64_FORMAT_HIGHLOW "%" LUA_INT_FRMLEN "x%08" LUA_INT_FRMLEN "x"
+
+int luaO_ui64_s_2str(char *str, struct lua_ui64_s literal) {
+  if (literal.high == 0)
+    return sprintf(str, UI64_FORMAT_LOW, literal.low);
+  else
+    return sprintf(str, UI64_FORMAT_HIGHLOW, literal.high, literal.low);
+}
 #endif /* LUA_UI64_S */
+
+int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
+  char *endptr;
+  *result = lua_str2ui64(s, &endptr, suffix-s);
+  return (endptr == suffix);
+}
 
 
 const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
