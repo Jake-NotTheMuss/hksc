@@ -7,8 +7,6 @@
 #ifndef lparser_h
 #define lparser_h
 
-#include "hksc_begin_code.h"
-
 #include "llimits.h"
 #include "lobject.h"
 #include "ltable.h"

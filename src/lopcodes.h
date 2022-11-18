@@ -7,8 +7,6 @@
 #ifndef lopcodes_h
 #define lopcodes_h
 
-#include "hksc_begin_code.h"
-
 #include "llimits.h"
 
 

@@ -9,10 +9,6 @@
 #ifndef lua_h
 #define lua_h
 
-/* make these configurable in luaconf.h */
-#define LUA_COD /* general cod compatibility */
-#define LUA_CODT7 /* T7 compatibility */
-
 #include <stdarg.h>
 #include <stddef.h>
 

@@ -7,8 +7,6 @@
 #ifndef ldebug_h
 #define ldebug_h
 
-#include "hksc_begin_code.h"
-
 #include "lstate.h"
 
 

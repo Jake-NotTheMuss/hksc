@@ -51,11 +51,7 @@ struct lua_longjmp {
 
 void luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp)
 {
-  char buf[512];
-  vsnprintf(buf, sizeof(buf), fmt, argp);
-  va_end(argp);
-  buf[sizeof(buf) - 1] = '\0';
-  luaE_seterrormsg(H, getstr(luaS_new(H, buf)));
+  luaE_seterrormsg(H, luaO_pushvfstring(H, fmt, argp));
 }
 
 
@@ -80,8 +76,7 @@ void luaD_seterrorobj (hksc_State *H, int errcode) {
     }
     case LUA_ERRSYNTAX:
     case LUA_ERRRUN: {
-      /* error message was already set, do nothing */
-      break;
+      break; /* error message was already set, do nothing */
     }
   }
 }

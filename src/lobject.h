@@ -195,7 +195,7 @@ typedef struct lua_TValue {
 #define setttype(obj, tt) (ttype(obj) = (tt))
 
 
-#define iscollectable(o)  (ttype(o) >= LUA_TSTRING)
+#define iscollectable(o)  (ttype(o) >= LUA_TSTRING && !ttisui64(o))
 
 
 

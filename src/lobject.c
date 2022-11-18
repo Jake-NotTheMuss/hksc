@@ -9,8 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "hksc_begin_code.h"
-
 #define lobject_c
 #define LUA_CORE
 
@@ -159,12 +157,85 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
 }
 
 
+/* macro helpers for luaO_pushvfstring */
+#define concatlstr(strexp, lenexp) do { \
+  newlen = len + cast(size_t, (lenexp)); \
+  luaM_reallocvector(H, str, len, newlen, char); \
+  memcpy(str+len, (strexp), newlen-len); \
+  len = newlen; \
+} while (0)
+
+
+#define concatstr(strexp) concatlstr(strexp, strlen((strexp)))
+
+#define concatnum(n) do { \
+  char s[LUAI_MAXNUMBER2STR]; \
+  lua_number2str(s, cast_num(n)); \
+  concatstr(s); \
+} while (0)
+
+
+/* this function handles only `%d', `%c', %f, %p, and `%s' formats */
 const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
-  char buf[512];
-  vsnprintf(buf, sizeof(buf), fmt, argp);
-  buf[sizeof(buf) - 1] = '\0';
-  return getstr(luaS_new(H, buf));
+  TString *result;
+  size_t newlen, len = 0;
+  char *str = NULL;
+  for (;;) {
+    const char *e = strchr(fmt, '%');
+    if (e == NULL) break;
+    concatlstr(fmt, e-fmt);
+    switch (*(e+1)) {
+      case 's': {
+        const char *s = va_arg(argp, char *);
+        if (s == NULL) s = "(null)";
+        concatstr(s);
+        break;
+      }
+      case 'c': {
+        char buff[2];
+        buff[0] = cast(char, va_arg(argp, int));
+        buff[1] = '\0';
+        concatstr(buff);
+        break;
+      }
+      case 'd': {
+        concatnum(va_arg(argp, int));
+        break;
+      }
+      case 'f': {
+        concatnum(va_arg(argp, l_uacNumber));
+        break;
+      }
+      case 'p': {
+        char buff[4*sizeof(void *) + 8]; /* should be enough space for a `%p' */
+        sprintf(buff, "%p", va_arg(argp, void *));
+        concatstr(buff);
+        break;
+      }
+      case '%': {
+        concatstr("%");
+        break;
+      }
+      default: {
+        char buff[3];
+        buff[0] = '%';
+        buff[1] = *(e+1);
+        buff[2] = '\0';
+        concatstr(buff);
+        break;
+      }
+    }
+    fmt = e+2;
+  }
+  concatstr(fmt);
+  result = luaS_newlstr(H, str, len);
+  luaM_freearray(H, str, len, char);
+  return getstr(result);
 }
+
+#undef concatlstr
+#undef concatstr
+#undef concatnum
 
 
 const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...) {

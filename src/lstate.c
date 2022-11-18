@@ -9,7 +9,6 @@
 
 #define lstate_c
 #define LUA_CORE
-#include "hksc_begin_code.h"
 
 #include "lua.h"
 

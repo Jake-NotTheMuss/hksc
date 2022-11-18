@@ -23,9 +23,11 @@
 
 #define luaS_fix(s) l_setbit((s)->tsv.marked, FIXEDBIT)
 
+#ifdef LUA_COD
 #define luaS_dbhash(H, s)  (luaS_dbhashlstr(H, s, strlen(s)))
 #define luaS_dbhashliteral(H, s)  (luaS_dbhashlstr(H, "" s, \
                                     (sizeof(s)/sizeof(char))-1))
+#endif /* LUA_COD */
 
 #define MAINCHUNKNAME "(main chunk)"
 

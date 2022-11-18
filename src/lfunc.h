@@ -7,6 +7,8 @@
 #ifndef lfunc_h
 #define lfunc_h
 
+#include "lua.h"
+
 #include "lobject.h"
 
 
@@ -14,7 +16,9 @@ LUAI_FUNC Proto *luaF_newproto (hksc_State *H);
 LUAI_FUNC void luaF_freeproto (hksc_State *H, Proto *f);
 LUAI_FUNC const char *luaF_getlocalname (const Proto *func, int local_number,
                                          int pc);
+#ifdef LUA_COD
 LUAI_FUNC void luaF_makehash (hksc_State *H, Proto *f);
+#endif /* LUA_COD */
 
 
 #endif
