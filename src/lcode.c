@@ -908,7 +908,7 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
 */
 
 /*
-** Identify `leaders' in a function's bytecode
+** Identify `leaders' in an instruction array
 */
 static void identify_leaders (int sizecode, Instruction *code,
                               lu_byte *properties) {
@@ -948,7 +948,7 @@ static Instruction set_opcode (Instruction instr, OpCode newop) {
 ** Optimize the code sequence of a function
 */
 static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
-                                        int sizecode, TValue *k, int sizek) {
+                                             int sizecode, TValue *k) {
   int i;
   lu_byte *properties;
   for (i = 0; i < sizecode; i++) {
@@ -987,11 +987,10 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
       int prevIndex = i-1;
       OpCode prev = GET_OPCODE(code[prevIndex]);
       OpCode curr = GET_OPCODE(code[i]);
-      OpCode r1Version;
       while (prev == OP_DATA && prevIndex > 0) /* data codes do not count */
         prev = GET_OPCODE(code[--prevIndex]);
       if (testMakeR1(prev)) {
-        r1Version = getR1Version(curr);
+        OpCode r1Version = getR1Version(curr);
         if (r1Version != OP_MAX &&
           ((getR1Mode(r1Version) == R1A && GETARG_A(prev) == GETARG_A(curr)) ||
            (getR1Mode(r1Version) == R1B && GETARG_B(prev) == GETARG_B(curr))))
@@ -1005,7 +1004,7 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
 
 void luaK_optimize_function (hksc_State *H, Proto *f) {
   int i,n;
-  specialize_instruction_sequence(H, f->code, f->sizecode, f->k, f->sizek);
+  specialize_instruction_sequence(H, f->code, f->sizecode, f->k);
   n=f->sizep;
   for (i=0; i<n; i++) luaK_optimize_function(H, f->p[i]);
 }
