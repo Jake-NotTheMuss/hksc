@@ -1,5 +1,5 @@
 # CFLAGS+=-I../lua
-CFLAGS+=-std=c89  -pedantic -Wall
+CFLAGS+=-ansi -pedantic -Wall -Wextra
 
 SRC= \
 hksc.c \

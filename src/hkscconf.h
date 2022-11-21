@@ -19,17 +19,17 @@
 
 
 #define LUA_COD /* general cod compatibility */
-#define LUA_CODT7 /* bitwise operations */
+#define LUA_CODT7 /* support bitwise operations */
 
 
 /*
 ** NOTE for non-Call-of-Duty developers:
-** This version of Hksc is only intended to work with Call of Duty. Because
-** Call of Duty disables all compatibiliy flags, none of those features are
+** This version of Hksc is only intended to work with Call of Duty. Because Call
+** of Duty disables all compatibiliy flags, none of those features are
 ** implemented in the compiler. If the game you are developing for enables any
 ** of the compatibility features, you will need to find out which ones are
-** enabled and provide implementations for them. Also make sure to undefine
-** the macro `LUA_COD' if you are not developing for a a Call of Duty game.
+** enabled and provide implementations for them. Also make sure to undefine the
+** macro `LUA_COD' if you are not developing for a Call of Duty game.
 */
 
 /* #ifdef LUA_COD */

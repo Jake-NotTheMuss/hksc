@@ -92,6 +92,7 @@ hksc_default_settings(hksc_Settings *settings)
 
 
 hksc_State *luaE_newthread (hksc_State *H) {
+  UNUSED(H);
 #if 0
   hksc_State *H1 = tostate(luaM_malloc(H, state_size(hksc_State)));
   luaC_link(H, obj2gco(H1), LUA_TTHREAD);
@@ -110,6 +111,8 @@ hksc_State *luaE_newthread (hksc_State *H) {
 
 
 void luaE_freethread (hksc_State *H, hksc_State *H1) {
+  UNUSED(H);
+  UNUSED(H1);
 #if 0
   luaF_close(H1, H1->stack);  /* close all upvalues for this thread */
   lua_assert(H1->openupval == NULL);

@@ -456,7 +456,9 @@ void hksI_dumpctx_init(hksc_State *H, hksc_DumpCtx *ctx) {
 
 
 void hksI_dumpctx_free(hksc_State *H, hksc_DumpCtx *ctx) {
-  void *p = (*ctx->frealloc)(ctx->ud, ctx->buff, ctx->alloc, 0);
+  void *p;
+  UNUSED(H);
+  p = (*ctx->frealloc)(ctx->ud, ctx->buff, ctx->alloc, 0);
   lua_assert(p == NULL);
   ctx->buff = p;
   ctx->alloc = ctx->size = 0;

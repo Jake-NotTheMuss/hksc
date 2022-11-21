@@ -380,7 +380,7 @@
 #define LUA_UI64_S
 /* C89 with no builtin 64-bit types */
 #define LUAI_UINT64 struct lua_ui64_s
-#define LUA_UI64_FMT "%.0" LUA_INT_FRMLEN "x%08" LUA_INT_FRMLEN "x" 
+#define LUA_UI64_FMT ""
 #define lua_ui642str(s,n) luaO_ui64_s_2str((s), (n))
 #define lua_str2ui64(s,p,n) luaO_str2ui64_s((s), (p), (n))
 #endif
@@ -395,6 +395,7 @@
 #endif /* LUA_UI64_S */
 
 #define LUAI_MAXUI642STR 17 /* 16 hex digits and \0 */
+
 
 
 

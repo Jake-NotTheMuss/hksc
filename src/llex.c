@@ -239,6 +239,28 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
         luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
                       token);
       }
+      if (token == TK_SHORT_LITERAL && sizeof(void *) < sizeof(lu_int64)) {
+        const size_t voidpbits = (sizeof(void *) * CHAR_BIT);
+        int overflow;
+#ifdef LUA_UI64_S
+        const size_t int32bits = sizeof(lu_int32)*CHAR_BIT;
+        if (int32bits < voidpbits) { /* test high bits */
+          const lu_int32 mask =((lu_int32)1 << (voidpbits - int32bits)) - 1;
+          overflow=((literal.high & mask) != literal.high);
+        } else if (int32bits > voidpbits) {
+          const lu_int32 mask = ((lu_int32)1 << voidpbits) - 1;
+          overflow=(literal.high != 0) || ((literal.low & mask) != literal.low);
+        } else /* int32bits == voidpbits */
+          overflow=(literal.high != 0);
+#else
+        const lu_int64 mask = ((lu_int64)1 << voidpbits) - 1;
+        overflow = ((literal & mask) != literal);
+#endif
+        if (overflow) { /* literal does not fit in a lightuserdata */
+          ls->buff->n--; /* don't include the null character in messages */
+          luaX_lexerror(ls, "int literal too large for lightuserdata", token);
+        }
+      }
       seminfo->l = literal;
       break;
     }

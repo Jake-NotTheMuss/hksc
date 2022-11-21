@@ -192,6 +192,6 @@ void luaC_link (hksc_State *H, GCObject *o, lu_byte tt) {
 
 
 void luaC_printstrings (hksc_State *H) {
-  
+  UNUSED(H);
 }
 

@@ -18,7 +18,7 @@
 #define DEFTOK(name, text) name,
 enum RESERVED {
 #include "ltoken.def"
-  MAX_RESERVED
+  MAX_RESERVED /* to avoid compiler warnings when last enum has a comma */
 };
 #undef DEFTOKFIRST
 #undef DEFTOK
