@@ -159,11 +159,13 @@ static int registerlocalvar (LexState *ls, TString *varname) {
   return fs->nlocvars++;
 }
 
-
-#define check_typed(ls) if ((ls)->t.token == ':') \
-  luaG_runerror((ls)->H, "Cannot use typed local variables when the virtual " \
+#if HKSC_STRUCTURE_EXTENSION_ON
+#error "typed variables not implemented (required when structures are enabled)"
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+#define check_typed(ls,what) if ((ls)->t.token == ':') \
+  luaG_runerror((ls)->H, "Cannot use typed " what " when the virtual " \
               "machine is built without structures")
-
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
 #define new_localvarliteral(ls,v,n) \
   new_localvar(ls, luaX_newstring(ls, "" v, (sizeof(v)/sizeof(char))-1), n)
@@ -171,7 +173,6 @@ static int registerlocalvar (LexState *ls, TString *varname) {
 
 static void new_localvar (LexState *ls, TString *name, int n) {
   FuncState *fs = ls->fs;
-  check_typed(ls);
   luaY_checklimit(fs, fs->nactvar+n+1, LUAI_MAXVARS, "local variables");
   fs->actvar[fs->nactvar+n] = cast(unsigned short, registerlocalvar(ls, name));
 }
@@ -508,18 +509,18 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
 /*============================================================*/
 
 
-static void field (LexState *ls, expdesc *v, int nptype) {
+static void field (LexState *ls, expdesc *v, int type) {
   /* field -> ['.' | ':'] NAME */
   FuncState *fs = ls->fs;
-  TString *np;
+  TString *name;
   expdesc key;
   luaK_exp2anyreg(fs, v);
   luaX_next(ls);  /* skip the dot or colon */
-  np = ls->t.seminfo.ts; /* get the name now, it gets skipped in checkname() */
+  name = ls->t.seminfo.ts; /* get the name now, it gets skipped in checkname() */
   checkname(ls, &key);
-  if (nptype != NAMEPART_NONE) {
-    lua_assert(nptype == NAMEPART_FIELD || nptype == NAMEPART_SELF);
-    addnamepart(ls, np, nptype); /* add the name part to the chain */
+  if (type != NAMEPART_NONE) {
+    lua_assert(type == NAMEPART_FIELD || type == NAMEPART_SELF);
+    addnamepart(ls, name, type); /* add the name part to the chain */
   }
   luaK_indexed(fs, v, &key);
 }
@@ -661,6 +662,7 @@ static void parlist (LexState *ls) {
       switch (ls->t.token) {
         case TK_NAME: {  /* param -> NAME */
           new_localvar(ls, str_checkname(ls), nparams++);
+          check_typed(ls,"parameters");
           break;
         }
         case TK_DOTS: {  /* param -> `...' */
@@ -1242,6 +1244,7 @@ static void forstat (LexState *ls, int line) {
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip `for' */
   varname = str_checkname(ls);  /* first variable name */
+  check_typed(ls, "parameters");
   switch (ls->t.token) {
     case '=': fornum(ls, varname, line); break;
     case ',': case TK_IN: forlist(ls, varname); break;
@@ -1310,6 +1313,7 @@ static void localstat (LexState *ls) {
   expdesc e;
   do {
     new_localvar(ls, str_checkname(ls), nvars++);
+    check_typed(ls, "local variables");
   } while (testnext(ls, ','));
   if (testnext(ls, '='))
     nexps = explist1(ls, &e);

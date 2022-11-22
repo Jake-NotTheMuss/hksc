@@ -360,8 +360,8 @@ int hksI_parser_buff(hksc_State *H, const char *buff, size_t size,
 }
 
 
-int hksI_parser_file_dump(hksc_State *H, const char *filename,
-                          hksc_DumpFunction dumpf, void *ud) {
+int hksI_parser_file_dumpf(hksc_State *H, const char *filename,
+                           hksc_DumpFunction dumpf, void *ud) {
   int status;
   startcycle(H);
   status = loadfile(H, filename); /* parse file */
@@ -373,7 +373,7 @@ int hksI_parser_file_dump(hksc_State *H, const char *filename,
 }
 
 
-int hksI_parser_buff_dump(hksc_State *H, const char *buff, size_t size,
+int hksI_parser_buff_dumpf(hksc_State *H, const char *buff, size_t size,
                     const char *source, hksc_DumpFunction dumpf, void *ud) {
   int status;
   startcycle(H);

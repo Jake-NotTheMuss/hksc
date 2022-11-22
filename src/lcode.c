@@ -650,9 +650,16 @@ void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
 /* TODO: add T7 operators */
 static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   lua_Number v1, v2, r;
+  lu_int32 iv1, iv2;
   if (!isnumeral(e1) || !isnumeral(e2)) return 0;
   v1 = e1->u.nval;
   v2 = e2->u.nval;
+#ifdef LUA_CODT7
+  iv1 = cast(lu_int32, v1);
+  iv2 = cast(lu_int32, v2);
+#else /* !LUA_CODT7 */
+  (void)iv1; (void)iv2;
+#endif /* LUA_CODT7 */
   switch (op) {
     case OP_ADD: r = luai_numadd(v1, v2); break;
     case OP_SUB: r = luai_numsub(v1, v2); break;
@@ -666,16 +673,16 @@ static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
     case OP_POW: r = luai_numpow(v1, v2); break;
     case OP_UNM: r = luai_numunm(v1); break;
     case OP_LEN: return 0;  /* no constant folding for 'len' */
+#ifdef LUA_CODT7
     case OP_LEFT_SHIFT:
-      r = cast(lua_Number, (cast(int, v1) << (cast(lu_byte, v2) & 0x1f)));
-      break;
+      r = cast_num(iv1 << iv2); break;
     case OP_RIGHT_SHIFT:
-      r = cast(lua_Number, (cast(int, v1) >> (cast(lu_byte, v2) & 0x1f)));
-      break;
+      r = cast_num(iv1 >> iv2); break;
     case OP_BIT_AND:
-      r = cast(lua_Number, (cast(int, v1) & cast(int, v2))); break;
+      r = cast_num(iv1 & iv2); break;
     case OP_BIT_OR:
-      r = cast(lua_Number, (cast(int, v1) | cast(int, v2))); break;
+      r = cast_num(iv1 | iv2); break;
+#endif /* LUA_CODT7 */
     default: lua_assert(0); r = 0; break;
   }
   if (luai_numisnan(r)) return 0;  /* do not attempt to produce NaN */
@@ -859,15 +866,12 @@ static int luaK_code (FuncState *fs, Instruction i, int line) {
   f->lineinfo[fs->pc] = line;
   return fs->pc++;
 }
-#define PRINT_ABC() printf("OP_%-14s  %d  %d  %d\n", getOpName(o), a,( b&0xff), c)
-#define PRINT_ABx() printf("OP_%-14s  %d  %d\n", getOpName(o), a, bc)
-#define PRINT_AsBx() printf("OP_%14s  %d  %d\n", getOpName(o), a, bc-MAXARG_sBx)
+
 
 int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
   lua_assert(getOpMode(o) == iABC);
   lua_assert(getBMode(o) != OpArgN || b == 0);
   lua_assert(getCMode(o) != OpArgN || c == 0);
-  PRINT_ABC();
   return luaK_code(fs, CREATE_ABC(o, a, b, c), fs->ls->lastline);
 }
 
@@ -875,8 +879,6 @@ int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
 int luaK_codeABx (FuncState *fs, OpCode o, int a, unsigned int bc) {
   lua_assert(getOpMode(o) == iABx || getOpMode(o) == iAsBx);
   lua_assert(getCMode(o) == OpArgN);
-  if (getOpMode(o) == iAsBx) PRINT_AsBx();
-  else PRINT_ABx();
   return luaK_code(fs, CREATE_ABx(o, a, bc), fs->ls->lastline);
 }
 
@@ -889,13 +891,8 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
     luaK_codeABC(fs, OP_SETLIST, base, b, c);
   else {
     if (c > MAXARG_Bx)
-    {
-      const char *msg=
-      "Attempt to initialize a table with too many array literals. "
-      "Please split into multiple statements.";
-      luaG_runerror(fs->H, msg);
-      /* TODO: call the correct error function */
-    }
+      luaG_runerror(fs->H, "Attempt to initialize a table with too many "
+        "array literals. Please split into multiple statements.");
     luaK_codeABC(fs, OP_SETLIST, base, b, 0);
     luaK_codeABx(fs, OP_DATA, 0, c);
   }
@@ -934,7 +931,7 @@ static void identify_leaders (int sizecode, Instruction *code,
 /*
 ** Set the opcode of an instruction (keeps BK bit)
 */
-static Instruction set_opcode (Instruction instr, OpCode newop) {
+static Instruction set_insn_opcode (Instruction instr, OpCode newop) {
   OpCode oldop = GET_OPCODE(instr);
   if (getOpMode(oldop) == iABC &&
       (getBMode(oldop) == OpArgUK || getBMode(oldop) == OpArgRK))
@@ -956,8 +953,8 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
     switch (op) {
       case OP_GETTABLE: { /* GETTABLE_S or GETFIELD */
         int c = GETARG_C(code[i]);
-        if (!ISK(c) || !ttisstring(&k[c]))
-          code[i] = set_opcode(code[i], OP_GETTABLE_S);
+        if (!ISK(c) || !ttisstring(&k[INDEXK(c)]))
+          code[i] = set_insn_opcode(code[i], OP_GETTABLE_S);
         else
           SET_OPCODE(code[i], OP_GETFIELD);
         break;
@@ -965,17 +962,17 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
       case OP_SETTABLE:
       case OP_SETTABLE_BK: { /* SETTABLE_S or SETFIELD */
         int c = GETARG_C(code[i]);
-        if (!ISK(c) || !ttisstring(&k[c]))
-          code[i] = set_opcode(code[i], OP_SETTABLE_S);
+        if (!ISK(c) || !ttisstring(&k[INDEXK(c)]))
+          code[i] = set_insn_opcode(code[i], OP_SETTABLE_S);
         else
           SET_OPCODE(code[i], OP_SETFIELD);
         break;
       }
       case OP_CALL: /* CALL_I */
-        code[i] = set_opcode(code[i], OP_CALL_I);
+        code[i] = set_insn_opcode(code[i], OP_CALL_I);
         break;
       case OP_TAILCALL: /* TAILCALL_I */
-        code[i] = set_opcode(code[i], OP_TAILCALL_I);
+        code[i] = set_insn_opcode(code[i], OP_TAILCALL_I);
         break;
       default: break;
     }
@@ -994,7 +991,7 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
         if (r1Version != OP_MAX &&
           ((getR1Mode(r1Version) == R1A && GETARG_A(prev) == GETARG_A(curr)) ||
            (getR1Mode(r1Version) == R1B && GETARG_B(prev) == GETARG_B(curr))))
-          code[i] = set_opcode(code[i], r1Version); /* set code to R1 version */
+          code[i] = set_insn_opcode(code[i], r1Version); /* set to R1 version */
       }
     }
   }

@@ -254,11 +254,19 @@ static int name (hksc_State *H, int argc, char *argv[]) { \
   return error; \
 }
 
+static int listbytecode(hksc_State *H, const Proto *f, void *ud) {
+  (void)H; (void)ud;
+  luaU_print(f, listing > 1);
+  return 0;
+}
+
 /* parse but do not dump */
 DECL_PARSER_LOOP_FUNC(parseonly, hksI_parser_file(H, argv[i]))
 /* parse and dump (output is NULL if multiple input files) */
 DECL_PARSER_LOOP_FUNC(parseanddump, hksI_parser_file2file(H, argv[i], output))
-
+/* parse and list bytecode */
+DECL_PARSER_LOOP_FUNC(parseandlist,
+                      hksI_parser_file_dumpf(H, argv[i], listbytecode, NULL))
 
 int main(int argc, char *argv[])
 {
@@ -274,7 +282,9 @@ int main(int argc, char *argv[])
   if (H==NULL) fatal("cannot create state: not enough memory");
   hksc_setBytecodeStrippingLevel(H,striplevel);
   hksc_setIntLiteralsEnabled(H,literals_enabled);
-  if (!dumping)
+  if (listing)
+    status=parseandlist(H,argc,argv);
+  else if (!dumping)
     status=parseonly(H,argc,argv);
   else
     status=parseanddump(H,argc,argv);

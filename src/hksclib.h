@@ -15,7 +15,7 @@
 #include "lobject.h" /* Proto */
 
 
-typedef int (*hksc_DumpFunction) (hksc_State *H, Proto *f, void *ud);
+typedef int (*hksc_DumpFunction) (hksc_State *H, const Proto *f, void *ud);
 
 /*
 ** `dump context' for dumping bytecode to a memory buffer
@@ -78,9 +78,9 @@ LUA_API int hksI_parser_buff2buff(hksc_State *H, const char *buff,
 
 /* Custom parse & dump functions (user program must provide a custom dump
    function to call when dumping the bytecode) */
-LUA_API int hksI_parser_file_dump(hksc_State *H, const char *filename,
-                                    hksc_DumpFunction dumpf, void *ud);
-LUA_API int hksI_parser_buff_dump(hksc_State *H, const char *buff,
+LUA_API int hksI_parser_file_dumpf(hksc_State *H, const char *filename,
+                                   hksc_DumpFunction dumpf, void *ud);
+LUA_API int hksI_parser_buff_dumpf(hksc_State *H, const char *buff,
           size_t size, const char *source, hksc_DumpFunction dumpf, void *ud);
 
 

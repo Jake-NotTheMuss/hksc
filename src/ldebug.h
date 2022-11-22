@@ -10,6 +10,11 @@
 #include "lstate.h"
 
 
+#define pcRel(pc, p)  (cast(int, (pc) - (p)->code) - 1)
+
+#define getline(f,pc) (((f)->lineinfo) ? (f)->lineinfo[pc] : 0)
+
+
 LUAI_FUNC void luaG_runerror (hksc_State *H, const char *fmt, ...);
 
 #endif

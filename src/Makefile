@@ -20,7 +20,8 @@ lstate.c \
 lstring.c \
 ltable.c \
 lundump.c \
-lzio.c
+lzio.c \
+print.c
 
 ALL_O:=$(SRC:%.c=%.o)
 ALL_D:=$(SRC:%.c=%.d)
