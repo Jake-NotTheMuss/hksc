@@ -12,18 +12,38 @@
 #include "lobject.h"
 #include "lzio.h"
 
+
+/* define static functions needed by both lundump.c and ldump.c */
+#if defined(lundump_c) || defined(ldump_c)
+
+#define correctendianness(s,x) \
+  if ((s)->swapendian) swapendianness((char *)&x,sizeof(x))
+
+static void swapendianness(char *x, size_t n) {
+  size_t i = 0;
+  while (n-- != 0) {
+    char t = x[i];
+    x[i] = x[n];
+    x[n] = t;
+    i++;
+  }
+}
+
+#endif /* lundump_c || ldump_c */
+
+
 /* load one chunk; from lundump.c */
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
                               const char *name);
 
 /* make header; from lundump.c */
-LUAI_FUNC void luaU_header (char *h, int endianswap);
+LUAI_FUNC void luaU_header (char *h, int swapendian);
 
 /* dump one chunk; from ldump.c */
 LUAI_FUNC int luaU_dump (hksc_State *H,
                          const Proto *f, lua_Writer w, void *data);
 
-#ifdef luac_c
+#ifdef hksc_c
 /* print one chunk; from print.c */
 LUAI_FUNC void luaU_print (const Proto *f, int full);
 #endif
@@ -37,25 +57,32 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 /* size of header of binary files */
 #define LUAC_HEADERSIZE		sizeof(HkscHeader)
 
-/* this is an offline compiler - bytecode is not shared */
-#define LUAC_SHARED_BYTECODE 0
 
 typedef struct HkscHeader {
   char signature[sizeof(LUA_SIGNATURE)-1]; /* Lua binary signature */
   char version;     /* Lua version */
-  char format;      /* Lua format */
-  char endianswap;  /* true if need to swap endianness when loading/dumping */
+  char formatversion; /* Lua format version */
+  char swapendian;  /* true if need to swap endianness when loading/dumping */
   char sizeint;     /* size of int */
   char sizesize;    /* size of size_t */
   char sizeinstr;   /* size of Instruction */
   char sizenumber;  /* size of lua_Number */
   char numberisint; /* true if lua_Number is integral */
-  char compatmask;  /* compatibility flags */
-  char sharedstate; /* true if compiled in a shared state */
+  char compatbits;  /* compatibility bits */
+  char shared;      /* true if compiled in a shared state */
 } HkscHeader;
 
 /* number of types in header of binary files */
 #define LUAC_NUMTYPES (LUA_NUM_TYPE_OBJECTS-1)
+
+/* maximum length of a reserved word */
+#define DEFTYPE(t) char buf_##t[sizeof(#t)];
+union max_type_length {
+#include "ltype.def"
+};
+#undef DEFTYPE
+
+#define MAX_TYPE_LENGTH (sizeof(union max_type_length)/sizeof(char))
 
 
 /* bytecode stripping levels */
@@ -66,6 +93,7 @@ typedef struct HkscHeader {
 #define BYTECODE_STRIPPING_DEBUG_ONLY 3
 #define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
 #endif /* LUA_COD */
+
 
 /* TODO: These are compatibility bits
   HKS_GETGLOBAL_MEMOIZATION
@@ -93,27 +121,22 @@ Note: CoD settings are 0:
   NATIVEINT:    OFF
 */
 
+#define hksc_compatbits \
+  ((HKSC_GETGLOBAL_MEMOIZATION   << HKSC_COMPATIBILITY_BIT_MEMOIZATION) | \
+  (HKSC_STRUCTURE_EXTENSION_ON   << HKSC_COMPATIBILITY_BIT_STRUCTURES)  | \
+  (HKSC_SELF                     << HKSC_COMPATIBILITY_BIT_SELF)        | \
+  (HKSC_WITHDOUBLES              << HKSC_COMPATIBILITY_BIT_DOUBLES)     | \
+  (HKSC_WITHNATIVEINT            << HKSC_COMPATIBILITY_BIT_NATIVEINT))
 
-#define aligned2type(x,size) (((x) + ((size)-1)) & ~((size)-1))
-#define aligned2nativetype(x,t) aligned2type(x,sizeof(t))
 
-#define aligned2int(x)     aligned2type(x,HKSC_SIZE_INT)
-#define aligned2size(x)    aligned2type(x,HKSC_SIZE_SIZE)
-#define aligned2instr(x)   aligned2type(x,HKSC_SIZE_INSTR)
-#define aligned2number(x)  aligned2type(x,HKSC_SIZE_NUMBER)
+/* stream position alignment in bytecode */
+#define aligned2type(x,t) (((x) + (sizeof(t)-1)) & ~(sizeof(t)-1))
+#define aligned2nativetype(x,t) aligned2type(x,t)
 
-#ifndef LUA_MULTIPLAT_COMPAT /* use native host sizes */
-# define HKSC_SIZE_INT     sizeof(int)
-# define HKSC_SIZE_SIZE    sizeof(size_t)
-# define HKSC_SIZE_INSTR   sizeof(Instruction)
-# define HKSC_SIZE_NUMBER  sizeof(lua_Number)
-#else
-/* TODO: use explicit sizes from dump settings */
-#error "Unimplemented"
-#endif
+#define aligned2int(x)     aligned2type(x,int)
+#define aligned2size(x)    aligned2type(x,size_t)
+#define aligned2instr(x)   aligned2type(x,Instruction)
+#define aligned2num(x)     aligned2type(x,lua_Number)
 
-/* for data alignment in header */
-#define ALIGN(p,n) (void *)(((long)(p) + (n)-1) & ~((n)-1))
-#define LUAC_PADCHAR 0x5f /* TODO: is this supposed to be '_'? in source */
 
 #endif

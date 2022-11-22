@@ -46,19 +46,6 @@ typedef struct {
 #define DumpMem(b,n,size,D)	DumpBlock(b,(n)*(size),D)
 #define DumpVar(x,D)	 	DumpMem(&x,1,sizeof(x),D)
 
-#define correctendianness(D,x) \
-  if ((D)->swapendian) swapendianness((char *)&x,sizeof(x))
-
-static void swapendianness(char *x, size_t n) {
-  size_t i = 0;
-  while (n-- != 0) {
-    char t = x[i];
-    x[i] = x[n];
-    x[n] = t;
-    i++;
-  }
-}
-
 static void DumpBlock(const void *b, size_t size, DumpState *D)
 {
   if (D->status==0)
@@ -144,11 +131,11 @@ static void DumpFunction(const Proto *f, const TString *p, DumpState *D);
 
 static void DumpCode(const Proto *f, DumpState *D)
 {
-  char buf[HKSC_SIZE_INSTR];
+  char buf[sizeof(Instruction)];
   size_t npadding;
-  memset(buf, 0x5f, HKSC_SIZE_INSTR-1);
-  buf[HKSC_SIZE_INSTR-1] = '\0';
-  DumpSize(f->sizecode,D); /* number of instructions */
+  memset(buf, '_', sizeof(Instruction)-1);
+  buf[sizeof(Instruction)-1] = '\0';
+  DumpSize(cast(size_t, f->sizecode),D); /* number of instructions */
   npadding = aligned2instr(D->pos) - D->pos;
   DumpMem(buf,npadding,sizeof(char),D); /* align to next instruction */
   if (!D->swapendian) /* not swapping endianness */
@@ -156,8 +143,8 @@ static void DumpCode(const Proto *f, DumpState *D)
   else { /* need to swap endianness */
     int i;
     for (i = 0; i < f->sizecode; i++) {
-      swapendianness((char *)(f->code+i),HKSC_SIZE_INSTR);
-      DumpMem(f->code+i,1,HKSC_SIZE_INSTR,D);
+      swapendianness((char *)(f->code+i),sizeof(Instruction));
+      DumpMem(f->code+i,1,sizeof(Instruction),D);
     }
   }
 }
@@ -206,13 +193,15 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
   if (D->striplevel == BYTECODE_STRIPPING_ALL) {
+    lu_int32 hash = f->hash;
     DumpInt(1,D);
-    DumpVar(f->hash,D);
+    correctendianness(D,hash);
+    DumpVar(hash,D);
   } else if (D->striplevel == BYTECODE_STRIPPING_PROFILING) {
     DumpInt(1,D);
-    DumpInt(0,D); /* striplevel line info */
-    DumpInt(0,D); /* striplevel local names */
-    DumpInt(0,D); /* striplevel upval names */
+    DumpInt(0,D); /* strip line info */
+    DumpInt(0,D); /* strip local names */
+    DumpInt(0,D); /* strip upval names */
     DumpInt(f->linedefined,D);
     DumpInt(f->lastlinedefined,D);
     if (p == NULL) /* main chunk */

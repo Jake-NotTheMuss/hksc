@@ -945,7 +945,7 @@ static Instruction set_insn_opcode (Instruction instr, OpCode newop) {
 ** Optimize the code sequence of a function
 */
 static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
-                                             int sizecode, TValue *k) {
+                                             int sizecode, const TValue *k) {
   int i;
   lu_byte *properties;
   for (i = 0; i < sizecode; i++) {

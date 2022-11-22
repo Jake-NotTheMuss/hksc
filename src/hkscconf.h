@@ -44,4 +44,20 @@
 #undef LUA_CODT7
 #endif
 
+#if HKSC_GETGLOBAL_MEMOIZATION
+#error "Global Memoization extension not implemented"
+#endif
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+#error "Structure extension not implemented"
+#endif
+
+#if HKSC_SELF
+#error "Self extension not implemented"
+#endif
+
+#if HKSC_WITHNATIVEINT
+#error "Native Int extension not implemented"
+#endif
+
 #endif
