@@ -16,6 +16,7 @@
 /* define static functions needed by both lundump.c and ldump.c */
 #if defined(lundump_c) || defined(ldump_c)
 
+/* swap endianness of a sequence of bytes if needed */
 #define correctendianness(s,x) \
   if ((s)->swapendian) swapendianness((char *)&x,sizeof(x))
 

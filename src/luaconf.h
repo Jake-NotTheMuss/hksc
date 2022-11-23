@@ -508,9 +508,6 @@
 ** system. In Pentium machines, a naive typecast from double to int
 ** in C is extremely slow, so any alternative is worth trying.
 */
-
-/* TODO: make this work with both `float' and `double' (used in ltable.c) */
-/* On a Pentium, resort to a trick */
 #if defined(LUA_NUMBER_DOUBLE) && !defined(LUA_ANSI) && !defined(__SSE2__) && \
     (defined(__i386) || defined (_M_IX86) || defined(__i386__))
 union luai_Cast { double l_d; long l_l; };
