@@ -119,16 +119,29 @@ struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr, size_t n) {
     *saveptr = save;
     lowptr = cast(const char *, saveptr);
     if (*endptr != saveptr) { /* conversion failed */
+      size_t n1; (void)n1;
       badconversion:
-      literal.low = literal.high & 0xffffffff;
-      literal.high = (literal.high >> 16 >> 16) & 0xffffffff;
+      /* store the correct number up to the character that caused the faiure */
+      n1 = cast(size_t, *endptr-s1);
+      if (n1 > 16)
+        literal.high = literal.low = cast(lu_int32, 0xfffffffful);
+      else {
+        literal.low = literal.high & cast(lu_int32, 0xfffffffful);
+        if (n1 > 8) { /* get the high part again */
+          char *saveptr1 = s1+n1-8;
+          char save1 = *saveptr1;
+          *saveptr1 = '\0';
+          literal.high = cast(lu_int32, strtoul(s, NULL, 16));
+          *saveptr1 = save1;
+        } else literal.high = 0;
+      }
       return literal;
     }
     if (n > 16) { /* too big to fit in 64 bits */
       /* complete the conversion to know if it succeeds or not */
       strtoul(lowptr, endptr, 16);
       if (*endptr != s1+n) goto badconversion;
-      literal.low = literal.high = ~cast(lu_int32, 0); /* overflow */
+      literal.low = literal.high = cast(lu_int32, 0xfffffffful); /* overflow */
       return literal;
     }
   } else {
