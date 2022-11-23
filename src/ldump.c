@@ -104,10 +104,8 @@ static void DumpString(const TString *s, DumpState *D)
 static void DumpUI64(const lu_int64 x, DumpState *D)
 {
   int y=1;
-  char buf[LUAI_MAXUI642STR];
-  lua_ui642str(buf,x);
-  printf("Dumping UI64 value: 0x%s\n", buf);
-  lua_assert(sizeof(lu_int64) == 8); /* needs to be exact */
+  /* note that a platform may expect this to be larger than 8 bytes */
+  lua_assert(sizeof(lu_int64) == 8);
 #ifdef LUA_UI64_S
   if (((char)*(char *)&y == 0) != D->swapendian) { /* big endian */
     correctendianness(D,x.high);
@@ -125,6 +123,11 @@ static void DumpUI64(const lu_int64 x, DumpState *D)
   correctendianness(D,x);
   DumpVar(x,D);
 #endif
+  {
+    char buf[LUAI_MAXUI642STR];
+    lua_ui642str(buf,x);
+    printf("Dumping UI64 value: 0x%s\n", buf);
+  }
 }
 
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D);
