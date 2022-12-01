@@ -251,7 +251,9 @@ typedef struct Proto {
   TString **upvalues;  /* upvalue names */
   TString  *source;
   TString  *name;
+#ifdef LUA_COD
   lu_int32 hash; /* TODO: is this strictly 32 bits or just sizeof(int)? */
+#endif /* LUA_COD */
   int sizeupvalues;
   int sizek;  /* size of `k' */
   int sizecode;

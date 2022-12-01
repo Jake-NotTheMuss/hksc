@@ -196,10 +196,12 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
   if (D->striplevel == BYTECODE_STRIPPING_ALL) {
-    lu_int32 hash = f->hash;
+#ifdef LUA_COD
     DumpInt(1,D);
-    correctendianness(D,hash);
-    DumpVar(hash,D);
+    DumpInt(f->hash,D);
+#else /* !LUA_COD */
+    DumpInt(0,D);
+#endif /* LUA_COD */
   } else if (D->striplevel == BYTECODE_STRIPPING_PROFILING) {
     DumpInt(1,D);
     DumpInt(0,D); /* strip line info */
@@ -212,14 +214,18 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
     else
       DumpString(NULL,D);
     DumpString(f->name,D);
-  } else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
+  }
+#ifdef LUA_COD
+  else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
     n=f->sizelineinfo;
     for (i=0; i<n; i++) {
       const char *line = luaO_pushfstring(D->H, "%u,%u,%s,%u,%s\n", f->hash, i,
         getstr(f->source), f->lineinfo[i], ts2txt(f->name));
       DumpMem(line,strlen(line),sizeof(char),D);
     }
-  } else { /* (BYTECODE_STRIPPING_NONE || BYTECODE_STRIPPING_DEBUG_ONLY) */
+  }
+#endif /* LUA_COD */
+  else { /* (BYTECODE_STRIPPING_NONE || BYTECODE_STRIPPING_DEBUG_ONLY) */
     DumpInt(1,D);
     DumpInt(f->sizelineinfo,D);
     DumpInt(f->sizelocvars,D);
@@ -292,7 +298,7 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.writer=w;
   D.data=data;
   D.pos=0;
-  D.striplevel=hksc_getStrip(H);
+  D.striplevel=hksc_getBytecodeStrippingLevel(H);
   D.status=0;
   if ((char)*(char*)&x == 0) /* big endian */
     D.swapendian=(G(H)->endianness==HKSC_LITTLE_ENDIAN);

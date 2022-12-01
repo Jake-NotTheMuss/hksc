@@ -24,28 +24,22 @@
 #include "lzio.h"
 
 typedef struct {
-  hksc_State *H;
-  ZIO *Z;
-  Mbuffer *b;
-  const char *name;
-  size_t pos;
-  int swapendian;
+ hksc_State *H;
+ ZIO *Z;
+ Mbuffer *b;
+ const char *name;
 } LoadState;
 
 #define BADHEADERMSG "Header mismatch when loading bytecode."
 #define BADCOMPATMSG BADHEADERMSG " The following build settings differ:"
 
-#ifdef LUAC_TRUST_BINARIES
-#define IF(c,s)
-#else
-#define IF(c,s)    if (c) error(S,s)
+#define IF(S,c,s)    if (c) error(S,s)
 
 static void error(LoadState *S, const char *why)
 {
   hksc_setfmsg(S->H,"%s: %s in precompiled chunk",S->name,why);
   luaD_throw(S->H,LUA_ERRSYNTAX);
 }
-#endif
 
 #define LoadMem(S,b,n,size)  LoadBlock(S,b,(n)*(size))
 #define  LoadByte(S)    (lu_byte)LoadChar(S)
@@ -56,7 +50,7 @@ static void LoadBlock(LoadState *S, void *b, size_t size)
 {
   size_t r=luaZ_read(S->Z,b,size);
   S->pos += size;
-  IF (r!=0, "unexpected end");
+  IF (S, r!=0, "unexpected end");
 }
 
 static int LoadChar(LoadState *S)
@@ -71,7 +65,7 @@ static int LoadInt(LoadState *S)
   int x;
   LoadVar(S,x);
   correctendianness(S,x);
-  IF (x<0, "bad integer");
+  IF (S, x<0, "bad integer");
   return x;
 }
 
@@ -132,7 +126,9 @@ static lu_int64 LoadUI64(LoadState *S)
 
 static void LoadCode(LoadState *S, Proto *f)
 {
+  char buf[sizeof(Instruction)];
   int n=cast_int(LoadSize(S));
+  LoadBlock(S,buf,(aligned2instr(S->pos) - S->pos));
   f->code=luaM_newvector(S->H,n,Instruction);
   f->sizecode=n;
   if (!S->swapendian) /* not swapping endianness */
@@ -188,7 +184,7 @@ static void LoadConstants(LoadState *S, Proto *f)
         setui64value(o,LoadUI64(S));
         break;
       default:
-        IF (1, "bad constant");
+        IF (S, 1, "bad constant");
         break;
     }
   }
@@ -225,7 +221,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   for (i=0; i<n; i++) f->upvalues[i]=LoadString(S);
 }
 
-static Proto *LoadFunction(LoadState *S, TString *p)
+static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
 {
   int i,n;
   Proto *f;
@@ -238,21 +234,26 @@ static Proto *LoadFunction(LoadState *S, TString *p)
   LoadCode(S,f);
   LoadConstants(S,f);
   n=LoadInt(S);
-  if (n==1) {
-    LoadVar(S,f->hash);
-    correctendianness(S,f->hash);
-    n=0;
-  }
-  if (n==0)
-    n=LoadInt(S);
+#ifdef LUA_COD /* Call of Duty also includes a hash after the debug flag */
+  if (n==1)
+    f->hash=LoadInt(S);
+#else /* !LUA_COD */
   if (n!=0)
-    LoadDebug(S,f,p);
+#endif /* LUA_COD */
+  {
+    if (debugS != NULL) {
+#ifdef LUA_COD
+      IF(debugS, LoadInt(debugS) != 1, "bad debug info");
+#endif /* LUA_COD */
+      LoadDebug(debugS,f,p);
+    }
+  }
   n=LoadInt(S); /* number of child functions */
   f->p=luaM_newvector(S->H,n,Proto *);
   f->sizep=n;
   for (i=0; i<n; i++) f->p[i]=NULL;
-  for (i=0; i<n; i++) f->p[i]=LoadFunction(S,f->source);
-  /*IF (!luaG_checkcode(f), "bad code");*/
+  for (i=0; i<n; i++) f->p[i]=LoadFunction(S,f->source,debugS);
+  /*IF (S, !luaG_checkcode(f), "bad code");*/
   leavelevel(S);
   return f;
 }
@@ -306,12 +307,36 @@ badheader:
   luaG_runerror(S->H, BADHEADERMSG); return;
 }
 
+
+/*
+** Execute a protected undump.
+*/
+struct SUndump {  /* data to `f_undump' */
+  Proto *f; /* result */
+  LoadState *S; /* reader */
+  LoadState *debugS; /* debug reader */
+};
+
+static void f_undump (hksc_State *H, void *ud) {
+  struct SUndump *u = cast(struct SUndump *, ud);
+  u->f = LoadFunction(u->S,luaS_newliteral(H,"=?"),u->debugS);
+}
+
 /*
 ** load precompiled chunk
 */
 Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
 {
+  struct SUndump u;
+  int status;
   LoadState S;
+#ifdef LUA_COD
+  LoadState SD; /* debug load state */
+  ZIO ZD; /* debugS->Z */
+  Mbuffer buffD; /* debugS->b */
+  char udata_buff[LUA_MAXUDATABUFF]; /* allocation for user data */
+#endif /* LUA_COD */
+  LoadState *debugS;
   if (*name=='@' || *name=='=')
     S.name=name+1;
   else if (*name==LUA_SIGNATURE[0])
@@ -322,9 +347,46 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.Z=Z;
   S.b=buff;
   S.pos=0;
-  LoadHeader(&S);
-  return LoadFunction(&S,luaS_newliteral(H,"=?"));
+  LoadHeader(&S); /* need some info in the header to initialize debug reader */
+#ifdef LUA_COD /* some gymnastics for Call of Duty */
+  if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
+    int status = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, udata_buff, name);
+    if (status == 0) {
+      debugS = &SD;
+      SD.H = H;
+      SD.Z = &ZD;
+      SD.b = &buffD;
+      SD.swapendian = S.swapendian;
+      SD.name = name;
+      SD.pos = 0;
+    }
+    else
+      luaD_throw(S->H,status);
+  }
+  else debugS = NULL; /* do not load debug info */
+#else /* !LUA_COD */
+  debugS = &S; /* still need to read the embedded debug info if present */
+#endif /* LUA_COD */
+  u.S = &S;
+  u.debugS = debugS;
+  status = luaD_pcall(H, f_undump, &u);
+  if (G(H)->debugLoadStateClose) {
+    int closestatus;
+    closestatus=(*G(H)->debugLoadStateClose)(H, &ZD, &buffD, udata_buff, name);
+    if (status == 0 && closestatus != 0)
+      status = closestatus;
+  }
+  if (status)
+    luaD_throw(H, status); /* return the error to the outer pcall */
+  return u.f;
 }
+
+#define compatbits \
+  ((HKSC_GETGLOBAL_MEMOIZATION   << HKSC_COMPATIBILITY_BIT_MEMOIZATION) | \
+  (HKSC_STRUCTURE_EXTENSION_ON   << HKSC_COMPATIBILITY_BIT_STRUCTURES)  | \
+  (HKSC_SELF                     << HKSC_COMPATIBILITY_BIT_SELF)        | \
+  (HKSC_WITHDOUBLES              << HKSC_COMPATIBILITY_BIT_DOUBLES)     | \
+  (HKSC_WITHNATIVEINT            << HKSC_COMPATIBILITY_BIT_NATIVEINT))
 
 /*
 * make header
@@ -341,7 +403,7 @@ void luaU_header (char *h, int swapendian)
   *h++=(char)sizeof(Instruction);
   *h++=(char)sizeof(lua_Number);
   *h++=(char)(((lua_Number)0.5)==0);    /* is lua_Number integral? */
-  *h++=(char)hksc_compatbits; /* build settings */
+  *h++=(char)compatbits; /* build settings */
   *h++=(char)0; /* true if in a shared state, false for an offline compiler */
 }
 

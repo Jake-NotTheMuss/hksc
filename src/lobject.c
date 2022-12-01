@@ -215,6 +215,10 @@ const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
         concatnum(va_arg(argp, int));
         break;
       }
+      case 'u': {
+        concatnum(va_arg(argp, unsigned int));
+        break;
+      }
       case 'f': {
         concatnum(va_arg(argp, l_uacNumber));
         break;

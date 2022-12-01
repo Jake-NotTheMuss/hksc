@@ -3,10 +3,12 @@ CFLAGS+=-ansi -pedantic -Wall -Wextra
 
 SRC= \
 hksc.c \
+hkscaux.c \
 hksclib.c \
 lctype.c \
 lcode.c \
 ldebug.c \
+ldecomp.c \
 ldo.c \
 ldump.c \
 lfunc.c \

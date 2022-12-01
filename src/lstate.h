@@ -10,9 +10,12 @@
 #include "lua.h"
 
 #include "lobject.h"
+#include "lundump.h"
 #include "lzio.h"
 
 
+/* optionally user-defined callbacks for beginning/end of cycles */
+typedef void (*hksc_CycleCallback)(hksc_State *H);
 
 
 struct lua_longjmp;  /* defined in ldo.c */
@@ -71,17 +74,16 @@ typedef struct hksc_Settings
   /* general settings */
   lu_byte sharing_format; /* bytecode sharing format, default = INPLACE */
   lu_byte sharing_mode; /* bytecode sharing mode, default = ON */
-
+  lu_byte ignore_debug; /* do not try to load/dump debug info */
   /* compiler-specific settings */
   lu_byte emit_struct; /* whether `hstructure' and `hmake' should be emitted */
   lu_byte enable_int_literals; /* int literal setting */
   lu_byte strip; /* bytecode stripping level */
-  const char **strip_names;
+  /*const char **strip_names;*/
   /*lua_LineMap debug_map;*/
-
-  /* decompiler-specific settings */
-  lu_byte ignore_debug; /* ignore debug info if present */
+#ifdef HKSC_DECOMPILER /* decompiler-specific settings */
   lu_byte match_line_info; /* emit statements according to the line mapping */
+#endif /* HKSC_DECOMPILER */
 } hksc_Settings;
 
 /*
@@ -96,6 +98,7 @@ typedef struct hksc_Settings
 */
 typedef struct global_State {
   int mode; /* compiling or decompiling? */
+  int stripmask; /* encodes all desired bytecode stripping levels */
   int endianness; /* bytecode endianness */
   hksc_Settings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
@@ -112,9 +115,14 @@ typedef struct global_State {
   lu_mem gcdept;  /* how much GC is `behind schedule' */
   int gcstepmul;  /* GC `granularity' */
   lua_CFunction panic;  /* to be called in unprotected errors */
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+  LoadStateCB debugLoadStateOpen; /* (COD) debug reader initializer */
+  LoadStateCB debugLoadStateClose; /* (COD) debug reader finalizer */
+#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 #if 0
   hksc_LogFunction log;  /* callback for logging debug messages */
 #endif
+  hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
 } global_State;
 
@@ -126,9 +134,13 @@ struct hksc_State {
   lu_byte status;
   global_State *h_G;
   Proto *last_result;
+  int stripmask; /* encodes all desired bytecode stripping levels */
   unsigned short nCcalls;  /* number of nested C calls */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+  const char *currdebugfile;
+#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 };
 
 
@@ -142,8 +154,8 @@ struct hksc_State {
 #define luaE_geterrormsg(H) hksc_luaE_geterrormsg(H)
 #define luaE_seterrormsg(H,s) hksc_luaE_seterrormsg(H,s)
 
-#define hksc_luaE_mode(H) (G(H)->mode)
-#define luaE_mode(H) hksc_luaE_mode(H)
+#define luaE_mode(H) (G(H)->mode)
+#define luaE_stripmask(H) (G(H)->stripmask)
 
 /* macros for setting compiler options */
 #define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
@@ -156,7 +168,7 @@ struct hksc_State {
 #define hksc_getSharingMode(H) (Settings(H).sharing_mode)
 #define hksc_getEmitStruct(H) (Settings(H).emit_struct)
 #define hksc_getIntLiteralsEnabled(H) (Settings(H).enable_int_literals)
-#define hksc_getStrip(H) (Settings(H).strip)
+#define hksc_getBytecodeStrippingLevel(H) (Settings(H).strip)
 #define hksc_getIgnoreDebug(H) (Settings(H).ignore_debug)
 #define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
 
@@ -194,6 +206,15 @@ union GCObject {
 /* macro to convert any Lua object into a GCObject */
 #define obj2gco(v)	(cast(GCObject *, (v)))
 
+/* functions for setting user callbacks */
+#define SETCALLBACK_DECL(type, field, suffix) \
+LUAI_FUNC type hksc_##suffix (hksc_State *H, type f);
+
+SETCALLBACK_DECL(lua_CFunction, panic, atpanic)
+SETCALLBACK_DECL(hksc_CycleCallback, startcycle, onstartcycle)
+SETCALLBACK_DECL(hksc_CycleCallback, endcycle, onendcycle)
+
+#undef SETCALLBACK_DECL
 
 LUAI_FUNC hksc_State *luaE_newthread (hksc_State *H);
 LUAI_FUNC void luaE_freethread (hksc_State *H, hksc_State *H1);

@@ -16,7 +16,7 @@
 
 
 typedef int (*hksc_DumpFunction) (hksc_State *H, const Proto *f, void *ud);
-
+#if 0
 /*
 ** `dump context' for dumping bytecode to a memory buffer
 */
@@ -74,14 +74,14 @@ LUA_API int hksI_parser_buff2buff(hksc_State *H, const char *buff,
        will hold the pointer to the dumped bytecode buffer, and the user program
        is responsible for freeing that memory using `hksI_dumpctx_free()'.
 */
-
+#endif
 
 /* Custom parse & dump functions (user program must provide a custom dump
    function to call when dumping the bytecode) */
-LUA_API int hksI_parser_file_dumpf(hksc_State *H, const char *filename,
+LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
                                    hksc_DumpFunction dumpf, void *ud);
-LUA_API int hksI_parser_buff_dumpf(hksc_State *H, const char *buff,
-          size_t size, const char *source, hksc_DumpFunction dumpf, void *ud);
+LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
+                      const char *source, hksc_DumpFunction dumpf, void *ud);
 
 
 /* extra error code for `luaL_load' */

@@ -44,7 +44,9 @@ Proto *luaF_newproto (hksc_State *H) {
   f->lastlinedefined = 0;
   f->source = NULL;
   f->name = NULL;
+#ifdef LUA_COD
   f->hash = 0;
+#endif /* LUA_COD */
   return f;
 }
 

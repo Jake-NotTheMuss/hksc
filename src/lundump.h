@@ -32,6 +32,11 @@ static void swapendianness(char *x, size_t n) {
 
 #endif /* lundump_c || ldump_c */
 
+#ifdef LUA_COD
+#define LUA_MAXUDATABUFF (LUAL_BUFFERSIZE + sizeof(void *))
+typedef int (*LoadStateCB)(hksc_State *H,ZIO **z,Mbuffer **b,char *udata_buff,
+                           const char *name);
+#endif /* LUA_COD */
 
 /* load one chunk; from lundump.c */
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
@@ -43,6 +48,13 @@ LUAI_FUNC void luaU_header (char *h, int swapendian);
 /* dump one chunk; from ldump.c */
 LUAI_FUNC int luaU_dump (hksc_State *H,
                          const Proto *f, lua_Writer w, void *data);
+
+
+#ifdef HKSC_DECOMPILER
+/* decompile one chunk; from ldecomp.c */
+LUAI_FUNC int luaU_decompile (hksc_State *H,
+                         const Proto *f, lua_Writer w, void *data);
+#endif /* HKSC_DECOMPILER */
 
 #ifdef hksc_c
 /* print one chunk; from print.c */

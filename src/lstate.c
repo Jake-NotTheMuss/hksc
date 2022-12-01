@@ -60,6 +60,9 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->status = 0;
   H->errormsg = NULL;
   H->last_result = NULL;
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+  H->currdebugfile = NULL;
+#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 }
 
 
@@ -81,47 +84,33 @@ hksc_default_settings(hksc_Settings *settings)
   /* general settings */
   settings->sharing_format = HKSC_BYTECODE_DEFAULT;
   settings->sharing_mode = HKSC_SHARING_MODE_OFF;
+  settings->ignore_debug = 0;
   /* compiler settings */
   settings->emit_struct = 0;
   settings->enable_int_literals = INT_LITERALS_NONE;
-  settings->strip_names = NULL;
-  /* decompiler settings */
-  settings->ignore_debug = 0;
+  /*settings->strip_names = NULL;*/
+#ifdef HKSC_DECOMPILER /* decompiler settings */
   settings->match_line_info = 1;
+#endif /* HKSC_DECOMPILER */
 }
 
+#define SETCALLBACK_DECL(type, field, suffix) \
+type hksc_##suffix (hksc_State *H, type f) { \
+  type old; \
+  lua_lock(H); \
+  old = G(H)->field; \
+  G(H)->field = f; \
+  lua_unlock(H); \
+  return old; \
+}
 
-hksc_State *luaE_newthread (hksc_State *H) {
-  UNUSED(H);
+SETCALLBACK_DECL(lua_CFunction, panic, atpanic)
+SETCALLBACK_DECL(hksc_CycleCallback, startcycle, onstartcycle)
+SETCALLBACK_DECL(hksc_CycleCallback, endcycle, onendcycle)
+
+#undef SETCALLBACK_DECL
+
 #if 0
-  hksc_State *H1 = tostate(luaM_malloc(H, state_size(hksc_State)));
-  luaC_link(H, obj2gco(H1), LUA_TTHREAD);
-  preinit_state(H1, G(H));
-  stack_init(H1, H);  /* init stack */
-  setobj2n(H, gt(H1), gt(H));  /* share table of globals */
-  H1->hookmask = H->hookmask;
-  H1->basehookcount = H->basehookcount;
-  H1->hook = H->hook;
-  resethookcount(H1);
-  lua_assert(iswhite(obj2gco(H1)));
-  return H1;
-#endif
-  return NULL;
-}
-
-
-void luaE_freethread (hksc_State *H, hksc_State *H1) {
-  UNUSED(H);
-  UNUSED(H1);
-#if 0
-  luaF_close(H1, H1->stack);  /* close all upvalues for this thread */
-  lua_assert(H1->openupval == NULL);
-  luai_userstatefree(H1);
-  freestack(H, H1);
-  luaM_freemem(H, fromstate(H1), state_size(hksc_State));
-#endif
-}
-
 lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf) {
   lua_CFunction old;
   lua_lock(H);
@@ -130,6 +119,8 @@ lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf) {
   lua_unlock(H);
   return old;
 }
+#endif
+
 
 #if 0
 hksc_LogFunction hksc_logfunc (hksc_State *H, lua_LogFunction logf) {
@@ -173,6 +164,11 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   g->sweepstrgc = 0;
   g->sweepgc = &g->rootgc;
   g->totalbytes = sizeof(LG);
+  g->startcycle = g->endcycle = NULL;
+#ifdef defined(LUA_COD) && defined(HKSC_DECOMPILER)
+  g->debugLoadStateOpen = NULL;
+  g->debugLoadStateClose = NULL;
+#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
   if (luaD_rawrunprotected(H, f_luaopen, NULL) != 0) {
     /* memory allocation error: free partial state */
     close_state(H);

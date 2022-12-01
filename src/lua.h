@@ -21,12 +21,6 @@
 #define LUA_COPYRIGHT	"Copyright (C) 1994-2006 Lua.org, PUC-Rio"
 #define LUA_AUTHORS 	"R. Ierusalimschy, H. H. de Figueiredo & W. Celes"
 
-/* default extension of pre-compiled Lua files */
-#define LUAC_EXT ".luac"
-/* default extension of source Lua files */
-#define LUA_EXT  ".lua"
-/* default extension of decompiled Lua files */
-#define LUADEC_EXT  ".dec.lua"
 
 /* mark for precompiled code (`<esc>Lua') */
 #define	LUA_SIGNATURE	"\033Lua"

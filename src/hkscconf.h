@@ -11,6 +11,7 @@
 #include <assert.h>
 #define lua_assert assert
 
+/* compatibility bits */
 #define HKSC_COMPATIBILITY_BIT_MEMOIZATION  0
 #define HKSC_COMPATIBILITY_BIT_STRUCTURES   1
 #define HKSC_COMPATIBILITY_BIT_SELF         2
@@ -21,6 +22,7 @@
 #define LUA_COD /* general cod compatibility */
 #define LUA_CODT7 /* support bitwise operations */
 
+/*#define HKSC_DECOMPILER*/
 
 /*
 ** NOTE for non-Call-of-Duty developers:
@@ -45,7 +47,7 @@
 #endif
 
 #if HKSC_GETGLOBAL_MEMOIZATION
-#error "Global Memoization extension not implemented"
+#error "Global Memoization not implemented"
 #endif
 
 #if HKSC_STRUCTURE_EXTENSION_ON
@@ -57,7 +59,7 @@
 #endif
 
 #if HKSC_WITHNATIVEINT
-#error "Native Int extension not implemented"
+#error "Native Int not implemented"
 #endif
 
 #endif

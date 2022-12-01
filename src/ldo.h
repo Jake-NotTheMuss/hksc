@@ -32,8 +32,7 @@ LUAI_FUNC int luaD_rawrunprotected (hksc_State *H, Pfunc f, void *ud);
 
 LUAI_FUNC void luaD_seterrorobj (hksc_State *H, int errcode);
 
-LUAI_FUNC void luaD_setvfmsg (hksc_State *H, const char *fmt,
-                                         va_list argp);
+LUAI_FUNC void luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp);
 LUAI_FUNC void luaD_setfmsg (hksc_State *H, const char *fmt, ...);
 
 #endif
