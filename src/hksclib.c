@@ -30,20 +30,29 @@
 #include "lzio.h"
 
 
-#ifdef HKSC_DECOMPILER
 /*
 ** assert that that Hksc is running in a given mode
 */
 #define checkmode(H,m,f) do { \
-  if (checkmode_(H,m,f)) return LUA_ERRRUN;
+  if (checkmode_(H,m,f)) return LUA_ERRRUN; \
 } while (0)
 
+#ifdef HKSC_DECOMPILER
 #define checkmodematches(H,c,f) do { \
   if ((c) == LUA_SIGNATURE[0]) \
     checkmode(H,HKSC_MODE_DECOMPILE,f); \
   else \
     checkmode(H,HKSC_MODE_COMPILE,f); \
 } while (0)
+#else /* !HKSC_DECOMPILER */
+#define checkmodematches(H,c,f) do { \
+  if ((c) == LUA_SIGNATURE[0]) { \
+    hksc_setfmsg((H), "`%s' is already a pre-compiled Lua file", (f)); \
+    return LUA_ERRRUN; \
+  } \
+  checkmode((H),HKSC_MODE_COMPILE,(f)); \
+} while (0)
+#endif /* HKSC_DECOMPILER */
 
 static int checkmode_(hksc_State *H, int mode, const char *filename) {
   lua_assert(mode != HKSC_MODE_DEFAULT);
@@ -61,21 +70,6 @@ static int checkmode_(hksc_State *H, int mode, const char *filename) {
   return 0;
 }
 
-#else /* !HKSC_DECOMPILER */
-
-/* not built with a decompiler */
-#define checkmode(H,m,f) do { \
-  (void)((H)); (void((m))); (void)((f)); \
-} while (0)
-#define checkmodematches(H,c,f) do { \
-  if ((c) == LUA_SIGNATURE[0]) { \
-    hksc_setfmsg((H), "`%s' is already a pre-compiled Lua file", (f)); \
-    return LUA_ERRRUN; \
-  } \
-} while (0)
-#endif /* HKSC_DECOMPILER */
-
-
 static void cleanFileName(char *instr, char *outstr) {
   int numdots = 0;
   int length = 0;
@@ -90,7 +84,7 @@ static void cleanFileName(char *instr, char *outstr) {
       *outstr++ = *instr;
     }
     instr++;
-    legnth++;
+    length++;
   }
   *outstr = '\0';
 }
