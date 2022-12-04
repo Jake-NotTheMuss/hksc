@@ -490,7 +490,24 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   luaX_setinput(H, &lexstate, z, luaS_new(H, name));
   open_func(&lexstate, &funcstate);
   funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
+#if 0
   luaX_next(&lexstate);  /* read first token */
+#else
+  luaX_readFirstToken(&lexstate);  /* read first token */
+  switch (lexstate.t.token) {
+    case TK_UTF8_BOM:
+      luaX_next(&lexstate);
+      break;
+    case TK_INVALID_BOM:
+    case TK_UTF16LE_BOM:
+    case TK_UTF16BE_BOM:
+    case TK_UTF32LE_BOM:
+    case TK_UTF32BE_BOM:
+      luaG_runerror(H, "Invalid or unsupported file encoding. Only ASCII and "
+                    "UTF-8 are supported");
+      break;
+  }
+#endif
   chunk(&lexstate);
   check(&lexstate, TK_EOS);
   close_func(&lexstate);

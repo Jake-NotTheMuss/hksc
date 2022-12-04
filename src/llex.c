@@ -545,3 +545,58 @@ void luaX_lookahead (LexState *ls) {
   ls->lookahead.token = llex(ls, &ls->lookahead.seminfo);
 }
 
+
+static int readBOM (LexState *ls) {
+  int first = ls->current;
+  if (first == 0xEF) { /* utf8 */
+    if (next(ls) == 0xBB && next(ls) == 0xBF) {
+      next(ls);
+      return TK_UTF8_BOM;
+    }
+  }
+  else if (first == 0xFE) {
+    if (next(ls) == 0xFF) { /* little endian utf16 or utf32 */
+      if (next(ls) != 0) {
+        next(ls);
+        return TK_UTF16BE_BOM;
+      }
+      if (next(ls) == 0) {
+        next(ls);
+        return TK_UTF32LE_BOM;
+      }
+    }
+  }
+  else if (first == 0xFF) {
+    if (next(ls) == 0xFE) { /* little endian utf16 */
+      next(ls);
+      return TK_UTF16LE_BOM;
+    }
+  }
+  else if (first == 0) {
+    if (next(ls) == 0 &&
+        next(ls) == 0xFE &&
+        next(ls) == 0xFF) { /* big endian utf32 */
+      next(ls);
+      return TK_UTF32BE_BOM;
+    }
+  }
+  return TK_INVALID_BOM;
+}
+
+
+void luaX_readFirstToken (LexState *ls) {
+  luaZ_resetbuffer(ls->buff);
+  if (!zhasmore(ls->z)) { /* empty stream */
+    ls->t.token = TK_EOS;
+    return;
+  }
+  /* check for BOM */
+  if (ls->current == 0xEF /* utf8 */
+      || ls->current == 0xFE || ls->current == 0xFF /* utf16 or utf32 */
+      || ls->current == 0 /* utf32 */) {
+    ls->t.token = readBOM(ls);
+  }
+  else
+    ls->t.token = llex(ls, &ls->t.seminfo);  /* read next token */
+}
+
