@@ -2,3 +2,5 @@
 *.d
 hksc
 *.luac
+*.luadebug
+*.luacallstackdb
