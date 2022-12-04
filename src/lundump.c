@@ -91,7 +91,7 @@ static TString *LoadString(LoadState *S)
   LoadVar(S,size);
   correctendianness(S,size);
   if (size==0)
-  return NULL;
+    return NULL;
   else
   {
     char *s=luaZ_openspace(S->H,S->b,size);

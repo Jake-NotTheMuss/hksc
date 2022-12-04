@@ -900,12 +900,12 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
 }
 
 
-/*
-** Code optimization
-*/
+/*******************************************************************************
+** Code optimization ***********************************************************
+*******************************************************************************/
 
 /*
-** Identify `leaders' in an instruction array
+** Identify `leaders' in an instruction sequence
 */
 static void identify_leaders (int sizecode, Instruction *code,
                               lu_byte *properties) {
@@ -951,7 +951,7 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
   for (i = 0; i < sizecode; i++) {
     OpCode op = GET_OPCODE(code[i]);
     switch (op) {
-      case OP_GETTABLE: { /* GETTABLE_S or GETFIELD */
+      case OP_GETTABLE: { /* change to GETTABLE_S or GETFIELD */
         int c = GETARG_C(code[i]);
         if (!ISK(c) || !ttisstring(&k[INDEXK(c)]))
           code[i] = set_insn_opcode(code[i], OP_GETTABLE_S);
@@ -960,7 +960,7 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
         break;
       }
       case OP_SETTABLE:
-      case OP_SETTABLE_BK: { /* SETTABLE_S or SETFIELD */
+      case OP_SETTABLE_BK: { /* change to SETTABLE_S or SETFIELD */
         int c = GETARG_C(code[i]);
         if (!ISK(c) || !ttisstring(&k[INDEXK(c)]))
           code[i] = set_insn_opcode(code[i], OP_SETTABLE_S);
@@ -968,10 +968,10 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
           SET_OPCODE(code[i], OP_SETFIELD);
         break;
       }
-      case OP_CALL: /* CALL_I */
+      case OP_CALL: /* change to CALL_I */
         code[i] = set_insn_opcode(code[i], OP_CALL_I);
         break;
-      case OP_TAILCALL: /* TAILCALL_I */
+      case OP_TAILCALL: /* change to TAILCALL_I */
         code[i] = set_insn_opcode(code[i], OP_TAILCALL_I);
         break;
       default: break;
