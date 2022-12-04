@@ -72,8 +72,6 @@ typedef struct stringtable {
 typedef struct hksc_Settings
 {
   /* general settings */
-  lu_byte sharing_format; /* bytecode sharing format, default = INPLACE */
-  lu_byte sharing_mode; /* bytecode sharing mode, default = ON */
   lu_byte ignore_debug; /* do not try to load/dump debug info */
   /* compiler-specific settings */
   lu_byte emit_struct; /* whether `hstructure' and `hmake' should be emitted */
@@ -98,7 +96,6 @@ typedef struct hksc_Settings
 */
 typedef struct global_State {
   int mode; /* compiling or decompiling? */
-  int stripmask; /* encodes all desired bytecode stripping levels */
   int endianness; /* bytecode endianness */
   hksc_Settings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
@@ -134,7 +131,6 @@ struct hksc_State {
   lu_byte status;
   global_State *h_G;
   Proto *last_result;
-  int stripmask; /* encodes all desired bytecode stripping levels */
   unsigned short nCcalls;  /* number of nested C calls */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
@@ -155,7 +151,6 @@ struct hksc_State {
 #define luaE_seterrormsg(H,s) hksc_luaE_seterrormsg(H,s)
 
 #define luaE_mode(H) (G(H)->mode)
-#define luaE_stripmask(H) (G(H)->stripmask)
 
 /* macros for setting compiler options */
 #define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))

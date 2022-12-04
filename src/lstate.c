@@ -82,8 +82,6 @@ static void
 hksc_default_settings(hksc_Settings *settings)
 {
   /* general settings */
-  settings->sharing_format = HKSC_BYTECODE_DEFAULT;
-  settings->sharing_mode = HKSC_SHARING_MODE_OFF;
   settings->ignore_debug = 0;
   /* compiler settings */
   settings->emit_struct = 0;

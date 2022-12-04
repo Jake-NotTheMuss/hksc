@@ -18,10 +18,13 @@
 
 /* swap endianness of a sequence of bytes if needed */
 #define correctendianness(s,x) \
-  if ((s)->swapendian) swapendianness((char *)&x,sizeof(x))
+  if ((s)->swapendian) swapvarendianness(x)
 
-static void swapendianness(char *x, size_t n) {
+#define swapvarendianness(x) swapendianness(&(x), sizeof(x))
+
+static void swapendianness(void *p, size_t n) {
   size_t i = 0;
+  char *x = cast(char *, p);
   while (n-- != 0) {
     char t = x[i];
     x[i] = x[n];

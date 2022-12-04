@@ -222,9 +222,9 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   const int compiling = luaE_mode(H) == HKSC_MODE_COMPILE;
   lua_assert(f != NULL); /* parse errors should be caught before calling */
 #ifdef LUA_COD
-  if (compiling) {
+  if (compiling) { /* (COD) dump debug info to separate files */
     status = luacod_dumpdebug(H, f);
-    if (status) return status;
+    if (status) return status; /* error */
   }
 #endif /* LUA_COD */
   if (output == NULL || *output == 0) { /* generate an output name if needed */
@@ -237,10 +237,10 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   lua_assert(outname != NULL);
   out = fopen(outname, compiling ? "wb" : "w");
   if (out == NULL) cannot("open", outname);
-  if (compiling)
+  if (compiling) /* dump bytecode */
     status = luaU_dump(H, f, writer_2file, out);
 #ifdef HKSC_DECOMPILER
-  else
+  else /* dump decomp */
     status = luaU_decompile(H, f, writer_2file, out);
 #endif /* HKSC_DECOMPILER */
   if (fclose(out)) cannot("close", outname);

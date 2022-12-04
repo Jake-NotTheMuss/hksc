@@ -149,7 +149,7 @@ static void LoadCode(LoadState *S, Proto *f)
     int i;
     for (i = 0; i < f->sizecode; i++) {
       LoadMem(S,f->code+i,1,sizeof(Instruction));
-      swapendianness((char *)(f->code+i),sizeof(Instruction));
+      swapendianness(f->code+i,sizeof(Instruction));
     }
   }
 }
@@ -297,13 +297,24 @@ static void pushCompatibilityErrorString(hksc_State *H, char bits) {
 static void LoadHeader(LoadState *S)
 {
   char typename[MAX_TYPE_LENGTH]; /* buffer for type names */
+  int numtypes;
   HkscHeader h, s;
   LoadBlock(S,&s,LUAC_HEADERSIZE);
+  S->swapendian = s.swapendian;
   luaU_header((char *)&h, s.swapendian);
   if (s.compatbits != h.compatbits) /* build settings do not match */
     pushCompatibilityErrorString(S->H, s.compatbits);
   if (memcmp(&h,&s,LUAC_HEADERSIZE)!=0) goto badheader;
-  if (LoadInt(S) != LUAC_NUMTYPES) goto badheader; /* number of types */
+  numtypes = LoadInt(S); /* number of types */
+  if (numtypes != LUAC_NUMTYPES) {
+    if (G(S->H)->endianness != HKSC_DEFAULT_ENDIAN)
+      goto badheader; /* a specific endianness is expected */
+    else { /* try again with swapped endianness */
+      swapvarendianness(numtypes);
+      if (numtypes != LUAC_NUMTYPES) goto badheader;
+      else S->swapendian = !S->swapendian;
+    }
+  }
 #define DEFTYPE(t) \
   if (LoadInt(S) != LUA_##t) goto badheader; /* type id */ \
   if (LoadInt(S) != (int)sizeof(#t)) goto badheader; /* size of type name */ \
@@ -337,7 +348,6 @@ static void f_undump (hksc_State *H, void *ud) {
 */
 Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
 {
-  int x=1;
   struct SUndump u;
   int status;
   LoadState S;
@@ -358,10 +368,6 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.Z=Z;
   S.b=buff;
   S.pos=0;
-  if ((char)*(char*)&x == 0) /* big endian */
-    S.swapendian=(G(H)->endianness==HKSC_LITTLE_ENDIAN);
-  else /* little endian */
-    S.swapendian=(G(H)->endianness==HKSC_BIG_ENDIAN);
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
 #ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {

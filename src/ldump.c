@@ -101,7 +101,7 @@ static void DumpString(const TString *s, DumpState *D)
   }
 }
 
-static void DumpUI64(const lu_int64 x, DumpState *D)
+static void DumpUI64(lu_int64 x, DumpState *D)
 {
   int y=1;
   /* note that a platform may expect this to be larger than 8 bytes */
@@ -146,7 +146,7 @@ static void DumpCode(const Proto *f, DumpState *D)
   else { /* need to swap endianness */
     int i;
     for (i = 0; i < f->sizecode; i++) {
-      swapendianness((char *)(f->code+i),sizeof(Instruction));
+      swapendianness(f->code+i,sizeof(Instruction));
       DumpMem(f->code+i,1,sizeof(Instruction),D);
     }
   }
