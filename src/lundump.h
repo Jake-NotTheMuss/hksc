@@ -13,8 +13,8 @@
 #include "lzio.h"
 
 
-/* define static functions needed by both lundump.c and ldump.c */
-#if defined(lundump_c) || defined(ldump_c)
+/* define static functions needed for both dumping and loading */
+#if defined(ldump_c) || (defined(lundump_c) && defined(HKSC_DECOMPILER))
 
 /* swap endianness of a sequence of bytes if needed */
 #define correctendianness(s,x) \
@@ -32,15 +32,17 @@ static void swapendianness(char *x, size_t n) {
 
 #endif /* lundump_c || ldump_c */
 
-#ifdef LUA_COD
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
 #define LUA_MAXUDATABUFF (LUAL_BUFFERSIZE + sizeof(void *))
 typedef int (*LoadStateCB) (hksc_State *H, ZIO *z, Mbuffer *b, char *udata_buff,
                            const char *name);
 #endif /* LUA_COD */
 
+#ifdef HKSC_DECOMPILER
 /* load one chunk; from lundump.c */
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
                               const char *name);
+#endif /* HKSC_DECOMPILER */
 
 /* make header; from lundump.c */
 LUAI_FUNC void luaU_header (char *h, int swapendian);

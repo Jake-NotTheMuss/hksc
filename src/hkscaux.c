@@ -133,8 +133,8 @@ static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
   return (*size > 0) ? ld->buff : NULL;
 }
 
-int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                             char *udata_buff, const char *name) {
+int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, char *udata_buff,
+                      const char *name) {
   LoadDebug *ld = (LoadDebug *)udata_buff;
   lua_assert(sizeof(LoadDebug) <= LUA_MAXUDATABUFF);
   lua_assert(Settings(H).ignore_debug == 0);
@@ -149,13 +149,14 @@ int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
   return 0;
 }
 
-int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                              char *udata_buff, const char *name) {
+int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, char *udata_buff,
+                       const char *name) {
   LoadDebug *ld = (LoadDebug *)udata_buff;
   int readstatus, closestatus;
   lua_assert(Settings(H).ignore_debug == 0);
-  (void)z; (void)buff; (void)name;
+  (void)z; (void)name;
   if (ld->f == NULL) return 0;
+  luaZ_freebuffer(H, buff);
   readstatus = ferror(ld->f);
   closestatus = fclose(ld->f);
   if (readstatus) cannot("read", H->currdebugfile);

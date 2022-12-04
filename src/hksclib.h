@@ -78,8 +78,8 @@ LUA_API int hksI_parser_buff2buff(hksc_State *H, const char *buff,
 
 /* Custom parse & dump functions (user program must provide a custom dump
    function to call when dumping the bytecode) */
-LUA_API int hksI_parser_file(hksc_State *H, char *filename,
-                                   hksc_DumpFunction dumpf, void *ud);
+LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
+                             hksc_DumpFunction dumpf, void *ud);
 LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
                                char *source, hksc_DumpFunction dumpf, void *ud);
 

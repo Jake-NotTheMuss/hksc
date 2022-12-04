@@ -29,7 +29,6 @@
 #include "lundump.h"
 #include "lzio.h"
 
-#define lua_load lua_load_
 
 /*
 ** assert that that Hksc is running in a given mode
@@ -125,8 +124,8 @@ static int errfile (hksc_State *H, const char *what, const char *filename) {
 }
 
 
-static int lua_load(hksc_State *H, lua_Reader reader, void *data,
-                    const char *chunkname) {
+static int load(hksc_State *H, lua_Reader reader, void *data,
+                const char *chunkname) {
   ZIO z;
   int status;
   lua_lock(H);
@@ -139,7 +138,7 @@ static int lua_load(hksc_State *H, lua_Reader reader, void *data,
   return status;
 }
 
-static int lua_loadfile(hksc_State *H, const char *filename) {
+static int loadfile(hksc_State *H, const char *filename) {
   LoadF lf;
   int status, readstatus;
   int c;
@@ -171,7 +170,7 @@ static int lua_loadfile(hksc_State *H, const char *filename) {
     lf.f = fopen(filename, "rb");  /* reopen in binary mode */
     if (lf.f == NULL) return errfile(H, "reopen", filename);
     /* skip eventual `#!...' */
-    while ((c = getc(lf.f)) != EOF && c != LUA_SIGNATURE[0]) {}
+    while ((c = getc(lf.f)) != EOF && c != LUA_SIGNATURE[0]) ;
     lf.extraline = 0;
 #endif /* !HKSC_DECOMPILER */
   } else { /* source file */
@@ -179,7 +178,7 @@ static int lua_loadfile(hksc_State *H, const char *filename) {
     checkmode(H, HKSC_MODE_COMPILE, filename);
   }
   ungetc(c, lf.f);
-  status = lua_load(H, getF, &lf, chunkname);
+  status = load(H, getF, &lf, chunkname);
   readstatus = ferror(lf.f);
   if (lf.f != stdin) fclose(lf.f);  /* close file (even in case of errors) */
   if (readstatus)
@@ -221,7 +220,7 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
   checkmodematches(H, *buff, name);
   ls.s = buff;
   ls.size = size;
-  return lua_load(H, getS, &ls, name);
+  return load(H, getS, &ls, name);
 }
 
 
@@ -339,11 +338,11 @@ static int dump2buff(hksc_State *H, hksc_DumpCtx *ctx) {
 */
 
 
-int hksI_parser_file(hksc_State *H, char *filename, hksc_DumpFunction dumpf,
-                     void *ud) {
+int hksI_parser_file(hksc_State *H, const char *filename,
+                     hksc_DumpFunction dumpf, void *ud) {
   int status;
   startcycle(H, filename);
-  status = lua_loadfile(H, filename); /* parse file */
+  status = loadfile(H, filename); /* parse file */
   if (status) goto fail;
   status = (*dumpf)(H, H->last_result, ud);
   fail:

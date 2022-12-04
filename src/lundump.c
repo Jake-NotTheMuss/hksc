@@ -23,6 +23,8 @@
 #include "lundump.h"
 #include "lzio.h"
 
+#ifdef HKSC_DECOMPILER /* bytecode loading stuff */
+
 typedef struct {
  hksc_State *H;
  ZIO *Z;
@@ -200,8 +202,6 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   f->sizeupvalues=LoadInt(S);
   f->linedefined=LoadInt(S);
   f->lastlinedefined=LoadInt(S);
-  n=f->sizelineinfo;
-  f->lineinfo=luaM_newvector(S->H,n,int);
   f->source = LoadString(S);
   if (f->source == NULL) f->source = p;
   f->name = LoadString(S);
@@ -352,8 +352,9 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
 #ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
-    int status = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, udata_buff, name);
-    if (status == 0) {
+    int openstatus;
+    openstatus=(*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, udata_buff, name);
+    if (openstatus == 0) {
       debugS = &SD;
       SD.H = H;
       SD.Z = &ZD;
@@ -363,7 +364,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.pos = 0;
     }
     else {
-      luaD_throw(S.H,status);
+      luaD_throw(S.H,openstatus);
       debugS = NULL; /* to avoid uninitialized variable warning */
     }
   }
@@ -374,16 +375,20 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   u.S = &S;
   u.debugS = debugS;
   status = luaD_pcall(H, f_undump, &u);
-  if (G(H)->debugLoadStateClose) {
+#ifdef LUA_COD
+  if (G(H)->debugLoadStateClose && !Settings(H).ignore_debug) {
     int closestatus;
     closestatus=(*G(H)->debugLoadStateClose)(H, &ZD, &buffD, udata_buff, name);
     if (status == 0 && closestatus != 0)
       status = closestatus;
   }
+#endif /* LUA_COD */
   if (status)
     luaD_throw(H, status); /* return the error to the outer pcall */
   return u.f;
 }
+
+#endif /* HKSC_DECOMPILER */
 
 #define compatbits \
   ((HKSC_GETGLOBAL_MEMOIZATION   << HKSC_COMPATIBILITY_BIT_MEMOIZATION) | \

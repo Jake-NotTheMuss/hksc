@@ -4,3 +4,4 @@ hksc
 *.luac
 *.luadebug
 *.luacallstackdb
+*.dec.lua
