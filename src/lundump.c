@@ -109,22 +109,30 @@ static lu_int64 LoadUI64(LoadState *S)
   int y=1;
   lu_int64 x;
 #ifdef LUA_UI64_S
-  if (((char)*(char *)&y == 0) != S->swapendian) { /* big endian */
+  if ((char)*(char *)&y == 0) { /* big endian */
     LoadVar(S,x.high);
-    correctendianness(S,x.high);
     LoadVar(S,x.low);
-    correctendianness(S,x.low);
   } else { /* little endian */
     LoadVar(S,x.low);
-    correctendianness(S,x.low);
     LoadVar(S,x.high);
-    correctendianness(S,x.high);
   }
+  if (S->swapendian) {
+    lu_int32 tmp = x.low;
+    x.low = x.high;
+    x.high = tmp;
+  }
+  correctendianness(S,x.high);
+  correctendianness(S,x.low);
 #else
   (void)y;
   LoadVar(S,x);
   correctendianness(S,x);
 #endif
+  {
+    char buf[LUAI_MAXUI642STR];
+    lua_ui642str(buf,x);
+    printf("Loaded UI64 value: 0x%s\n", buf);
+  }
   return x;
 }
 
@@ -155,7 +163,7 @@ static void enterlevel (LoadState *S) {
 #define leavelevel(S)  ((S)->H->nCcalls--)
 
 static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS);
-
+#include <stdio.h>
 static void LoadConstants(LoadState *S, Proto *f)
 {
   int i,n;
@@ -329,6 +337,7 @@ static void f_undump (hksc_State *H, void *ud) {
 */
 Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
 {
+  int x=1;
   struct SUndump u;
   int status;
   LoadState S;
@@ -349,6 +358,10 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.Z=Z;
   S.b=buff;
   S.pos=0;
+  if ((char)*(char*)&x == 0) /* big endian */
+    S.swapendian=(G(H)->endianness==HKSC_LITTLE_ENDIAN);
+  else /* little endian */
+    S.swapendian=(G(H)->endianness==HKSC_BIG_ENDIAN);
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
 #ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {

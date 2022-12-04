@@ -30,6 +30,7 @@ typedef struct {
 */
 int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
+#if 0
   DecompState D;
   D.H=H;
   D.writer=w;
@@ -39,4 +40,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   DumpFunction(f,NULL,&D);*/
   (void)f;
   return D.status;
+#endif
+  return luaU_dump(H,f,w,data);
 }

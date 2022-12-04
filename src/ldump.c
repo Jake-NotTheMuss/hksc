@@ -163,26 +163,20 @@ static void DumpConstants(const Proto *f, DumpState *D)
     switch (ttype(o))
     {
       case LUA_TNIL:
-        DumpChar(LUA_TNIL,D);
         break;
       case LUA_TBOOLEAN:
-        DumpChar(LUA_TBOOLEAN,D);
         DumpChar(bvalue(o),D);
         break;
       case LUA_TLIGHTUSERDATA:
-        DumpChar(LUA_TLIGHTUSERDATA,D);
         DumpSize(cast(size_t, pvalue(o)),D);
         break;
       case LUA_TNUMBER:
-        DumpChar(LUA_TNUMBER,D);
         DumpNumber(nvalue(o),D);
         break;
       case LUA_TSTRING:
-        DumpChar(LUA_TSTRING,D);
         DumpString(rawtsvalue(o),D);
         break;
       case LUA_TUI64:
-        DumpChar(LUA_TUI64,D);
         DumpUI64(hlvalue(o),D);
         break;
       default:
