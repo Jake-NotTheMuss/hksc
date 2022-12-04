@@ -25,17 +25,23 @@ int luaZ_fill (ZIO *z) {
   lua_unlock(H);
   buff = z->reader(H, z->data, &size);
   lua_lock(H);
-  if (buff == NULL || size == 0) return EOZ;
-  z->n = size - 1;
-  z->p = buff;
-  return char2int(*(z->p++));
+  if (buff == NULL || size == 0) { /* end of stream */
+    z->state = STREAM_END;
+    z->n = 0;
+    return 0;
+  } else {
+    z->n = size - 1;
+    z->p = buff;
+    return char2int(*(z->p++));
+  }
 }
 
 
 int luaZ_lookahead (ZIO *z) {
   if (z->n == 0) {
-    if (luaZ_fill(z) == EOZ)
-      return EOZ;
+    luaZ_fill(z);
+    if (z->state != STREAM_OK)
+      return 0;
     else {
       z->n++;  /* luaZ_fill removed first byte; put back it */
       z->p--;
@@ -51,6 +57,7 @@ void luaZ_init (hksc_State *H, ZIO *z, lua_Reader reader, void *data) {
   z->data = data;
   z->n = 0;
   z->p = NULL;
+  z->state = STREAM_OK;
 }
 
 
@@ -58,7 +65,8 @@ void luaZ_init (hksc_State *H, ZIO *z, lua_Reader reader, void *data) {
 size_t luaZ_read (ZIO *z, void *b, size_t n) {
   while (n) {
     size_t m;
-    if (luaZ_lookahead(z) == EOZ)
+    if (z->n == 0) luaZ_fill(z);
+    if (z->state != STREAM_OK)
       return n;  /* return number of missing bytes */
     m = (n <= z->n) ? n : z->n;  /* min. between n and z->n */
     memcpy(b, z->p, m);

@@ -13,13 +13,18 @@
 #include "lmem.h"
 
 
-#define EOZ  (-1)      /* end of stream */
+/*#define EOZ  (-1) */     /* end of stream */
+
+/* stream states */
+#define STREAM_OK 0
+#define STREAM_END 1      /* end of stream */
 
 typedef struct Zio ZIO;
 
 #define char2int(c)  cast(int, cast(unsigned char, (c)))
 
 #define zgetc(z)  (((z)->n--)>0 ?  char2int(*(z)->p++) : luaZ_fill(z))
+#define zhasmore(z)  ((z)->state == STREAM_OK)
 
 typedef struct Mbuffer {
   char *buffer;
@@ -34,7 +39,6 @@ typedef struct Mbuffer {
 #define luaZ_bufflen(buff)  ((buff)->n)
 
 #define luaZ_resetbuffer(buff) ((buff)->n = 0)
-
 
 #define luaZ_resizebuffer(H, buff, size) \
   (luaM_reallocvector(H, (buff)->buffer, (buff)->buffsize, size, char), \
@@ -59,6 +63,7 @@ struct Zio {
   lua_Reader reader;
   void* data;      /* additional data */
   hksc_State *H;      /* Lua state (for reader) */
+  int state;      /* stream state */
 };
 
 

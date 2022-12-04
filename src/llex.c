@@ -293,11 +293,10 @@ static void read_long_string (LexState *ls, SemInfo *seminfo, int sep) {
   if (currIsNewline(ls))  /* string starts with a newline? */
     inclinenumber(ls);  /* skip it */
   for (;;) {
-    switch (ls->current) {
-      case EOZ:
+    if (!zhasmore(ls->z))
         luaX_lexerror(ls, (seminfo) ? "unfinished long string" :
                                    "unfinished long comment", TK_EOS);
-        break;  /* to avoid warnings */
+    switch (ls->current) {
 #if defined(LUA_COMPAT_LSTR)
       case '[': {
         if (skip_sep(ls) == sep) {
@@ -344,10 +343,9 @@ static void read_long_string (LexState *ls, SemInfo *seminfo, int sep) {
 static void read_string (LexState *ls, int del, SemInfo *seminfo) {
   save_and_next(ls);
   while (ls->current != del) {
+    if (!zhasmore(ls->z))
+      luaX_lexerror(ls, "unfinished string", TK_EOS);
     switch (ls->current) {
-      case EOZ:
-        luaX_lexerror(ls, "unfinished string", TK_EOS);
-        continue;  /* to avoid warnings */
       case '\n':
       case '\r':
         luaX_lexerror(ls, "unfinished string", TK_STRING);
@@ -355,6 +353,8 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
       case '\\': {
         int c;
         next(ls);  /* do not save the `\' */
+        if (!zhasmore(ls->z))
+          continue; /* will raise an error next loop */
         switch (ls->current) {
           case 'a': c = '\a'; break;
           case 'b': c = '\b'; break;
@@ -365,7 +365,6 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
           case 'v': c = '\v'; break;
           case '\n':  /* go through */
           case '\r': save(ls, '\n'); inclinenumber(ls); continue;
-          case EOZ: continue;  /* will raise an error next loop */
           default: {
             if (!lisdigit(ls->current))
               save_and_next(ls);  /* handles \\, \", \', and \? */
@@ -375,7 +374,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
               do {
                 c = 10*c + (ls->current-'0');
                 next(ls);
-              } while (++i<3 && lisdigit(ls->current));
+              } while (++i<3 && lisdigit(ls->current) && zhasmore(ls->z));
               if (c > UCHAR_MAX)
                 luaX_lexerror(ls, "escape sequence too large", TK_STRING);
               save(ls, c);
@@ -400,6 +399,8 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
 static int llex (LexState *ls, SemInfo *seminfo) {
   luaZ_resetbuffer(ls->buff);
   for (;;) {
+    if (!zhasmore(ls->z))
+      return TK_EOS;
     switch (ls->current) {
       case '\n':
       case '\r': {
@@ -421,7 +422,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           }
         }
         /* else short comment */
-        while (!currIsNewline(ls) && ls->current != EOZ)
+        while (!currIsNewline(ls) && zhasmore(ls->z))
           next(ls);
         continue;
       }
@@ -482,9 +483,6 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           lua_assert(token == TK_NUMBER);
           return token;
         }
-      }
-      case EOZ: {
-        return TK_EOS;
       }
       default: {
         if (lisspace(ls->current)) {
