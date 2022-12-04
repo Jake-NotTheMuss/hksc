@@ -28,7 +28,7 @@ typedef struct hksc_DumpCtx {
   size_t alloc; /* total size allocated */
   size_t size; /* size of dumped data (<= alloc) */
 } hksc_DumpCtx;
-
+#endif
 
 /*
 ** API declarations
@@ -38,7 +38,7 @@ typedef struct hksc_DumpCtx {
 LUA_API hksc_State *hksI_newstate(int mode);
 LUA_API void hksI_close(hksc_State *H);
 
-
+#if 0
 /* Dump context constructor/destructor */
 LUA_API void hksI_dumpctx_init(hksc_State *H, hksc_DumpCtx *ctx);
 LUA_API void hksI_dumpctx_free(hksc_State *H, hksc_DumpCtx *ctx);
@@ -78,10 +78,10 @@ LUA_API int hksI_parser_buff2buff(hksc_State *H, const char *buff,
 
 /* Custom parse & dump functions (user program must provide a custom dump
    function to call when dumping the bytecode) */
-LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
+LUA_API int hksI_parser_file(hksc_State *H, char *filename,
                                    hksc_DumpFunction dumpf, void *ud);
 LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
-                      const char *source, hksc_DumpFunction dumpf, void *ud);
+                               char *source, hksc_DumpFunction dumpf, void *ud);
 
 
 /* extra error code for `luaL_load' */

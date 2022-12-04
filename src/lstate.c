@@ -165,7 +165,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   g->sweepgc = &g->rootgc;
   g->totalbytes = sizeof(LG);
   g->startcycle = g->endcycle = NULL;
-#ifdef defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
   g->debugLoadStateOpen = NULL;
   g->debugLoadStateClose = NULL;
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */

@@ -21,8 +21,8 @@ extern int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
 
 # endif /* HKSC_DECOMPILER */
 
-extern void luacod_startcycle(hksc_State *H);
-extern void luacod_endcycle(hksc_State *H);
+extern void luacod_startcycle(hksc_State *H, const char *name);
+extern void luacod_endcycle(hksc_State *H, const char *name);
 
 #endif /* LUA_COD */
 

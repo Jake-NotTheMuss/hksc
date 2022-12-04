@@ -28,6 +28,8 @@ typedef struct {
  ZIO *Z;
  Mbuffer *b;
  const char *name;
+ size_t pos;
+ int swapendian;
 } LoadState;
 
 #define BADHEADERMSG "Header mismatch when loading bytecode."
@@ -150,7 +152,7 @@ static void enterlevel (LoadState *S) {
 
 #define leavelevel(S)  ((S)->H->nCcalls--)
 
-static Proto *LoadFunction(LoadState *S, TString *p);
+static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS);
 
 static void LoadConstants(LoadState *S, Proto *f)
 {
@@ -348,7 +350,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.b=buff;
   S.pos=0;
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
-#ifdef LUA_COD /* some gymnastics for Call of Duty */
+#ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
     int status = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, udata_buff, name);
     if (status == 0) {
@@ -360,8 +362,10 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.name = name;
       SD.pos = 0;
     }
-    else
-      luaD_throw(S->H,status);
+    else {
+      luaD_throw(S.H,status);
+      debugS = NULL; /* to avoid uninitialized variable warning */
+    }
   }
   else debugS = NULL; /* do not load debug info */
 #else /* !LUA_COD */

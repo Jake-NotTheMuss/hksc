@@ -34,7 +34,7 @@ static void swapendianness(char *x, size_t n) {
 
 #ifdef LUA_COD
 #define LUA_MAXUDATABUFF (LUAL_BUFFERSIZE + sizeof(void *))
-typedef int (*LoadStateCB)(hksc_State *H,ZIO **z,Mbuffer **b,char *udata_buff,
+typedef int (*LoadStateCB) (hksc_State *H, ZIO *z, Mbuffer *b, char *udata_buff,
                            const char *name);
 #endif /* LUA_COD */
 

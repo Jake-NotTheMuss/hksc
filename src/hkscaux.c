@@ -18,6 +18,7 @@
 #include "hksclib.h"
 
 #include "lctype.h"
+#include "ldo.h"
 #include "lobject.h"
 #include "lstring.h"
 #include "lundump.h"
@@ -99,7 +100,7 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
   return getstr(luaS_newlstr(H, buff, n));
 }
 
-static int writer(hksc_State *H, const void *p, size_t size, void *u) {
+static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
   UNUSED(H);
   return (fwrite(p,size,1,(FILE*)u)!=1) && (size!=0);
 }
@@ -112,7 +113,7 @@ static int writer(hksc_State *H, const void *p, size_t size, void *u) {
 
 #define xopenfile(var,name,mode) do { \
   var = fopen(name,mode); \
-  if (var==NULL) cannot(H,"open",name); \
+  if (var==NULL) cannot("open",name); \
 } while (0)
 
 #ifdef LUA_COD
@@ -126,7 +127,8 @@ typedef struct LoadDebug
 
 static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
   LoadDebug *ld = (LoadDebug *)ud;
-  if (foef(ld->f)) return NULL;
+  UNUSED(H);
+  if (feof(ld->f)) return NULL;
   *size = fread(ld->buff, 1, LUAL_BUFFERSIZE, ld->f);
   return (*size > 0) ? ld->buff : NULL;
 }
@@ -163,20 +165,20 @@ int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
 
 # endif /* HKSC_DECOMPIELR */
 
-void luacod_startcycle(hksc_State *H) {
+void luacod_startcycle(hksc_State *H, const char *name) {
   if (!Settings(H).ignore_debug) {
     if (debugfile == NULL) /* may be provided in command line */
-      debugfile = lua2luadebug(H, filename);
+      debugfile = lua2luadebug(H, name);
     if (callstackdb == NULL)
-      callstackdb = lua2luacallstackdb(H, filename);
+      callstackdb = lua2luacallstackdb(H, name);
 # ifdef HKSC_DECOMPILER
     H->currdebugfile = debugfile;
 # endif /* HKSC_DECOMPILER */
   }
 }
 
-void luacod_endcycle(hksc_State *H) {
-  (void)H;
+void luacod_endcycle(hksc_State *H, const char *name) {
+  (void)H; (void)name;
   /* output names are only generated if they were previously NULL; this works
      even if output names were explicitly provided, since only 1 cycle should
      run in that case */
@@ -192,7 +194,7 @@ void luacod_endcycle(hksc_State *H) {
   xopenfile(debug_file_,name,mode); \
   lua_lock(H); \
   hksc_setBytecodeStrippingLevel(H,striplevel); \
-  luaU_dump(H,f,writer,debug_file_); \
+  luaU_dump(H,f,writer_2file,debug_file_); \
   lua_unlock(H); \
   if (ferror(debug_file_)) cannot("write",name); \
   if (fclose(debug_file_)) cannot("close",name); \
@@ -206,14 +208,10 @@ static int luacod_dumpdebug(hksc_State *H, const Proto *f) {
   dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
   /* callstack reconstruction */
   dumpdebugfile(callstackdb,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
+  hksc_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }
 #endif /* LUA_COD */
-
-static int writer_2file(hksc_State *H, const void *p, size_t size, void *ud) {
-  UNUSED(H);
-  return (fwrite(p,size,1,(FILE*)u)!=1) && (size!=0);
-}
 
 /* default dump function used by standalone program (for bytecode or decomp) */
 int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
@@ -230,9 +228,9 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
 #endif /* LUA_COD */
   if (output == NULL || *output == 0) { /* generate an output name if needed */
     if (compiling)
-      outname = lua2luac(H, inname);
+      outname = lua2luac(H, filename);
     else
-      outname = luac2luadec(H, inname);
+      outname = luac2luadec(H, filename);
   } else
     outname = output;
   lua_assert(outname != NULL);

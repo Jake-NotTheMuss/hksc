@@ -22,7 +22,7 @@
 #define LUA_COD /* general cod compatibility */
 #define LUA_CODT7 /* support bitwise operations */
 
-/*#define HKSC_DECOMPILER*/
+#define HKSC_DECOMPILER
 
 /*
 ** NOTE for non-Call-of-Duty developers:

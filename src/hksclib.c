@@ -29,6 +29,7 @@
 #include "lundump.h"
 #include "lzio.h"
 
+#define lua_load lua_load_
 
 /*
 ** assert that that Hksc is running in a given mode
@@ -203,14 +204,14 @@ static const char *getS (hksc_State *H, void *ud, size_t *size) {
 }
 
 static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
-                           const char *name) {
+                           char *name) {
   LoadS ls;
   char cleanedFileName[PATH_MAX];
   if (name != buff && name != NULL) {
     if (strlen(name) < (PATH_MAX-1)) {
       char *outstr;
       if (*name != '=' && *name != '@') {
-        cleanFileName[0] = '@';
+        cleanedFileName[0] = '@';
         outstr = &cleanedFileName[1];
       } else
         outstr = &cleanedFileName[0];
@@ -229,24 +230,26 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 
 
 /* put here all logic to be run at the start of a parser cycle */
-#define startcycle(H) do { \
-  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */ \
-  luaC_newcycle(H); /* collect old prototypes and tables */ \
-  luaC_checkGC(H); /* maybe collect garbage */ \
-  /* end of library start-cycle logic */ \
-  if ((H)->startcycle) /* user-defined logic */ \
-    (*(H)->startcycle)((H)); \
-} while (0)
+static void startcycle(hksc_State *H, const char *name) {
+  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
+  luaC_newcycle(H); /* collect old prototypes and tables */
+  luaC_checkGC(H); /* maybe collect garbage */
+  /* end of library start-cycle logic */
+  if (G(H)->startcycle) /* user-defined logic */
+    (*G(H)->startcycle)(H, name);
+}
 
 
 /* put here all logic to be run at the end of a parser cycle */
-#define endcycle(H) do { \
-  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */ \
-  if ((H)->endcycle) /* user-defined logic */ \
-    (*(H)->endcycle)((H)); \
-  /* start of library end-cycle logic */ \
-  (H)->last_result = NULL; /* will be collected, remove dangling pointer */ \
-} while (0)
+static void endcycle(hksc_State *H, const char *name) {
+  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
+  if (G(H)->endcycle) /* user-defined logic */
+    (*G(H)->endcycle)(H, name);
+  /* start of library end-cycle logic */
+  H->last_result = NULL; /* will be collected, remove dangling pointer */
+}
+
+
 #if 0
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *ud) {
@@ -336,28 +339,28 @@ static int dump2buff(hksc_State *H, hksc_DumpCtx *ctx) {
 */
 
 
-int hksI_parser_file(hksc_State *H, const char *filename,
-                           hksc_DumpFunction dumpf, void *ud) {
+int hksI_parser_file(hksc_State *H, char *filename, hksc_DumpFunction dumpf,
+                     void *ud) {
   int status;
-  startcycle(H);
+  startcycle(H, filename);
   status = lua_loadfile(H, filename); /* parse file */
   if (status) goto fail;
   status = (*dumpf)(H, H->last_result, ud);
   fail:
-  endcycle(H);
+  endcycle(H, filename);
   return status;
 }
 
 
 int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
-                    const char *source, hksc_DumpFunction dumpf, void *ud) {
+                       char *source, hksc_DumpFunction dumpf, void *ud) {
   int status;
-  startcycle(H);
+  startcycle(H, source);
   status = lua_loadbuffer(H, buff, size, source);
   if (status) goto fail;
   status = (*dumpf)(H, H->last_result, ud);
   fail:
-  endcycle(H);
+  endcycle(H, source);
   return status;
 }
 

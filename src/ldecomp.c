@@ -37,5 +37,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.status=0;
 /*  DumpHeader(&D);
   DumpFunction(f,NULL,&D);*/
+  (void)f;
   return D.status;
 }

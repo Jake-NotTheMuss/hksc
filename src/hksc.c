@@ -362,8 +362,8 @@ int main(int argc, char *argv[])
   hksc_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD
   Settings(H).ignore_debug=!withdebug;
-  Settings(H).debugfile=debugfile;
-  Settings(H).callstackfile=callstackdb;
+/*  Settings(H).debugfile=debugfile;
+  Settings(H).callstackfile=callstackdb;*/
   hksc_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
 # ifdef HKSC_DECOMPILER
   /* Call of Duty needs a separate debug reader when loading bytecode */
