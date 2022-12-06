@@ -708,10 +708,13 @@ static void codearith (FuncState *fs, OpCode op, expdesc *e1, expdesc *e2) {
       case OP_MOD:
       case OP_POW:
       case OP_UNM:
+#ifdef LUA_CODT7
       case OP_LEFT_SHIFT:
       case OP_RIGHT_SHIFT:
       case OP_BIT_AND:
-      case OP_BIT_OR: {
+      case OP_BIT_OR:
+#endif /* LUA_CODT7 */
+      {
         if (!expisnumber(e1) || !expisnumber(e2))
           exptype(e1) = LUA_TNONE;
         break;

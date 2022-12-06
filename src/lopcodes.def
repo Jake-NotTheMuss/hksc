@@ -14,25 +14,12 @@
 **   <useRA> is 1 if the operation uses argument A as a register, 0 otherwise
 **   <bmode> is the mode of argument B (see lopcodes.h)
 **   <cmode> is the mode of argument C
-**   <makeR1> is 1 if the operation requires the next to be R1 in non-shared states
+**   <makeR1> is 1 if the operation requires the next to be R1 in non-shared
+**   states
 **   <useR1> is the R1 mode of the operation (for R1 versions, see lopcodes.h)
 **   <r1> is the R1 version of the operation (OP_MAX if there is none)
 */
 
-/*
-TODO for researching opcodes
-
-OP_CHECKTYPES: see if this is can be emitted with multiple asignments
-    with the same type checks, e.g. `local a:string, b:string = func();'
-
-OP_INTRINSIC_*: this may bypass metatable queries
-INDEX corresponds to GETTABLE
-NEWINDEX corresponds to SETTABLE
-SELF correspons to SELF
-the `_LITERAL' variants may just be const variants, but I don't know for sure
-
-
-*/
 
 /*
 ** extra macros for convenience
