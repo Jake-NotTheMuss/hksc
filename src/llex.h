@@ -11,6 +11,11 @@
 #include "lobject.h"
 #include "lzio.h"
 
+enum TextModes {
+  ASCII,
+  UTF8
+};
+
 
 #define FIRST_RESERVED  0x400001
 
@@ -36,7 +41,6 @@ union max_token_length {
 /* number of reserved words */
 #define NUM_RESERVED  (cast(int, LAST_RESERVED-FIRST_RESERVED+1))
 
-
 /* array with token `names' */
 LUAI_DATA const char *const luaX_tokens [];
 
@@ -54,18 +58,20 @@ typedef struct Token {
 } Token;
 
 
-struct FuncNameStack;  /* defined in lparser.c */
+/* defined in lparser.c; holds the name parts of the current function */
+struct FunctionNameStack;
 
 
 typedef struct LexState {
   int current;  /* current character (charint) */
   int linenumber;  /* input line counter */
   int lastline;  /* line of last token `consumed' */
+  int textmode; /* text mode */
   Token t;  /* current token */
   Token lookahead;  /* look ahead token */
   struct FuncState *fs;  /* `FuncState' is private to the parser */
   struct hksc_State *H;
-  struct FuncNameStack *funcnamestack;
+  struct FunctionNameStack *functionNameStack;
   ZIO *z;  /* input stream */
   Mbuffer *buff;  /* buffer for tokens */
   TString *source;  /* current source name */

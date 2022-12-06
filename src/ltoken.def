@@ -75,19 +75,19 @@ DEFTOK(TK_NE,             "~=")
 #endif /* LAST_FIXED_FORMAT_TOKEN */
 
 DEFTOK(TK_NUMBER,         "<number>")
-DEFTOK(TK_SHORT_LITERAL,  "<short_literal>")
-DEFTOK(TK_LONG_LITERAL,   "<long_literal>")
+DEFTOK(TK_SHORT_LITERAL,  "<short literal>")
+DEFTOK(TK_LONG_LITERAL,   "<long literal>")
 DEFTOK(TK_NAME,           "<name>")
 DEFTOK(TK_STRING,         "<string>")
 DEFTOK(TK_EOS,            "<eof>")
 
 /* file encoding types */
-DEFTOK(TK_INVALID_BOM,    "<Invalid_BOM>")
-DEFTOK(TK_UTF8_BOM,       "<UTF8_BOM>")
-DEFTOK(TK_UTF16LE_BOM,    "<UTF16LE_BOM>")
-DEFTOK(TK_UTF16BE_BOM,    "<UTF16BE_BOM>")
-DEFTOK(TK_UTF32LE_BOM,    "<UTF32LE_BOM>")
-DEFTOK(TK_UTF32BE_BOM,    "<UTF32BE_BOM>")
+DEFTOK(TK_INVALID_BOM,    "<Invalid BOM>")
+DEFTOK(TK_UTF8_BOM,       "<UTF8 BOM>")
+DEFTOK(TK_UTF16LE_BOM,    "<UTF16LE BOM>")
+DEFTOK(TK_UTF16BE_BOM,    "<UTF16BE BOM>")
+DEFTOK(TK_UTF32LE_BOM,    "<UTF32LE BOM>")
+DEFTOK(TK_UTF32BE_BOM,    "<UTF32BE BOM>")
 
 /* end of reserved tokens */
 

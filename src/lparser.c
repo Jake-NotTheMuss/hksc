@@ -348,7 +348,7 @@ typedef struct NamePart {
   int type;
 } NamePart;
 
-struct FuncNameStack {
+struct FunctionNameStack {
   struct NamePart *names;
   int used;
   int alloc;
@@ -357,9 +357,9 @@ struct FuncNameStack {
 #define MAX_FUNCNAME 512
 
 /* add a name to the current list of name parts */
-static void addnamepart (LexState *ls, TString *name, int type) {
+static void addNamePart (LexState *ls, TString *name, int type) {
   NamePart *namepart;
-  struct FuncNameStack *stk = ls->funcnamestack;
+  struct FunctionNameStack *stk = ls->functionNameStack;
   lua_assert(stk != NULL);
   lua_assert(type != NAMEPART_NONE);
   if (type == NAMEPART_NAME) /* regular names can only be first in the list */
@@ -379,8 +379,8 @@ static void addnamepart (LexState *ls, TString *name, int type) {
 
 
 /* free the entire name part stack */
-static void freefuncnamestack (LexState *ls) {
-  struct FuncNameStack *stk = ls->funcnamestack;
+static void freeFunctionNameStack (LexState *ls) {
+  struct FunctionNameStack *stk = ls->functionNameStack;
   lua_assert(stk != NULL);
   if (stk->names != NULL)
     luaM_freearray(ls->H, stk->names, stk->alloc, NamePart);
@@ -390,11 +390,11 @@ static void freefuncnamestack (LexState *ls) {
 
 
 /* build a function name from the current name part stack */
-static TString *buildfuncname (LexState *ls) {
+static TString *buildFunctionName (LexState *ls) {
   char buf[MAX_FUNCNAME];
   int i;
   size_t len = 0;
-  struct FuncNameStack *stk = ls->funcnamestack;
+  struct FunctionNameStack *stk = ls->functionNameStack;
   lua_assert(stk != NULL);
   for (i = 0; i < stk->used; i++) {
     size_t l;
@@ -429,7 +429,7 @@ static void open_func (LexState *ls, FuncState *fs) {
   if (ls->fs == NULL) /* main chunk */
     name = luaS_mainchunk;
   else
-    name = buildfuncname(ls);
+    name = buildFunctionName(ls);
   fs->prev = ls->fs;  /* linked list of funcstates */
   fs->ls = ls;
   fs->H = H;
@@ -481,12 +481,12 @@ static void close_func (LexState *ls) {
 Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   struct LexState lexstate;
   struct FuncState funcstate;
-  struct FuncNameStack funcnamestack;
+  struct FunctionNameStack functionNameStack;
   lua_assert(luaS_mainchunk != NULL);
   lexstate.buff = buff;
-  lexstate.funcnamestack = &funcnamestack;
-  funcnamestack.names = NULL;
-  funcnamestack.used = funcnamestack.alloc = 0;
+  lexstate.functionNameStack = &functionNameStack;
+  functionNameStack.names = NULL;
+  functionNameStack.used = functionNameStack.alloc = 0;
   luaX_setinput(H, &lexstate, z, luaS_new(H, name));
   open_func(&lexstate, &funcstate);
   funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
@@ -496,6 +496,7 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   luaX_readFirstToken(&lexstate);  /* read first token */
   switch (lexstate.t.token) {
     case TK_UTF8_BOM:
+      lexstate.textmode = UTF8;
       luaX_next(&lexstate);
       break;
     case TK_INVALID_BOM:
@@ -511,7 +512,7 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   chunk(&lexstate);
   check(&lexstate, TK_EOS);
   close_func(&lexstate);
-  freefuncnamestack(&lexstate);
+  freeFunctionNameStack(&lexstate);
   luaK_optimize_function(H, funcstate.f);
   lua_assert(funcstate.prev == NULL);
   lua_assert(funcstate.f->nups == 0);
@@ -537,7 +538,7 @@ static void field (LexState *ls, expdesc *v, int type) {
   checkname(ls, &key);
   if (type != NAMEPART_NONE) {
     lua_assert(type == NAMEPART_FIELD || type == NAMEPART_SELF);
-    addnamepart(ls, name, type); /* add the name part to the chain */
+    addNamePart(ls, name, type); /* add the name part to the chain */
   }
   luaK_indexed(fs, v, &key);
 }
@@ -1312,7 +1313,7 @@ static void localfunc (LexState *ls) {
   FuncState *fs = ls->fs;
   TString *name = str_checkname(ls);
   new_localvar(ls, name, 0);
-  addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
+  addNamePart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
   init_exp(&v, VLOCAL, fs->freereg);
   luaK_reserveregs(fs, 1);
   adjustlocalvars(ls, 1);
@@ -1347,7 +1348,7 @@ static int funcname (LexState *ls, expdesc *v) {
   /* funcname -> NAME {field} [`:' NAME] */
   int needself = 0;
   TString *name = singlevar(ls, v);
-  addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
+  addNamePart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
   while (ls->t.token == '.')
     field(ls, v, NAMEPART_FIELD);
   if (ls->t.token == ':') {

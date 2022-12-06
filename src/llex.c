@@ -150,6 +150,7 @@ void luaX_setinput (hksc_State *H, LexState *ls, ZIO *z, TString *source) {
   ls->linenumber = 1;
   ls->lastline = 1;
   ls->source = source;
+  ls->textmode = ASCII;
   luaZ_resizebuffer(ls->H, ls->buff, LUA_MINBUFFER);  /* initialize buffer */
   next(ls);  /* read first char */
 }
@@ -401,6 +402,10 @@ static int llex (LexState *ls, SemInfo *seminfo) {
   for (;;) {
     if (!zhasmore(ls->z))
       return TK_EOS;
+    if ((ls->current & 0x80) != 0 && ls->textmode == UTF8) {
+      luaG_runerror(ls->H,
+        "Multi-byte characters are only supported in strings and comments");
+    }
     switch (ls->current) {
       case '\n':
       case '\r': {
@@ -546,36 +551,38 @@ void luaX_lookahead (LexState *ls) {
 }
 
 
+/* returns a token id corresponding to the BOM that was read */
 static int readBOM (LexState *ls) {
   int first = ls->current;
+  int nextCharacter;
   if (first == 0xEF) { /* utf8 */
     if (next(ls) == 0xBB && next(ls) == 0xBF) {
       next(ls);
       return TK_UTF8_BOM;
     }
   }
-  else if (first == 0xFE) {
-    if (next(ls) == 0xFF) { /* little endian utf16 or utf32 */
-      if (next(ls) != 0) {
-        next(ls);
-        return TK_UTF16BE_BOM;
-      }
-      if (next(ls) == 0) {
-        next(ls);
-        return TK_UTF32LE_BOM;
-      }
-    }
-  }
-  else if (first == 0xFF) {
-    if (next(ls) == 0xFE) { /* little endian utf16 */
+  else if (first == 0xFE) { /* big endian utf16 */
+    if (next(ls) == 0xFF) {
       next(ls);
-      return TK_UTF16LE_BOM;
+      return TK_UTF16BE_BOM;
     }
   }
-  else if (first == 0) {
-    if (next(ls) == 0 &&
-        next(ls) == 0xFE &&
-        next(ls) == 0xFF) { /* big endian utf32 */
+  else if (first == 0xFF) { /* little endian utf16 or utf32 */
+    if (next(ls) == 0xFE) {
+      nextCharacter = next(ls);
+      if (nextCharacter != 0) /* utf16 */
+        return TK_UTF16LE_BOM;
+      else {
+        nextCharacter = next(ls);
+        if (nextCharacter == 0) { /* utf32 */
+          next(ls);
+          return TK_UTF32LE_BOM;
+        }
+      }
+    }
+  }
+  else if (first == 0) { /* big endian utf32 */
+    if (next(ls) == 0 && next(ls) == 0xFE && next(ls) == 0xFF) {
       next(ls);
       return TK_UTF32BE_BOM;
     }
