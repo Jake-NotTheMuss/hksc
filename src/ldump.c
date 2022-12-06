@@ -1,5 +1,5 @@
 /*
-** $Id: ldump.c,v 1.15 2006/02/16 15:53:49 lhf Exp $
+** $Id: ldump.c $
 ** save precompiled Lua chunks
 ** See Copyright Notice in lua.h
 */

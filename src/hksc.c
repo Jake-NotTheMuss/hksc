@@ -1,5 +1,5 @@
 /*
-** $Id: hksc.c,v 1.74 2015/03/12 01:53:53 lhf Exp lhf $
+** $Id: hksc.c $
 ** Lua compiler (saves bytecodes to files; also lists bytecodes)
 ** See Copyright Notice in lua.h
 */
