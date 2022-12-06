@@ -36,9 +36,9 @@ static void swapendianness(void *p, size_t n) {
 #endif /* lundump_c || ldump_c */
 
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+/* callback to initialize data for a debug load state */
 #define LUA_MAXUDATABUFF (LUAL_BUFFERSIZE + sizeof(void *))
-typedef int (*LoadStateCB) (hksc_State *H, ZIO *z, Mbuffer *b, char *udata_buff,
-                           const char *name);
+typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
 #endif /* LUA_COD */
 
 #ifdef HKSC_DECOMPILER

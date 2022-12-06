@@ -355,7 +355,6 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   LoadState SD; /* debug load state */
   ZIO ZD; /* debugS->Z */
   Mbuffer buffD; /* debugS->b */
-  char udata_buff[LUA_MAXUDATABUFF]; /* allocation for user data */
 #endif /* LUA_COD */
   LoadState *debugS;
   if (*name=='@' || *name=='=')
@@ -371,8 +370,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
 #ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
-    int openstatus;
-    openstatus=(*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, udata_buff, name);
+    int openstatus = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, name);
     if (openstatus == 0) {
       debugS = &SD;
       SD.H = H;
@@ -396,8 +394,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   status = luaD_pcall(H, f_undump, &u);
 #ifdef LUA_COD
   if (G(H)->debugLoadStateClose && !Settings(H).ignore_debug) {
-    int closestatus;
-    closestatus=(*G(H)->debugLoadStateClose)(H, &ZD, &buffD, udata_buff, name);
+    int closestatus = (*G(H)->debugLoadStateClose)(H, &ZD, &buffD, name);
     if (status == 0 && closestatus != 0)
       status = closestatus;
   }

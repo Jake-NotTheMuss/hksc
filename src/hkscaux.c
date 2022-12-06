@@ -133,10 +133,8 @@ static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
   return (*size > 0) ? ld->buff : NULL;
 }
 
-int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, char *udata_buff,
-                      const char *name) {
-  LoadDebug *ld = (LoadDebug *)udata_buff;
-  lua_assert(sizeof(LoadDebug) <= LUA_MAXUDATABUFF);
+int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
+  LoadDebug *ld = luaM_new(H, LoadDebug);
   lua_assert(Settings(H).ignore_debug == 0);
   if (H->currdebugfile == NULL) {
     hksc_setfmsg(H, "debug file name not set for input `%s'", name);
@@ -149,14 +147,14 @@ int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, char *udata_buff,
   return 0;
 }
 
-int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, char *udata_buff,
-                       const char *name) {
-  LoadDebug *ld = (LoadDebug *)udata_buff;
+int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   int readstatus, closestatus;
+  LoadDebug *ld = z->data;
   lua_assert(Settings(H).ignore_debug == 0);
   (void)z; (void)name;
   if (ld->f == NULL) return 0;
   luaZ_freebuffer(H, buff);
+  luaM_free(H, ld);
   readstatus = ferror(ld->f);
   closestatus = fclose(ld->f);
   if (readstatus) cannot("read", H->currdebugfile);

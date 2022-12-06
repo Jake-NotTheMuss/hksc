@@ -15,9 +15,9 @@
 # ifdef HKSC_DECOMPILER
 
 extern int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                             char *udata_buff, const char *name);
+                             const char *name);
 extern int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                              char *udata_buff, const char *name);
+                              const char *name);
 
 # endif /* HKSC_DECOMPILER */
 
