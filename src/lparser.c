@@ -427,7 +427,7 @@ static void open_func (LexState *ls, FuncState *fs) {
   Proto *f = luaF_newproto(H);
   fs->f = f;
   if (ls->fs == NULL) /* main chunk */
-    name = luaS_mainchunk;
+    name = luaS_newliteral(ls->H, MAINCHUNKNAME);
   else
     name = buildFunctionName(ls);
   fs->prev = ls->fs;  /* linked list of funcstates */
@@ -468,9 +468,9 @@ static void close_func (LexState *ls) {
   luaM_reallocvector(ls->H, f->upvalues, f->sizeupvalues, f->nups, TString *);
   f->sizeupvalues = f->nups;
 #ifdef LUA_COD
-  luaF_makehash(ls->H,f);
+  luaF_hash(ls->H,f);
 #endif /* LUA_COD */
-  /*lua_assert(luaG_checkcode(f));*/
+  lua_assert(luaG_checkcode(f));
   lua_assert(fs->bl == NULL);
   ls->fs = fs->prev;
   /* last token read was anchored in defunct function; must reanchor it */
@@ -482,7 +482,6 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   struct LexState lexstate;
   struct FuncState funcstate;
   struct FunctionNameStack functionNameStack;
-  lua_assert(luaS_mainchunk != NULL);
   lexstate.buff = buff;
   lexstate.functionNameStack = &functionNameStack;
   functionNameStack.names = NULL;

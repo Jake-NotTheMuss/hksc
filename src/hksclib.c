@@ -231,8 +231,7 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 /* put here all logic to be run at the start of a parser cycle */
 static void startcycle(hksc_State *H, const char *name) {
   lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
-  luaC_newcycle(H); /* collect old prototypes and tables */
-  luaC_checkGC(H); /* maybe collect garbage */
+  luaC_newcycle(H); /* collect garbage */
   /* end of library start-cycle logic */
   if (G(H)->startcycle) /* user-defined logic */
     (*G(H)->startcycle)(H, name);

@@ -1,5 +1,5 @@
 /*
-** $Id: lgc.h,v 2.14 2005/06/07 18:53:45 roberto Exp roberto $
+** $Id: lgc.h $
 ** Garbage Collector
 ** See Copyright Notice in lua.h
 */
@@ -38,9 +38,9 @@
 ** Possible states of the Garbage Collector
 */
 #define GCSpause        0 /* inactive */
-#define GCSmarking    1 /* marking strings */
-#define GCSsweepstring  2 /* sweeping string lists */
-#define GCSsweep        3 /* sweeping temp list */
+#define GCSmarking      1 /* marking strings */
+#define GCSsweep        2 /* sweeping temp list */
+#define GCSsweepstring  3 /* sweeping string lists */
 
 
 /*
@@ -75,20 +75,21 @@
 #define SFIXEDBIT 3
 
 #define islive(g,x)       testbit((x)->gch.marked, LIVEBIT)
-#define isdead(g,x)       (!islive(g,x))
 #define istemp(g,x)       testbit((x)->gch.marked, TEMPBIT)
 #define isfixed(g,x)      testbit((x)->gch.marked, FIXEDBIT)
 
-#define otherwhite(g) (g->currentwhite ^ bitmask(LIVEBIT))
+#define otherwhite(g) (g->currentwhite ^ LIVEMASK)
+#define isdead(g,v) (!islive(g,v))
 
 #define makelive(x)  l_setbit((x)->gch.marked, LIVEBIT)
 #define makedead(x)  resetbit((x)->gch.marked, LIVEBIT)
 
-#define luaC_white(g) cast(lu_byte, bitmask(LIVEBIT))
+#define luaC_white(g) cast(lu_byte, LIVEMASK)
 
+#define LIVEMASK  bitmask(LIVEBIT)
 
 #define luaC_checkGC(H) do { \
-  /*if (G(H)->totalbytes >= G(H)->GCthreshold) */\
+  if (G(H)->totalbytes >= G(H)->GCthreshold) \
   luaC_step(H); } while (0)
 
 LUAI_FUNC void luaC_freeall (hksc_State *H);

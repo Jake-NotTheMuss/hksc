@@ -1,5 +1,5 @@
 /*
-** $Id: lua.h,v 1.215 2005/12/27 17:09:50 roberto Exp roberto $
+** $Id: lua.h $
 ** Lua - An Extensible Extension Language
 ** Lua.org, PUC-Rio, Brazil (http://www.lua.org)
 ** See Copyright Notice at the end of this file

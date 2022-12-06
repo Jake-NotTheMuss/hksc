@@ -46,10 +46,9 @@ static void f_luaopen (hksc_State *H, void *ud) {
   luaS_resize(H, MINSTRTABSIZE);  /* initial size of string table */
   luaX_init(H);
   luaS_fix(luaS_newliteral(H, MEMERRMSG));
-  luaS_mainchunk = luaS_newliteral(H, MAINCHUNKNAME);
-  luaS_fix(luaS_mainchunk);
+  luaS_fix(luaS_newliteral(H, MAINCHUNKNAME));
   (void)g;
-  /*g->GCthreshold = 4*g->totalbytes;*/
+  g->GCthreshold = 4*g->totalbytes;
 }
 
 
@@ -69,7 +68,7 @@ static void preinit_state (hksc_State *H, global_State *g) {
 static void close_state (hksc_State *H) {
   global_State *g = G(H);
   luaC_freeall(H);  /* collect all objects */
-  lua_assert(g->rootgc == NULL /*obj2gco(H)*/);
+  lua_assert(g->rootgc == obj2gco(H));
   lua_assert(g->strt.nuse == 0);
   luaM_freearray(H, G(H)->strt.hash, G(H)->strt.size, TString *);
   luaZ_freebuffer(H, &g->buff);
@@ -141,7 +140,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   H = tostate(h);
   g = &((LG *)H)->g;
   H->tt = LUA_TTHREAD;
-  g->currentwhite = bit2mask(LIVEBIT, FIXEDBIT);
+  g->currentwhite = bitmask(FIXEDBIT);
   H->marked = luaC_white(g);
   set2bits(H->marked, FIXEDBIT, SFIXEDBIT);
   preinit_state(H, g);
@@ -157,11 +156,12 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   luaZ_initbuffer(H, &g->buff);
   g->panic = NULL;
   g->gcstate = GCSpause;
-  /*g->rootgc = obj2gco(H);*/
-  g->rootgc = NULL;
+  g->rootgc = obj2gco(H);
   g->sweepstrgc = 0;
   g->sweepgc = &g->rootgc;
   g->totalbytes = sizeof(LG);
+  g->gcpause = LUAI_GCPAUSE;
+  g->gcstepmul = LUAI_GCMUL;
   g->startcycle = g->endcycle = NULL;
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
   g->debugLoadStateOpen = NULL;

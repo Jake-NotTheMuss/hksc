@@ -1,5 +1,5 @@
 /*
-** $Id: lobject.h,v 2.19 2006/01/10 12:51:53 roberto Exp roberto $
+** $Id: lobject.h $
 ** Type definitions for Lua objects
 ** See Copyright Notice in lua.h
 */
@@ -215,12 +215,8 @@ typedef union TString {
   } tsv;
 } TString;
 
-/* TODO: */
-#define LUA_MAXSTRLEN ((size_t)1<<((sizeof(size_t)*CHAR_BIT)-2))
 
 #define getstr(ts)  cast(const char *, (ts) + 1)
-#define getstrlen(ts)  cast(size_t, (ts)->tsv.len & (LUA_MAXSTRLEN-1))
-#define setstrlen(ts,l)  ((ts)->tsv.len = ((l) & (LUA_MAXSTRLEN-1)))
 #define svalue(o)       getstr(tsvalue(o))
 
 
@@ -252,7 +248,7 @@ typedef struct Proto {
   TString  *source;
   TString  *name;
 #ifdef LUA_COD
-  lu_int32 hash; /* TODO: is this strictly 32 bits or just sizeof(int)? */
+  lu_int32 hash;
 #endif /* LUA_COD */
   int sizeupvalues;
   int sizek;  /* size of `k' */

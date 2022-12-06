@@ -14,7 +14,7 @@
 #include "lobject.h"
 #include "lopcodes.h"
 #include "lundump.h"
-
+#define SAYHI printf("HELLO [%d]\n", __LINE__)
 #define PrintFunction	luaU_print
 
 #define Sizeof(x)	((int)sizeof(x))
@@ -253,7 +253,9 @@ void PrintFunction(const Proto *f, int full)
 {
   int i,n=f->sizep;
   PrintHeader(f);
+  SAYHI;
   PrintCode(f);
+  SAYHI;
   if (full)
   {
     PrintConstants(f);

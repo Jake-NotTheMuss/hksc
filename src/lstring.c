@@ -5,9 +5,7 @@
 */
 
 
-#include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 
 #define lstring_c
 #define LUA_CORE
@@ -21,14 +19,10 @@
 
 
 
-TString *luaS_mainchunk = NULL;
-
-
 void luaS_resize (hksc_State *H, int newsize) {
   GCObject **newhash;
   stringtable *tb;
   int i;
-  /* TODO: see if this can be an assertion */
   if (G(H)->gcstate == GCSsweepstring)
     return;  /* cannot resize during GC traverse */
   newhash = luaM_newvector(H, newsize, GCObject *);
@@ -50,7 +44,6 @@ void luaS_resize (hksc_State *H, int newsize) {
   luaM_freearray(H, tb->hash, tb->size, TString *);
   tb->size = newsize;
   tb->hash = newhash;
-  printf("resized G(H)->strt to %d bytes\n", newsize);
 }
 
 
@@ -80,13 +73,6 @@ static TString *newlstr (hksc_State *H, const char *str, size_t l,
 
 
 TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
-#if 0
-  {char *str_x = strndup(str, l);
-    if (!str_x) {fprintf(stderr,"strndup returned NULL\n"); exit(EXIT_FAILURE);}
-  printf("encountered string \"%s\"\n", str_x);
-  free(str_x);}
-#endif
-
   GCObject *o;
   unsigned int h = cast(unsigned int, l);  /* seed */
   size_t step = (l>>5)+1;  /* if string is too long, don't hash all its chars */
@@ -131,12 +117,12 @@ static lu_int32 codhash (hksc_State *H, const char *str, size_t l, size_t step)
 }
 
 /* increment i by 1 each iteration */
-lu_int32 luaS_dbhashlstr (hksc_State *H, const char *str, size_t l) {
+lu_int32 luaS_comhash (hksc_State *H, const char *str, size_t l) {
   return codhash(H, str, l, 1);
 }
 
 /* increment i by 2 each iteration */
-lu_int32 luaS_dbhashlstr2 (hksc_State *H, const char *str, size_t l) {
+lu_int32 luaS_comhash2 (hksc_State *H, const char *str, size_t l) {
   return codhash(H, str, l, 2);
 }
 #endif /* LUA_COD */

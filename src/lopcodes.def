@@ -1,6 +1,6 @@
 /* -*- Mode: C -*- */
 /*
-** lopcodes.def
+** $Id: lopcodes.def $
 ** Define all opcodes here
 ** Before including this file, define the macro DEFCODE
 ** See Copyright Notice in lua.h

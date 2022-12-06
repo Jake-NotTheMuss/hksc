@@ -1,5 +1,5 @@
 /*
-** $Id: lundump.h,v 1.39 2005/11/01 17:04:55 lhf Exp lhf $
+** $Id: lundump.h $
 ** load precompiled Lua chunks
 ** See Copyright Notice in lua.h
 */
@@ -70,7 +70,15 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 #define LUAC_VERSION		0x51
 
 /* for header of binary files -- this is the official format */
-#define LUAC_FORMAT		14
+#if defined(LUA_CODT7)
+#define LUAC_FORMAT   14 /* T7 format version */
+#elif defined(LUA_COD)
+#define LUAC_FORMAT   13 /* T6 format version */
+#elif defined(HKSC_FORMAT_VERSION)
+#define LUAC_FORMAT   HKSC_FORMAT_VERSION
+#else
+#error "You need to define HKSC_FORMAT_VERSION"
+#endif
 
 /* size of header of binary files */
 #define LUAC_HEADERSIZE		sizeof(HkscHeader)
@@ -111,40 +119,6 @@ union max_type_length {
 #define BYTECODE_STRIPPING_DEBUG_ONLY 3
 #define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
 #endif /* LUA_COD */
-
-
-/* TODO: These are compatibility bits
-  HKS_GETGLOBAL_MEMOIZATION
-  HKS_STRUCTURE_EXTENSION_ON
-  HKS_SELF
-  HKS_WITHDOUBLES
-  HKS_WITHNATIVEINT
-  -----
-  HKS_COMPATIBILITY_BIT_MEMOIZATION
-  HKS_COMPATIBILITY_BIT_STRUCTURES
-  HKS_COMPATIBILITY_BIT_SELF
-  HKS_COMPATIBILITY_BIT_DOUBLES
-  HKS_COMPATIBILITY_BIT_NATIVEINT
-Note: Civ6 settings are 0xb == 01011:
-  MEMOIZATION:  ON
-  STRUCTURES:   ON
-  SELF:         OFF
-  DOUBLES:      ON
-  NATIVEINT:    OFF
-Note: CoD settings are 0:
-  MEMOIZATION:  OFF
-  STRUCTURES:   OFF
-  SELF:         OFF
-  DOUBLES:      OFF
-  NATIVEINT:    OFF
-*/
-
-#define hksc_compatbits \
-  ((HKSC_GETGLOBAL_MEMOIZATION   << HKSC_COMPATIBILITY_BIT_MEMOIZATION) | \
-  (HKSC_STRUCTURE_EXTENSION_ON   << HKSC_COMPATIBILITY_BIT_STRUCTURES)  | \
-  (HKSC_SELF                     << HKSC_COMPATIBILITY_BIT_SELF)        | \
-  (HKSC_WITHDOUBLES              << HKSC_COMPATIBILITY_BIT_DOUBLES)     | \
-  (HKSC_WITHNATIVEINT            << HKSC_COMPATIBILITY_BIT_NATIVEINT))
 
 
 /* stream position alignment in bytecode */

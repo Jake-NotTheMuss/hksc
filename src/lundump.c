@@ -37,7 +37,7 @@ typedef struct {
 #define BADHEADERMSG "Header mismatch when loading bytecode."
 #define BADCOMPATMSG BADHEADERMSG " The following build settings differ:"
 
-#define IF(S,c,s)    if (c) error(S,s)
+#define IF(c,s)    if (c) error(S,s)
 
 static void error(LoadState *S, const char *why)
 {
@@ -54,7 +54,7 @@ static void LoadBlock(LoadState *S, void *b, size_t size)
 {
   size_t r=luaZ_read(S->Z,b,size);
   S->pos += size;
-  IF (S, r!=0, "unexpected end");
+  IF(r!=0, "unexpected end");
 }
 
 static int LoadChar(LoadState *S)
@@ -69,7 +69,7 @@ static int LoadInt(LoadState *S)
   int x;
   LoadVar(S,x);
   correctendianness(S,x);
-  IF (S, x<0, "bad integer");
+  IF(x<0, "bad integer");
   return x;
 }
 
@@ -196,7 +196,7 @@ static void LoadConstants(LoadState *S, Proto *f)
         setui64value(o,LoadUI64(S));
         break;
       default:
-        IF (S, 1, "bad constant");
+        IF(1, "bad constant");
         break;
     }
   }
@@ -236,7 +236,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   int i,n;
   Proto *f;
   enterlevel(S);
-  f=luaF_newproto(S->H);
+  f=luaF_newproto(S->H); f->source = p;
   f->nups=LoadInt(S); /* number of upvalues */
   f->numparams=LoadInt(S); /* number of parameters */
   f->is_vararg=LoadChar(S); /* vararg flags */
@@ -253,7 +253,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   {
     if (debugS != NULL) {
 #ifdef LUA_COD
-      IF(debugS, LoadInt(debugS) != 1, "bad debug info");
+      IF(LoadInt(debugS) != 1, "bad debug info");
 #endif /* LUA_COD */
       LoadDebug(debugS,f,p);
     }
@@ -263,7 +263,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   f->sizep=n;
   for (i=0; i<n; i++) f->p[i]=NULL;
   for (i=0; i<n; i++) f->p[i]=LoadFunction(S,f->source,debugS);
-  /*IF (S, !luaG_checkcode(f), "bad code");*/
+  IF(!luaG_checkcode(f), "bad code");
   leavelevel(S);
   return f;
 }

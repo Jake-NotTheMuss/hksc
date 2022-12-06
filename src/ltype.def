@@ -1,6 +1,6 @@
 /* -*- Mode: C -*- */
 /*
-** ltype.def
+** $Id: ltype.def $
 ** Define all Lua types here
 ** Before including this file, define the macro DEFTYPE
 ** Keep in sync with lua.h

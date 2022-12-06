@@ -647,7 +647,7 @@ void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
   t->k = VINDEXED;
 }
 
-/* TODO: add T7 operators */
+
 static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   lua_Number v1, v2, r;
   lu_int32 iv1, iv2;

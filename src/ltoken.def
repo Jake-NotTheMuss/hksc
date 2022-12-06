@@ -1,6 +1,6 @@
 /* -*- Mode: C -*- */
 /*
-** ltoken.def
+** $Id: ltoken.def $
 ** Define all reserved tokens here
 ** Before including this file, define the macros DEFTOK and DEFTOKFIRST.
 ** When adding `#define' directives inside this file, use an `#ifndef' guard
