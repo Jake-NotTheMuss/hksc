@@ -110,19 +110,19 @@ static lu_int64 LoadUI64(LoadState *S)
   lu_int64 x;
 #ifdef LUA_UI64_S
   if ((char)*(char *)&y == 0) { /* big endian */
-    LoadVar(S,x.high);
-    LoadVar(S,x.low);
+    LoadVar(S,x.hi);
+    LoadVar(S,x.lo);
   } else { /* little endian */
-    LoadVar(S,x.low);
-    LoadVar(S,x.high);
+    LoadVar(S,x.lo);
+    LoadVar(S,x.hi);
   }
   if (S->swapendian) {
-    lu_int32 tmp = x.low;
-    x.low = x.high;
-    x.high = tmp;
+    lu_int32 tmp = x.lo;
+    x.lo = x.hi;
+    x.hi = tmp;
   }
-  correctendianness(S,x.high);
-  correctendianness(S,x.low);
+  correctendianness(S,x.hi);
+  correctendianness(S,x.lo);
 #else
   (void)y;
   LoadVar(S,x);

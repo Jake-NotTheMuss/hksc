@@ -18,11 +18,16 @@
 #define HKSC_COMPATIBILITY_BIT_DOUBLES      3
 #define HKSC_COMPATIBILITY_BIT_NATIVEINT    4
 
-
+#ifndef LUA_COD
 #define LUA_COD /* general cod compatibility */
+#endif
+#ifndef LUA_CODT7
 #define LUA_CODT7 /* support bitwise operations */
+#endif
 
+#ifndef HKSC_DECOMPILER
 #define HKSC_DECOMPILER
+#endif
 
 /*
 ** NOTE for non-Call-of-Duty developers:

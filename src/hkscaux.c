@@ -237,9 +237,11 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   if (out == NULL) cannot("open", outname);
   if (compiling) /* dump bytecode */
     status = luaU_dump(H, f, writer_2file, out);
+  else
 #ifdef HKSC_DECOMPILER
-  else /* dump decomp */
-    status = luaU_decompile(H, f, writer_2file, out);
+    status = luaU_decompile(H, f, writer_2file, out); /* dump decomp */
+#else
+    lua_assert(0); /* cannot happen */
 #endif /* HKSC_DECOMPILER */
   if (fclose(out)) cannot("close", outname);
   return status;

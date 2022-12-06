@@ -108,15 +108,15 @@ static void DumpUI64(lu_int64 x, DumpState *D)
   lua_assert(sizeof(lu_int64) == 8);
 #ifdef LUA_UI64_S
   if (((char)*(char *)&y == 0) != D->swapendian) { /* big endian */
-    correctendianness(D,x.high);
-    DumpVar(x.high,D);
-    correctendianness(D,x.low);
-    DumpVar(x.low,D);
+    correctendianness(D,x.hi);
+    DumpVar(x.hi,D);
+    correctendianness(D,x.lo);
+    DumpVar(x.lo,D);
   } else { /* little endian */
-    correctendianness(D,x.low);
-    DumpVar(x.low,D);
-    correctendianness(D,x.high);
-    DumpVar(x.high,D);
+    correctendianness(D,x.lo);
+    DumpVar(x.lo,D);
+    correctendianness(D,x.hi);
+    DumpVar(x.hi,D);
   }
 #else
   (void)y;

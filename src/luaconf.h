@@ -357,20 +357,20 @@
 ** UI64 type
 */
 
-#if defined(LUA_WIN)
+#if defined(LUA_WIN) && !defined(HKSC_TEST_UI64_S)
 /* in Windows, can use specific Windows types */
 #define LUAI_UINT64 unsigned __int64
 #define LUA_UI64_FMT "%I64x"
 #define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n));
 #define lua_str2ui64(s,p) _strtoui64((s), (p), 16)
 #elif !defined(LUA_ANSI) && defined(__STDC_VERSION__) && \
-  __STDC_VERSION__ >= 199901L
+  __STDC_VERSION__ >= 199901L && !defined(HKSC_TEST_UI64_S)
 /* use C99 types */
 #define LUAI_UINT64 unsigned long long
 #define LUA_UI64_FMT "%llx"
 #define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n))
 #define lua_str2ui64(s,p,n) strtoull((s), (p), 16)
-#elif 0 && ((ULONG_MAX >> 62) >= 3) /* long is 64 bits? */
+#elif ((ULONG_MAX >> 62) >= 3) && !defined(HKSC_TEST_UI64_S)
 /* use unsigned long type */
 #define LUAI_UINT64 unsigned long
 #define LUA_UI64_FMT "%lx"

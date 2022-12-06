@@ -115,7 +115,7 @@ struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr, size_t n) {
     char *saveptr = s1+n-8;
     char save = *saveptr;
     *saveptr = '\0'; /* just get the high part */
-    literal.high = cast(lu_int32, strtoul(s, endptr, 16));
+    literal.hi = cast(lu_int32, strtoul(s, endptr, 16));
     *saveptr = save;
     lowptr = cast(const char *, saveptr);
     if (*endptr != saveptr) { /* conversion failed */
@@ -124,16 +124,16 @@ struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr, size_t n) {
       /* store the correct number up to the character that caused the faiure */
       n1 = cast(size_t, *endptr-s1);
       if (n1 > 16)
-        literal.high = literal.low = cast(lu_int32, 0xfffffffful);
+        literal.hi = literal.lo = cast(lu_int32, 0xfffffffful);
       else {
-        literal.low = literal.high & cast(lu_int32, 0xfffffffful);
+        literal.lo = literal.hi & cast(lu_int32, 0xfffffffful);
         if (n1 > 8) { /* get the high part again */
           char *saveptr1 = s1+n1-8;
           char save1 = *saveptr1;
           *saveptr1 = '\0';
-          literal.high = cast(lu_int32, strtoul(s, NULL, 16));
+          literal.hi = cast(lu_int32, strtoul(s, NULL, 16));
           *saveptr1 = save1;
-        } else literal.high = 0;
+        } else literal.hi = 0;
       }
       return literal;
     }
@@ -141,14 +141,14 @@ struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr, size_t n) {
       /* complete the conversion to know if it succeeds or not */
       strtoul(lowptr, endptr, 16);
       if (*endptr != s1+n) goto badconversion;
-      literal.low = literal.high = cast(lu_int32, 0xfffffffful); /* overflow */
+      literal.lo = literal.hi = cast(lu_int32, 0xfffffffful); /* overflow */
       return literal;
     }
   } else {
-    literal.high = 0; /* fits in 32 bits */
+    literal.hi = 0; /* fits in 32 bits */
     lowptr = s;
   }
-  literal.low = cast(lu_int32, strtoul(lowptr, endptr, 16));
+  literal.lo = cast(lu_int32, strtoul(lowptr, endptr, 16));
   return literal;
 }
 
@@ -156,10 +156,10 @@ struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr, size_t n) {
 #define UI64_FORMAT_HIGHLOW "%" LUA_INT_FRMLEN "x%08" LUA_INT_FRMLEN "x"
 
 int luaO_ui64_s_2str(char *str, struct lua_ui64_s literal) {
-  if (literal.high == 0)
-    return sprintf(str, UI64_FORMAT_LOW, literal.low);
+  if (literal.hi == 0)
+    return sprintf(str, UI64_FORMAT_LOW, literal.lo);
   else
-    return sprintf(str, UI64_FORMAT_HIGHLOW, literal.high, literal.low);
+    return sprintf(str, UI64_FORMAT_HIGHLOW, literal.hi, literal.lo);
 }
 #endif /* LUA_UI64_S */
 
