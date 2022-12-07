@@ -52,7 +52,7 @@
 #define hashboolean(t,p)        hashpow2(t, p)
 
 #ifdef LUA_UI64_S
-#define hashui64(t,l)  hashpow2(t, (l).high)
+#define hashui64(t,l)  hashpow2(t, (l).hi)
 #else
 #define hashui64(t,l)  hashpow2(t, (l))
 #endif

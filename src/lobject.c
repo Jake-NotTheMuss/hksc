@@ -81,8 +81,8 @@ int luaO_rawequalObj (const TValue *t1, const TValue *t2) {
       return pvalue(t1) == pvalue(t2);
     case LUA_TUI64:
 #ifdef LUA_UI64_S
-      return hlvalue(t1).high == hlvalue(t2).high &&
-              hlvalue(t1).low == hlvalue(t2).low;
+      return hlvalue(t1).hi == hlvalue(t2).hi &&
+              hlvalue(t1).lo == hlvalue(t2).lo;
 #else
       return hlvalue(t1) == hlvalue(t2);
 #endif

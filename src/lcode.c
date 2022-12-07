@@ -674,14 +674,10 @@ static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
     case OP_UNM: r = luai_numunm(v1); break;
     case OP_LEN: return 0;  /* no constant folding for 'len' */
 #ifdef LUA_CODT7
-    case OP_LEFT_SHIFT:
-      r = cast_num(iv1 << iv2); break;
-    case OP_RIGHT_SHIFT:
-      r = cast_num(iv1 >> iv2); break;
-    case OP_BIT_AND:
-      r = cast_num(iv1 & iv2); break;
-    case OP_BIT_OR:
-      r = cast_num(iv1 | iv2); break;
+    case OP_LEFT_SHIFT: r = cast_num(iv1 << iv2); break;
+    case OP_RIGHT_SHIFT: r = cast_num(iv1 >> iv2); break;
+    case OP_BIT_AND: r = cast_num(iv1 & iv2); break;
+    case OP_BIT_OR: r = cast_num(iv1 | iv2); break;
 #endif /* LUA_CODT7 */
     default: lua_assert(0); r = 0; break;
   }

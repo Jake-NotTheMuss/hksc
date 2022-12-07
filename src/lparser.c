@@ -210,7 +210,6 @@ static int indexupvalue (FuncState *fs, TString *name, expdesc *v) {
                   TString *, MAX_INT, "");
   while (oldsize < f->sizeupvalues) f->upvalues[oldsize++] = NULL;
   f->upvalues[f->nups] = name;
-  /*luaC_objbarrier(fs->L, f, name);*/
   lua_assert(v->k == VLOCAL || v->k == VUPVAL);
   fs->upvalues[f->nups].k = cast_byte(v->k);
   fs->upvalues[f->nups].info = cast_byte(v->u.s.info);
