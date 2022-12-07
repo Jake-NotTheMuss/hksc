@@ -165,6 +165,8 @@ int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
 # endif /* HKSC_DECOMPIELR */
 
 void luacod_startcycle(hksc_State *H, const char *name) {
+  if (output != NULL && *output != 0)
+    name = output;/* so the debug files go the directory with the output file */
   if (!Settings(H).ignore_debug) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
@@ -191,10 +193,8 @@ void luacod_endcycle(hksc_State *H, const char *name) {
 #define dumpdebugfile(name, striplevel, mode) do { \
   FILE *debug_file_; \
   xopenfile(debug_file_,name,mode); \
-  lua_lock(H); \
   hksc_setBytecodeStrippingLevel(H,striplevel); \
   luaU_dump(H,f,writer_2file,debug_file_); \
-  lua_unlock(H); \
   if (ferror(debug_file_)) cannot("write",name); \
   if (fclose(debug_file_)) cannot("close",name); \
 } while (0)
