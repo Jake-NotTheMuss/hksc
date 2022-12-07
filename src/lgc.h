@@ -74,17 +74,17 @@
 #define FIXEDBIT  2
 #define SFIXEDBIT 3
 
-#define islive(g,x)       testbit((x)->gch.marked, LIVEBIT)
-#define istemp(g,x)       testbit((x)->gch.marked, TEMPBIT)
-#define isfixed(g,x)      testbit((x)->gch.marked, FIXEDBIT)
+#define islive(g,x)       ((void)(g), testbit((x)->gch.marked, LIVEBIT))
+#define istemp(g,x)       ((void)(g), testbit((x)->gch.marked, TEMPBIT))
+#define isfixed(g,x)      ((void)(g), testbit((x)->gch.marked, FIXEDBIT))
 
 #define otherwhite(g) (g->currentwhite ^ LIVEMASK)
-#define isdead(g,v) (!islive(g,v))
+#define isdead(g,v) ((void)(g), !islive(g,v))
 
 #define makelive(x)  l_setbit((x)->gch.marked, LIVEBIT)
 #define makedead(x)  resetbit((x)->gch.marked, LIVEBIT)
 
-#define luaC_white(g) cast(lu_byte, LIVEMASK)
+#define luaC_white(g) ((void)(g), cast(lu_byte, LIVEMASK))
 
 #define LIVEMASK  bitmask(LIVEBIT)
 

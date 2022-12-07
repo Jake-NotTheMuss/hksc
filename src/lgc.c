@@ -141,7 +141,7 @@ static l_mem singlestep (hksc_State *H) {
         g->gcstate = GCSpause;  /* end sweep-string phase */
       lua_assert(*g->sweepgc == NULL); /* temp list should already be swept */
       checkSizes(H);
-      lua_assert(old >= g->totalbytes);
+      lua_assert(old >= g->totalbytes); UNUSED(old);
       return GCSWEEPCOST;
     }
     default: lua_assert(0); return 0;

@@ -4,8 +4,8 @@
 ** See Copyright Notice in lua.h
 */
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <stdio.h> /* TODO:  */
+#include <stdlib.h> /* TODO:  */
 #include <stddef.h>
 #include <string.h> /* memset */
 

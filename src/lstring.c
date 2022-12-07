@@ -85,7 +85,7 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
     TString *ts = rawgco2ts(o);
     if (ts->tsv.len == l && (memcmp(str, getstr(ts), l) == 0)) {
       /* string may be dead */
-      if (isdead(G(L), o)) makelive(o);
+      if (isdead(G(H), o)) makelive(o);
       return ts;
     }
   }

@@ -4,15 +4,15 @@
 ** See Copyright Notice in lua.h
 */
 
-#define hksc_c
-#define LUA_CORE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 
-#include "luaconf.h"
+#define hksc_c
+#define LUA_CORE
+
+#include "lua.h"
 
 #include "hksclib.h"
 

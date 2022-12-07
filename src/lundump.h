@@ -7,8 +7,6 @@
 #ifndef lundump_h
 #define lundump_h
 
-#include "lua.h"
-
 #include "lobject.h"
 #include "lzio.h"
 

@@ -261,7 +261,9 @@ int hksI_parser_file(hksc_State *H, const char *filename,
   startcycle(H, filename);
   status = loadfile(H, filename); /* parse file */
   if (status) goto fail;
+  lua_lock(H);
   status = (*dumpf)(H, H->last_result, ud);
+  lua_unlock(H);
   fail:
   endcycle(H, filename);
   return status;
@@ -274,7 +276,9 @@ int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
   startcycle(H, source);
   status = lua_loadbuffer(H, buff, size, source);
   if (status) goto fail;
+  lua_lock(H);
   status = (*dumpf)(H, H->last_result, ud);
+  lua_unlock(H);
   fail:
   endcycle(H, source);
   return status;

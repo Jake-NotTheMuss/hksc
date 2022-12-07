@@ -139,6 +139,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   if (h == NULL) return NULL;
   H = tostate(h);
   g = &((LG *)H)->g;
+  H->next = NULL;
   H->tt = LUA_TTHREAD;
   g->currentwhite = bitmask(FIXEDBIT);
   H->marked = luaC_white(g);

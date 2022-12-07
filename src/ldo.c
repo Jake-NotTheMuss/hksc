@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <stdio.h>
 
 #define ldo_c
 #define LUA_CORE

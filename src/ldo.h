@@ -4,14 +4,15 @@
 ** See Copyright Notice in lua.h
 */
 
+#include <stdarg.h>
+
 #ifndef ldo_h
 #define ldo_h
-
-#include <stdarg.h>
 
 #include "lobject.h"
 #include "lstate.h"
 #include "lzio.h"
+
 
 #define hksc_setliteralmsg(H,s) \
   (luaE_seterrormsg(H, getstr(luaS_newliteral(H, s))))

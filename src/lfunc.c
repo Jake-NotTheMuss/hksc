@@ -6,6 +6,7 @@
 
 
 #include <stddef.h>
+#include <string.h> /* memcpy */
 
 #define lfunc_c
 #define LUA_CORE

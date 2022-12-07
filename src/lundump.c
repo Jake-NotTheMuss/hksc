@@ -4,7 +4,7 @@
 ** See Copyright Notice in lua.h
 */
 
-#include <stddef.h>
+#include <stddef.h> /* TODO: check inclusiong of stddef and stdarg (included in lua.h) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

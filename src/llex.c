@@ -7,8 +7,7 @@
 
 #include <locale.h>
 #include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h> /* TODO:  */
 
 #define llex_c
 #define LUA_CORE
@@ -24,6 +23,7 @@
 #include "lstate.h"
 #include "lstring.h"
 #include "lzio.h"
+
 
 
 #define next(ls) (ls->current = zgetc(ls->z))

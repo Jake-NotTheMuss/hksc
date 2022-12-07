@@ -14,7 +14,7 @@
 #include "lzio.h"
 
 
-/* optionally user-defined callbacks for beginning/end of cycles */
+/* user-defined callbacks for beginning/end of cycles */
 typedef void (*hksc_CycleCallback)(hksc_State *H, const char *name);
 
 
