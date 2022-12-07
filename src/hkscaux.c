@@ -165,7 +165,7 @@ int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
 # endif /* HKSC_DECOMPIELR */
 
 void luacod_startcycle(hksc_State *H, const char *name) {
-  if (output != NULL && *output != 0)
+  if (output != NULL)
     name = output;/* so the debug files go the directory with the output file */
   if (!Settings(H).ignore_debug) {
     if (debugfile == NULL) /* may be provided in command line */
@@ -225,7 +225,7 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
     if (status) return status; /* error */
   }
 #endif /* LUA_COD */
-  if (output == NULL || *output == 0) { /* generate an output name if needed */
+  if (output == NULL) { /* generate an output name if needed */
     if (compiling)
       outname = lua2luac(H, filename);
     else
