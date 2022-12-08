@@ -234,6 +234,7 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
 
 
 int luaG_checkcode (const Proto *pt) {
+  return 1; /* todo: sync code check with Havok Lua instruction set */
   return (symbexec(pt, pt->sizecode, NO_REG) != 0);
 }
 

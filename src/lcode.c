@@ -927,19 +927,6 @@ static void identify_leaders (int sizecode, Instruction *code,
 
 
 /*
-** Set the opcode of an instruction (keeps BK bit)
-*/
-static Instruction set_insn_opcode (Instruction instr, OpCode newop) {
-  OpCode oldop = GET_OPCODE(instr);
-  if (getOpMode(oldop) == iABC &&
-      (getBMode(oldop) == OpArgUK || getBMode(oldop) == OpArgRK))
-    newop = cast(OpCode, newop | (oldop & 1)); /* BK */
-  SET_OPCODE(instr, newop);
-  return instr;
-}
-
-
-/*
 ** Optimize the code sequence of a function
 */
 static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
@@ -952,25 +939,28 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
       case OP_GETTABLE: { /* change to GETTABLE_S or GETFIELD */
         int c = GETARG_C(code[i]);
         if (!ISK(c) || !ttisstring(&k[INDEXK(c)]))
-          code[i] = set_insn_opcode(code[i], OP_GETTABLE_S);
-        else
+          SET_OPCODE(code[i], OP_GETTABLE_S);
+        else {
           SET_OPCODE(code[i], OP_GETFIELD);
+          SETARG_C(code[i], INDEXK(c));
+        }
         break;
       }
       case OP_SETTABLE:
       case OP_SETTABLE_BK: { /* change to SETTABLE_S or SETFIELD */
-        int c = GETARG_C(code[i]);
-        if (!ISK(c) || !ttisstring(&k[INDEXK(c)]))
-          code[i] = set_insn_opcode(code[i], OP_SETTABLE_S);
+        int b = GETARG_B(code[i]);
+        if (!ISK(b) || !ttisstring(&k[INDEXK(b)]))
+          SET_OPCODE(code[i], OP_SETTABLE_S);
         else
-          SET_OPCODE(code[i], OP_SETFIELD);
+          code[i] = CREATE_ABC(OP_SETFIELD, GETARG_A(code[i]), INDEXK(b),
+                               GETARG_C(code[i]));
         break;
       }
       case OP_CALL: /* change to CALL_I */
-        code[i] = set_insn_opcode(code[i], OP_CALL_I);
+        SET_OPCODE(code[i], OP_CALL_I);
         break;
       case OP_TAILCALL: /* change to TAILCALL_I */
-        code[i] = set_insn_opcode(code[i], OP_TAILCALL_I);
+        SET_OPCODE(code[i], OP_TAILCALL_I);
         break;
       default: break;
     }
@@ -989,7 +979,7 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
         if (r1Version != OP_MAX &&
           ((getR1Mode(r1Version) == R1A && GETARG_A(prev) == GETARG_A(curr)) ||
            (getR1Mode(r1Version) == R1B && GETARG_B(prev) == GETARG_B(curr))))
-          code[i] = set_insn_opcode(code[i], r1Version); /* set to R1 version */
+          SET_OPCODE(code[i], r1Version); /* set to R1 version */
       }
     }
   }

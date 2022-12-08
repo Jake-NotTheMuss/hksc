@@ -77,16 +77,14 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 */
 
 #define GET_OPCODE(i)  (cast(OpCode, ((i)>>POS_OP) & MASK1(SIZE_OP,0)))
-#define SET_OPCODE(i,o)  ((i) = (((i)&MASK0(SIZE_OP,POS_OP)) | \
-    ((cast(Instruction, o)<<POS_OP)&MASK1(SIZE_OP,POS_OP))))
+#define SET_OPCODE(i,o)  luaP_set_opcode(&(i), (o))
 
 #define GETARG_A(i)  (cast(int, ((i)>>POS_A) & MASK1(SIZE_A,0)))
 #define SETARG_A(i,u)  ((i) = (((i)&MASK0(SIZE_A,POS_A)) | \
     ((cast(Instruction, u)<<POS_A)&MASK1(SIZE_A,POS_A))))
 
-#define GETARG_B(i)  (cast(int, ((i)>>POS_B) & MASK1(SIZE_B,0)))
-#define SETARG_B(i,b)  ((i) = (((i)&MASK0(SIZE_B,POS_B)) | \
-    ((cast(Instruction, b)<<POS_B)&MASK1(SIZE_B,POS_B))))
+#define GETARG_B(i) luaP_getarg_b((i))
+#define SETARG_B(i,b) luaP_setarg_b(&(i),(b))
 
 #define GETARG_C(i)  (cast(int, ((i)>>POS_C) & MASK1(SIZE_C,0)))
 #define SETARG_C(i,b)  ((i) = (((i)&MASK0(SIZE_C,POS_C)) | \
@@ -193,6 +191,10 @@ LUAI_DATA const struct OpCodeDesc luaP_opmodes[NUM_OPCODES];
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
 #define getOpName(m)  (luaP_opnames[m])
+
+LUAI_FUNC Instruction luaP_set_opcode(Instruction *i, OpCode o);
+LUAI_FUNC int luaP_getarg_b(Instruction i);
+LUAI_FUNC Instruction luaP_setarg_b(Instruction *i, int b);
 
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50

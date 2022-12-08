@@ -41,7 +41,8 @@ typedef struct {
 
 static void error(LoadState *S, const char *why)
 {
-  hksc_setfmsg(S->H,"%s: %s in precompiled chunk",S->name,why);
+  hksc_setfmsg(S->H,"%s: %s in precompiled chunk (position %d)",S->name,why,
+               (int)S->pos);
   luaD_throw(S->H,LUA_ERRSYNTAX);
 }
 
@@ -70,6 +71,14 @@ static int LoadInt(LoadState *S)
   LoadVar(S,x);
   correctendianness(S,x);
   IF(x<0, "bad integer");
+  return x;
+}
+
+static int LoadHash(LoadState *S)
+{
+  int x;
+  LoadVar(S,x);
+  correctendianness(S,x);
   return x;
 }
 
@@ -246,7 +255,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   n=LoadInt(S);
 #ifdef LUA_COD /* Call of Duty also includes a hash after the debug flag */
   if (n==1)
-    f->hash=LoadInt(S);
+    f->hash=LoadHash(S);
 #else /* !LUA_COD */
   if (n!=0)
 #endif /* LUA_COD */
@@ -300,8 +309,8 @@ static void LoadHeader(LoadState *S)
   int numtypes;
   HkscHeader h, s;
   LoadBlock(S,&s,LUAC_HEADERSIZE);
-  S->swapendian = s.swapendian;
-  luaU_header((char *)&h, s.swapendian);
+  S->swapendian = (s.swapendian == 0);
+  luaU_header((char *)&h, s.swapendian == 0);
   if (s.compatbits != h.compatbits) /* build settings do not match */
     pushCompatibilityErrorString(S->H, s.compatbits);
   if (memcmp(&h,&s,LUAC_HEADERSIZE)!=0) goto badheader;
@@ -422,7 +431,7 @@ void luaU_header (char *h, int swapendian)
   h+=sizeof(LUA_SIGNATURE)-1;
   *h++=(char)LUAC_VERSION;
   *h++=(char)LUAC_FORMAT;
-  *h++=(char)swapendian;        /* endianness */
+  *h++=(char)(swapendian == 0);        /* endianness */
   *h++=(char)sizeof(int);
   *h++=(char)sizeof(size_t);
   *h++=(char)sizeof(Instruction);
