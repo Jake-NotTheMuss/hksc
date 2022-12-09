@@ -40,6 +40,8 @@ const char *output=NULL;
 #ifdef LUA_COD
 const char *debugfile=NULL;
 const char *callstackdb=NULL;
+int debugfile_arg=0;
+int callstackdb_arg=0;
 static int withdebug=0;
 #else
 static int ignore_debug=0;
@@ -363,6 +365,8 @@ int main(int argc, char *argv[])
 #ifdef LUA_COD
   Settings(H).ignore_debug=!withdebug;
   hksc_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
+  debugfile_arg = (debugfile != NULL);
+  callstackdb_arg = (callstackdb != NULL);
 # ifdef HKSC_DECOMPILER
   /* Call of Duty needs a separate debug reader when loading bytecode */
   G(H)->debugLoadStateOpen = init_debug_reader;

@@ -52,7 +52,7 @@ typedef struct GCheader {
 
 
 #ifdef LUA_UI64_S
-struct lua_ui64_s { /* typedefined as lu_int64 */
+struct lua_ui64_s { /* typedef'd as lu_int64 */
   lu_int32 hi; /* bits 33-64 */
   lu_int32 lo; /* bits 1-32 */
 };

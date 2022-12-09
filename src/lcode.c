@@ -952,6 +952,7 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
         if (!ISK(b) || !ttisstring(&k[INDEXK(b)]))
           SET_OPCODE(code[i], OP_SETTABLE_S);
         else
+          /* don't use SET_OPCODE because the BK bit needs to be cleared */
           code[i] = CREATE_ABC(OP_SETFIELD, GETARG_A(code[i]), INDEXK(b),
                                GETARG_C(code[i]));
         break;

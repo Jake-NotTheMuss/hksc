@@ -72,9 +72,9 @@ int luaG_checkopenop (Instruction i) {
 static int checkArgMode (const Proto *pt, int r, enum OpArgMask mode) {
   switch (mode) {
     case OpArgN: check(r == 0); break;
-    case OpArgU: case OpArgUK: break;
+    case OpArgU: case OpArgK: break;
     case OpArgR: checkreg(pt, r); break;
-    case OpArgRK: case OpArgK:
+    case OpArgRK: case OpArgUK:
       check(ISK(r) ? INDEXK(r) < pt->sizek : r < pt->maxstacksize);
       break;
     default: break;
@@ -208,7 +208,9 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         check(pc + nup < pt->sizecode);
         for (; nup>0; nup--) {
           OpCode op1 = GET_OPCODE(pt->code[pc+nup]);
-          check(op1 == OP_GETUPVAL || op1 == OP_MOVE);
+          int a1 = GETARG_A(pt->code[pc+nup]);
+          check(op1 == OP_DATA);
+          check(a1 == 1 || a1 == 2);
         }
         break;
       }
@@ -234,7 +236,6 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
 
 
 int luaG_checkcode (const Proto *pt) {
-  return 1; /* todo: sync code check with Havok Lua instruction set */
   return (symbexec(pt, pt->sizecode, NO_REG) != 0);
 }
 

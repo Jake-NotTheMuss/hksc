@@ -28,6 +28,8 @@ extern const char *output;
 #ifdef LUA_COD
 extern const char *debugfile;
 extern const char *callstackdb;
+extern int debugfile_arg;
+extern int callstackdb_arg;
 /*extern const char *debugext;*/
 #endif /* LUA_COD */
 
@@ -164,9 +166,15 @@ int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
 
 # endif /* HKSC_DECOMPIELR */
 
+
 void luacod_startcycle(hksc_State *H, const char *name) {
-  if (output != NULL)
-    name = output;/* so the debug files go the directory with the output file */
+  /* err on the side of generating names from the input file - output debug
+     names are not needed until the dump stage, whereas input debug names are
+     needed from the start; if dumping, the names will be regenerated to go to
+     the output directory; this doesn't apply when the names are provided
+     explicitly in the command line  */
+  if (luaE_mode(H) == HKSC_MODE_COMPILE && output != NULL)
+    name = output;/* the debug files go the directory with the output file */
   if (!Settings(H).ignore_debug) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
@@ -201,8 +209,13 @@ void luacod_endcycle(hksc_State *H, const char *name) {
 
 
 /* (COD) dump debug info to files */
-static int luacod_dumpdebug(hksc_State *H, const Proto *f) {
+static int luacod_dumpdebug(hksc_State *H, const Proto *f, const char *outname){
   if (Settings(H).ignore_debug) return 0;
+  /* make sure generated names are in the same directory as outname */
+  if (!debugfile_arg)
+    debugfile = lua2luadebug(H, outname);
+  if (!callstackdb_arg)
+    callstackdb = lua2luacallstackdb(H, outname);
   /* debug information */
   dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
   /* callstack reconstruction */
@@ -219,12 +232,6 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   const char *outname; /* output file name */
   const int compiling = luaE_mode(H) == HKSC_MODE_COMPILE;
   lua_assert(f != NULL); /* parse errors should be caught before calling */
-#ifdef LUA_COD
-  if (compiling) { /* (COD) dump debug info to separate files */
-    status = luacod_dumpdebug(H, f);
-    if (status) return status; /* error */
-  }
-#endif /* LUA_COD */
   if (output == NULL) { /* generate an output name if needed */
     if (compiling)
       outname = lua2luac(H, filename);
@@ -233,6 +240,12 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   } else
     outname = output;
   lua_assert(outname != NULL);
+#ifdef LUA_COD
+  if (compiling) { /* (COD) dump debug info to separate files */
+    status = luacod_dumpdebug(H, f, outname);
+    if (status) return status; /* error */
+  }
+#endif /* LUA_COD */
   out = fopen(outname, compiling ? "wb" : "w");
   if (out == NULL) cannot("open", outname);
   if (compiling) /* dump bytecode */
