@@ -2,9 +2,7 @@
 /*
 ** $Id: ltoken.def $
 ** Define all reserved tokens here
-** Before including this file, define the macros DEFTOK and DEFTOKFIRST.
-** When adding `#define' directives inside this file, use an `#ifndef' guard
-**   to allow for multiple inclusions of this file
+** Before including this file, define the macro DEFTOK
 ** See Copyright Notice in lua.h
 */
 
@@ -81,7 +79,7 @@ DEFTOK(TK_NAME,           "<name>")
 DEFTOK(TK_STRING,         "<string>")
 DEFTOK(TK_EOS,            "<eof>")
 
-/* file encoding types */
+/* byte order marks */
 DEFTOK(TK_INVALID_BOM,    "<Invalid BOM>")
 DEFTOK(TK_UTF8_BOM,       "<UTF8 BOM>")
 DEFTOK(TK_UTF16LE_BOM,    "<UTF16LE BOM>")
