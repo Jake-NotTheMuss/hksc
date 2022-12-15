@@ -41,8 +41,7 @@ typedef struct {
 
 static void error(LoadState *S, const char *why)
 {
-  hksc_setfmsg(S->H,"%s: %s in precompiled chunk (position %d)",S->name,why,
-               (int)S->pos);
+  hksc_setfmsg(S->H,"%s: %s in precompiled chunk",S->name,why);
   luaD_throw(S->H,LUA_ERRSYNTAX);
 }
 
@@ -115,10 +114,9 @@ static TString *LoadString(LoadState *S)
 
 static lu_int64 LoadUI64(LoadState *S)
 {
-  int y=1;
   lu_int64 x;
 #ifdef LUA_UI64_S
-  if ((char)*(char *)&y == 0) { /* big endian */
+  if (isbigendian()) {
     LoadVar(S,x.hi);
     LoadVar(S,x.lo);
   } else { /* little endian */
@@ -133,7 +131,6 @@ static lu_int64 LoadUI64(LoadState *S)
   correctendianness(S,x.hi);
   correctendianness(S,x.lo);
 #else
-  (void)y;
   LoadVar(S,x);
   correctendianness(S,x);
 #endif
@@ -172,7 +169,7 @@ static void enterlevel (LoadState *S) {
 #define leavelevel(S)  ((S)->H->nCcalls--)
 
 static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS);
-#include <stdio.h>
+
 static void LoadConstants(LoadState *S, Proto *f)
 {
   int i,n;
@@ -316,7 +313,7 @@ static void LoadHeader(LoadState *S)
   if (memcmp(&h,&s,LUAC_HEADERSIZE)!=0) goto badheader;
   numtypes = LoadInt(S); /* number of types */
   if (numtypes != LUAC_NUMTYPES) {
-    if (G(S->H)->endianness != HKSC_DEFAULT_ENDIAN)
+    if (G(S->H)->bytecode_endianness != HKSC_DEFAULT_ENDIAN)
       goto badheader; /* a specific endianness is expected */
     else { /* try again with swapped endianness */
       swapvarendianness(numtypes);
@@ -350,6 +347,8 @@ struct SUndump {  /* data to `f_undump' */
 static void f_undump (hksc_State *H, void *ud) {
   struct SUndump *u = cast(struct SUndump *, ud);
   u->f = LoadFunction(u->S,luaS_newliteral(H,"=?"),u->debugS);
+  if (!u->f->name)
+    u->f->name = luaS_newliteral(H, MAINCHUNKNAME);
 }
 
 /*

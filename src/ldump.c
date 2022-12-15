@@ -103,23 +103,19 @@ static void DumpString(const TString *s, DumpState *D)
 
 static void DumpUI64(lu_int64 x, DumpState *D)
 {
-  int y=1;
   /* note that a platform may expect this to be larger than 8 bytes */
   lua_assert(sizeof(lu_int64) == 8);
 #ifdef LUA_UI64_S
-  if (((char)*(char *)&y == 0) != D->swapendian) { /* big endian */
-    correctendianness(D,x.hi);
+  correctendianness(D,x.lo);
+  correctendianness(D,x.hi);
+  if (isbigendian() != D->swapendian) {
     DumpVar(x.hi,D);
-    correctendianness(D,x.lo);
     DumpVar(x.lo,D);
   } else { /* little endian */
-    correctendianness(D,x.lo);
     DumpVar(x.lo,D);
-    correctendianness(D,x.hi);
     DumpVar(x.hi,D);
   }
 #else
-  (void)y;
   correctendianness(D,x);
   DumpVar(x,D);
 #endif
@@ -177,7 +173,7 @@ static void DumpConstants(const Proto *f, DumpState *D)
         DumpString(rawtsvalue(o),D);
         break;
       case LUA_TUI64:
-        DumpUI64(hlvalue(o),D);
+        DumpUI64(ui64value(o),D);
         break;
       default:
         lua_assert(0);			/* cannot happen */
@@ -213,9 +209,11 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
   else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
     n=f->sizelineinfo;
     for (i=0; i<n; i++) {
-      const char *line = luaO_pushfstring(D->H, "%u,%u,%s,%u,%s\n", f->hash, i,
-        getstr(f->source), f->lineinfo[i], ts2txt(f->name));
-      DumpMem(line,strlen(line),sizeof(char),D);
+      /* <hash>,<i>,<source>,<lineno>,<name> */
+      const char *str = luaO_pushfstring(D->H, "%" LUA_INT_FRMLEN "u,"
+        "%u,%s,%u,%s\n", f->hash, i, getstr(f->source), f->lineinfo[i],
+        ts2txt(f->name));
+      DumpMem(str,strlen(str),sizeof(char),D);
     }
   }
 #endif /* LUA_COD */
@@ -286,7 +284,6 @@ static void DumpHeader(DumpState *D)
 */
 int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
-  int x=1;
   DumpState D;
   D.H=H;
   D.writer=w;
@@ -294,10 +291,10 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.pos=0;
   D.striplevel=hksc_getBytecodeStrippingLevel(H);
   D.status=0;
-  if ((char)*(char*)&x == 0) /* big endian */
-    D.swapendian=(G(H)->endianness==HKSC_LITTLE_ENDIAN);
+  if (isbigendian())
+    D.swapendian=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);
   else /* little endian */
-    D.swapendian=(G(H)->endianness==HKSC_BIG_ENDIAN);
+    D.swapendian=(G(H)->bytecode_endianness==HKSC_BIG_ENDIAN);
   DumpHeader(&D);
   DumpFunction(f,NULL,&D);
   return D.status;

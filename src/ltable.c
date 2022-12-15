@@ -112,7 +112,7 @@ static Node *mainposition (const Table *t, const TValue *key) {
     case LUA_TLIGHTUSERDATA:
       return hashpointer(t, pvalue(key));
     case LUA_TUI64:
-      return hashui64(t, hlvalue(key));
+      return hashui64(t, ui64value(key));
     default:
       return hashpointer(t, gcvalue(key));
   }

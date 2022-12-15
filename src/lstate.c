@@ -152,7 +152,7 @@ hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   g->strt.nuse = 0;
   g->strt.hash = NULL;
   g->mode = HKSC_MODE_DEFAULT;
-  g->endianness = HKSC_DEFAULT_ENDIAN;
+  g->bytecode_endianness = HKSC_DEFAULT_ENDIAN;
   hksc_default_settings(&g->settings);
   luaZ_initbuffer(H, &g->buff);
   g->panic = NULL;

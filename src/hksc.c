@@ -63,50 +63,56 @@ static void print_usage(void)
 {
   fprintf(stderr, "usage: %s [options] [filenames]\n", progname);
   fputs(
-   "Available options are:\n"
-   "  -c, --compile         Run Hksc in compile mode\n"
-   "  --printconfig         Print Hksc configuration\n"
-   "  -d, --decompile       Run Hksc in decompile mode\n"
-#ifdef LUA_COD
-   "  --withdebug           Load/dump debug files with input files\n"
-   "  --callstackdb <name>  Use callstack reconstruction file <name>\n"
-   "  --debugfile <name>    Use debug info file <name>\n"
-#else
-   "  --ignoredebug         Ignore debug info when decompiling\n"
+   "\nOperation modes:\n"
+   "      --help              Print this message and exit\n"
+   "      --version           Show version information\n"
+   "      --printconfig       Print Hksc configuration\n"
+#ifdef HKSC_DECOMPILER
+   "  -c, --compile           Run Hksc in compile mode\n"
+   "  -d, --decompile         Run Hksc in decompile mode\n"
+#endif /* HKSC_DECOMPILER */
+  , stderr);
+  fputs(
+   "\nCompiler options:\n"
+   "  -L[=TYPE]               Enable int literals of the given TYPE\n"
+#ifndef LUA_COD
+   "  -s[=MODE]               Use bytecode stripping level MODE\n"
+   "  -i, --ignoredebug       Ignore debug info when decompiling\n"
 #endif /* LUA_COD */
    , stderr);
   fputs(
-   "  -h, --help            Print this message and exit\n"
-   "  -l                    List (use -l -l for full listing)\n"
-   "  -L <type>             Enable int literals of the type given by <type>\n"
-   "  -o, --output <name>   Output to file 'name'\n"
-   "  -p                    Parse only\n"
-#ifndef LUA_COD /* -s is still enabled for testing purposes */
-   "  -s <mode>             Use bytecode stripping mode <mode>\n"
-#endif /* !LUA_COD */
-   "  -v, --version         Show version information\n"
-   "  --                    Stop handling options\n", stderr);
-  fputs(
-   "\nInt literal options (to use with '-L')\n"
-   "  I or 32  [32BIT] Enable 32-bit int literals\n"
-   "  L or 64  [64BIT] Enable 64-bit int literals\n"
-   "  A        [ALL] Enable all int literals\n"
-#ifndef LUA_COD /* use special arguments for cod */
-   "\nBytecode stripping levels (to use with '-s'):\n"
-   "  N or 0   [NONE] Include all debug information in dump\n"
-   "  P or 1   [PROFILING] Include line information in dump\n"
-   "  A or 2   [ALL] Strip all debug information\n"
-#endif /* !LUA_COD */
+   "\nInput/Output options:\n"
+   "  -o, --output=NAME       Output to file NAME\n"
+   "  -p                      Parse only\n"
+#ifdef LUA_COD
+   "  -r, --withdebug         Load/dump debug files with input/output files\n"
+   "  -a, --callstackdb=FILE  Use FILE for callstack reconstruction\n"
+   "  -g, --debugfile=FILE    Use FILE for debug info\n"
+#endif /* LUA_COD */
    , stderr);
+  fputs(
+   "  --                      Stop handling options\n", stderr);
+  fputs(
+   "\nInt literal options for TYPE (to use with '-L')\n"
+   "  32  Enable 32-bit int literals\n"
+   "  64  Enable 64-bit int literals\n", stderr);
+#ifndef LUA_COD /* use special arguments for cod */
+  fputs(
+   "\nBytecode stripping options for MODE (to use with '-s'):\n"
+   "  n   Include all debug information in dump\n"
+   "  p   Include profiling information in dump\n"
+   , stderr);
+#endif /* !LUA_COD */
 }
 
 static void usage(const char *message)
 {
-  if (*message == '-')
+  if (*message == '-') {
     fprintf(stderr,"%s: unrecognized option '%s'\n",progname,message);
+    print_usage();
+  }
   else
     fprintf(stderr,"%s: %s\n",progname,message);
-  print_usage();
   exit(EXIT_FAILURE);
 }
 
@@ -114,58 +120,71 @@ static void print_version(void)
 {
   printf(HKSC_NAME " " HKSC_VERSION "\n" /* Hksc version */
 #ifdef LUA_COD
-    "Call of Duty Lua compiler/decompiler\n"
+    "Call of Duty "
 #endif
-    LUA_VERSION " " LUA_COPYRIGHT "\n" /* Lua version */
+    "Havok Script compiler"
+#ifdef HKSC_DECOMPILER
+    "/decompiler"
+#endif
+    "\n" LUA_VERSION " " LUA_COPYRIGHT "\n" /* Lua version */
   );
 }
 
-#define HKSC_YESNO(x) ((HKSC_##x) ? "YES" : "NO")
+
+#define PRINT_YESNO(s,x) \
+  fprintf(stdout, "  " s "            %s\n", ((HKSC_##x) ? "YES" : "NO"))
 
 static void print_config(void)
 {
-  print_version();
-  fputs("\nHksc configuration:\n", stdout);
-  fprintf(stdout, "  GETGLOBAL_MEMOIZATION     %s\n",
-          HKSC_YESNO(GETGLOBAL_MEMOIZATION));
-  fprintf(stdout, "  STRUCTURE_EXTENSION_ON    %s\n",
-          HKSC_YESNO(STRUCTURE_EXTENSION_ON));
-  fprintf(stdout, "  SELF                      %s\n",
-          HKSC_YESNO(SELF));
-  fprintf(stdout, "  WITHDOUBLES               %s\n",
-          HKSC_YESNO(WITHDOUBLES));
-  fprintf(stdout, "  WITHNATIVEINT             %s\n",
-          HKSC_YESNO(WITHNATIVEINT));
+  fputs("Compiler build settings:\n", stdout);
+  PRINT_YESNO("MEMOIZATION", GETGLOBAL_MEMOIZATION);
+  PRINT_YESNO("STRUCTURES ", STRUCTURE_EXTENSION_ON);
+  PRINT_YESNO("SELF       ", SELF);
+  PRINT_YESNO("DOUBLES    ", WITHDOUBLES);
+  PRINT_YESNO("NATIVE INT ", WITHNATIVEINT);
 }
 
 #define IS(s) (strcmp(argv[i],s)==0)
 #define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
-#define CHECKARGC if (i >= argc) usage("argument expected")
 
-#define DOSTRINGARG(str, var) do { \
-  char *val = argv[i] + sizeof(str)-1; \
-  if (*val == '=') val++; \
-  else if (*val == '\0') val = argv[++i]; \
-  else usage(argv[i]); \
-  if (val == NULL || *val == 0) \
-    usage("argument exptected with '" str "'"); \
-  var = (const char *)val; \
+#define DOSTRINGARG(s,l,v) do { \
+  char *val; \
+  int shrt = IS(s); \
+  if (shrt) val = argv[++i]; \
+  else { \
+    val = argv[i] + sizeof(l)-1; \
+    if (*val == '=') val++; \
+    else if (*val == '\0') val = argv[++i]; \
+    else usage(argv[i]); \
+  } \
+  if (val == NULL || *val == '\0') { \
+    if (shrt) usage("'" s "' needs an argument"); \
+    else usage("'" l "' needs an argument"); \
+  } \
+  v = (const char *)val; \
 } while (0)
 
-#define ELSE_IF_STRING(str, var) else if (HAS(str)) DOSTRINGARG(str, var)
+#define ELSE_IF_STRING(s,l,v) else if (IS(s) || HAS(l)) DOSTRINGARG(s,l,v)
 
 static int doargs(int argc, char *argv[])
 {
   int i;
+  int nfiles=0;
   int striparg=0;
   int version=0;
   int info=0;
+#ifdef HKSC_DECOMPILER
   int c=0,d=0; /* uses of `-c' and `-d' */
+#endif /* HKSC_DECOMPILER */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
   {
-    if (*argv[i]!='-')      /* end of options; keep it */
-      break;
+    if (*argv[i]!='-')      /* input file */
+    {
+      char *tmp = argv[++nfiles]; /* push names to the front */
+      argv[nfiles] = argv[i];
+      argv[i] = tmp;
+    }
     else if (IS("--"))      /* end of options; skip it */
     {
       ++i;
@@ -176,44 +195,42 @@ static int doargs(int argc, char *argv[])
     else if (IS("-"))     /* end of options; use stdin */
       break;
 #endif
+#ifdef HKSC_DECOMPILER
     else if (IS("-c") || IS("--compile")) ++c; /* specifies compile mode */
+    else if (IS("-d") || IS("--decompile")) ++d; /* specified decompile mode */
+#endif /* HKSC_DECOMPILER */
 #ifdef LUA_COD
-    else if (IS("--withdebug")) withdebug=1;
-    ELSE_IF_STRING("--callstackdb", callstackdb);
-    ELSE_IF_STRING("--debugfile", debugfile);
+    else if (IS("-r") || IS("--withdebug")) withdebug=1;
+    ELSE_IF_STRING("-a", "--callstackdb", callstackdb);
+    ELSE_IF_STRING("-g", "--debugfile", debugfile);
 #else
-    else if (IS("--ignoredebug")) ignore_debug=1;
+    else if (IS("-i") || IS("--ignoredebug")) ignore_debug=1;
 #endif /* LUA_COD */
     else if (IS("--printconfig")) ++info;
-    else if (IS("-d") || IS("--decompile")) ++d; /* specified decompile mode */
-    else if (IS("-h") || IS("--help")) { /* print help message and exit */
+    else if (IS("--help")) { /* print help message and exit */
       print_usage();
       exit(EXIT_SUCCESS);
     }
     else if (IS("-l"))      /* list */
       ++listing;
-    else if (HAS("-L"))     /* specify int literal options */
+    else if (HAS("-L"))   /* specify int literal options */
     {
       char *mode;
-      if (argv[i][2] == 0) /* next argument has int literal type */
-        mode = argv[++i];
-      else
-        mode = argv[i]+2;
-      CHECKARGC;
-      if (mode[0] == 0 || (mode[1] != 0 && mode[2] != 0))
+      if (argv[i][2] == 0) {
+        literals_enabled=INT_LITERALS_ALL; /* default */
+        continue;
+      }
+      mode = argv[i]+2;
+      if (*mode == '=') mode++;
+      if (mode[0] == '\0' || mode[1] == '\0' || mode[2] != '\0')
         goto badliteralarg;
       switch (*mode) {
-        case 'I': case 'i': case '3':
-          if ((mode[0] != '3' && mode[1] != '\0') ||
-              (mode[0] == '3' && mode[1] != '2')) goto badliteralarg;
+        case '3':
+          if (mode[1] != '2') goto badliteralarg;
           literals_enabled|=INT_LITERALS_LUD; break;
-        case 'L': case 'l': case '6':
-          if ((mode[0] != '6' && mode[1] != '\0') ||
-              (mode[0] == '6' && mode[1] != '4')) goto badliteralarg;
+        case '6':
+          if (mode[1] != '4') goto badliteralarg;
           literals_enabled|=INT_LITERALS_UI64; break;
-        case 'A': case 'a':
-          if (mode[1] != 0) goto badliteralarg;
-          literals_enabled|=INT_LITERALS_ALL; break;
         default:
           goto badliteralarg;
       }
@@ -221,39 +238,38 @@ static int doargs(int argc, char *argv[])
       badliteralarg:
       usage("invalid int literal type given with '-L'");
     }
-    ELSE_IF_STRING("--output", output);
-    else if (IS("-o"))      /* output file */
-    {
-      output=argv[++i];
-      if (output==NULL || *output==0 || (*output=='-' && output[1]!=0))
-        usage("'-o' needs argument");
-      if (IS("-")) output=NULL;
-    }
+    ELSE_IF_STRING("-o", "--output", output);
     else if (IS("-p"))      /* parse only */
       dumping=0;
     else if (HAS("-s"))     /* specify stripping level */
     {
+#ifdef LUA_COD
+      /* do nothing */
+      (void)striplevel;
+#else /* !LUA_COD */
       char *mode;
       if (striparg)
-        usage("'-s' option used multiple times");
-      if (argv[i][2] == 0) /* next agrument specifies stripping mode */
-        mode = argv[++i];
-      else
-        mode = argv[i]+2;
-      CHECKARGC;
-      if (mode[0] == 0 || (mode[1] != 0 && mode[1] != ','))
+        usage("'-s' used multiple times");
+      if (argv[i][2] == 0) {
+        striplevel=BYTECODE_STRIPPING_ALL; /* default */
+        striparg=1;
+        continue;
+      }
+      mode = argv[i]+2;
+      if (*mode == '=') mode++;
+      if (mode[0] == '\0' || mode[1] != '\0')
         goto badstriparg;
       switch (*mode) {
-        case 'N': case 'n': case '0':
+        case 'N': case 'n':
           striplevel=BYTECODE_STRIPPING_NONE; break;
-        case 'P': case 'p': case '1':
+        case 'P': case 'p':
           striplevel=BYTECODE_STRIPPING_PROFILING; break;
-        case 'A': case 'a': case '2':
+        case 'A': case 'a':
           striplevel=BYTECODE_STRIPPING_ALL; break;
 #if 0
-        case 'D': case 'd': case '3':
+        case 'D': case 'd':
           striplevel=BYTECODE_STRIPPING_DEBUG_ONLY; break;
-        case 'C': case 'c': case '4':
+        case 'C': case 'c':
           striplevel=BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION; break;
 #endif
         default:
@@ -263,18 +279,23 @@ static int doargs(int argc, char *argv[])
       continue;
       badstriparg:
       usage("invalid stripping mode given with '-s'");
+#endif /* LUA_COD */
     }
-    else if (IS("-v") || IS("--version"))     /* show version */
+    else if (IS("--version"))     /* show version */
       ++version;
     else
       usage(argv[i]);
   }
   if (version || info)
   {
-    if (!info) print_version();
-    else print_config();
-    if (i==argc) exit(EXIT_SUCCESS);
+    if (version) print_version();
+    if (info) {
+      if (version) fputc('\n', stdout);
+      print_config();
+    }
+    exit(EXIT_SUCCESS);
   }
+#ifdef HKSC_DECOMPILER
   if (c && d) /* both compile and decompile mode specified? */
     usage("both '-c' and '-d' used; Hksc can only be run in one mode");
   else if (c) {
@@ -286,9 +307,14 @@ static int doargs(int argc, char *argv[])
   }
   else if (d)
     mode=HKSC_MODE_DECOMPILE;
-  if (!dumping && striparg)
-    warn_unused("-s", "not dumping");
-  return i;
+#endif /* HKSC_DECOMPILER */
+  if (striparg && (dumping
+#ifdef HKSC_DECOMPILER
+      || d
+#endif
+      ))
+    warn_unused("-s", "not dumping bytecode");
+  return nfiles;
 }
 
 #define FUNCTION "(function()end)();"
@@ -340,7 +366,7 @@ int main(int argc, char *argv[])
   hksc_State *H;
   int status;
   int i=doargs(argc,argv);
-  argc-=i;argv+=i;
+  argc=i;argv+=1; /* in-files are pushed to front */
   if (argc<=0) usage("no input files given");
   /* warn about using -o with multiple input files */
   else if (argc > 1) {
@@ -348,9 +374,9 @@ int main(int argc, char *argv[])
       error_multiple_inputs("-o");
 #ifdef LUA_COD
     if (debugfile != NULL)
-      error_multiple_inputs("--debugfile");
+      error_multiple_inputs("-g");
     if (callstackdb != NULL)
-      error_multiple_inputs("--callstackdb");
+      error_multiple_inputs("-a");
 #endif /* LUA_COD */
   }
   H = hksI_newstate(mode);
@@ -363,10 +389,11 @@ int main(int argc, char *argv[])
 #endif /* LUA_COD */
   hksc_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD
-  Settings(H).ignore_debug=!withdebug;
   hksc_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
   debugfile_arg = (debugfile != NULL);
   callstackdb_arg = (callstackdb != NULL);
+  withdebug = (withdebug || debugfile_arg || callstackdb_arg);
+  Settings(H).ignore_debug=!withdebug;
 # ifdef HKSC_DECOMPILER
   /* Call of Duty needs a separate debug reader when loading bytecode */
   G(H)->debugLoadStateOpen = init_debug_reader;
@@ -383,9 +410,6 @@ int main(int argc, char *argv[])
   else
     dumpf = hksc_dump_default;
   status = dofiles(H, argc, argv);
-  printf("hksc: closing hksc_State\n");
   hksI_close(H);
-  printf("hksc: closed hksc_State\nExiting with code %d\n",
-         status ? EXIT_FAILURE : EXIT_SUCCESS);
   return status ? EXIT_FAILURE : EXIT_SUCCESS;
 }

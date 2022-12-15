@@ -81,10 +81,10 @@ int luaO_rawequalObj (const TValue *t1, const TValue *t2) {
       return pvalue(t1) == pvalue(t2);
     case LUA_TUI64:
 #ifdef LUA_UI64_S
-      return hlvalue(t1).hi == hlvalue(t2).hi &&
-              hlvalue(t1).lo == hlvalue(t2).lo;
+      return ui64value(t1).hi == ui64value(t2).hi &&
+              ui64value(t1).lo == ui64value(t2).lo;
 #else
-      return hlvalue(t1) == hlvalue(t2);
+      return ui64value(t1) == ui64value(t2);
 #endif
     default:
       lua_assert(iscollectable(t1));
@@ -178,6 +178,12 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
   len = newlen; \
 } while (0)
 
+#define concatchar(c) do { \
+  newlen = len+1; \
+  luaM_reallocvector(H, str, len, newlen, char); \
+  str[len] = (unsigned char)c; \
+  len = newlen; \
+} while (0)
 
 #define concatstr(strexp) concatlstr(strexp, strlen((strexp)))
 
@@ -186,6 +192,43 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
   lua_number2str(s, cast_num(n)); \
   concatstr(s); \
 } while (0)
+
+/* return a printable version of a string constant */
+TString *luaO_kstring2print (hksc_State *H, TString *ts) {
+  TString *result; /* new printable string */
+  size_t newlen, len = 0; /* for the new string allocation */
+  const char *s = getstr(ts); /* original string */
+  size_t i, n = ts->tsv.len;
+  char *str = NULL; /* buffer for building the printable string */
+  concatchar('\"');
+  for (i = 0; i < n; i++) {
+    int c = s[i];
+    switch (c) {
+      case '"': concatchar('\\'); concatchar('"'); break;
+      case '\\': concatchar('\\'); concatchar('\\'); break;
+      case '\a': concatchar('\\'); concatchar('a'); break;
+      case '\b': concatchar('\\'); concatchar('b'); break;
+      case '\f': concatchar('\\'); concatchar('f'); break;
+      case '\n': concatchar('\\'); concatchar('n'); break;
+      case '\r': concatchar('\\'); concatchar('r'); break;
+      case '\t': concatchar('\\'); concatchar('t'); break;
+      case '\v': concatchar('\\'); concatchar('v'); break;
+      default: {
+        if (lisprint(c))
+          concatchar(c);
+        else {
+          char buff[5];
+          sprintf(buff, "\\%03u", (unsigned char)c);
+          concatstr(buff);
+        }
+      }
+    }
+  }
+  concatchar('\"');
+  result = luaS_newlstr(H, str, len);
+  luaM_freearray(H, str, len, char);
+  return result;
+}
 
 
 /* this function handles only `%d', `%c', %f, %p, and `%s' formats */

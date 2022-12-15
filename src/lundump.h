@@ -15,20 +15,26 @@
 #if defined(ldump_c) || (defined(lundump_c) && defined(HKSC_DECOMPILER))
 
 /* swap endianness of a sequence of bytes if needed */
-#define correctendianness(s,x) \
-  if ((s)->swapendian) swapvarendianness(x)
+#define correctendianness(S,x) \
+  if ((S)->swapendian) swapvarendianness(x)
 
 #define swapvarendianness(x) swapendianness(&(x), sizeof(x))
 
 static void swapendianness(void *p, size_t n) {
   size_t i = 0;
+  size_t hn = n/2;
   char *x = cast(char *, p);
-  while (n-- != 0) {
+  while (n-- > hn) {
     char t = x[i];
     x[i] = x[n];
     x[n] = t;
     i++;
   }
+}
+
+static int isbigendian() {
+  int x=1;
+  return ((char)*(char *)&x == 0);
 }
 
 #endif /* lundump_c || ldump_c */

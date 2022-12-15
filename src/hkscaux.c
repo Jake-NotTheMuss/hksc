@@ -137,6 +137,8 @@ static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
 
 int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   LoadDebug *ld = luaM_new(H, LoadDebug);
+  /* todo: this assertion is awkward because it expects the library to have
+     particular internal behavior */
   lua_assert(Settings(H).ignore_debug == 0);
   if (H->currdebugfile == NULL) {
     hksc_setfmsg(H, "debug file name not set for input `%s'", name);
@@ -155,10 +157,10 @@ int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   lua_assert(Settings(H).ignore_debug == 0);
   (void)z; (void)name;
   if (ld->f == NULL) return 0;
-  luaZ_freebuffer(H, buff);
-  luaM_free(H, ld);
+  luaZ_freebuffer(H, buff); UNUSED(buff);
   readstatus = ferror(ld->f);
   closestatus = fclose(ld->f);
+  luaM_free(H, ld); UNUSED(ld);
   if (readstatus) cannot("read", H->currdebugfile);
   if (closestatus) cannot("close", H->currdebugfile);
   return 0;

@@ -102,8 +102,7 @@ typedef struct lua_TValue {
 #define gcvalue(o)  check_exp(iscollectable(o), (o)->value.gc)
 #define pvalue(o)  check_exp(ttislightuserdata(o), (o)->value.p)
 #define nvalue(o)  check_exp(ttisnumber(o), (o)->value.n)
-#define hivalue(o)  check_exp(ttislightuserdata(o), (o)->value.l)
-#define hlvalue(o)  check_exp(ttisui64(o), (o)->value.l)
+#define ui64value(o)  check_exp(ttisui64(o), (o)->value.l)
 #define rawtsvalue(o)  check_exp(ttisstring(o), &(o)->value.gc->ts)
 #define tsvalue(o)  (&rawtsvalue(o)->tsv)
 #define rawuvalue(o)  check_exp(ttisuserdata(o), &(o)->value.gc->u)
@@ -390,6 +389,7 @@ LUAI_FUNC struct lua_ui64_s luaO_str2ui64_s(const char *s, char **endptr,
 LUAI_FUNC int luaO_ui64_s_2str(char *str, struct lua_ui64_s literal);
 #endif /* LUA_UI64_S */
 LUAI_FUNC int luaO_str2ui64(const char *s,const char *suffix,lu_int64 *result);
+LUAI_FUNC TString *luaO_kstring2print (hksc_State *H, TString *ts);
 LUAI_FUNC const char *luaO_pushvfstring (hksc_State *H, const char *fmt,
                                                        va_list argp);
 LUAI_FUNC const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...);

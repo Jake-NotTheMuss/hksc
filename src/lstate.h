@@ -96,7 +96,7 @@ typedef struct hksc_Settings
 */
 typedef struct global_State {
   int mode; /* compiling or decompiling? */
-  int endianness; /* bytecode endianness */
+  int bytecode_endianness; /* bytecode endianness */
   hksc_Settings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
   lua_Alloc frealloc;  /* function to reallocate memory */
