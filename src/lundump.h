@@ -22,9 +22,9 @@
 
 static void swapendianness(void *p, size_t n) {
   size_t i = 0;
-  size_t hn = n/2;
+  size_t n2 = n/2;
   char *x = cast(char *, p);
-  while (n-- > hn) {
+  while (n-- > n2) {
     char t = x[i];
     x[i] = x[n];
     x[n] = t;
@@ -40,8 +40,19 @@ static int isbigendian() {
 #endif /* lundump_c || ldump_c */
 
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
-/* callback to initialize/finalize data for a debug load state */
+
+/*
+** Callback function signature for constructing/destructing a debug load state.
+** The LoadState structure is private to lundump.c; the individual members that
+** need initializing are passed by reference (ZIO and Mbuffer), as well as the
+** name of the chunk. The constructor/destructor are referenced with separate
+** pointers in the global state, and it is ensured that the destructor will fire
+** if it is non-NULL and if the constructor was fired even if an exception is
+** thrown in between the 2 callbacks, eliminiating the library's chance of
+** leaking user memory.
+*/
 typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
+
 #endif /* LUA_COD */
 
 #ifdef HKSC_DECOMPILER

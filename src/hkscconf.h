@@ -8,9 +8,6 @@
 #ifndef hconfig_h
 #define hconfig_h
 
-/*#include <assert.h>
-#define lua_assert assert*/
-
 #define HKSC_TEST_UI64_S
 
 /* compatibility bits */
