@@ -49,6 +49,7 @@ static void freeobj (hksc_State *H, GCObject *o) {
 }
 
 
+
 #define sweepwholelist(H,p) sweeplist(H,p,MAX_LUMEM)
 
 
@@ -137,13 +138,14 @@ static l_mem singlestep (hksc_State *H) {
     }
     case GCSsweepstring: {
       lu_mem old = g->totalbytes;
-      (void)old; /* avoid warnings */
       lua_assert(*g->sweepgc == g->rootgc); /* all temps have been collected */
       sweepwholelist(H, &g->strt.hash[g->sweepstrgc++]);
-      if (g->sweepstrgc >= g->strt.size)  /* nothing more to sweep? */
+      if (g->sweepstrgc >= g->strt.size) { /* nothing more to sweep? */
+        checkSizes(H);
         g->gcstate = GCSpause;  /* end sweep-string phase */
-      checkSizes(H);
+      }
       lua_assert(old >= g->totalbytes);
+      UNUSED(old); /* avoid warning */
       return GCSWEEPCOST;
     }
     default: lua_assert(0); return 0;
