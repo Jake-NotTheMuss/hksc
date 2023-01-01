@@ -134,14 +134,14 @@ static void PrintCode(const Proto *f)
       case OP_GETTABLE:
       case OP_GETTABLE_S:
       case OP_GETTABLE_N:
-      case OP_GETFIELD: case OP_GETFIELD_R1:
       case OP_SELF:
-        if (ISK(c)) { printf("\t; "); PrintConstant(f,INDEXK(c)); }
+        if (ISK(c))
+      case OP_GETFIELD: case OP_GETFIELD_R1:
+          { printf("\t; "); PrintConstant(f,INDEXK(c)); }
         break;
       case OP_SETTABLE: case OP_SETTABLE_BK:
       case OP_SETTABLE_S: case OP_SETTABLE_S_BK:
       case OP_SETTABLE_N: case OP_SETTABLE_N_BK:
-      case OP_SETFIELD: case OP_SETFIELD_R1:
       case OP_ADD: case OP_ADD_BK:
       case OP_SUB: case OP_SUB_BK:
       case OP_MUL: case OP_MUL_BK:
@@ -163,6 +163,12 @@ static void PrintCode(const Proto *f)
           printf(" ");
           if (ISK(c)) PrintConstant(f,INDEXK(c)); else printf("-");
         }
+        break;
+      case OP_SETFIELD: case OP_SETFIELD_R1:
+        printf("\t; ");
+        PrintConstant(f,b);
+        printf(" ");
+        if (ISK(c)) PrintConstant(f,INDEXK(c)); else printf("-");
         break;
       case OP_JMP:
       case OP_FORLOOP:
