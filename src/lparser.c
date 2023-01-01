@@ -478,26 +478,22 @@ static void close_func (LexState *ls) {
   if (fs) anchor_token(ls);
 }
 
+struct SParser {
+  struct LexState *ls;
+  struct FuncState *fs;
+};
 
-Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
-  struct LexState lexstate;
-  struct FuncState funcstate;
-  struct FunctionNameStack functionNameStack;
-  lexstate.buff = buff;
-  lexstate.functionNameStack = &functionNameStack;
-  functionNameStack.names = NULL;
-  functionNameStack.used = functionNameStack.alloc = 0;
-  luaX_setinput(H, &lexstate, z, luaS_new(H, name));
-  open_func(&lexstate, &funcstate);
-  funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
-#if 0
-  luaX_next(&lexstate);  /* read first token */
-#else
-  luaX_readFirstToken(&lexstate);  /* read first token */
-  switch (lexstate.t.token) {
+static void parser_inner_func (hksc_State *H, void *ud) {
+  struct SParser *p = cast(struct SParser *, ud);
+  struct LexState *ls = p->ls;
+  struct FuncState *fs = p->fs;
+  open_func(ls, fs);
+  fs->f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
+  luaX_readFirstToken(ls);  /* read first token */
+  switch (ls->t.token) {
     case TK_UTF8_BOM:
-      lexstate.textmode = UTF8;
-      luaX_next(&lexstate);
+      ls->textmode = UTF8;
+      luaX_next(ls);
       break;
     case TK_INVALID_BOM:
     case TK_UTF16LE_BOM:
@@ -508,11 +504,29 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
                     "UTF-8 are supported");
       break;
   }
-#endif
-  chunk(&lexstate);
-  check(&lexstate, TK_EOS);
-  close_func(&lexstate);
+  chunk(ls);
+  check(ls, TK_EOS);
+  close_func(ls);
+}
+
+
+Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
+  int status;
+  struct SParser p;
+  struct LexState lexstate;
+  struct FuncState funcstate;
+  struct FunctionNameStack functionNameStack;
+  p.ls = &lexstate;
+  p.fs = &funcstate;
+  lexstate.buff = buff;
+  lexstate.functionNameStack = &functionNameStack;
+  functionNameStack.names = NULL;
+  functionNameStack.used = functionNameStack.alloc = 0;
+  luaX_setinput(H, &lexstate, z, luaS_new(H, name));
+  status = luaD_pcall(H, parser_inner_func, &p);
   freeFunctionNameStack(&lexstate);
+  if (status)
+    luaD_throw(H, status); /* return the error to the outer pcall */
   luaK_optimize_function(H, funcstate.f);
   lua_assert(funcstate.prev == NULL);
   lua_assert(funcstate.f->nups == 0);
