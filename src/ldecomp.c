@@ -700,6 +700,7 @@ enum INS_FLAG {
   INS_LOOPEND, /* last pc in a loop */
   INS_BREAKSTAT, /* pc is a break instruction */
   INS_WHILESTATEND, /* last pc in a while-loop, to help detect if-statements */
+  INS_REPEATSTATEND, /* last pc in a reoeat-loop */
   INS_NEWREG, /* first pc to use a given register */
   /* end of instruction flags */
   MAX_INS
@@ -726,6 +727,7 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_LOOPEND",
   "INS_BREAKSTAT",
   "INS_WHILESTATEND",
+  "INS_REPEATSTATEND",
   "INS_NEWREG",
   /* end of instruction flags */
   "MAX_INS"
@@ -897,12 +899,14 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("LOOP FAIL\n", D);
     if (test_ins_property(fs, pc, INS_BREAKSTAT))
       DumpLiteral("BREAK\n", D);
-    if (test_ins_property(fs, pc, INS_WHILESTATEND))
-      DumpLiteral("END WHILE\n", D);
-    else if (test_ins_property(fs, pc, INS_LOOPEND))
-      DumpLiteral("END LOOP\n", D);
     if (test_ins_property(fs, pc, INS_BLOCKEND))
       DumpLiteral("END BLOCK\n", D);
+    if (test_ins_property(fs, pc, INS_WHILESTATEND))
+      DumpLiteral("END WHILE\n", D);
+    else if (test_ins_property(fs, pc, INS_REPEATSTATEND))
+      DumpLiteral("END REPEAT\n", D);
+    else if (test_ins_property(fs, pc, INS_LOOPEND))
+      DumpLiteral("END LOOP\n", D);
     DumpStringf(D, "\t%d\t%s\n", pc+1, luaP_opnames[o]);
   }
 }
@@ -981,23 +985,28 @@ typedef struct CodeAnalyzer {
 ** Check if the given jump at PC with TARGET is after the start of a loop.
 ** TARGET-1 must be marked as the end of a loop.
 */
-static int pcinloop(const CodeAnalyzer *ca, DFuncState *fs, int pc, int target){
-  int loopstart = ca->whilestatstart;
+static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
+  int loopstart;
   int sbx = GETARG_sBx(ca->code[target-1]);
   lua_assert(test_ins_property(fs, target - 1, INS_LOOPEND));
   lua_assert(GET_OPCODE(ca->code[pc]) == OP_JMP);
   lua_assert(sbx < 0);
   lua_assert(pc < target);
-  lua_assert(ca->inwhileloop > 0);
-  if (!test_ins_property(fs, loopstart, INS_FORLIST) &&
-      !test_ins_property(fs, loopstart, INS_REPEATSTAT))
-    lua_assert(loopstart != pc);
+  loopstart = target + sbx;
+#if 0
+  if (test_ins_property(fs, loopstart, INS_WHILESTAT))
+    lua_assert(loopstart = ca->whilestatstart);
+  if (test_ins_property(fs, loopstart, INS_FORNUM) ||
+      test_ins_property(fs, loopstart, INS_FORLIST))
+    lua_assert(ca->inforloop > 0);
+#endif
   /* avoid a long assertion string */
   if (!test_ins_property(fs, loopstart, INS_WHILESTAT) &&
       !test_ins_property(fs, loopstart, INS_FORLIST) &&
       !test_ins_property(fs, loopstart, INS_FORNUM) &&
-      !test_ins_property(fs, loopstart, INS_REPEATSTAT))
+      !test_ins_property(fs, loopstart, INS_REPEATSTAT)) {
     lua_assert(0); /* cannot happen */
+  }
   return loopstart <= pc;
 }
 
@@ -1042,10 +1051,10 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               ca->inforloop++;
             }
             else { /* possibly a repeat-loop */
-              /* When there are nested branches at the end of a while-loop, they
-                 will exit by jumping to the start of the loop, saving an
-                 unnecessary jump. Sometimes this will be preceded with a test,
-                 such as the following case:
+              /* When there are branches at the end of a while-loop, they will
+                 exit by jumping to the start of the loop, saving an unnecessary
+                 jump. Sometimes this will be preceded with a test, such as the
+                 following case:
                     while a do
                         ...
                         if b then
@@ -1064,24 +1073,28 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                 printf("  encountered a repeat loop starting at %d\n",target+1);
                 init_ins_property(fs, target, INS_REPEATSTAT);
                 init_ins_property(fs, pc, INS_LOOPEND);
+                init_ins_property(fs, pc, INS_REPEATSTATEND);
               }
               else if (test_ins_property(fs, target, INS_WHILESTAT)) {
                 /* when while-loops fail-jump backward, it is because they are
                    at the end of an enclosing while-loop */
+#if 0
                 if (target == outerwhilestat)
                   init_ins_property(fs, pc, INS_LOOPFAIL);
                 /* otherwise it is a branch fail-jumping to the start of the
                    current while-loop */
-                else {
-                  lua_assert(target == ca->whilestatstart);
+#endif
+                if (target == ca->whilestatstart) {
                   init_ins_property(fs, pc, INS_BRANCHFAIL);
                   /* there is a branch at the end of the loop, which means the
                      end of the loop is also the end of a block */
                   set_ins_property(fs, endpc, INS_BLOCKEND);
                 }
+                else
+                  init_ins_property(fs, pc, INS_LOOPFAIL);
               }
               else { /* jumps to repeat-loop */
-                /*init_ins_property(fs, pc, INS_LOOPFAIL);*/
+                init_ins_property(fs, pc, INS_LOOPFAIL);
               }
             }
           }
@@ -1156,11 +1169,15 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           if (ca->prevTMode) { /* conditional forward jump */
             /*if (forlistreg != -1)
               break;*/ /* part of for-list variable evaluation */
+            if (test_ins_property(fs, target-1, INS_REPEATSTATEND) &&
+                pcinloop(ca, fs, pc, target)) {
+              init_ins_property(fs, pc, INS_LOOPFAIL);
+            }
             /* There is ambiguity when an if-statement and while-loop have the
                same exit target. This jump could be for the loop condition or it
                could be for the branch condition. If the current pc is after the
                start of the loop, this is part of the loop condition */
-            if (((target - 1) == endpc && pc > startpc) ||
+            else if (((target - 1) == endpc && pc > startpc) ||
                 test_ins_property(fs, target, INS_OPTLOOPFAILEXIT)) {
               init_ins_property(fs, pc, INS_LOOPFAIL);
               break; /* do nothing */
@@ -1168,7 +1185,16 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             else {
               /* jump target out of if-statement */
               init_ins_property(fs, pc, INS_BRANCHFAIL);
-              set_ins_property(fs, target-1, INS_BLOCKEND);
+              /* this will be set already if there are elseif-branches or an
+                 else-branch */
+              if (test_ins_property(fs, target-1, INS_BLOCKEND) &&
+                  GET_OPCODE(code[target-1]) == OP_JMP) {
+                int jtarget = target + GETARG_sBx(code[target-1]);
+                if (jtarget - 1 > pc)
+                  set_ins_property(fs, jtarget-1, INS_BLOCKEND);
+              }
+              else
+                init_ins_property(fs, target-1, INS_BLOCKEND);
             }
             /*lua_assert(!test_ins_property(fs, target-1, INS_LOOPEND));*/
           }
@@ -1189,7 +1215,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               printf("  encountered exit-jump from a branch\n");
               /* mark this jump as the end of the current branch */
               init_ins_property(fs, pc, INS_BLOCKEND);
-              set_ins_property(fs, target, INS_BLOCKEND);
+              /*set_ins_property(fs, target, INS_BLOCKEND);*/
             }
           }
         }
@@ -1204,8 +1230,10 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       ca->inforloop--;
       lua_assert(ca->inforloop >= 0);
     }
-    if (test_ins_property(fs, pc, INS_WHILESTAT))
+    if (test_ins_property(fs, pc, INS_WHILESTAT)) {
+      lua_assert(ca->inwhileloop >= 1);
       break;
+    }
   }
   ca->inwhileloop--;
   ca->whilestatstart = outerwhilestat;
@@ -1215,7 +1243,9 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
 /*
 ** The code analyzer works in the first pass and detects the beginnings and ends
 ** of loops (and determines the type of each loop), the ends of blocks, branch
-** jumps, break jumps
+** jumps, break jumps, and the beginnings of for-loop control variable
+** evaluations. It walks through the code backwards, which makes distinguishing
+** branch tests from loop tests a simpler task.
 */
 static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 {
