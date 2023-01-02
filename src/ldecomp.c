@@ -689,7 +689,7 @@ enum INS_FLAG {
   INS_ELSESTAT, /* first pc in an else-branch */
   INS_IFSTATEND, /* exit target of an if-statement */
   INS_FORLIST, /* first pc in a list for-loop */
-  INS_FORLISTVARS, /* first pc to evaluate for-list control variables */
+  INS_PREFORLIST, /* first pc to evaluate for-list control variables */
   INS_FORNUM, /* first pc in a numeric for-loop */
   INS_BLOCKEND, /* last pc in a block */
   INS_LOOPEND, /* last pc in a loop */
@@ -718,7 +718,7 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_ELSESTAT",
   "INS_IFSTATEND",
   "INS_FORLIST",
-  "INS_FORLISTVARS",
+  "INS_PREFORLIST",
   "INS_FORNUM",
   "INS_BLOCKEND",
   "INS_LOOPEND",
@@ -882,8 +882,8 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("BEGIN ELSEIF\n", D);
     if (test_ins_property(fs, pc, INS_ELSESTAT))
       DumpLiteral("BEGIN ELSE\n", D);
-    if (test_ins_property(fs, pc, INS_FORLISTVARS))
-      DumpLiteral("BEGIN FORLIST CONTROL VARIABLES\n", D);
+    if (test_ins_property(fs, pc, INS_PREFORLIST))
+      DumpLiteral("PRE FORLIST\n", D);
     if (test_ins_property(fs, pc, INS_FORLIST))
       DumpLiteral("BEGIN FORLIST\n", D);
     if (test_ins_property(fs, pc, INS_FORNUM))
@@ -994,6 +994,64 @@ static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
   return loopstart <= pc;
 }
 
+static int beginstempexpr(const Instruction *code, Instruction i, int pc,
+                           int firstreg, int jumplimit)
+{
+  OpCode o = GET_OPCODE(i);
+  int a = GETARG_A(i);
+  int b = GETARG_B(i);
+  int c = GETARG_C(i);
+  switch (o) {
+    case OP_JMP: {
+      int sbx = GETARG_sBx(i);
+      lua_assert(sbx >= 0);
+      lua_assert(pc + 1 + sbx < jumplimit);
+      return 0;
+    }
+    case OP_LOADBOOL:
+      /* OP_LOADBOOL may begin an expression, unless it is preceded by another
+         OP_LOADBOOL with argC == 1 */
+      if ((pc-1) >= 0) {
+        Instruction prev = code[pc-1];
+        if (GET_OPCODE(prev) == OP_LOADBOOL && GETARG_C(prev))
+          return 0;
+      }
+      /* fallthrough */
+    default:
+      /* OP_TESTSET is handled in `beginseval' */
+      if (testTMode(o) && o != OP_TESTSET) { /* conditional expression */
+        if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP) {
+          checkjumptarget:
+          {
+            int jumpoffs = GETARG_sBx(code[pc-1]);
+            int target = pc + jumpoffs;
+            if (target > jumplimit || jumpoffs < 0)
+              return 1; /* the previous jump is not part of this expression */
+            else
+              return 0;
+          }
+        }
+        if (testAMode(o)) { /* test */
+          if (a < firstreg)
+            return 1;
+        }
+        else { /* comparison */
+          if ((ISK(b) || b < firstreg) && (ISK(c) || c < firstreg))
+            return 1;
+        }
+      }
+      else if (testAMode(o)) {
+        if (a == firstreg && beginseval(o, a, b, c)) {
+          if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
+            goto checkjumptarget;
+          return 1;
+        }
+      }
+      /* fallthrough */
+      return 0;
+  }
+}
+
 static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
 {
   int endpc; /* pc of call */
@@ -1020,24 +1078,15 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
   }
   for (; ca->pc >= 0; ca->pc--) {
     const int pc = ca->pc;
-    CODE_LOOP_DECL(code,pc);
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    int c = GETARG_C(i);
     switch (o) {
-      case OP_JMP:
-        lua_assert(sbx >= 0);
-        lua_assert(pc + 1 + sbx < endpc);
-        break;
-      case OP_LOADBOOL:
-        /* OP_LOADBOOL may begin an expression, unless it is preceded by another
-           OP_LOADBOOL with argC == 1 */
-        if ((pc-1) >= 0) {
-          Instruction prev = code[pc-1];
-          if (GET_OPCODE(prev) ==  OP_LOADBOOL && GETARG_C(prev))
-            break;
-        }
+      case OP_SELF:
+        lua_assert(a == firstreg);
         /* fallthrough */
       default: {
-        if (o == OP_SELF)
-          lua_assert(a == firstreg);
         if (isOpCall(o)) { /* a nested call expression */
           callstat1(ca, fs);
           /* when a function return value is used to evaluate another function
@@ -1047,53 +1096,68 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
             return;
           }
         }
-        /* OP_TESTSET is handled in `beginseval' */
-        else if (testTMode(o) && o != OP_TESTSET) { /* conditional expression */
-          if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP) {
-            checkjumptarget:
-            {
-            int jumpoffs = GETARG_sBx(code[pc-1]);
-            int target = pc + jumpoffs;
-            lua_assert(target != endpc);
-            if (target > endpc || jumpoffs < 0)
-              goto begincall; /* the previous jump is not part of the call */
-            else
-              break;
-            }
-          }
-          if (testAMode(o)) {
-            if (a < firstreg) /* testing a local variable would begin */
-              goto begincall;
-          }
-          else {
-            if (!ISK(b)) {
-              if (b < firstreg)
-                goto begincall;
-            }
-            else if (!ISK(c)) {
-              if (c < firstreg)
-                goto begincall;
-            }
-            else
-              goto begincall;
-          }
+        else if (beginstempexpr(code, i, pc, firstreg, endpc)) {
+          init_ins_property(fs, pc, INS_PRECALL);
+          printf("returning from callstat1 at pc %d, OP_%s\n",
+                 pc+1, luaP_opnames[o]);
+          return;
         }
-        else if (testAMode(o)) {
-          if (a == firstreg && beginseval(o, a, b, c)) {
-            if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
-              goto checkjumptarget;
-            begincall:
-            init_ins_property(fs, pc, INS_PRECALL);
-            printf("returning from callstat1 at pc %d, OP_%s\n",
-                   pc+1, luaP_opnames[o]);
-            return;
-          }
-        }
-        UNUSED(bx); UNUSED(sbx); 
         break;
       }
     }
   }
+}
+
+static void forlist1(CodeAnalyzer *ca, DFuncState *fs)
+{
+  const Instruction *code = ca->code;
+  int firstreg; /* first register of loop control variables */
+  int nvars; /* number of loop variables */
+  int startpc; /* start of loop */
+  lua_assert(ca->inforloop);
+  { /* get number of variables and start register of control variables */
+    Instruction entry; /* OP_JMP into the for-loop */
+    Instruction test; /* OP_TFORLOOP at the end of the for-loop */
+    int testpc; /* pc of test */
+    lua_assert(ca->pc >= 0);
+    entry = code[ca->pc];
+    lua_assert(GET_OPCODE(entry) == OP_JMP);
+    lua_assert(GETARG_sBx(entry) >= 0);
+    testpc = ca->pc + 1 + GETARG_sBx(entry);
+    test = code[testpc];
+    lua_assert(GET_OPCODE(test) == OP_TFORLOOP);
+    nvars = GETARG_C(test);
+    firstreg = GETARG_A(test);
+    startpc = ca->pc--;
+  }
+  for (; ca->pc >= 0; ca->pc--) {
+    const int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    switch (o) {
+      CASE_OP_CALL: {
+        callstat1(ca, fs);
+        if (firstreg == a) {
+          init_ins_property(fs, ca->pc, INS_PREFORLIST);
+          return;
+        }
+        break;
+      }
+      default: {
+        if (beginstempexpr(code, i, pc, firstreg, startpc)) {
+          init_ins_property(fs, pc, INS_PREFORLIST);
+          printf("returning from forlist1 at pc %d, OP_%s\n",
+                 pc+1, luaP_opnames[o]);
+          return;
+        }
+        break;
+      }
+    }
+  }
+  /* it is possible for a for-loop to have no preparation code */
+  lua_assert(ca->pc < 0);
+  init_ins_property(fs, 0, INS_PREFORLIST);
 }
 
 /*
@@ -1118,9 +1182,18 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
     printf("pc %d: OP_%s\n", nextpc, luaP_opnames[o]);
     switch (o) {
       case OP_JMP: {
-        int target = nextpc + sbx;
+        int target;
         OpCode prevop;
+        /* jump into a for-loop */
+        if (test_ins_property(fs, nextpc, INS_FORLIST)) {
+          lua_assert(ca->inforloop >= 1);
+          forlist1(ca, fs);
+          ca->inforloop--;
+          break;
+        }
+        /* excluding the above case, this cannot be the first instruction */
         lua_assert(pc > 0);
+        target = nextpc + sbx;
         prevop = GET_OPCODE(code[prevpc]);
         ca->prevTMode = testTMode(prevop);
         /* there are 4 basic cetegories of jumps:
@@ -1287,13 +1360,6 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             }
           }
           else { /* unconditional forward jump (possibly a break statement) */
-            /*lua_assert(!inwhilecond);*/ /* cannot happen */
-            if (test_ins_property(fs, nextpc, INS_FORLIST)) {
-              Instruction forloopins = code[target];
-              lua_assert(GET_OPCODE(forloopins) == OP_TFORLOOP);
-              forlistreg = GETARG_A(forloopins);
-              break;
-            }
             if (test_ins_property(fs, target-1, INS_LOOPEND) &&
                 pcinloop(ca, fs, pc, target)) { /* break statement */
               printf("  encoutered break-statement\n");
@@ -1316,10 +1382,6 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         callstat1(ca, fs);
         break;
       default: (void)a;(void)b;(void)c;(void)bx;(void)sbx;
-    }
-    if (test_ins_property(fs, ca->pc, INS_FORLIST)) {
-      ca->inforloop--;
-      lua_assert(ca->inforloop >= 0);
     }
     if (test_ins_property(fs, ca->pc, INS_WHILESTAT)) {
       lua_assert(ca->inwhileloop >= 1);
