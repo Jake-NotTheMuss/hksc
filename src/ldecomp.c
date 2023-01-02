@@ -996,6 +996,7 @@ static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
 
 static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
 {
+  int endpc; /* pc of call */
   int nargs; /* number of arguments */
   int nret; /* number of return values */
   int firstreg; /* first register used for the call */
@@ -1015,7 +1016,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     nargs = b - 1;
     firstreg = a;
     lastreg = firstreg + nargs;
-    ca->pc--;
+    endpc = ca->pc--;
   }
   for (; ca->pc >= 0; ca->pc--) {
     const int pc = ca->pc;
@@ -1023,6 +1024,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     switch (o) {
       case OP_JMP:
         lua_assert(sbx >= 0);
+        lua_assert(pc + 1 + sbx < endpc);
         break;
       case OP_LOADBOOL:
         /* OP_LOADBOOL may begin an expression, unless it is preceded by another
@@ -1032,11 +1034,11 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
           if (GET_OPCODE(prev) ==  OP_LOADBOOL && GETARG_C(prev))
             break;
         }
-      case OP_SELF:
-        lua_assert(a == firstreg);
         /* fallthrough */
       default: {
-        if (isOpCall(o)) {
+        if (o == OP_SELF)
+          lua_assert(a == firstreg);
+        if (isOpCall(o)) { /* a nested call expression */
           callstat1(ca, fs);
           /* when a function return value is used to evaluate another function
              expression, mark the call op as a pre-call */
@@ -1045,9 +1047,22 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
             return;
           }
         }
-        else if (testTMode(o)) {
+        /* OP_TESTSET is handled in `beginseval' */
+        else if (testTMode(o) && o != OP_TESTSET) { /* conditional expression */
+          if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP) {
+            checkjumptarget:
+            {
+            int jumpoffs = GETARG_sBx(code[pc-1]);
+            int target = pc + jumpoffs;
+            lua_assert(target != endpc);
+            if (target > endpc || jumpoffs < 0)
+              goto begincall; /* the previous jump is not part of the call */
+            else
+              break;
+            }
+          }
           if (testAMode(o)) {
-            if (a < firstreg)
+            if (a < firstreg) /* testing a local variable would begin */
               goto begincall;
           }
           else {
@@ -1066,7 +1081,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
         else if (testAMode(o)) {
           if (a == firstreg && beginseval(o, a, b, c)) {
             if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
-              break;
+              goto checkjumptarget;
             begincall:
             init_ins_property(fs, pc, INS_PRECALL);
             printf("returning from callstat1 at pc %d, OP_%s\n",
