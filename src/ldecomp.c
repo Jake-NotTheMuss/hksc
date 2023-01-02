@@ -25,13 +25,6 @@
 /* for formatting decimal integers in generated variable names */
 #define INT_CHAR_MAX_DEC (3 * sizeof(int) * (CHAR_BIT/8))
 
-/* type is "arg" or "local" */
-#define VAR_NAME_MAX(type)
-
-#define isCall(o) ((o) == OP_CALL || (o) == OP_CALL_I || (o) == OP_CALL_C \
-  (o) == OP_CALL_M || (o) == OP_TAILCALL || (o) == OP_TAILCALL_I || \
-  (o) == OP_TAILCALL_C || (o) == OP_TAILCALL_M)
-
 #define nodebug_p(H) (Settings(H).ignore_debug)
 
 struct DFuncState;
@@ -682,9 +675,11 @@ static DExp *k2exp(DFuncState *fs, int i, DecompState *D)
 enum INS_FLAG {
   INS_FJT = 0,
   INS_BJT,
-  INS_CONDSTART, /* first pc in a condition evaluation */
-  INS_BRANCHFAIL, /* fail-jump out of an if-statement condition evaluation */
-  INS_LOOPFAIL, /* fail-jump out of a loop condition evaluation */
+  INS_PRECALL, /* first pc that sets up a function call */
+  INS_BRANCHFAIL, /* false-jump out of an if-statement condition evaluation */
+  INS_BRANCHPASS, /* true-jump out of an if-statement condition evaluation */
+  INS_LOOPFAIL, /* false-jump out of a loop condition evaluation */
+  INS_LOOPPASS, /* true-jump out of a loop condition evaluation */
   INS_OPTLOOPFAILEXIT, /* optimized jump target of a loop fail */
   INS_REPEATSTAT, /* first pc in a repeat-loop */
   INS_WHILESTAT, /* first pc in a while-loop */
@@ -709,9 +704,11 @@ enum INS_FLAG {
 static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_FJT",
   "INS_BJT",
-  "INS_CONDSTART",
+  "INS_PRECALL",
   "INS_BRANCHFAIL",
+  "INS_BRANCHPASS",
   "INS_LOOPFAIL",
+  "INS_LOOPPASS",
   "INS_OPTLOOPFAILEXIT",
   "INS_REPEATSTAT",
   "INS_WHILESTAT",
@@ -875,8 +872,6 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     /*CODE_LOOP_DECL(code,pc);*/
-    if (test_ins_property(fs, pc, INS_CONDSTART))
-      DumpLiteral("BEGIN CONDITION EVALUATION\n", D);
     if (test_ins_property(fs, pc, INS_REPEATSTAT))
       DumpLiteral("BEGIN REPEAT\n", D);
     if (test_ins_property(fs, pc, INS_WHILESTAT))
@@ -895,8 +890,14 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("BEGIN FORNUM\n", D);
     if (test_ins_property(fs, pc, INS_BRANCHFAIL))
       DumpLiteral("BRANCH FAIL\n", D);
+    else if (test_ins_property(fs, pc, INS_BRANCHPASS))
+      DumpLiteral("BRANCH PASS\n", D);
     if (test_ins_property(fs, pc, INS_LOOPFAIL))
       DumpLiteral("LOOP FAIL\n", D);
+    else if (test_ins_property(fs, pc, INS_LOOPPASS))
+      DumpLiteral("LOOP PASS\n", D);
+    if (test_ins_property(fs, pc, INS_PRECALL))
+      DumpLiteral("PRE FUNCTION CALL\n", D);
     if (test_ins_property(fs, pc, INS_BREAKSTAT))
       DumpLiteral("BREAK\n", D);
     if (test_ins_property(fs, pc, INS_BLOCKEND))
@@ -942,27 +943,17 @@ static int beginseval(OpCode o, int a, int b, int c) {
     case OP_GETTABLE:
     case OP_CONCAT:
     /* arithmetic operations */
-    case OP_ADD:
-    case OP_ADD_BK:
-    case OP_SUB:
-    case OP_SUB_BK:
-    case OP_MUL:
-    case OP_MUL_BK:
-    case OP_DIV:
-    case OP_DIV_BK:
-    case OP_MOD:
-    case OP_MOD_BK:
-    case OP_POW:
-    case OP_POW_BK:
+    case OP_ADD: case OP_ADD_BK:
+    case OP_SUB: case OP_SUB_BK:
+    case OP_MUL: case OP_MUL_BK:
+    case OP_DIV: case OP_DIV_BK:
+    case OP_MOD: case OP_MOD_BK:
+    case OP_POW: case OP_POW_BK:
 #ifdef LUA_CODT7
-    case OP_LEFT_SHIFT:
-    case OP_LEFT_SHIFT_BK:
-    case OP_RIGHT_SHIFT:
-    case OP_RIGHT_SHIFT_BK:
-    case OP_BIT_AND:
-    case OP_BIT_AND_BK:
-    case OP_BIT_OR:
-    case OP_BIT_OR_BK:
+    case OP_LEFT_SHIFT: case OP_LEFT_SHIFT_BK:
+    case OP_RIGHT_SHIFT: case OP_RIGHT_SHIFT_BK:
+    case OP_BIT_AND: case OP_BIT_AND_BK:
+    case OP_BIT_OR: case OP_BIT_OR_BK:
 #endif /* LUA_CODT7 */
       return a != b && a != c;
     /* the remaining operations do not clobber A or do not depend on A */
@@ -993,13 +984,6 @@ static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
   lua_assert(sbx < 0);
   lua_assert(pc < target);
   loopstart = target + sbx;
-#if 0
-  if (test_ins_property(fs, loopstart, INS_WHILESTAT))
-    lua_assert(loopstart = ca->whilestatstart);
-  if (test_ins_property(fs, loopstart, INS_FORNUM) ||
-      test_ins_property(fs, loopstart, INS_FORLIST))
-    lua_assert(ca->inforloop > 0);
-#endif
   /* avoid a long assertion string */
   if (!test_ins_property(fs, loopstart, INS_WHILESTAT) &&
       !test_ins_property(fs, loopstart, INS_FORLIST) &&
@@ -1010,12 +994,76 @@ static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
   return loopstart <= pc;
 }
 
+static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
+{
+  int nargs; /* number of arguments */
+  int nret; /* number of return values */
+  int firstreg; /* first register used for the call */
+  int lastreg; /* last register used for the call */
+  const Instruction *code = ca->code;
+  { /* handle the call instruction */
+    Instruction call;
+    int a, b, c;
+    lua_assert(ca->pc >= 0);
+    call = code[ca->pc];
+    /* avoid long assertion string */
+    if (!isOpCall(GET_OPCODE(call))) lua_assert(0);
+    a = GETARG_A(call);
+    b = GETARG_B(call);
+    c = GETARG_C(call);
+    nret = c - 1;
+    nargs = b - 1;
+    firstreg = a;
+    lastreg = firstreg + nargs;
+    ca->pc--;
+  }
+  for (; ca->pc >= 0; ca->pc--) {
+    const int pc = ca->pc;
+    CODE_LOOP_DECL(code,pc);
+    switch (o) {
+      case OP_JMP:
+        break;
+      case OP_SELF:
+        lua_assert(a == firstreg);
+        /* fallthrough */
+      default: {
+        if (isOpCall(o)) {
+          callstat1(ca, fs);
+          /* when a function return value is used to evaluate another function
+             expression, mark the call op as a pre-call */
+          if (a == firstreg && c > 1)
+            init_ins_property(fs, pc, INS_PRECALL);
+        }
+        else if (testTMode(o)) {
+          if (a < firstreg) {
+            init_ins_property(fs, pc, INS_PRECALL);
+            return;
+          }
+        }
+        else if (testAMode(o)) {
+          if (a == firstreg && beginseval(o, a, b, c)) {
+            if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
+              break;
+            init_ins_property(fs, pc, INS_PRECALL);
+            printf("returning from callstat1 at pc %d, OP_%s\n",
+                   pc+1, luaP_opnames[o]);
+            return;
+          }
+        }
+        UNUSED(bx); UNUSED(sbx); 
+        break;
+      }
+    }
+  }
+}
+
 /*
 ** First pass while-loop analyzer
 */
 static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
 {
   int outerwhilestat, outerwhilestatend;
+  int forlistreg = -1;
   const Instruction *code = ca->code;
   const int endpc = ca->pc--;
   ca->inwhileloop++;
@@ -1078,12 +1126,6 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               else if (test_ins_property(fs, target, INS_WHILESTAT)) {
                 /* when while-loops fail-jump backward, it is because they are
                    at the end of an enclosing while-loop */
-#if 0
-                if (target == outerwhilestat)
-                  init_ins_property(fs, pc, INS_LOOPFAIL);
-                /* otherwise it is a branch fail-jumping to the start of the
-                   current while-loop */
-#endif
                 if (target == ca->whilestatstart) {
                   init_ins_property(fs, pc, INS_BRANCHFAIL);
                   /* there is a branch at the end of the loop, which means the
@@ -1094,7 +1136,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                   init_ins_property(fs, pc, INS_LOOPFAIL);
               }
               else { /* jumps to repeat-loop */
-                init_ins_property(fs, pc, INS_LOOPFAIL);
+                init_ins_property(fs, pc, INS_LOOPPASS);
               }
             }
           }
@@ -1119,7 +1161,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                jump from a branch */
             if (test_ins_property(fs, target, INS_WHILESTAT)) {
               /* a break statement in an inner block/loop at the end of a
-                 while-loop will jump backward to the enclosing while-loop */
+                 while-loop will jump backward to the start of the enclosing
+                 while-loop */
               if (target == outerwhilestat) {
                 /* an outer while loop with at least 1 inner for-loop or inner
                    while-loop */
@@ -1128,8 +1171,6 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                            (ca->inforloop + ca->inwhileloop) >= 2);
                 init_ins_property(fs, pc, INS_BREAKSTAT);
               }
-              /*if (ca->inwhileloop && (ca->inforloop + ca->inwhileloop) >= 2)*/
-                /*init_ins_property(fs, pc, INS_BREAKSTAT);*/
               else
                 init_ins_property(fs, pc, INS_BLOCKEND); /* end of if/elseif */
             }
@@ -1141,17 +1182,17 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               init_ins_property(fs, pc, INS_WHILESTATEND);
               if (test_ins_property(fs, nextpc, INS_BLOCKEND)) {
                 Instruction nextins = code[nextpc];
-                int jtarget;
+                int opttarget;
                 lua_assert(GET_OPCODE(nextins) == OP_JMP);
-                jtarget = nextpc + 1 + GETARG_sBx(nextins);
-                if (jtarget > nextpc)
+                opttarget = nextpc + 1 + GETARG_sBx(nextins);
+                if (opttarget > nextpc) /* forward jump */
                   /* This is the result of an optimized jump from a failed loop
                      test to the end of the enclosing if-else branches. It
                      happens when there is no more code after the while-loop and
                      before the end of the enclosing branch. It is to be used
                      internally by the analyzer to determine if a failed
                      condition is part of a loop test or a branch test */
-                  init_ins_property(fs, jtarget, INS_OPTLOOPFAILEXIT);
+                  init_ins_property(fs, opttarget, INS_OPTLOOPFAILEXIT);
               }
               whilestat1(ca, fs, target);
               /* make sure everything was updated correctly */
@@ -1167,43 +1208,51 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           lua_assert(sbx >= 0);
           set_ins_property(fs, target, INS_FJT);
           if (ca->prevTMode) { /* conditional forward jump */
-            /*if (forlistreg != -1)
-              break;*/ /* part of for-list variable evaluation */
+            if (forlistreg != -1)
+              break; /* part of for-list variable evaluation */
             if (test_ins_property(fs, target-1, INS_REPEATSTATEND) &&
                 pcinloop(ca, fs, pc, target)) {
               init_ins_property(fs, pc, INS_LOOPFAIL);
             }
+            else if (test_ins_property(fs,target-1, INS_LOOPFAIL))
+              init_ins_property(fs, pc, INS_LOOPPASS);
+            else if (test_ins_property(fs,target-1, INS_LOOPPASS))
+              init_ins_property(fs, pc, INS_LOOPFAIL);
             /* There is ambiguity when an if-statement and while-loop have the
                same exit target. This jump could be for the loop condition or it
                could be for the branch condition. If the current pc is after the
                start of the loop, this is part of the loop condition */
-            else if (((target - 1) == endpc && pc > startpc) ||
-                test_ins_property(fs, target, INS_OPTLOOPFAILEXIT)) {
+            else if (ca->inwhileloop &&
+                     (test_ins_property(fs, target-1, INS_WHILESTATEND) ||
+                     test_ins_property(fs, target, INS_OPTLOOPFAILEXIT))) {
               init_ins_property(fs, pc, INS_LOOPFAIL);
-              break; /* do nothing */
+              break;
             }
             else {
-              /* jump target out of if-statement */
-              init_ins_property(fs, pc, INS_BRANCHFAIL);
-              /* this will be set already if there are elseif-branches or an
-                 else-branch */
-              if (test_ins_property(fs, target-1, INS_BLOCKEND) &&
-                  GET_OPCODE(code[target-1]) == OP_JMP) {
-                int jtarget = target + GETARG_sBx(code[target-1]);
-                if (jtarget - 1 > pc)
-                  set_ins_property(fs, jtarget-1, INS_BLOCKEND);
+              if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
+                init_ins_property(fs, pc, INS_BRANCHPASS);
+              else {
+                /* jump target out of if-statement */
+                /* this will be set already if there are elseif-branches or an
+                   else-branch */
+                init_ins_property(fs, pc, INS_BRANCHFAIL);
+                if (test_ins_property(fs, target-1, INS_BLOCKEND) &&
+                    GET_OPCODE(code[target-1]) == OP_JMP) {
+                  int jtarget = target + GETARG_sBx(code[target-1]);
+                  if (jtarget - 1 > pc)
+                    set_ins_property(fs, jtarget-1, INS_BLOCKEND);
+                }
+                else
+                  set_ins_property(fs, target-1, INS_BLOCKEND);
               }
-              else
-                init_ins_property(fs, target-1, INS_BLOCKEND);
             }
-            /*lua_assert(!test_ins_property(fs, target-1, INS_LOOPEND));*/
           }
           else { /* unconditional forward jump (possibly a break statement) */
             /*lua_assert(!inwhilecond);*/ /* cannot happen */
             if (test_ins_property(fs, nextpc, INS_FORLIST)) {
-              Instruction tforloop = code[target];
-              lua_assert(GET_OPCODE(tforloop) == OP_TFORLOOP);
-              /*forlistreg = GETARG_A(tforloop);*/
+              Instruction forloopins = code[target];
+              lua_assert(GET_OPCODE(forloopins) == OP_TFORLOOP);
+              forlistreg = GETARG_A(forloopins);
               break;
             }
             if (test_ins_property(fs, target-1, INS_LOOPEND) &&
@@ -1224,13 +1273,16 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       case OP_TFORLOOP:
         lua_assert(test_ins_property(fs, nextpc, INS_LOOPEND));
         break;
-      default: (void)a;(void)b;(void)c;(void)bx;(void)sbx;(void)beginseval;
+      CASE_OP_CALL:
+        callstat1(ca, fs);
+        break;
+      default: (void)a;(void)b;(void)c;(void)bx;(void)sbx;
     }
-    if (test_ins_property(fs, pc, INS_FORLIST)) {
+    if (test_ins_property(fs, ca->pc, INS_FORLIST)) {
       ca->inforloop--;
       lua_assert(ca->inforloop >= 0);
     }
-    if (test_ins_property(fs, pc, INS_WHILESTAT)) {
+    if (test_ins_property(fs, ca->pc, INS_WHILESTAT)) {
       lua_assert(ca->inwhileloop >= 1);
       break;
     }
@@ -1262,176 +1314,8 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   lua_assert(ca.whilestatend == -1);
   lua_assert(ca.inforloop == 0);
   lua_assert(ca.inwhileloop == -1);
-  lua_assert(ca.pc == -1);
+  lua_assert(ca.pc < 0);
 }
-
-#if 0
-
-static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
-{
-  int pc;
-  int inforloop = 0; /* number of forloops currently active */
-  int inwhileloop = 0; /* number of while loops currently active */
-  int currtestjump = -1; /* jump intruction of current condition evaluation */
-  int inwhilecond = 0; /* currently walking through a while-loop condition */
-  struct {
-    lu_byte b; /* whether currently evaluating a tested expression */
-    int r1; /* register that was tested */
-    int r2; /* other register that was tested in comparison ops */
-  } evalcond = {0, -1, -1};
-  int forlistreg = -1; /* first for-loop register (argA in OP_TFORLOOP) */
-  int lastreg = f->numparams - 1; /* last register A */
-  int lastregstartpc; /* startpc of last register A */
-  int lastregA = -1;
-  const Instruction *code = f->code;
-  lu_byte *reg_properties;
-  int sizecode = f->sizecode;
-  lu_byte prevTMode = 0; /* previous pc is a test instruction */
-  lua_assert(sizecode > 0);
-  reg_properties = luaM_newvector(fs->H, fs->sizelocvars, lu_byte);
-  memset(reg_properties, 0, fs->sizelocvars);
-  /*addargs(f, fs);*/
-  for (pc = sizecode - 2; pc >= 0; pc--) {
-    const int nextpc = pc + 1;
-    const int prevpc = pc - 1;
-    CODE_LOOP_DECL(code,pc);
-    printf("pc %d: OP_%s\n", nextpc, luaP_opnames[o]);
-    switch (o) {
-      default: {
-        /* FOR-LIST VARIABLES */
-        if (testAMode(o)) {
-          if (forlistreg != -1 && lastregA != -1) {
-            if (a < forlistreg) {
-              init_ins_property(fs, lastregA, INS_FORLISTVARS);
-              forlistreg = -1;
-            }
-            else if (a == forlistreg) {
-              if (pc > 0) {
-
-              }
-            }
-          }
-          lastregA = pc;
-
-        }
-#if 0
-        if (testTMode(o)) {
-          Instruction jump_ins = code[nextpc];
-          int jump_target;
-          lua_assert(GET_OPCODE(jump_ins) == OP_JMP);
-          lua_assert(evalcond.b == 0);
-          evalcond.b = 1;
-          currtestjump = nextpc;
-          jump_target = GETARG_sBx(jump_ins);
-          if (testAMode(o)) evalcond.r1 = a; /* eval register A */
-          else {
-            lua_assert(getBMode(o) == OpArgR || getBMode(o) == OpArgRK);
-            if (!ISK(b)) evalcond.r1 = b; /* eval regiser B */
-            else evalcond.r1 = -1; /* constant */
-          }
-          if (getCMode(o) == OpArgR || getCMode(o) == OpArgRK) {
-            if (!ISK(c)) evalcond.r2 = c; /* compare with/eval register C */
-            else evalcond.r2 = -1; /* constant */
-          }
-        }
-        if (evalcond.b) {
-          if (pc == 0) {
-            init_ins_property(fs, pc, INS_CONDSTART);
-            evalcond.b = 0;
-          }
-          else {
-            ;
-          }
-          if (evalcond.r2 != -1) {
-            if (beginseval(o, a, b, c))
-            if (getOpMode(o) == iABC &&
-                (getCMode(o) == OpArgR || getCMode(o) == OpArgRK)) {
-              if (evalcond.r2 == c && beginseval(o, a, b, c))
-            }
-          }
-          if (testAMode(o)) {
-            if (evalcond.r1 != -1) {
-              ;
-            }
-          }
-        }
-#endif
-#if 0
-        if (testTMode(o)) { /* test instructions */
-          Instruction jump_ins;
-          int jump_target;
-          lua_assert(pc + 1 < sizecode);
-          jump_ins = code[nextpc];
-          lua_assert(GET_OPCODE(jump_ins) == OP_JMP);
-          jump_target = GETARG_sBx(jump_ins);
-          lua_assert(evalcond.yes == 0);
-          evalcond.yes = 1; /* evaluating an expression */
-          lua_assert(getOpMode(o) == iABC);
-          if (testAMode(o)) evalcond.r1 = a; /* eval register a */
-          else {
-            lua_assert(getBMode(o) == OpArgR || getBMode(o) == OpArgRK);
-            if (!ISK(b)) evalcond.r1 = b;
-            else lua_assert(evalcond.r1 == -1);
-          }
-          if (getCMode(o) == OpArgR || getCMode(o) == OpArgRK) {
-            if (!ISK(c)) evalcond.r2 = c; /* compare with/eval register c */
-            else lua_assert(evalcond.r2 == -1);
-          }
-        }
-#endif
-        break;
-      }
-#if 0
-      case OP_RETURN: {
-        ;
-        /* fallthrough */
-      }
-      case OP_LOADK: {
-        if (lastreg < a)
-          pass1_addlocalvar(fs, pc);
-      }
-
-      default: {
-        if (testAMode(o)) {
-          if (lastreg < a) {
-            int i;
-            for (i = lastreg; i < a; i++) {
-              pass1_addlocalvar(fs, pc);
-            }
-            lastreg = a;
-            lastregstartpc = pc;
-          }
-        }
-        break;
-      }
-      prevTMode = testTMode(o);
-#endif
-    }
-       (void)a; (void)b; (void)c; (void)bx; (void)lastreg;
-        (void) lastregstartpc; (void)D; (void)evalcond;
-    if (test_ins_property(fs, pc, INS_FORLIST)) {
-      inforloop--;
-      lua_assert(inforloop >= 0);
-    }
-    if (test_ins_property(fs, pc, INS_WHILESTAT)) {
-      inwhileloop--;
-      lua_assert(inwhileloop >= 0);
-    }
-#if 0
-    if (test_ins_property(fs, pc, INS_WHILESTAT)) {
-      numwhileloops--;
-      /*lua_assert(inwhilecond);*/
-      /*inwhilecond = 0;*/ /* out of the while-loop */
-      evalcond.yes = 0;
-      evalcond.r1 = evalcond.r2 = -1;
-    }
-#endif
-  }
-  /*if (forlistreg != -1)
-    init_ins_property(fs, lastregA, INS_FORLISTVARS);*/
-  luaM_freearray(fs->H, reg_properties, fs->sizelocvars, lu_byte);
-}
-#endif
 
 static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D);
 

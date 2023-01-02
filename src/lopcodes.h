@@ -199,5 +199,15 @@ LUAI_FUNC Instruction luaP_setarg_b(Instruction *i, int b);
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50
 
+#define CASE_OP_CALL \
+  case OP_CALL: case OP_CALL_I: case OP_CALL_I_R1: case OP_CALL_C: \
+  case OP_CALL_M: case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1: \
+  case OP_TAILCALL_C: case OP_TAILCALL_M
+
+#define isOpCall(o) \
+  ((o) == OP_CALL || (o) == OP_CALL_I || (o) == OP_CALL_I_R1 || \
+   (o) == OP_CALL_C || (o) == OP_CALL_M || (o) == OP_TAILCALL || \
+   (o) == OP_TAILCALL_I || (o) == OP_TAILCALL_I_R1 || (o) == OP_TAILCALL_C || \
+   (o) == OP_TAILCALL_M)
 
 #endif
