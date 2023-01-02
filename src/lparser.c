@@ -392,7 +392,7 @@ static void freeFunctionNameStack (LexState *ls) {
 
 /* build a function name from the current name part stack */
 static TString *buildFunctionName (LexState *ls) {
-  char buf[MAX_FUNCNAME];
+  char buff[MAX_FUNCNAME];
   int i;
   size_t len = 0;
   struct FunctionNameStack *stk = ls->functionNameStack;
@@ -402,21 +402,21 @@ static TString *buildFunctionName (LexState *ls) {
     TString *name = stk->names[i].name;
     int type = stk->names[i].type;
     if (type == NAMEPART_FIELD)
-      buf[len++] = '.';
+      buff[len++] = '.';
     else if (type == NAMEPART_SELF)
-      buf[len++] = ':';
+      buff[len++] = ':';
     l = name->tsv.len;
     if (l >= MAX_FUNCNAME - len)
       l = MAX_FUNCNAME - len;
-    memcpy(buf+len,getstr(name),l);
+    memcpy(buff+len,getstr(name),l);
     len+=l;
   }
   if (len >= MAX_FUNCNAME)
     len = MAX_FUNCNAME - 1;
-  buf[len] = '\0';
+  buff[len] = '\0';
   stk->used = 0; /* discharge name parts */
   if (len != 0)
-    return luaS_newlstr(ls->H, buf, len);
+    return luaS_newlstr(ls->H, buff, len);
   else
     return NULL;
 }
