@@ -956,7 +956,7 @@ static int beginseval(OpCode o, int a, int b, int c) {
     case OP_BIT_OR: case OP_BIT_OR_BK:
 #endif /* LUA_CODT7 */
       return a != b && a != c;
-    /* the remaining operations do not clobber A or do not depend on A */
+    /* the remaining operations do not clobber A or do depend on A */
     default:
       return 0;
   }
@@ -1022,7 +1022,16 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     CODE_LOOP_DECL(code,pc);
     switch (o) {
       case OP_JMP:
+        lua_assert(sbx >= 0);
         break;
+      case OP_LOADBOOL:
+        /* OP_LOADBOOL may begin an expression, unless it is preceded by another
+           OP_LOADBOOL with argC == 1 */
+        if ((pc-1) >= 0) {
+          Instruction prev = code[pc-1];
+          if (GET_OPCODE(prev) ==  OP_LOADBOOL && GETARG_C(prev))
+            break;
+        }
       case OP_SELF:
         lua_assert(a == firstreg);
         /* fallthrough */
@@ -1031,19 +1040,34 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
           callstat1(ca, fs);
           /* when a function return value is used to evaluate another function
              expression, mark the call op as a pre-call */
-          if (a == firstreg && c > 1)
-            init_ins_property(fs, pc, INS_PRECALL);
-        }
-        else if (testTMode(o)) {
-          if (a < firstreg) {
+          if (a == firstreg && c > 1) {
             init_ins_property(fs, pc, INS_PRECALL);
             return;
+          }
+        }
+        else if (testTMode(o)) {
+          if (testAMode(o)) {
+            if (a < firstreg)
+              goto begincall;
+          }
+          else {
+            if (!ISK(b)) {
+              if (b < firstreg)
+                goto begincall;
+            }
+            else if (!ISK(c)) {
+              if (c < firstreg)
+                goto begincall;
+            }
+            else
+              goto begincall;
           }
         }
         else if (testAMode(o)) {
           if (a == firstreg && beginseval(o, a, b, c)) {
             if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
               break;
+            begincall:
             init_ins_property(fs, pc, INS_PRECALL);
             printf("returning from callstat1 at pc %d, OP_%s\n",
                    pc+1, luaP_opnames[o]);
