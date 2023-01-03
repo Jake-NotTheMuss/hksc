@@ -691,6 +691,7 @@ enum INS_FLAG {
   INS_FORLIST, /* first pc in a list for-loop */
   INS_PREFORLIST, /* first pc to evaluate for-list control variables */
   INS_FORNUM, /* first pc in a numeric for-loop */
+  INS_PREFORNUM, /* first pc to evluate for-num control variables */
   INS_BLOCKEND, /* last pc in a block */
   INS_LOOPEND, /* last pc in a loop */
   INS_BREAKSTAT, /* pc is a break instruction */
@@ -720,6 +721,7 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_FORLIST",
   "INS_PREFORLIST",
   "INS_FORNUM",
+  "INS_PREFORNUM",
   "INS_BLOCKEND",
   "INS_LOOPEND",
   "INS_BREAKSTAT",
@@ -886,6 +888,8 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("PRE FORLIST\n", D);
     if (test_ins_property(fs, pc, INS_FORLIST))
       DumpLiteral("BEGIN FORLIST\n", D);
+    if (test_ins_property(fs, pc, INS_PREFORNUM))
+      DumpLiteral("PRE FORNUM\n", D);
     if (test_ins_property(fs, pc, INS_FORNUM))
       DumpLiteral("BEGIN FORNUM\n", D);
     if (test_ins_property(fs, pc, INS_BRANCHFAIL))
@@ -1108,23 +1112,77 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
   }
 }
 
-static void forlist1(CodeAnalyzer *ca, DFuncState *fs)
+static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
+{
+  const Instruction *code = ca->code;
+  int firstreg; /* first register of loop control variables */
+  int startpc; /* start pc of loop, specifically the jump op into the loop */
+  lua_assert(ca->inforloop);
+  ca->inforloop--;
+  { /* get the start-register of the loop control variables */
+    Instruction entry; /* OP_FORPREP */
+    Instruction test; /* OP_FORLOOP */
+    lua_assert(ca->pc >= 0);
+    entry = code[ca->pc];
+    lua_assert(GET_OPCODE(entry) == OP_FORPREP);
+    lua_assert(GETARG_sBx(entry) >= 0); /* can be 0 in an empty loop */
+    lua_assert(ca->pc + 1 + GETARG_sBx(entry) == endpc);
+    test = code[endpc];
+    lua_assert(GET_OPCODE(test) == OP_FORLOOP);
+    firstreg = GETARG_A(entry);
+    startpc = ca->pc--;
+  }
+  for (; ca->pc >= 0; ca->pc--) {
+    const int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    switch (o) {
+      CASE_OP_CALL: {
+        callstat1(ca, fs);
+        if (firstreg == a) {
+          init_ins_property(fs, ca->pc, INS_PREFORNUM);
+          return;
+        }
+        break;
+      }
+      default: {
+        if (beginstempexpr(code, i, pc, firstreg, startpc)) {
+          init_ins_property(fs, pc, INS_PREFORNUM);
+          printf("returning from fornumprep1 at pc %d, OP_%s\n",
+                 pc+1, luaP_opnames[o]);
+          return;
+        }
+        break;
+      }
+    }
+  }
+  /* it is possible for a for-loop to have no preparation code, for example:
+      for x = nil, nil, nil do
+          ...
+      end
+  */
+  lua_assert(ca->pc < 0);
+  init_ins_property(fs, 0, INS_PREFORNUM);
+}
+
+static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 {
   const Instruction *code = ca->code;
   int firstreg; /* first register of loop control variables */
   int nvars; /* number of loop variables */
-  int startpc; /* start of loop */
+  int startpc; /* start of loop, specifically the jump op into the loop */
   lua_assert(ca->inforloop);
-  { /* get number of variables and start register of control variables */
+  ca->inforloop--;
+  { /* get the start-register of the loop control variables */
     Instruction entry; /* OP_JMP into the for-loop */
     Instruction test; /* OP_TFORLOOP at the end of the for-loop */
-    int testpc; /* pc of test */
     lua_assert(ca->pc >= 0);
     entry = code[ca->pc];
     lua_assert(GET_OPCODE(entry) == OP_JMP);
-    lua_assert(GETARG_sBx(entry) >= 0);
-    testpc = ca->pc + 1 + GETARG_sBx(entry);
-    test = code[testpc];
+    lua_assert(GETARG_sBx(entry) >= 0); /* can be 0 in an empty loop */
+    lua_assert(ca->pc + 1 + GETARG_sBx(entry) == endpc);
+    test = code[endpc];
     lua_assert(GET_OPCODE(test) == OP_TFORLOOP);
     nvars = GETARG_C(test);
     firstreg = GETARG_A(test);
@@ -1147,7 +1205,7 @@ static void forlist1(CodeAnalyzer *ca, DFuncState *fs)
       default: {
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           init_ins_property(fs, pc, INS_PREFORLIST);
-          printf("returning from forlist1 at pc %d, OP_%s\n",
+          printf("returning from forlistprep1 at pc %d, OP_%s\n",
                  pc+1, luaP_opnames[o]);
           return;
         }
@@ -1155,7 +1213,11 @@ static void forlist1(CodeAnalyzer *ca, DFuncState *fs)
       }
     }
   }
-  /* it is possible for a for-loop to have no preparation code */
+  /* it is possible for a for-loop to have no preparation code, for example:
+      for x, y in nil do
+          ...
+      end
+  */
   lua_assert(ca->pc < 0);
   init_ins_property(fs, 0, INS_PREFORLIST);
 }
@@ -1182,18 +1244,15 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
     printf("pc %d: OP_%s\n", nextpc, luaP_opnames[o]);
     switch (o) {
       case OP_JMP: {
-        int target;
+        int target = nextpc + sbx;
         OpCode prevop;
         /* jump into a for-loop */
         if (test_ins_property(fs, nextpc, INS_FORLIST)) {
-          lua_assert(ca->inforloop >= 1);
-          forlist1(ca, fs);
-          ca->inforloop--;
+          forlistprep1(ca, fs, target);
           break;
         }
         /* excluding the above case, this cannot be the first instruction */
         lua_assert(pc > 0);
-        target = nextpc + sbx;
         prevop = GET_OPCODE(code[prevpc]);
         ca->prevTMode = testTMode(prevop);
         /* there are 4 basic cetegories of jumps:
@@ -1378,6 +1437,20 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       case OP_TFORLOOP:
         lua_assert(test_ins_property(fs, nextpc, INS_LOOPEND));
         break;
+      case OP_FORLOOP: {
+        int target = nextpc + sbx;
+        lua_assert(GET_OPCODE(code[target-1]) == OP_FORPREP);
+        init_ins_property(fs, pc, INS_LOOPEND);
+        init_ins_property(fs, target, INS_FORNUM);
+        ca->inforloop++;
+        break;
+      }
+      case OP_FORPREP: {
+        int target = nextpc + sbx;
+        lua_assert(test_ins_property(fs, target, INS_LOOPEND));
+        fornumprep1(ca, fs, target);
+        break;
+      }
       CASE_OP_CALL:
         callstat1(ca, fs);
         break;
@@ -1397,7 +1470,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
 ** The code analyzer works in the first pass and detects the beginnings and ends
 ** of loops (and determines the type of each loop), the ends of blocks, branch
 ** jumps, break jumps, and the beginnings of for-loop control variable
-** evaluations. It walks through the code backwards, which makes distinguishing
+** evaluations. It walks through the code backwards, which makes differentiating
 ** branch tests from loop tests a simpler task.
 */
 static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
