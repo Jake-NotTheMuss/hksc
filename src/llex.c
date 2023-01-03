@@ -598,9 +598,8 @@ void luaX_readFirstToken (LexState *ls) {
     return;
   }
   /* check for BOM */
-  if (ls->current == 0xEF /* utf8 */
-      || ls->current == 0xFE || ls->current == 0xFF /* utf16 or utf32 */
-      || ls->current == 0 /* utf32 */) {
+  if (ls->current == 0xEF || ls->current == 0xFE || ls->current == 0xFF ||
+      ls->current == 0) {
     ls->t.token = readBOM(ls);
   }
   else
