@@ -81,6 +81,13 @@ static void
 hksc_default_settings(hksc_Settings *settings)
 {
   /* general settings */
+#ifdef LUA_COD
+# ifdef LUA_CODT7
+  settings->hash_step = 1;
+# else /* !LUA_CODT7 */
+  settings->hash_step = 2;
+# endif /* LUA_CODT7 */
+#endif /* LUA_COD */
   settings->ignore_debug = 0;
   /* compiler settings */
   settings->emit_struct = 0;

@@ -104,11 +104,10 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
 ** increment by 1.
 */
 
-static lu_int32 hashstring (hksc_State *H, const char *s, size_t l, size_t step)
-{
+lu_int32 luaS_cod_hashstring (hksc_State *H, const char *s, size_t l) {
   lu_int32 hash = 5381;
   size_t i = 0;
-  UNUSED(H);
+  const int step = Settings(H).hash_step;
   while (i < l) {
     hash = hash * 33 + s[i];
     i += step;
@@ -116,14 +115,5 @@ static lu_int32 hashstring (hksc_State *H, const char *s, size_t l, size_t step)
   return hash;
 }
 
-/* increment i by 1 each iteration */
-lu_int32 luaS_cod_hashstring (hksc_State *H, const char *s, size_t l) {
-  return hashstring(H, s, l, 1);
-}
-
-/* increment i by 2 each iteration */
-lu_int32 luaS_cod_hashstring2 (hksc_State *H, const char *s, size_t l) {
-  return hashstring(H, s, l, 2);
-}
 #endif /* LUA_COD */
 

@@ -71,6 +71,9 @@ typedef struct stringtable {
 */
 typedef struct hksc_Settings
 {
+#ifdef LUA_COD
+  int hash_step;
+#endif
   /* general settings */
   lu_byte ignore_debug; /* do not try to load/dump debug info */
   /* compiler-specific settings */
