@@ -145,8 +145,13 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         check(b < pt->nups);
         break;
       }
+      case OP_GETFIELD: case OP_GETFIELD_R1: {
+        check(ttisstring(&pt->k[c]));
+        break;
+      }
       case OP_GETGLOBAL:
-      case OP_SETGLOBAL: {
+      case OP_SETGLOBAL:
+      case OP_SETFIELD: {
         check(ttisstring(&pt->k[b]));
         break;
       }
@@ -176,9 +181,7 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
           pc += b;  /* do the jump */
         break;
       }
-      case OP_CALL: case OP_CALL_I: case OP_CALL_C: case OP_CALL_M:
-      case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_C:
-      case OP_TAILCALL_M: {
+      CASE_OP_CALL: {
         if (b != 0) {
           checkreg(pt, a+b-1);
         }
@@ -198,20 +201,29 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
       }
       case OP_SETLIST: {
         if (b > 0) checkreg(pt, a + b);
-        if (c == 0) pc++;
+        if (c == 0) {
+          OpCode op1;
+          int a1;
+          pc++;
+          op1 = GET_OPCODE(pt->code[pc]);
+          a1 = GETARG_A(pt->code[pc]);
+          check(op1 == OP_DATA);
+          check(a1 == 0);
+        }
         break;
       }
       case OP_CLOSURE: {
-        int nup;
+        int nup, nupn;
         check(b < pt->sizep);
-        nup = pt->p[b]->nups;
+        nupn = nup = pt->p[b]->nups;
         check(pc + nup < pt->sizecode);
-        for (; nup>0; nup--) {
-          OpCode op1 = GET_OPCODE(pt->code[pc+nup]);
-          int a1 = GETARG_A(pt->code[pc+nup]);
+        for (; nupn>0; nupn--) {
+          OpCode op1 = GET_OPCODE(pt->code[pc+nupn]);
+          int a1 = GETARG_A(pt->code[pc+nupn]);
           check(op1 == OP_DATA);
           check(a1 == 1 || a1 == 2);
         }
+        pc += nup;
         break;
       }
       case OP_VARARG: {
