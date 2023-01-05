@@ -201,13 +201,18 @@ LUAI_FUNC Instruction luaP_setarg_b(Instruction *i, int b);
 
 #define CASE_OP_CALL \
   case OP_CALL: case OP_CALL_I: case OP_CALL_I_R1: case OP_CALL_C: \
-  case OP_CALL_M: case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1: \
+  case OP_CALL_M: CASE_OP_TAILCALL
+
+#define CASE_OP_TAILCALL \
+  case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1: \
   case OP_TAILCALL_C: case OP_TAILCALL_M
 
 #define isOpCall(o) \
   ((o) == OP_CALL || (o) == OP_CALL_I || (o) == OP_CALL_I_R1 || \
-   (o) == OP_CALL_C || (o) == OP_CALL_M || (o) == OP_TAILCALL || \
-   (o) == OP_TAILCALL_I || (o) == OP_TAILCALL_I_R1 || (o) == OP_TAILCALL_C || \
-   (o) == OP_TAILCALL_M)
+   (o) == OP_CALL_C || (o) == OP_CALL_M || isOpTailCall(o))
+
+#define isOpTailCall(o) \
+  ((o) == OP_TAILCALL || (o) == OP_TAILCALL_I || (o) == OP_TAILCALL_I_R1 || \
+   (o) == OP_TAILCALL_C || (o) == OP_TAILCALL_M)
 
 #endif
