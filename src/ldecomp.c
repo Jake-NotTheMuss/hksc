@@ -681,6 +681,8 @@ enum INS_FLAG {
   INS_PRECALL, /* first pc that sets up a function call */
   INS_PRERETURN, /* first pc that evaluates a returned expression */
   INS_PRERETURN1, /* possible first pc that evaluates a single return value */
+  INS_PREBRANCHTEST, /* first pc that evaluates a condition */
+  INS_PREBRANCHTEST1, /* possible first pc that evaluates a condition */
   INS_BRANCHFAIL, /* false-jump out of an if-statement condition evaluation */
   INS_BRANCHPASS, /* true-jump out of an if-statement condition evaluation */
   INS_LOOPFAIL, /* false-jump out of a loop condition evaluation */
@@ -714,6 +716,8 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_PRECALL",
   "INS_PRERETURN",
   "INS_PRERETURN1",
+  "INS_PREBRANCHTEST",
+  "INS_PREBRANCHTEST1",
   "INS_BRANCHFAIL",
   "INS_BRANCHPASS",
   "INS_LOOPFAIL",
@@ -916,6 +920,10 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("PRE RETURN\n", D);
     else if (test_ins_property(fs, pc, INS_PRERETURN1))
       DumpLiteral("PRE RETURN 1\n", D);
+    if (test_ins_property(fs, pc, INS_PREBRANCHTEST))
+      DumpLiteral("PRE BRANCH TEST\n", D);
+    else if (test_ins_property(fs, pc, INS_PREBRANCHTEST1))
+      DumpLiteral("PRE BRANCH TEST 1\n", D);
     if (test_ins_property(fs, pc, INS_BREAKSTAT))
       DumpLiteral("BREAK\n", D);
     if (test_ins_property(fs, pc, INS_BLOCKEND))
@@ -992,8 +1000,10 @@ typedef struct CodeAnalyzer {
   lu_byte buildingretval; /* whether evaluating a single return value */
   int retpending; /* a returned register, which may be temporary */
   int retpc; /* pc of OP_RETURN in pending return statement */
-  int lastexp; /* pc of omst recently encountered beginning of an expression */
-  int datacount; /* number of OP_DATA instructions after OP_CLOSURE */
+  struct {
+    int r1, r2; /* registers */
+    int pc; /* pc of test instruction */
+  } condpending; /* a tested register or pair of registers */
   lu_byte *reg_properties;
   const Instruction *code;
 } CodeAnalyzer;
@@ -1632,10 +1642,16 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           forlistprep1(ca, fs, target);
           break;
         }
+        /* check for pending return register */
         if (ca->retpending != -1 && sbx >= 0 && target <= ca->retpc)
           break; /* this jump is part of the return expression */
         else
           pendingreturn1();
+        /* check for pending condition registers */
+        if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+          init_ins_property(fs, nextpc, INS_PREBRANCHTEST);
+          ca->condpending.r1 = ca->condpending.r2 = -1;
+        }
         /* excluding the above case, this cannot be the first instruction */
         lua_assert(pc > 0);
         prevop = GET_OPCODE(code[prevpc]);
@@ -1787,6 +1803,10 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             }
             else { /* jumping in a branch-condition */
               /* if the jump skips over a false-jump, this is a true-jump  */
+              /*if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+                init_ins_property(fs, nextpc, INS_PREBRANCHTEST);
+                ca->condpending.r1 = ca->condpending.r2 = -1;
+              }*/
               if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
                 init_ins_property(fs, pc, INS_BRANCHPASS);
               else {
@@ -1819,6 +1839,10 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             }
           }
         }
+        /*if (test_ins_property(fs, pc, INS_BLOCKEND)) {
+          init_ins_property(fs, nextpc, INS_PREBRANCHTEST);
+          ca->condpending.r1 = ca->condpending.r2 = -1;
+        }*/
         break;
       }
       case OP_TFORLOOP: /* handled in case OP_JMP */
@@ -1854,24 +1878,65 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         pendingreturn1();
         ca->retpending = retstat1(ca, fs);
         if (ca->retpending != -1) {
+          lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
           ca->retpc = pc;
           ca->buildingretval = 0;
         }
         break;
       default:
-        if (ca->retpending != -1) {
+        if (test_ins_property(fs, nextpc, INS_BRANCHFAIL) ||
+             test_ins_property(fs, nextpc, INS_BRANCHPASS)) {
+          lua_assert(ca->retpending == -1);
+          lua_assert(testTMode(o));
+          lua_assert(ca->condpending.r1 == -1);
+          if (testAMode(o)) { /* OP_TEST, OP_TESTSET */
+            ca->condpending.r1 = a;
+            ca->condpending.r2 = -1;
+          }
+          else { /* comparison */
+            ca->condpending.r1 = ISK(b) ? -1 : b;
+            ca->condpending.r2 = ISK(c) ? -1 : c;
+          }
+          lua_assert(ca->condpending.r1 != -1 || ca->condpending.r2 != -1);
+          ca->condpending.pc = pc;
+          ca->buildingretval = 0;
+        }
+        else if (ca->retpending != -1) {
           if (testAMode(o)) {
             if (!ca->buildingretval && a != ca->retpending) {
               init_ins_property(fs, ca->retpc, INS_PRERETURN);
               ca->retpending = -1;
             }
             else {
-              ca->buildingretval = 1; /* current evluating retpending */
+              ca->buildingretval = 1; /* currently evluating retpending */
               if (beginstempexpr(code, i, pc, ca->retpending,
                                     ca->retpc)) {
                 /* this may be the start of the return statement */
                 init_ins_property(fs, pc, INS_PRERETURN1);
                 ca->retpending = -1;
+              }
+            }
+          }
+        }
+        else if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+          if (testAMode(o)) {
+            int *condreg = ca->condpending.r2 != -1 ? &ca->condpending.r2 :
+                                                      &ca->condpending.r1;
+            lua_assert(*condreg != -1);
+            if (!ca->buildingretval && a != *condreg) {
+              init_ins_property(fs, ca->condpending.pc, INS_PREBRANCHTEST);
+              goto checkcondreg;
+            }
+            else {
+              ca->buildingretval = 1;
+              if (beginstempexpr(code, i, pc, *condreg, ca->condpending.pc)) {
+                init_ins_property(fs, pc, INS_PREBRANCHTEST1);
+                *condreg = -1;
+                checkcondreg:
+                ca->buildingretval = 0;
+                if (ca->condpending.r1 != -1) {
+                  ca->condpending.pc = prevpc;
+                }
               }
             }
           }
@@ -1905,8 +1970,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
   ca.retpending = -1;
-  ca.lastexp = ca.pc;
-  ca.datacount = 0;
+  ca.condpending.r1 = ca.condpending.r2 = -1;
   ca.code = f->code;
   ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
   UNUSED(D);
@@ -1918,7 +1982,8 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   lua_assert(ca.inforloop == 0);
   lua_assert(ca.inwhileloop == -1);
   lua_assert(ca.pc < 0);
-  /*lua_assert(ca.retpending == -1);*/
+  lua_assert(ca.retpending == -1);
+  lua_assert(ca.condpending.r1 == -1);
 }
 
 static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D);
