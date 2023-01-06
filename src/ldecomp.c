@@ -677,8 +677,10 @@ static DExp *k2exp(DFuncState *fs, int i, DecompState *D)
 enum INS_FLAG {
   INS_FJT = 0,
   INS_BJT,
+  INS_PREVARSTART, /* first pc that evaluates a new local variable asignment */
   INS_PRECALL, /* first pc that sets up a function call */
   INS_PRERETURN, /* first pc that evaluates a returned expression */
+  INS_PRERETURN1, /* possible first pc that evaluates a single return value */
   INS_BRANCHFAIL, /* false-jump out of an if-statement condition evaluation */
   INS_BRANCHPASS, /* true-jump out of an if-statement condition evaluation */
   INS_LOOPFAIL, /* false-jump out of a loop condition evaluation */
@@ -708,8 +710,10 @@ enum INS_FLAG {
 static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_FJT",
   "INS_BJT",
+  "INS_PREVARSTART",
   "INS_PRECALL",
   "INS_PRERETURN",
+  "INS_PRERETURN1",
   "INS_BRANCHFAIL",
   "INS_BRANCHPASS",
   "INS_LOOPFAIL",
@@ -904,10 +908,14 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("LOOP FAIL\n", D);
     else if (test_ins_property(fs, pc, INS_LOOPPASS))
       DumpLiteral("LOOP PASS\n", D);
+    if (test_ins_property(fs, pc, INS_PREVARSTART))
+      DumpLiteral("PRE LOCAL VARIABLE START\n", D);
     if (test_ins_property(fs, pc, INS_PRECALL))
       DumpLiteral("PRE FUNCTION CALL\n", D);
     if (test_ins_property(fs, pc, INS_PRERETURN))
       DumpLiteral("PRE RETURN\n", D);
+    else if (test_ins_property(fs, pc, INS_PRERETURN1))
+      DumpLiteral("PRE RETURN 1\n", D);
     if (test_ins_property(fs, pc, INS_BREAKSTAT))
       DumpLiteral("BREAK\n", D);
     if (test_ins_property(fs, pc, INS_BLOCKEND))
@@ -981,7 +989,9 @@ typedef struct CodeAnalyzer {
   int inwhileloop; /* number of while loops currently active */
   int pc; /* current pc */
   lu_byte prevTMode; /* previous pc is a test instruction */
-  int ret_pending; /* a returned register, which may be temporary */
+  lu_byte buildingretval; /* whether evaluating a single return value */
+  int retpending; /* a returned register, which may be temporary */
+  int retpc; /* pc of OP_RETURN in pending return statement */
   int lastexp; /* pc of omst recently encountered beginning of an expression */
   int datacount; /* number of OP_DATA instructions after OP_CLOSURE */
   lu_byte *reg_properties;
@@ -1010,6 +1020,7 @@ static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
   return loopstart <= pc;
 }
 
+#if 0
 /*
 ** Ask the debug info if the next local variable starts at PC
 */
@@ -1033,6 +1044,25 @@ static int varstartshere1(CodeAnalyzer *ca, DFuncState *fs, int pc) {
   }
   return n;
 }
+#endif
+#if 0
+static void locvar1(CodeAnalyzer *ca, DFuncState *fs, int reg);
+
+static int updatelastexp(CodeAnalyzer *ca, DFuncState *fs, int pc, int reg) {
+  int n;
+  int lastexp = ca->lastexp;
+  ca->lastexp = pc;
+  printf("\tbegins an expression\n");
+  n = varstartshere1(ca, fs, pc);
+  (void)varstartshere2;
+  if (n) {
+    int ends = fs->locvars[fs->locvaridx+1].endpc == pc;
+    printf("\tlocvar1(ca, fs, %d);\n", ends?reg:reg-n);
+    locvar1(ca, fs, ends?reg:reg-n);
+  }
+  return n;
+}
+#endif
 #if 0
 /* create a new local variable for a function; call this when the analyzer is
    certain of the existence and startpc of the variable */
@@ -1099,15 +1129,16 @@ static int locvar1(CodeAnalyzer *ca, DFuncState *fs, int reg)
   }
 }
 #endif
+
 /*
 ** Check if the given instruction I begins a temporary expression in register
-** FISRTREG. PC is the pc of I. JUMPLIMIT is a pc used to check if a jump
-** instruction jumps to somewhere within the temporary expression evaluation,
-** meaning it is part of the temporary expression. CODE is the instruction array
-** which contains I, used for look-behinds.
+** FISRTREG. PC is the pc of I. JUMPLIMIT is a pc used to check if a preceding
+** jump instruction jumps to somewhere within the temporary expression
+** evaluation, meaning it is part of the temporary expression. CODE is the
+** instruction array which contains I, used for single look-behinds.
 */
 static int beginstempexpr(const Instruction *code, Instruction i, int pc,
-                           int firstreg, int jumplimit)
+                          int firstreg, int jumplimit)
 {
   OpCode o = GET_OPCODE(i);
   int a = GETARG_A(i);
@@ -1115,6 +1146,9 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
   int c = GETARG_C(i);
   switch (o) {
     case OP_JMP: {
+      /* This jump must be part of the temporary expression. Otherwise, the
+         caller has made a mistake by calling after they have already found the
+         beginning of the expression. */
       int sbx = GETARG_sBx(i);
       lua_assert(sbx >= 0);
       lua_assert(pc + 1 + sbx < jumplimit);
@@ -1126,7 +1160,7 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
       if ((pc-1) >= 0) {
         Instruction prev = code[pc-1];
         if (GET_OPCODE(prev) == OP_LOADBOOL && GETARG_C(prev))
-          return 0;
+          return 0; /* one result of a boolean expression */
       }
       /* fallthrough */
     default:
@@ -1143,55 +1177,63 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
               return 0;
           }
         }
-        if (testAMode(o)) { /* test */
-          if (a < firstreg)
-            return 1;
+        if (testAMode(o)) { /* OP_TEST */
+          if (a < firstreg) {
+            /* This instruction tests a local variable and is not preceded by a
+               jump. Check if the preceding instruction uses a free register */
+            checkprevreg:
+            if ((pc-1) >= 0) {
+              Instruction prev = code[pc-1];
+              OpCode prevop = GET_OPCODE(prev);
+              int preva = GETARG_A(prev);
+              return !(testAMode(prevop) && preva >= firstreg);
+            }
+            else return 1; /* this is the first instruction */
+          }
         }
-        else { /* comparison */
+        else { /* comparison op */
           if ((ISK(b) || b < firstreg) && (ISK(c) || c < firstreg))
-            return 1;
+            /* Same as above. */
+            goto checkprevreg;
         }
       }
-      else if (testAMode(o)) {
+      else if (testAMode(o)) { /* A is a register */
         if (a == firstreg && beginseval(o, a, b, c, 1)) {
           if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
             goto checkjumptarget;
+          /* Clobbers the first free register without using what was previously
+             stored inside it, and there is no jump to precede this instruction.
+             This is the start of a temporary expression. */
           return 1;
         }
       }
-      /* fallthrough */
       return 0;
   }
 }
 
 
 /*
-** Find and mark the beginning of a call expression
+** callstat -> ... [callstat] ... OP_CALL [callstat]
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: No
+** New Blocks: No
+** =============================================================================
+** Finds and marks the beginning of a call expression.
 */
 static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
 {
   int endpc; /* pc of call */
-  int nargs; /* number of arguments */
-  int nret; /* number of return values */
   int firstreg; /* first register used for the call */
-  int lastreg; /* last register used for the call */
-  int istailcall; /* whether this is a tailcall */
   const Instruction *code = ca->code;
   { /* handle the call instruction */
     Instruction call;
-    int a, b, c;
     lua_assert(ca->pc >= 0);
     call = code[ca->pc];
     /* avoid long assertion string */
     if (!isOpCall(GET_OPCODE(call))) lua_assert(0);
-    a = GETARG_A(call);
-    b = GETARG_B(call);
-    c = GETARG_C(call);
-    nret = c - 1;
-    nargs = b - 1;
-    firstreg = a;
-    lastreg = firstreg + nargs;
-    istailcall = isOpTailCall(GET_OPCODE(call));
+    firstreg = GETARG_A(call);
     endpc = ca->pc--;
   }
   for (; ca->pc >= 0; ca->pc--) {
@@ -1207,13 +1249,14 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
       default: {
         if (isOpCall(o)) { /* a nested call expression */
           callstat1(ca, fs);
-          /* when a function return value is used to evaluate another function
-             expression, e.g. `f()()', mark the call op as a pre-call (a call
-             operation itself will never be the beginning of a call expression,
-             a fact that is taken advantage of here; when a call instruction is
-             marked as such, it will clue the decompiler in that the most recent
-             non-call `precall' instruction is actually the start of multiple
-             calls that each call the return value of the previous call. */
+          /* When a function return value is used to evaluate another function
+             expression, e.g. `f()()', mark the first call op as a pre-call (a
+             call operation itself will never be the beginning of a call
+             expression, a fact that is taken advantage of here; when a call
+             instruction is marked as such, it will clue the decompiler in that
+             the most recent non-call `precall' instruction is actually the
+             start of multiple calls that each call the return value of the
+             previous call). */
           if (a == firstreg && c > 1) {
             init_ins_property(fs, pc, INS_PRECALL);
             return;
@@ -1221,8 +1264,6 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
         }
         else if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           init_ins_property(fs, pc, INS_PRECALL);
-          if (istailcall)
-            /*init_ins_property(fs, pc, INS_PRERETURN)*/;
           printf("returning from callstat1 at pc %d, OP_%s\n",
                  pc+1, luaP_opnames[o]);
           return;
@@ -1233,29 +1274,33 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
   }
 }
 
+#if 0
 /*
-** walk through a complete table construction (this prevents the analyzer from
-** executing unnecessary logic inside a set-list sequence)
+** setlist -> OP_NEWTABLE ... [setlist] ... OP_SETLIST
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: No
+** New Blocks: No
+** =============================================================================
+** Walks through a complete table construction (this prevents the analyzer from
+** executing unnecessary logic inside a set-list sequence).
 */
 static void setlist1(CodeAnalyzer *ca, DFuncState *fs)
 {
   const Instruction *code = ca->code;
   int firstreg; /* register that holds the table */
-  int narray; /* number of array-part items to set */
-  int flushlevel;
-  int endpc;
+  int flushlevel; /* value of argC from most recent OP_SETLIST */
+  int endpc; /* pc of final OP_SETLIST */
   {
     Instruction setlist;
     lua_assert(ca->pc >= 0);
     setlist = code[ca->pc];
     lua_assert(GET_OPCODE(setlist) == OP_SETLIST);
     firstreg = GETARG_A(setlist);
-    narray = GETARG_B(setlist);
     flushlevel = GETARG_C(setlist);
-    if (flushlevel == 0) {
-      Instruction data = code[ca->pc+1];
-      flushlevel = GETARG_sBx(data);
-    }
+    if (flushlevel == 0) /* next instruction holds real C */
+      flushlevel = GETARG_Bx(code[ca->pc+1]);
     lua_assert(flushlevel > 0);
     endpc = ca->pc--;
   }
@@ -1270,7 +1315,7 @@ static void setlist1(CodeAnalyzer *ca, DFuncState *fs)
           flushlevel--;
           lua_assert(flushlevel > 0);
         }
-        else {
+        else { /* nested table constructor */
           setlist1(ca, fs);
         }
         break;
@@ -1288,15 +1333,74 @@ static void setlist1(CodeAnalyzer *ca, DFuncState *fs)
   }
   lua_assert(0);
 }
+#endif
 
-/* returns 0 if the start of the return statement was successfully detected */
+#if 0
+/*
+** locvar -> reserve free register R ... write to R ... begin new statement
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: No
+** New Blocks: No
+** =============================================================================
+** Marks the beginning of the evluation of a new variable assignment.
+*/
+static void locvar1(CodeAnalyzer *ca, DFuncState *fs, int reg)
+{
+  const Instruction *code = ca->code;
+  int startpc = ca->pc--;
+  for (; ca->pc >= 0; ca->pc--) {
+    int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    switch (o) {
+      CASE_OP_CALL:
+        callstat1(ca, fs);
+        if (reg == a) {
+          init_ins_property(fs, ca->pc, INS_PREVARSTART);
+          return;
+        }
+        break;
+      case OP_SETLIST:
+        setlist1(ca, fs);
+        pc = ca->pc;
+        i = code[pc];
+        o = GET_OPCODE(i);
+        a = GETARG_A(i);
+        /* fallthrough */
+      default:
+        if (beginstempexpr(code, i, pc, reg, startpc)) {
+          init_ins_property(fs, pc, INS_PREVARSTART);
+          printf("returning from locvar1 at pc %d, OP_%s\n",
+                 pc+1, luaP_opnames[o]);
+          return;
+        }
+        break;
+    }
+  }
+}
+#endif
+
+/*
+** retstat -> ... OP_RETURN
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: No
+** New Blocks: No
+** =============================================================================
+** If the beginning of the return statement cannot be determined from the
+** information currently at hand, the (single) register used in the return
+** statement is returned, otherwise -1.
+*/
 static int retstat1(CodeAnalyzer *ca, DFuncState *fs)
 {
   const Instruction *code = ca->code;
   int firstreg; /* first register of returned expression list */
   int nret; /* number of returned values */
- /* int startpc;*/
-  int endpc;
+  int endpc; /* pc of OP_RETURN */
   { /* get start register and number of returned values */
     Instruction ret;
     lua_assert(ca->pc >= 0);
@@ -1307,14 +1411,14 @@ static int retstat1(CodeAnalyzer *ca, DFuncState *fs)
     endpc = ca->pc;
     if (nret == 0) { /* no values to return */
       init_ins_property(fs, endpc, INS_PRERETURN);
-      return 0;
+      return -1;
     }
     else if (nret == 1) {
       /* OP_RETURN is usually not the beginning of its own statement, but in
          this case, when there is only 1 return value, if argA is a local
          variable register, it does begin the statement. It is impossible right
          now to say whether it is a local variable or a temporary value */
-      return 1;
+      return firstreg;
     }
     ca->pc--;
   }
@@ -1324,28 +1428,38 @@ static int retstat1(CodeAnalyzer *ca, DFuncState *fs)
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
     switch (o) {
-      case OP_RETURN:
       CASE_OP_CALL:
         callstat1(ca, fs);
         if (firstreg == a) {
           init_ins_property(fs, ca->pc, INS_PRERETURN);
-          return 0;
+          return -1;
         }
         break;
       default:
+        lua_assert(o != OP_RETURN); /* cannot have nested return statements */
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           init_ins_property(fs, pc, INS_PRERETURN);
           printf("returning from retstat1 at pc %d, OP_%s\n",
                  pc+1, luaP_opnames[o]);
-          return 0;
+          return -1;
         }
         break;
     }
   }
   lua_assert(0); /* cannot happen - void-return should already be handled */
-  return 1;
+  return -1;
 }
 
+/*
+** fornumprep -> ... OP_FORPREP
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: Only loop-control variables
+** New Blocks: No
+** =============================================================================
+** Marks the start of for-num-loop preparation code.
+*/
 static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 {
   const Instruction *code = ca->code;
@@ -1366,8 +1480,6 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     firstreg = GETARG_A(entry);
     startpc = ca->pc--;
   }
-  varstartshere1(ca, fs, startpc+1);
-  varstartshere1(ca, fs, startpc);
   for (; ca->pc >= 0; ca->pc--) {
     const int pc = ca->pc;
     Instruction i = code[pc];
@@ -1400,6 +1512,16 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   init_ins_property(fs, 0, INS_PREFORNUM);
 }
 
+/*
+** forlistprep -> ... OP_JMP (to OP_TFORLOOP)
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: Only loop-control variables
+** New Blocks: No
+** =============================================================================
+** Marks the start of for-list-loop preparation code.
+*/
 static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 {
   const Instruction *code = ca->code;
@@ -1422,8 +1544,6 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     firstreg = GETARG_A(test);
     startpc = ca->pc--;
   }
-  varstartshere1(ca, fs, startpc+1);
-  varstartshere1(ca, fs, startpc);
   for (; ca->pc >= 0; ca->pc--) {
     const int pc = ca->pc;
     Instruction i = code[pc];
@@ -1456,14 +1576,38 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   init_ins_property(fs, 0, INS_PREFORLIST);
 }
 
+/*
+** Check if there is a valid pending return register, and discharge it. This is
+** used for special instructions that can never be a part of a return statement.
+** The instruction after the current is expected to be an OP_RETURN.
+*/
+#define pendingreturn1ex(extraassert) do { \
+  if (ca->retpending != -1) { \
+    /* store in a variable to avoid long assertion string */ \
+    int extraassertval_ = (extraassert); \
+    lua_assert(GET_OPCODE(code[nextpc]) == OP_RETURN); \
+    lua_assert(ca->retpc == nextpc); \
+    lua_assert(extraassertval_); UNUSED(extraassertval_); \
+    init_ins_property(fs, nextpc, INS_PRERETURN); \
+    ca->retpending = -1; /* discharge */ \
+  } \
+} while (0)
+
+#define pendingreturn1() pendingreturn1ex(1)
 
 /*
-** First pass while-loop analyzer
+** whilestat -> { test OP_JMP } (to EXIT) ... OP_JMP (to test) EXIT
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: Yes
+** New Variables: Yes
+** New Blocks: Yes
+** =============================================================================
+** Classifies/contextualizes jumps and invokes handlers for other constructs.
 */
 static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
 {
   int outerwhilestat, outerwhilestatend;
-  int forlistreg = -1;
   const Instruction *code = ca->code;
   const int endpc = ca->pc--;
   ca->inwhileloop++;
@@ -1483,9 +1627,15 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         OpCode prevop;
         /* jump into a for-loop */
         if (test_ins_property(fs, nextpc, INS_FORLIST)) {
+          /* check for a return statement at the start of the for-loop */
+          pendingreturn1();
           forlistprep1(ca, fs, target);
           break;
         }
+        if (ca->retpending != -1 && sbx >= 0 && target <= ca->retpc)
+          break; /* this jump is part of the return expression */
+        else
+          pendingreturn1();
         /* excluding the above case, this cannot be the first instruction */
         lua_assert(pc > 0);
         prevop = GET_OPCODE(code[prevpc]);
@@ -1614,14 +1764,15 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           lua_assert(sbx >= 0);
           set_ins_property(fs, target, INS_FJT);
           if (ca->prevTMode) { /* conditional forward jump */
-            if (forlistreg != -1)
-              break; /* part of for-list variable evaluation */
+            /* false-jump in a repeat-until condition */
             if (test_ins_property(fs, target-1, INS_REPEATSTATEND) &&
                 pcinloop(ca, fs, pc, target)) {
               init_ins_property(fs, pc, INS_LOOPFAIL);
             }
+            /* if the jump skips over a false-jump, this is a true-jump */
             else if (test_ins_property(fs,target-1, INS_LOOPFAIL))
               init_ins_property(fs, pc, INS_LOOPPASS);
+            /* if the jump skips over a true-jump, this is a false-jump  */
             else if (test_ins_property(fs,target-1, INS_LOOPPASS))
               init_ins_property(fs, pc, INS_LOOPFAIL);
             /* There is ambiguity when an if-statement and while-loop have the
@@ -1634,7 +1785,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               init_ins_property(fs, pc, INS_LOOPFAIL);
               break;
             }
-            else {
+            else { /* jumping in a branch-condition */
+              /* if the jump skips over a false-jump, this is a true-jump  */
               if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
                 init_ins_property(fs, pc, INS_BRANCHPASS);
               else {
@@ -1670,66 +1822,62 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         break;
       }
       case OP_TFORLOOP: /* handled in case OP_JMP */
-        varstartshere1(ca, fs, pc);
         lua_assert(test_ins_property(fs, nextpc, INS_LOOPEND));
+        lua_assert(ca->retpending == -1);
         break;
       case OP_FORLOOP: { /* identify a for-num loop */
         int target = nextpc + sbx;
         lua_assert(GET_OPCODE(code[target-1]) == OP_FORPREP);
-        varstartshere1(ca, fs, pc);
         init_ins_property(fs, pc, INS_LOOPEND);
         init_ins_property(fs, target, INS_FORNUM);
         ca->inforloop++;
+        /* check for a return statement after the end of the for-loop */
+        pendingreturn1();
         break;
       }
-      case OP_FORPREP: { /* mark the start of for-num loop control variables */
+      case OP_FORPREP: { /* mark the start of preparation code */
         int target = nextpc + sbx;
         lua_assert(test_ins_property(fs, target, INS_LOOPEND));
+        /* check for a return statement at the start of the for-loop */
+        pendingreturn1();
         fornumprep1(ca, fs, target);
         break;
       }
       CASE_OP_CALL: /* mark a call expression */
+        /* if retpending is a valid register, this call cannot be part of the
+           return expression, as tailcalls are handled in `retstat1'. Mark the
+           start of the following return statement and discharge retpending */
+        pendingreturn1ex(!isOpTailCall(o));
         callstat1(ca, fs);
         break;
-      case OP_RETURN:
-        if (ca->ret_pending != -1) { /* back-to-back returns */
-          /* uncomment when everything is in place */
-          /*lua_assert(GET_OPCODE(code[nextpc]) == OP_RETURN);*/
-          init_ins_property(fs, nextpc, INS_PRERETURN);
+      case OP_RETURN: /* mark a return statement */
+        pendingreturn1();
+        ca->retpending = retstat1(ca, fs);
+        if (ca->retpending != -1) {
+          ca->retpc = pc;
+          ca->buildingretval = 0;
         }
-        ca->ret_pending = retstat1(ca, fs) ? a : -1;
         break;
-      case OP_SETLIST:
-        /* the analyzer will get confused inside a setlist operation and think
-           new local variables are being created, so handle it separately in its
-           own context */
-        setlist1(ca, fs);
-        lua_assert(ca->pc >= 0);
-        /* still more work to do - update everything */
-        pc = ca->pc;
-        nextpc = pc + 1;
-        prevpc = pc - 1;
-        i = code[pc];
-        o = GET_OPCODE(i);
-        a = GETARG_A(i);
-        b = GETARG_B(i);
-        c = GETARG_C(i);
-        lua_assert(o == OP_NEWTABLE);
-        printf("pc %d: OP_%s\n", pc + 1, luaP_opnames[o]);
-        /* fallthrough */
-      default: {
-        int n;
-        /* make sure calls that change the pc actually break */
-        lua_assert(pc == ca->pc);
-        if (beginseval(o, a, b, c, 0))
-          printf("\tbegins an expression\n");
-        if ((n = varstartshere1(ca, fs, pc))) {
-          /*printf("\t%d variable%s start%s here\n", n,
-                 (n>1)?"s":"",(n==1)?"s":"");*/
+      default:
+        if (ca->retpending != -1) {
+          if (testAMode(o)) {
+            if (!ca->buildingretval && a != ca->retpending) {
+              init_ins_property(fs, ca->retpc, INS_PRERETURN);
+              ca->retpending = -1;
+            }
+            else {
+              ca->buildingretval = 1; /* current evluating retpending */
+              if (beginstempexpr(code, i, pc, ca->retpending,
+                                    ca->retpc)) {
+                /* this may be the start of the return statement */
+                init_ins_property(fs, pc, INS_PRERETURN1);
+                ca->retpending = -1;
+              }
+            }
+          }
         }
-        (void)varstartshere1;
-        UNUSED(b), UNUSED(c), UNUSED(bx);
-      }
+        UNUSED(a), UNUSED(b), UNUSED(c), UNUSED(bx);
+        break;
     }
     if (test_ins_property(fs, ca->pc, INS_WHILESTAT)) {
       lua_assert(ca->inwhileloop >= 1);
@@ -1756,14 +1904,13 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.inwhileloop = -1; /* incremented in whilestat1 */
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
-  ca.ret_pending = -1;
+  ca.retpending = -1;
   ca.lastexp = ca.pc;
   ca.datacount = 0;
   ca.code = f->code;
   ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
   UNUSED(D);
   init_ins_property(fs, ca.pc, INS_BLOCKEND); /* mark end of function */
-  varstartshere1(&ca, fs, ca.pc);
   whilestat1(&ca, fs, -1);
   luaM_freearray(fs->H, ca.reg_properties, f->maxstacksize, lu_byte);
   lua_assert(ca.whilestatstart == -1);
@@ -1771,8 +1918,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   lua_assert(ca.inforloop == 0);
   lua_assert(ca.inwhileloop == -1);
   lua_assert(ca.pc < 0);
-  printf("fs->locvaridx == %d\n", fs->locvaridx);
-  /*lua_assert(ca.ret_pending == -1);*/
+  /*lua_assert(ca.retpending == -1);*/
 }
 
 static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D);
