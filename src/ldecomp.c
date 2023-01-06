@@ -1605,6 +1605,15 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 
 #define pendingreturn1() pendingreturn1ex(1)
 
+#define pendingcond1() do { \
+  if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) { \
+    lua_assert(testTMode(GET_OPCODE(code[nextpc]))); \
+    lua_assert(ca->condpending.pc == nextpc); \
+    init_ins_property(fs, nextpc, INS_PREBRANCHTEST); \
+    ca->condpending.r1 = ca->condpending.r2 = -1; /* discharge */ \
+  } \
+} while (0)
+
 /*
 ** whilestat -> { test OP_JMP } (to EXIT) ... OP_JMP (to test) EXIT
 ** ============================ NESTED CONSTRUCTS ==============================
@@ -1848,6 +1857,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       case OP_TFORLOOP: /* handled in case OP_JMP */
         lua_assert(test_ins_property(fs, nextpc, INS_LOOPEND));
         lua_assert(ca->retpending == -1);
+        lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
         break;
       case OP_FORLOOP: { /* identify a for-num loop */
         int target = nextpc + sbx;
@@ -1857,6 +1867,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         ca->inforloop++;
         /* check for a return statement after the end of the for-loop */
         pendingreturn1();
+        pendingcond1();
         break;
       }
       case OP_FORPREP: { /* mark the start of preparation code */
@@ -1864,6 +1875,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         lua_assert(test_ins_property(fs, target, INS_LOOPEND));
         /* check for a return statement at the start of the for-loop */
         pendingreturn1();
+        pendingcond1();
         fornumprep1(ca, fs, target);
         break;
       }
@@ -1873,9 +1885,10 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
            start of the following return statement and discharge retpending */
         pendingreturn1ex(!isOpTailCall(o));
         callstat1(ca, fs);
-        break;
+        goto postcallstat; /* check on pending condition registers */
       case OP_RETURN: /* mark a return statement */
         pendingreturn1();
+        pendingcond1();
         ca->retpending = retstat1(ca, fs);
         if (ca->retpending != -1) {
           lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
@@ -1918,27 +1931,42 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             }
           }
         }
-        else if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
-          if (testAMode(o)) {
-            int *condreg = ca->condpending.r2 != -1 ? &ca->condpending.r2 :
-                                                      &ca->condpending.r1;
-            lua_assert(*condreg != -1);
-            if (!ca->buildingretval && a != *condreg) {
-              init_ins_property(fs, ca->condpending.pc, INS_PREBRANCHTEST);
-              goto checkcondreg;
-            }
-            else {
-              ca->buildingretval = 1;
-              if (beginstempexpr(code, i, pc, *condreg, ca->condpending.pc)) {
-                init_ins_property(fs, pc, INS_PREBRANCHTEST1);
-                *condreg = -1;
-                checkcondreg:
-                ca->buildingretval = 0;
-                if (ca->condpending.r1 != -1) {
-                  ca->condpending.pc = prevpc;
+        else {
+          int callstat = 0;
+          goto checkpendingcond;
+          postcallstat: /* jump to here after calling `callstat1' */
+          callstat = 1;
+          checkpendingcond:
+          if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+            if (testAMode(o)) {
+              int *condreg = ca->condpending.r2 != -1 ? &ca->condpending.r2 :
+                                                        &ca->condpending.r1;
+              lua_assert(*condreg != -1);
+              if (!ca->buildingretval && a != *condreg) {
+                init_ins_property(fs, ca->condpending.pc, INS_PREBRANCHTEST);
+                goto checkcondreg;
+              }
+              else {
+                ca->buildingretval = 1;
+                if (beginstempexpr(code, i, pc, *condreg, ca->condpending.pc)) {
+                  init_ins_property(fs, pc, INS_PREBRANCHTEST1);
+                  checkcondreg:
+                  *condreg = -1;
+                  ca->buildingretval = 0;
+                  if (ca->condpending.r1 != -1) {
+                    ca->condpending.pc = prevpc;
+                  }
                 }
               }
             }
+          }
+          if (callstat) {
+            callstat = 0;
+            pc = ca->pc;
+            i = code[pc];
+            o = GET_OPCODE(i);
+            a = GETARG_A(i);
+            goto checkpendingcond;
           }
         }
         UNUSED(a), UNUSED(b), UNUSED(c), UNUSED(bx);
