@@ -950,7 +950,7 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
 /*
 ** Check if the given operation O clobbers register A without depending on what
 ** was previously in register A. if CHECKDEP is false, the check will not take
-** into account dependencies on 
+** into account dependencies related to registers that both read and clobbered.
 */
 static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
   switch (o) {
@@ -998,24 +998,34 @@ static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
   }
 }
 
+/*
+** `Code Analyzer' - the main structure used in the first pass. It populates the
+** `ins_properties' array of its corresponding `DFuncState'.
+*/
 typedef struct CodeAnalyzer {
+  /* a record of all encountered while-loops is saved implicitly on the
+     callstack, these values hold the bounds of the currently most inner
+     while-loop */
   int whilestatstart; /* start pc of current while loop */
   int whilestatend; /* end pc of current while loop */
+  /* other loops simply have counters telling how many of them are nested at the
+     current pc */
   int inforloop; /* number of forloops currently active */
   int inwhileloop; /* number of while loops currently active */
   int pc; /* current pc */
+  /* most of these values could be local to `whilestat1', but are kept in this
+     structure to avoid allocating new copies on every recursive call */
   lu_byte prevTMode; /* previous pc is a test instruction */
   lu_byte buildingretval; /* whether evaluating a single return value */
   int retpending; /* a returned register, which may be temporary */
   int retpc; /* pc of OP_RETURN in pending return statement */
   struct {
-    int r1, r2; /* registers */
-    int pc; /* pc of test instruction */
+    int r1, r2; /* compared registers */
+    int pc; /* pc of last test instruction */
     int flag; /* flag for the type of condition (loop or branch) */
-    int inrepeatcond; /* true if in an `until' condition */
   } condpending; /* a tested register or pair of registers */
   lu_byte *reg_properties;
-  const Instruction *code;
+  const Instruction *code; /* f->code */
 } CodeAnalyzer;
 
 /* 
@@ -1150,7 +1160,9 @@ static int locvar1(CodeAnalyzer *ca, DFuncState *fs, int reg)
 }
 #endif
 
-
+/*
+** Returns true if the instruction at (PC-1) is OP_JMP.
+*/
 static int previsjump(const Instruction *code, int pc) {
   if (pc > 0) {
     Instruction i = code[pc-1];
@@ -1630,7 +1642,6 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     lua_assert(ca->condpending.pc == nextpc); \
     init_ins_property(fs, nextpc, ca->condpending.flag); \
     ca->condpending.r1 = ca->condpending.r2 = -1; /* discharge */ \
-    ca->condpending.inrepeatcond = 0; \
   } \
 } while (0)
 
@@ -2053,10 +2064,15 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                          ins_flag_names[ca->condpending.flag + flagvariant],
                          ca->condpending.r1, ca->condpending.r2);
                   ca->buildingretval = 0;
+                  /* see if there is still 1 more register pending */
                   if (ca->condpending.r1 != -1) {
-                    if (wasjump) /* beginning of the conditional expression */
+                    /* a preceding jump is caught here, where the pending
+                       condition can be completed before moving on */
+                    if (wasjump)
                       ca->condpending.r1 = -1;
-                    else /* 1 more pending register from the last test */
+                    else
+                      /* 1 more pending register from the last test; update the
+                         pending end-pc for the remaining expression */
                       ca->condpending.pc = prevpc;
                   }
                 }
@@ -2077,7 +2093,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         break;
       }
     }
-    if (test_ins_property(fs, ca->pc, INS_WHILESTAT)) {
+    pc = ca->pc; /* update current pc */
+    if (test_ins_property(fs, pc, INS_WHILESTAT)) {
       lua_assert(ca->inwhileloop >= 1);
       lua_assert(ca->retpending == -1);
       /* Discharge pending while-loop explicitly condition, this is needed in
@@ -2098,12 +2115,38 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
         lua_assert(ca->condpending.flag == INS_PRELOOPTEST);
         ca->condpending.r1 = ca->condpending.r2 = -1;
-        init_ins_property(fs, ca->pc, INS_PRELOOPTEST);
+        init_ins_property(fs, pc, INS_PRELOOPTEST);
       }
+#if 0
+      else {
+        lua_assert(!test_ins_property(fs, pc, INS_PRELOOPTEST1));
+        /* repeat-loops can be incorrectly marked as while-loops in the
+           following case:
+            repeat
+                ...
+            until false
+           The above code will not generate a conditional jump at the end of the
+           repeat loop, which will make it seem like the end of a while-loop to
+           the analyzer. This is caught here, once the beginning of the loop is
+           encountered, where, if it is really the start of a while-loop, the
+           current pc will also be marked with INS_PRELOOPTEST. If it is not,
+           this is the start of a repeat-loop. */
+        if (!test_ins_property(fs, pc, INS_PRELOOPTEST)) {
+          lua_assert(test_ins_property(fs, ca->whilestatend, INS_WHILESTATEND));
+          lua_assert(test_ins_property(fs, ca->whilestatend, INS_LOOPEND));
+          /* remove while-loop markers */
+          unset_ins_property(fs, pc, INS_WHILESTAT);
+          unset_ins_property(fs, ca->whilestatend, INS_WHILESTATEND);
+          /* add repeat-loop markers */
+          init_ins_property(fs, pc, INS_REPEATSTAT);
+          init_ins_property(fs, ca->whilestatend, INS_REPEATSTATEND);
+        }
+      }
+#endif
       lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
       break;
     }
-    else if (test_ins_property(fs, ca->pc, INS_REPEATSTAT)) {
+    else if (test_ins_property(fs, pc, INS_REPEATSTAT)) {
       /* Like with while-loops, pending retusn and condition expressions need
          to be caught here before they go across the start of a repeat-loop.
          This is needed in a case such as the following example:
@@ -2116,12 +2159,12 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
          The analyzer will otherwise think that the condition inside the
          repeat-loop is `i + 1 > 2' instead of `a > 2'. */
       if (ca->retpending != -1) {
-        init_ins_property(fs, ca->pc, INS_PRERETURN+ca->buildingretval);
+        init_ins_property(fs, pc, INS_PRERETURN + ca->buildingretval);
         ca->retpending = -1;
       }
       else if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
         ca->condpending.r1 = ca->condpending.r2 = -1;
-        init_ins_property(fs, ca->pc, ca->condpending.flag+ca->buildingretval);
+        init_ins_property(fs, pc, ca->condpending.flag + ca->buildingretval);
       }
     }
   }
@@ -2147,7 +2190,6 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.prevTMode = 0;
   ca.retpending = -1;
   ca.condpending.r1 = ca.condpending.r2 = -1;
-  ca.condpending.inrepeatcond = 0;
   ca.code = f->code;
   ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
   UNUSED(D);
