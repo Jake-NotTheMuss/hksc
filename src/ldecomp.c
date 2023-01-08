@@ -681,10 +681,12 @@ enum INS_FLAG {
   INS_PRECALL, /* first pc that sets up a function call */
   INS_PRERETURN, /* first pc that evaluates a returned expression */
   INS_PRERETURN1, /* possible first pc that evaluates a single return value */
-  INS_PREBRANCHTEST, /* first pc that evaluates a condition */
-  INS_PREBRANCHTEST1, /* possible first pc that evaluates a condition */
+  INS_PREBRANCHTEST, /* first pc that evaluates a branch condition */
+  INS_PREBRANCHTEST1, /* possible first pc that evaluates a branch condition */
   INS_BRANCHFAIL, /* false-jump out of an if-statement condition evaluation */
   INS_BRANCHPASS, /* true-jump out of an if-statement condition evaluation */
+  INS_PRELOOPTEST, /* first pc that evaluates a loop condition */
+  INS_PRELOOPTEST1, /* possible first pc that evaluates a loop condition */
   INS_LOOPFAIL, /* false-jump out of a loop condition evaluation */
   INS_LOOPPASS, /* true-jump out of a loop condition evaluation */
   INS_OPTLOOPFAILEXIT, /* optimized jump target of a loop fail */
@@ -720,6 +722,8 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_PREBRANCHTEST1",
   "INS_BRANCHFAIL",
   "INS_BRANCHPASS",
+  "INS_PRELOOPTEST",
+  "INS_PRELOOPTEST1",
   "INS_LOOPFAIL",
   "INS_LOOPPASS",
   "INS_OPTLOOPFAILEXIT",
@@ -762,7 +766,7 @@ static const char *const ins_flag_names[MAX_INS+1] = {
 } while (0)
 
 #define unset_ins_property(fs,pc,val) do { \
-  (fs)->ins_properties[(pc)] &= ~(1 << (val)) \
+  (fs)->ins_properties[(pc)] &= ~(1 << (val)); \
 } while (0)
 
 #define init_ins_property(fs,pc,val) do { \
@@ -924,6 +928,10 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("PRE BRANCH TEST\n", D);
     else if (test_ins_property(fs, pc, INS_PREBRANCHTEST1))
       DumpLiteral("PRE BRANCH TEST 1\n", D);
+    else if (test_ins_property(fs, pc, INS_PRELOOPTEST))
+      DumpLiteral("PRE LOOP TEST\n", D);
+    else if (test_ins_property(fs, pc, INS_PRELOOPTEST1))
+      DumpLiteral("PRE LOOP TEST 1\n", D);
     if (test_ins_property(fs, pc, INS_BREAKSTAT))
       DumpLiteral("BREAK\n", D);
     if (test_ins_property(fs, pc, INS_BLOCKEND))
@@ -1003,6 +1011,8 @@ typedef struct CodeAnalyzer {
   struct {
     int r1, r2; /* registers */
     int pc; /* pc of test instruction */
+    int flag; /* flag for the type of condition (loop or branch) */
+    int inrepeatcond; /* true if in an `until' condition */
   } condpending; /* a tested register or pair of registers */
   lu_byte *reg_properties;
   const Instruction *code;
@@ -1139,6 +1149,15 @@ static int locvar1(CodeAnalyzer *ca, DFuncState *fs, int reg)
   }
 }
 #endif
+
+
+static int previsjump(const Instruction *code, int pc) {
+  if (pc > 0) {
+    Instruction i = code[pc-1];
+    return GET_OPCODE(i) == OP_JMP;
+  }
+  return 0;
+}
 
 /*
 ** Check if the given instruction I begins a temporary expression in register
@@ -1609,10 +1628,46 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) { \
     lua_assert(testTMode(GET_OPCODE(code[nextpc]))); \
     lua_assert(ca->condpending.pc == nextpc); \
-    init_ins_property(fs, nextpc, INS_PREBRANCHTEST); \
+    init_ins_property(fs, nextpc, ca->condpending.flag); \
     ca->condpending.r1 = ca->condpending.r2 = -1; /* discharge */ \
+    ca->condpending.inrepeatcond = 0; \
   } \
 } while (0)
+
+/* mark the end of a block or loop with INS_BLOCKEND or INS_LOOPEND */
+#define markend1(pc,flag,init) do { \
+  if (init) \
+    init_ins_property(fs, (pc), flag); \
+  else \
+    set_ins_property(fs, (pc), flag); \
+  { \
+    int pendingflag_; \
+    int pc_ = (pc)+1; \
+    if (test_ins_property(fs, (pc), INS_PREBRANCHTEST) || \
+        test_ins_property(fs, (pc), INS_PREBRANCHTEST1)) \
+      pendingflag_ = INS_PREBRANCHTEST; \
+    else if (test_ins_property(fs, (pc), INS_PRELOOPTEST) || \
+             test_ins_property(fs, (pc), INS_PRELOOPTEST1)) \
+      pendingflag_ = INS_PRELOOPTEST; \
+    else \
+      break; \
+    while (test_ins_property(fs, pc_, INS_BLOCKEND) || \
+           test_ins_property(fs, pc_, INS_LOOPEND)) \
+      pc_++; \
+    unset_ins_property(fs, (pc), pendingflag_); \
+    unset_ins_property(fs, (pc), pendingflag_+1); \
+    pendingflag_+=!testTMode(o); \
+    lua_assert(!test_ins_property(fs, pc_, INS_WHILESTAT)); \
+    init_ins_property(fs, pc_, pendingflag_); \
+  } \
+} while (0)
+
+#define isloopstart(pc) \
+  (test_ins_property(fs, (pc), INS_WHILESTAT) || \
+   test_ins_property(fs, (pc), INS_REPEATSTAT) || \
+   test_ins_property(fs, (pc), INS_FORLIST) || \
+   test_ins_property(fs, (pc), INS_FORNUM))
+
 
 /*
 ** whilestat -> { test OP_JMP } (to EXIT) ... OP_JMP (to test) EXIT
@@ -1655,10 +1710,10 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         if (ca->retpending != -1 && sbx >= 0 && target <= ca->retpc)
           break; /* this jump is part of the return expression */
         else
-          pendingreturn1();
+          pendingreturn1(); /* discarge pending return if needed */
         /* check for pending condition registers */
         if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
-          init_ins_property(fs, nextpc, INS_PREBRANCHTEST);
+          init_ins_property(fs, nextpc, ca->condpending.flag);
           ca->condpending.r1 = ca->condpending.r2 = -1;
         }
         /* excluding the above case, this cannot be the first instruction */
@@ -1676,7 +1731,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             if (prevop == OP_TFORLOOP) { /* for-list-loop */
               printf("  encountered a for-list loop starting at %d\n",target+1);
               init_ins_property(fs, target, INS_FORLIST);
-              init_ins_property(fs, pc, INS_LOOPEND);
+              /*init_ins_property(fs, pc, INS_LOOPEND);*/
+              markend1(pc, INS_LOOPEND, 1);
               ca->inforloop++;
             }
             else { /* possibly a repeat-loop */
@@ -1701,7 +1757,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                   !test_ins_property(fs, target, INS_REPEATSTAT)) {
                 printf("  encountered a repeat loop starting at %d\n",target+1);
                 init_ins_property(fs, target, INS_REPEATSTAT);
-                init_ins_property(fs, pc, INS_LOOPEND);
+                /*init_ins_property(fs, pc, INS_LOOPEND);*/
+                markend1(pc, INS_LOOPEND, 1);
                 init_ins_property(fs, pc, INS_REPEATSTATEND);
               }
               else if (test_ins_property(fs, target, INS_WHILESTAT)) {
@@ -1711,7 +1768,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                   init_ins_property(fs, pc, INS_BRANCHFAIL);
                   /* there is a branch at the end of the loop, which means the
                      end of the loop is also the end of a block */
-                  set_ins_property(fs, endpc, INS_BLOCKEND);
+                  /*set_ins_property(fs, endpc, INS_BLOCKEND);*/
+                  markend1(endpc, INS_BLOCKEND, 0);
                 }
                 else
                   init_ins_property(fs, pc, INS_LOOPFAIL);
@@ -1753,13 +1811,15 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                 init_ins_property(fs, pc, INS_BREAKSTAT);
               }
               else
-                init_ins_property(fs, pc, INS_BLOCKEND); /* end of if/elseif */
+                /*init_ins_property(fs, pc, INS_BLOCKEND);*/ /* end of if/elseif */
+                markend1(pc, INS_BLOCKEND, 1);
             }
             else { /* mark beginning of while-loop */
               printf("  encountered a while loop starting at %d\n",target+1);
               init_ins_property(fs, target, INS_WHILESTAT);
               /* actual end of loop */
-              init_ins_property(fs, pc, INS_LOOPEND);
+              /*init_ins_property(fs, pc, INS_LOOPEND);*/
+              markend1(pc, INS_LOOPEND, 1);
               init_ins_property(fs, pc, INS_WHILESTATEND);
               if (test_ins_property(fs, nextpc, INS_BLOCKEND)) {
                 Instruction nextins = code[nextpc];
@@ -1827,10 +1887,12 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                     GET_OPCODE(code[target-1]) == OP_JMP) {
                   int jtarget = target + GETARG_sBx(code[target-1]);
                   if (jtarget - 1 > pc)
-                    set_ins_property(fs, jtarget-1, INS_BLOCKEND);
+                    /*set_ins_property(fs, jtarget-1, INS_BLOCKEND);*/
+                    markend1(jtarget-1, INS_BLOCKEND, 0);
                 }
                 else
-                  set_ins_property(fs, target-1, INS_BLOCKEND);
+                  /*set_ins_property(fs, target-1, INS_BLOCKEND);*/
+                  markend1(target-1, INS_BLOCKEND, 0);
               }
             }
           }
@@ -1843,7 +1905,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
             else { /* exiting an if-else branch */
               printf("  encountered exit-jump from a branch\n");
               /* mark this jump as the end of the current branch */
-              init_ins_property(fs, pc, INS_BLOCKEND);
+              /*init_ins_property(fs, pc, INS_BLOCKEND);*/
+              markend1(pc, INS_BLOCKEND, 1);
               /*set_ins_property(fs, target, INS_BLOCKEND);*/
             }
           }
@@ -1862,7 +1925,8 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       case OP_FORLOOP: { /* identify a for-num loop */
         int target = nextpc + sbx;
         lua_assert(GET_OPCODE(code[target-1]) == OP_FORPREP);
-        init_ins_property(fs, pc, INS_LOOPEND);
+        /*init_ins_property(fs, pc, INS_LOOPEND);*/
+        markend1(pc, INS_LOOPEND, 1);
         init_ins_property(fs, target, INS_FORNUM);
         ca->inforloop++;
         /* check for a return statement after the end of the for-loop */
@@ -1896,9 +1960,13 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           ca->buildingretval = 0;
         }
         break;
-      default:
+      default: {
+        int pendingflag;
+        /* record a pending branch condition expression if needed */
         if (test_ins_property(fs, nextpc, INS_BRANCHFAIL) ||
              test_ins_property(fs, nextpc, INS_BRANCHPASS)) {
+          pendingflag = INS_PREBRANCHTEST;
+          pendingloopcond:
           lua_assert(ca->retpending == -1);
           lua_assert(testTMode(o));
           lua_assert(ca->condpending.r1 == -1);
@@ -1912,7 +1980,20 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           }
           lua_assert(ca->condpending.r1 != -1 || ca->condpending.r2 != -1);
           ca->condpending.pc = pc;
+          ca->condpending.flag = pendingflag;
+          printf("Recording new pending condition at pc (%d)\n"
+                 "\tflag == %s\n"
+                 "\tr1 == (%d)\n"
+                 "\tr2 == (%d)\n", pc+1,ins_flag_names[pendingflag],
+                 ca->condpending.r1, ca->condpending.r2);
           ca->buildingretval = 0;
+        }
+        /* record a pending loop condition expression if needed */
+        else if (test_ins_property(fs, nextpc, INS_LOOPFAIL) ||
+                 test_ins_property(fs, nextpc, INS_LOOPPASS) ||
+                 test_ins_property(fs, nextpc, INS_REPEATSTATEND)) {
+          pendingflag = INS_PRELOOPTEST;
+          goto pendingloopcond;
         }
         else if (ca->retpending != -1) {
           if (testAMode(o)) {
@@ -1934,7 +2015,9 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         else {
           int callstat = 0;
           goto checkpendingcond;
-          postcallstat: /* jump to here after calling `callstat1' */
+          /* Jump to here after calling `callstat1'. This will do 2 checks, one
+             for the pc of the call instruction, and one for the current pc */
+          postcallstat:
           callstat = 1;
           checkpendingcond:
           if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
@@ -1943,18 +2026,38 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                                                         &ca->condpending.r1;
               lua_assert(*condreg != -1);
               if (!ca->buildingretval && a != *condreg) {
-                init_ins_property(fs, ca->condpending.pc, INS_PREBRANCHTEST);
+                init_ins_property(fs, ca->condpending.pc, ca->condpending.flag);
                 goto checkcondreg;
               }
               else {
                 ca->buildingretval = 1;
                 if (beginstempexpr(code, i, pc, *condreg, ca->condpending.pc)) {
-                  init_ins_property(fs, pc, INS_PREBRANCHTEST1);
+                  int wasjump = previsjump(code, pc);
+                  int flagvariant = !(wasjump ||
+                                      test_ins_property(fs, pc, INS_WHILESTAT));
+                  /* if the previous instruction is a jump, this instruction
+                     begins the condition expression, hence the addition of
+                     `!previsjump()', turning the `certain' flag into the
+                     `uncertain' flag if there is no preceding jump */
+                  init_ins_property(fs, pc,
+                    ca->condpending.flag + flagvariant);
                   checkcondreg:
+                  printf(
+                         "\tca->condpending.r1 == (%d)\n"
+                         "\tca->condpending.r2 == (%d)\n",
+                         ca->condpending.r1, ca->condpending.r2);
                   *condreg = -1;
+                  printf("Marked pc (%d) as %s\n"
+                         "\tca->condpending.r1 == (%d)\n"
+                         "\tca->condpending.r2 == (%d)\n", pc+1,
+                         ins_flag_names[ca->condpending.flag + flagvariant],
+                         ca->condpending.r1, ca->condpending.r2);
                   ca->buildingretval = 0;
                   if (ca->condpending.r1 != -1) {
-                    ca->condpending.pc = prevpc;
+                    if (wasjump) /* beginning of the conditional expression */
+                      ca->condpending.r1 = -1;
+                    else /* 1 more pending register from the last test */
+                      ca->condpending.pc = prevpc;
                   }
                 }
               }
@@ -1962,6 +2065,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           }
           if (callstat) {
             callstat = 0;
+            /* update variables to current pc for the second check */
             pc = ca->pc;
             i = code[pc];
             o = GET_OPCODE(i);
@@ -1971,10 +2075,54 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         }
         UNUSED(a), UNUSED(b), UNUSED(c), UNUSED(bx);
         break;
+      }
     }
     if (test_ins_property(fs, ca->pc, INS_WHILESTAT)) {
       lua_assert(ca->inwhileloop >= 1);
+      lua_assert(ca->retpending == -1);
+      /* Discharge pending while-loop explicitly condition, this is needed in
+         cases such as the following example:
+          local a;
+          [begin block]
+              ...
+              a = a * 23;
+          end
+          while a < 0 and a == i * 20 do
+              ...
+         The analyzer will assume that an expression is being built across the
+         start of the loop (as if the while-loop condition contained
+         `a * 23 < 0'). This is caught here because the analyzer does not both
+         record a new pending condition and discharge one in the same switch
+         statement.
+        */
+      if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+        lua_assert(ca->condpending.flag == INS_PRELOOPTEST);
+        ca->condpending.r1 = ca->condpending.r2 = -1;
+        init_ins_property(fs, ca->pc, INS_PRELOOPTEST);
+      }
+      lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
       break;
+    }
+    else if (test_ins_property(fs, ca->pc, INS_REPEATSTAT)) {
+      /* Like with while-loops, pending retusn and condition expressions need
+         to be caught here before they go across the start of a repeat-loop.
+         This is needed in a case such as the following example:
+          local a = i + 1;
+          repeat
+              if a > 2 then
+                  ...
+              end
+          until ...
+         The analyzer will otherwise think that the condition inside the
+         repeat-loop is `i + 1 > 2' instead of `a > 2'. */
+      if (ca->retpending != -1) {
+        init_ins_property(fs, ca->pc, INS_PRERETURN+ca->buildingretval);
+        ca->retpending = -1;
+      }
+      else if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+        ca->condpending.r1 = ca->condpending.r2 = -1;
+        init_ins_property(fs, ca->pc, ca->condpending.flag+ca->buildingretval);
+      }
     }
   }
   ca->inwhileloop--;
@@ -1999,6 +2147,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.prevTMode = 0;
   ca.retpending = -1;
   ca.condpending.r1 = ca.condpending.r2 = -1;
+  ca.condpending.inrepeatcond = 0;
   ca.code = f->code;
   ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
   UNUSED(D);
@@ -2023,7 +2172,6 @@ static void DecompileCode(const Proto *f, DFuncState *fs, DecompState *D)
   int deltaAStreak=0; /* how many times in a row arg A increments */
   DExp *lastreg=NULL;
   lua_assert(n > 0); /* there is always at least OP_RETURN */
-  dumploopinfo(f, fs, D);
   return;
   implicit_decl(fs, n, D);
   for (fs->pc=0; fs->pc<n; fs->pc++)
@@ -2169,10 +2317,11 @@ static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D)
   DFuncState fs;
   open_func(&fs, f, prev, D);
   if (f->name && getstr(f->name))
-    printf("-- Decompiling function named '%s'\n", getstr(f->name));
+    printf("-- Decompiling function (%d) named '%s'\n", D->funcidx, getstr(f->name));
   else
     printf("-- Decompiling anonymous function (%d)\n", D->funcidx);
-  pass1(f,&fs,D); /* detect loops and local variables */
+  pass1(f,&fs,D);
+  dumploopinfo(f, &fs, D);
   DecompileCode(f,&fs,D);
   /*discharge(&fs, D);*/ /* todo: should the chain always be empty by this point? */
   close_func(&fs, D);
