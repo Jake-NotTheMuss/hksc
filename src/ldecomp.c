@@ -691,6 +691,7 @@ enum INS_FLAG {
   INS_LOOPPASS, /* true-jump out of a loop condition evaluation */
   INS_OPTLOOPFAILEXIT, /* optimized jump target of a loop fail */
   INS_REPEATSTAT, /* first pc in a repeat-loop */
+  INS_REPEATFOREVERSTAT, /* first pc in a repeat-until-false-loop */
   INS_WHILESTAT, /* first pc in a while-loop */
   INS_WHILEEXIT, /* a jump instruction in a while-loop condition */
   INS_IFSTAT, /* first pc in an if-branch */
@@ -728,6 +729,7 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_LOOPPASS",
   "INS_OPTLOOPFAILEXIT",
   "INS_REPEATSTAT",
+  "INS_REPEATFOREVERSTAT",
   "INS_WHILESTAT",
   "INS_WHILEEXIT",
   "INS_IFSTAT",
@@ -892,6 +894,8 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
     /*CODE_LOOP_DECL(code,pc);*/
     if (test_ins_property(fs, pc, INS_REPEATSTAT))
       DumpLiteral("BEGIN REPEAT\n", D);
+    else if (test_ins_property(fs, pc, INS_REPEATFOREVERSTAT))
+      DumpLiteral("BEGIN REPEAT (UNTIL FALSE)\n", D);
     if (test_ins_property(fs, pc, INS_WHILESTAT))
       DumpLiteral("BEGIN WHILE\n", D);
     if (test_ins_property(fs, pc, INS_IFSTAT))
@@ -999,19 +1003,26 @@ static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
 }
 
 /*
+** basic block types used in the first pass
+*/
+#define BBL1_FUNCTION 0
+#define BBL1_WHILE 1
+#define BBL1_REPEAT 2
+#define BBL1_FOR 3
+/* the other basic block types are not needed for the first pass */
+#define BBL1_MAX 4
+
+/*
 ** `Code Analyzer' - the main structure used in the first pass. It populates the
 ** `ins_properties' array of its corresponding `DFuncState'.
 */
 typedef struct CodeAnalyzer {
-  /* a record of all encountered while-loops is saved implicitly on the
-     callstack, these values hold the bounds of the currently most inner
-     while-loop */
-  int whilestatstart; /* start pc of current while loop */
-  int whilestatend; /* end pc of current while loop */
-  /* other loops simply have counters telling how many of them are nested at the
-     current pc */
-  int inforloop; /* number of forloops currently active */
-  int inwhileloop; /* number of while loops currently active */
+  /* a record of all encountered loops is saved implicitly on the callstack;
+     these values hold the bounds of the current loop */
+  struct {
+    int start, end;
+  } bbl_bounds[BBL1_MAX+1];
+  int in_bbl[BBL1_MAX]; /* number currently active for each loop type */
   int pc; /* current pc */
   /* most of these values could be local to `whilestat1', but are kept in this
      structure to avoid allocating new copies on every recursive call */
@@ -1027,28 +1038,6 @@ typedef struct CodeAnalyzer {
   lu_byte *reg_properties;
   const Instruction *code; /* f->code */
 } CodeAnalyzer;
-
-/* 
-** Check if the given jump at PC with TARGET is after the start of a loop.
-** TARGET-1 must be marked as the end of a loop.
-*/
-static int pcinloop(CodeAnalyzer *ca, DFuncState *fs, int pc, int target) {
-  int loopstart;
-  int sbx = GETARG_sBx(ca->code[target-1]);
-  lua_assert(test_ins_property(fs, target - 1, INS_LOOPEND));
-  lua_assert(GET_OPCODE(ca->code[pc]) == OP_JMP);
-  lua_assert(sbx < 0);
-  lua_assert(pc < target);
-  loopstart = target + sbx;
-  /* avoid a long assertion string */
-  if (!test_ins_property(fs, loopstart, INS_WHILESTAT) &&
-      !test_ins_property(fs, loopstart, INS_FORLIST) &&
-      !test_ins_property(fs, loopstart, INS_FORNUM) &&
-      !test_ins_property(fs, loopstart, INS_REPEATSTAT)) {
-    lua_assert(0); /* cannot happen */
-  }
-  return loopstart <= pc;
-}
 
 #if 0
 /*
@@ -1506,8 +1495,6 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   const Instruction *code = ca->code;
   int firstreg; /* first register of loop control variables */
   int startpc; /* start pc of loop, specifically the jump op into the loop */
-  lua_assert(ca->inforloop);
-  ca->inforloop--;
   { /* get the start-register of the loop control variables */
     Instruction entry; /* OP_FORPREP */
     Instruction test; /* OP_FORLOOP */
@@ -1569,8 +1556,6 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   int firstreg; /* first register of loop control variables */
   int nvars; /* number of loop variables */
   int startpc; /* start of loop, specifically the jump op into the loop */
-  lua_assert(ca->inforloop);
-  ca->inforloop--;
   { /* get the start-register of the loop control variables */
     Instruction entry; /* OP_JMP into the for-loop */
     Instruction test; /* OP_TFORLOOP at the end of the for-loop */
@@ -1690,16 +1675,34 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 ** =============================================================================
 ** Classifies/contextualizes jumps and invokes handlers for other constructs.
 */
-static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
+static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
 {
-  int outerwhilestat, outerwhilestatend;
+  /* `seenloopcond' is used to tell if the analyzer incorrectly detected a
+     while-loop instead of a repeat-until-false loop such as the following:
+      repeat
+          ...
+      until false
+     Both cases generate a loop with no tail-condition, which creates ambiguity
+     for the analyzer. The analyzer assumes it is a while-loop, but if it gets
+     to the start of the loop and `seenloopcond' is still false, then it
+     re-marks the current loop as a repeat-loop with a constant false
+     tail-condition. */
+  int seenloopcond = 0; /* whether a loop condition has been encountered */
+  int outerstatstart, outerstatend; /* enclosing loop of any type */
+  int outertypestatstart, outertypestatend; /* enclosing loop of type `type' */
   const Instruction *code = ca->code;
   const int endpc = ca->pc--;
-  ca->inwhileloop++;
-  outerwhilestat = ca->whilestatstart;
-  outerwhilestatend = ca->whilestatend;
-  ca->whilestatstart = startpc;
-  ca->whilestatend = endpc;
+  ca->in_bbl[type]++;
+  /* push old values */
+  outerstatstart = ca->bbl_bounds[BBL1_MAX].start;
+  outerstatend = ca->bbl_bounds[BBL1_MAX].end;
+  outertypestatstart = ca->bbl_bounds[type].start;
+  outertypestatend = ca->bbl_bounds[type].end;
+  /* update to new values */
+  ca->bbl_bounds[BBL1_MAX].start = startpc;
+  ca->bbl_bounds[BBL1_MAX].end = endpc;
+  ca->bbl_bounds[type].start = startpc;
+  ca->bbl_bounds[type].end = endpc;
   for (; ca->pc >= 0; ca->pc--) {
     int pc = ca->pc;
     int nextpc = pc + 1;
@@ -1744,7 +1747,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               init_ins_property(fs, target, INS_FORLIST);
               /*init_ins_property(fs, pc, INS_LOOPEND);*/
               markend1(pc, INS_LOOPEND, 1);
-              ca->inforloop++;
+              bbl1(ca, fs, target, BBL1_FOR);
             }
             else { /* possibly a repeat-loop */
               /* When there are branches at the end of a while-loop, they will
@@ -1771,21 +1774,27 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                 /*init_ins_property(fs, pc, INS_LOOPEND);*/
                 markend1(pc, INS_LOOPEND, 1);
                 init_ins_property(fs, pc, INS_REPEATSTATEND);
+                init_ins_property(fs, pc, INS_LOOPPASS);
+                bbl1(ca, fs, target, BBL1_REPEAT);
               }
               else if (test_ins_property(fs, target, INS_WHILESTAT)) {
                 /* when while-loops fail-jump backward, it is because they are
                    at the end of an enclosing while-loop */
-                if (target == ca->whilestatstart) {
+                if (target == startpc)
+                /*if (target == ca->bbl_bounds[BBL1_WHILE].start)*/ {
                   init_ins_property(fs, pc, INS_BRANCHFAIL);
                   /* there is a branch at the end of the loop, which means the
                      end of the loop is also the end of a block */
                   /*set_ins_property(fs, endpc, INS_BLOCKEND);*/
                   markend1(endpc, INS_BLOCKEND, 0);
                 }
-                else
+                else {
+                  seenloopcond = (type == BBL1_WHILE);
                   init_ins_property(fs, pc, INS_LOOPFAIL);
+                }
               }
               else { /* jumps to repeat-loop */
+                lua_assert(type == BBL1_REPEAT);
                 init_ins_property(fs, pc, INS_LOOPPASS);
               }
             }
@@ -1813,12 +1822,12 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
               /* a break statement in an inner block/loop at the end of a
                  while-loop will jump backward to the start of the enclosing
                  while-loop */
-              if (target == outerwhilestat) {
+              if (target == outerstatstart) {
                 /* an outer while loop with at least 1 inner for-loop or inner
                    while-loop */
-                printf("num current while-loops: %d\n", ca->inwhileloop);
-                lua_assert(ca->inwhileloop &&
-                           (ca->inforloop + ca->inwhileloop) >= 2);
+                printf("num current while-loops: %d\n", ca->in_bbl[BBL1_WHILE]);
+                lua_assert(ca->in_bbl[BBL1_WHILE] &&
+                          (ca->in_bbl[BBL1_FOR] + ca->in_bbl[BBL1_WHILE]) >= 2);
                 init_ins_property(fs, pc, INS_BREAKSTAT);
               }
               else
@@ -1846,13 +1855,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
                      condition is part of a loop test or a branch test */
                   init_ins_property(fs, opttarget, INS_OPTLOOPFAILEXIT);
               }
-              whilestat1(ca, fs, target);
-              /* make sure everything was updated correctly */
-              lua_assert(ca->inwhileloop >= 0);
-              lua_assert(ca->pc == target);
-              lua_assert(ca->whilestatstart == startpc);
-              lua_assert(ca->whilestatend == endpc);
-              continue;
+              bbl1(ca, fs, target, BBL1_WHILE);
             }
           }
         }
@@ -1861,25 +1864,36 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           set_ins_property(fs, target, INS_FJT);
           if (ca->prevTMode) { /* conditional forward jump */
             /* false-jump in a repeat-until condition */
-            if (test_ins_property(fs, target-1, INS_REPEATSTATEND) &&
-                pcinloop(ca, fs, pc, target)) {
-              init_ins_property(fs, pc, INS_LOOPFAIL);
+            if (test_ins_property(fs, target-1, INS_REPEATSTATEND)) {
+              /* false-jump in a repeat-until condition */
+              if (target-1 == endpc) {
+                lua_assert(type == BBL1_REPEAT);
+                init_ins_property(fs, pc, INS_LOOPFAIL);
+              }
+              else { /* false-jump in a branch */
+                init_ins_property(fs, pc, INS_BRANCHFAIL);
+                set_ins_property(fs, target-1, INS_BLOCKEND);
+              }
             }
             /* if the jump skips over a false-jump, this is a true-jump */
-            else if (test_ins_property(fs,target-1, INS_LOOPFAIL))
+            else if (test_ins_property(fs,target-1, INS_LOOPFAIL)) {
+              lua_assert(seenloopcond);
               init_ins_property(fs, pc, INS_LOOPPASS);
+            }
             /* if the jump skips over a true-jump, this is a false-jump  */
-            else if (test_ins_property(fs,target-1, INS_LOOPPASS))
+            else if (test_ins_property(fs,target-1, INS_LOOPPASS)) {
+              lua_assert(seenloopcond);
               init_ins_property(fs, pc, INS_LOOPFAIL);
+            }
             /* There is ambiguity when an if-statement and while-loop have the
                same exit target. This jump could be for the loop condition or it
                could be for the branch condition. If the current pc is after the
                start of the loop, this is part of the loop condition */
-            else if (ca->inwhileloop &&
+            else if (ca->in_bbl[BBL1_WHILE] &&
                      (test_ins_property(fs, target-1, INS_WHILESTATEND) ||
                      test_ins_property(fs, target, INS_OPTLOOPFAILEXIT))) {
+              seenloopcond = 1;
               init_ins_property(fs, pc, INS_LOOPFAIL);
-              break;
             }
             else { /* jumping in a branch-condition */
               /* if the jump skips over a false-jump, this is a true-jump  */
@@ -1909,7 +1923,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
           }
           else { /* unconditional forward jump (possibly a break statement) */
             if (test_ins_property(fs, target-1, INS_LOOPEND) &&
-                pcinloop(ca, fs, pc, target)) { /* break statement */
+                target-1 == endpc) { /* break statement */
               printf("  encoutered break-statement\n");
               init_ins_property(fs, pc, INS_BREAKSTAT); /* break out of loop */
             }
@@ -1939,20 +1953,22 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         /*init_ins_property(fs, pc, INS_LOOPEND);*/
         markend1(pc, INS_LOOPEND, 1);
         init_ins_property(fs, target, INS_FORNUM);
-        ca->inforloop++;
         /* check for a return statement after the end of the for-loop */
         pendingreturn1();
         pendingcond1();
+        bbl1(ca, fs, target, BBL1_FOR);
         break;
       }
       case OP_FORPREP: { /* mark the start of preparation code */
         int target = nextpc + sbx;
         lua_assert(test_ins_property(fs, target, INS_LOOPEND));
+        lua_assert(type == BBL1_FOR);
+        lua_assert(pc == startpc);
         /* check for a return statement at the start of the for-loop */
         pendingreturn1();
         pendingcond1();
         fornumprep1(ca, fs, target);
-        break;
+        goto exitblock;
       }
       CASE_OP_CALL: /* mark a call expression */
         /* if retpending is a valid register, this call cannot be part of the
@@ -2001,8 +2017,7 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
         }
         /* record a pending loop condition expression if needed */
         else if (test_ins_property(fs, nextpc, INS_LOOPFAIL) ||
-                 test_ins_property(fs, nextpc, INS_LOOPPASS) ||
-                 test_ins_property(fs, nextpc, INS_REPEATSTATEND)) {
+                 test_ins_property(fs, nextpc, INS_LOOPPASS)) {
           pendingflag = INS_PRELOOPTEST;
           goto pendingloopcond;
         }
@@ -2094,83 +2109,87 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
       }
     }
     pc = ca->pc; /* update current pc */
-    if (test_ins_property(fs, pc, INS_WHILESTAT)) {
-      lua_assert(ca->inwhileloop >= 1);
-      lua_assert(ca->retpending == -1);
-      /* Discharge pending while-loop explicitly condition, this is needed in
-         cases such as the following example:
-          local a;
-          [begin block]
-              ...
-              a = a * 23;
-          end
-          while a < 0 and a == i * 20 do
-              ...
-         The analyzer will assume that an expression is being built across the
-         start of the loop (as if the while-loop condition contained
-         `a * 23 < 0'). This is caught here because the analyzer does not both
-         record a new pending condition and discharge one in the same switch
-         statement.
-        */
-      if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
-        lua_assert(ca->condpending.flag == INS_PRELOOPTEST);
-        ca->condpending.r1 = ca->condpending.r2 = -1;
-        init_ins_property(fs, pc, INS_PRELOOPTEST);
-      }
-#if 0
-      else {
-        lua_assert(!test_ins_property(fs, pc, INS_PRELOOPTEST1));
-        /* repeat-loops can be incorrectly marked as while-loops in the
-           following case:
-            repeat
+    if (pc == startpc) {
+      if (type == BBL1_WHILE) {
+        lua_assert(test_ins_property(fs, pc, INS_WHILESTAT));
+        /* repeat-until-false-loops will be marked as while-loops */
+        printf("ca->in_bbl[BBL1_WHILE] = %d\n"
+               "ca->in_bbl[BBL1_REPEAT] = %d\n",
+               ca->in_bbl[BBL1_WHILE],
+               ca->in_bbl[BBL1_REPEAT]);
+        lua_assert(ca->in_bbl[BBL1_WHILE] || ca->in_bbl[BBL1_REPEAT]);
+        lua_assert(ca->retpending == -1);
+        /* Discharge pending while-loop explicitly condition, this is needed in
+           cases such as the following example:
+            local a;
+            [begin block]
                 ...
-            until false
-           The above code will not generate a conditional jump at the end of the
-           repeat loop, which will make it seem like the end of a while-loop to
-           the analyzer. This is caught here, once the beginning of the loop is
-           encountered, where, if it is really the start of a while-loop, the
-           current pc will also be marked with INS_PRELOOPTEST. If it is not,
-           this is the start of a repeat-loop. */
-        if (!test_ins_property(fs, pc, INS_PRELOOPTEST)) {
-          lua_assert(test_ins_property(fs, ca->whilestatend, INS_WHILESTATEND));
-          lua_assert(test_ins_property(fs, ca->whilestatend, INS_LOOPEND));
+                a = a * 23;
+            end
+            while a < 0 and a == i * 20 do
+                ...
+           The analyzer will assume that an expression is being built across the
+           start of the loop (as if the while-loop condition contained
+           `a * 23 < 0'). This is caught here because the analyzer does not both
+           record a new pending condition and discharge one in the same switch
+           statement.
+          */
+        if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+          int flag = seenloopcond ? INS_PRELOOPTEST : INS_PREBRANCHTEST;
+          ca->condpending.r1 = ca->condpending.r2 = -1;
+          init_ins_property(fs, pc, flag);
+        }
+        if (!seenloopcond) {
+          lua_assert(test_ins_property(fs, endpc, INS_WHILESTATEND));
+          lua_assert(test_ins_property(fs, endpc, INS_LOOPEND));
           /* remove while-loop markers */
           unset_ins_property(fs, pc, INS_WHILESTAT);
-          unset_ins_property(fs, ca->whilestatend, INS_WHILESTATEND);
+          unset_ins_property(fs, endpc, INS_WHILESTATEND);
           /* add repeat-loop markers */
           init_ins_property(fs, pc, INS_REPEATSTAT);
-          init_ins_property(fs, ca->whilestatend, INS_REPEATSTATEND);
+          init_ins_property(fs, endpc, INS_REPEATSTATEND);
+          lua_assert(!test_ins_property(fs, endpc, INS_LOOPPASS) &&
+                     !test_ins_property(fs, endpc, INS_LOOPFAIL));
+          /*ca->in_bbl[BBL1_WHILE]--;*/
+          /* do not change the repeat/while counters; while-count will be
+             decremented at the end as needed, and repeat-count will not change
+             which is correct because it was never incremented to begin with */
+          /*ca->in_bbl[BBL1_REPEAT]++;*/
         }
       }
-#endif
+      else if (type == BBL1_REPEAT) {
+        lua_assert(test_ins_property(fs, pc, INS_REPEATSTAT));
+        /* Like with while-loops, pending retusn and condition expressions need
+           to be caught here before they go across the start of a repeat-loop.
+           This is needed in a case such as the following example:
+            local a = i + 1;
+            repeat
+                if a > 2 then
+                    ...
+                end
+            until ...
+           The analyzer will otherwise think that the condition inside the
+           repeat-loop is `i + 1 > 2' instead of `a > 2'. */
+        if (ca->retpending != -1) {
+          init_ins_property(fs, pc, INS_PRERETURN + ca->buildingretval);
+          ca->retpending = -1;
+        }
+        else if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
+          ca->condpending.r1 = ca->condpending.r2 = -1;
+          init_ins_property(fs, pc, ca->condpending.flag + ca->buildingretval);
+        }
+      }
       lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
       break;
     }
-    else if (test_ins_property(fs, pc, INS_REPEATSTAT)) {
-      /* Like with while-loops, pending retusn and condition expressions need
-         to be caught here before they go across the start of a repeat-loop.
-         This is needed in a case such as the following example:
-          local a = i + 1;
-          repeat
-              if a > 2 then
-                  ...
-              end
-          until ...
-         The analyzer will otherwise think that the condition inside the
-         repeat-loop is `i + 1 > 2' instead of `a > 2'. */
-      if (ca->retpending != -1) {
-        init_ins_property(fs, pc, INS_PRERETURN + ca->buildingretval);
-        ca->retpending = -1;
-      }
-      else if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
-        ca->condpending.r1 = ca->condpending.r2 = -1;
-        init_ins_property(fs, pc, ca->condpending.flag + ca->buildingretval);
-      }
-    }
   }
-  ca->inwhileloop--;
-  ca->whilestatstart = outerwhilestat;
-  ca->whilestatend = outerwhilestatend;
+  exitblock:
+  ca->in_bbl[type]--;
+  /* pop old values */
+  ca->bbl_bounds[BBL1_MAX].start = outerstatstart;
+  ca->bbl_bounds[BBL1_MAX].end = outerstatend;
+  ca->bbl_bounds[type].start = outertypestatstart;
+  ca->bbl_bounds[type].end = outertypestatend;
 }
 
 /*
@@ -2183,9 +2202,13 @@ static void whilestat1(CodeAnalyzer *ca, DFuncState *fs, const int startpc)
 static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 {
   CodeAnalyzer ca;
-  ca.whilestatstart = ca.whilestatend = -1;
-  ca.inforloop = 0;
-  ca.inwhileloop = -1; /* incremented in whilestat1 */
+  int i;
+  for (i = 0; i < BBL1_MAX; i++) {
+    ca.bbl_bounds[i].start = ca.bbl_bounds[i].end = -1;
+    ca.in_bbl[i] = 0;
+  }
+  /* this slot holds the enclosing loop, regardless of its type */
+  ca.bbl_bounds[BBL1_MAX].start = ca.bbl_bounds[BBL1_MAX].end = -1;
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
   ca.retpending = -1;
@@ -2194,13 +2217,21 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
   UNUSED(D);
   init_ins_property(fs, ca.pc, INS_BLOCKEND); /* mark end of function */
-  whilestat1(&ca, fs, -1);
+  bbl1(&ca, fs, 0, BBL1_FUNCTION);
   luaM_freearray(fs->H, ca.reg_properties, f->maxstacksize, lu_byte);
-  lua_assert(ca.whilestatstart == -1);
-  lua_assert(ca.whilestatend == -1);
-  lua_assert(ca.inforloop == 0);
-  lua_assert(ca.inwhileloop == -1);
-  lua_assert(ca.pc < 0);
+  /* check bbl-stack */
+  for (i = 0; i < BBL1_MAX; i++) {
+    static const char *const bbl1_names[BBL1_MAX] = {
+      "BBL1_FUNCTION", "BBL1_WHILE", "BBL1_REPEAT"
+    };
+    lua_assert(ca.bbl_bounds[i].start == -1 && ca.bbl_bounds[i].end == -1);
+    printf("ca.in_bbl[%s] = (%d)\n", bbl1_names[i], ca.in_bbl[i]);
+    lua_assert(ca.in_bbl[i] == 0);
+  }
+  lua_assert(ca.bbl_bounds[BBL1_MAX].start == -1 &&
+             ca.bbl_bounds[BBL1_MAX].end == -1);
+  printf("ca.pc == (%d)\n", ca.pc);
+  lua_assert(ca.pc <= 0);
   lua_assert(ca.retpending == -1);
   lua_assert(ca.condpending.r1 == -1);
 }
