@@ -112,6 +112,7 @@ typedef struct DFuncState {
   struct DFuncState *prev;
   const Proto *f;
   InstructionFlags *ins_properties;
+  lu_byte *reg_properties;
   struct {
     DExp *first, *last;
   } explist; /* current chain of pending expressions */
@@ -166,6 +167,8 @@ static void open_func(DFuncState *fs, const Proto *f, DFuncState *prev,
   fs->linepending = fs->line;
   fs->ins_properties = luaM_newvector(fs->H, f->sizecode, InstructionFlags);
   memset(fs->ins_properties, 0, f->sizecode * sizeof(InstructionFlags));
+  fs->reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
+  memset(fs->reg_properties, 0, f->maxstacksize * sizeof(lu_byte));
 }
 
 static void append_func(DFuncState *fs1, DFuncState *fs2);
@@ -189,6 +192,7 @@ static void close_func(DFuncState *fs, DecompState *D) {
     append_func(prev, fs);
   }
   luaM_freearray(fs->H, fs->ins_properties, fs->f->sizecode, InstructionFlags);
+  luaM_freearray(fs->H, fs->reg_properties, fs->f->maxstacksize, lu_byte);
 }
 
 #define match_lines_p(D) \
@@ -1032,7 +1036,6 @@ typedef struct CodeAnalyzer {
     int pc; /* pc of last test instruction */
     int flag; /* flag for the type of condition (loop or branch) */
   } condpending; /* a tested register or pair of registers */
-  lu_byte *reg_properties;
   const Instruction *code; /* f->code */
 } CodeAnalyzer;
 
@@ -1331,6 +1334,17 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     switch (o) {
       case OP_CONCAT:
         concat1(ca, fs);
+        /* The beginnig of the concat expression may already have been marked
+           as a pre-call in a nested `callstat1' call, for example in the
+           following case:
+            ((function () end)() .. a)();
+           In this case, mark the pc of OP_CONCAT with INS_PRECALL. Like OP_CALL
+           and its variants, OP_CONCAT cannot start a call expression, so this
+           is safe to use as a marker for this special case. */
+        if (test_ins_property(fs, ca->pc, INS_PRECALL)) {
+          init_ins_property(fs, pc, INS_PRECALL);
+          return;
+        }
         goto recheck;
       case OP_SELF:
         lua_assert(a == firstreg);
@@ -2334,11 +2348,9 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.testset.endpc = ca.testset.reg = -1;
   ca.condpending.r1 = ca.condpending.r2 = -1;
   ca.code = f->code;
-  ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
   UNUSED(D);
   init_ins_property(fs, ca.pc, INS_BLOCKEND); /* mark end of function */
   bbl1(&ca, fs, 0, BBL1_FUNCTION);
-  luaM_freearray(fs->H, ca.reg_properties, f->maxstacksize, lu_byte);
   /* check bbl-stack */
   for (i = 0; i < BBL1_MAX; i++) {
     static const char *const bbl1_names[BBL1_MAX] = {
@@ -2357,8 +2369,30 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
 }
 
-static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D);
+#define BBL2_FUNCTION   0 /* a function */
+#define BBL2_WHILE      1 /* a while-loop */
+#define BBL2_REPEAT     2 /* a repeat-loop */
+#define BBL2_FORNUM     3 /* a for-num-loop */
+#define BBL2_FORLIST    4 /* a for-list-loop */
+#define BBL2_IF         5 /* an if-statement */
+#define BBL2_ELSEIF     6 /* an elseif-statement */
+#define BBL2_ELSE       7 /* an else-statement */
+#define BBL2_DO         8 /* a do-end block */
 
+#define REG_FREE        0 /* a free register */
+#define REG_RESERVED    1 /* a register being used in a temporary expression */
+#define REG_LOCAL       2 /* a register which holds an active local variable */
+#define REG_CONTROL     3 /* a register which holds a loop control variable */
+
+static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D);
+#if 0
+static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
+{
+  const Instruction *code = f->code;
+  int n=f->sizecode;
+  fs->pc = 0;
+}
+#endif
 static void DecompileCode(const Proto *f, DFuncState *fs, DecompState *D)
 {
   const Instruction *code=f->code;
@@ -2516,7 +2550,9 @@ static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D)
     printf("-- Decompiling anonymous function (%d)\n", D->funcidx);
   pass1(f,&fs,D);
   dumploopinfo(f, &fs, D);
-  DecompileCode(f,&fs,D);
+  /*DumpLiteral("\n\n", D);
+  pass2(f,&fs,D);
+  DecompileCode(f,&fs,D);*/ (void)DecompileCode;
   /*discharge(&fs, D);*/ /* todo: should the chain always be empty by this point? */
   close_func(&fs, D);
 }
