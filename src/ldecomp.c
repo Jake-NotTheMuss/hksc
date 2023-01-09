@@ -1022,6 +1022,9 @@ typedef struct CodeAnalyzer {
      structure to avoid allocating new copies on every recursive call */
   lu_byte prevTMode; /* previous pc is a test instruction */
   lu_byte buildingretval; /* whether evaluating a single return value */
+  struct {
+    int endpc, reg;
+  } testset; /* the current OP_TESTSET expression */
   int retpending; /* a returned register, which may be temporary */
   int retpc; /* pc of OP_RETURN in pending return statement */
   struct {
@@ -1791,7 +1794,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
           forlistprep1(ca, fs, target);
           break;
         }
-        if (pc == 0) {
+        if (pc == 0) { /* only break-statements can be the first instruction */
           init_ins_property(fs, pc, INS_BREAKSTAT);
           break;
         }
@@ -1809,7 +1812,22 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
         /* excluding the above case, this cannot be the first instruction */
         lua_assert(pc > 0);
         prevop = GET_OPCODE(code[prevpc]);
+        if (prevop == OP_TESTSET) { /* jump after OP_TESTSET is not a branch */
+          if (ca->testset.endpc == -1)
+            ca->testset.endpc = target;
+          else
+            lua_assert(ca->testset.endpc == target);
+          break; /* OP_TESTSET is handled separately */
+        }
         ca->prevTMode = testTMode(prevop);
+        if (ca->testset.endpc != -1) { /* in a OP_TESTSET expression */
+          /* an unconditional jump cannot be in a conditional expression, nor
+             a backwards jump, nor one which jumps past the expression */
+          if (!ca->prevTMode || sbx < 0 || target >= ca->testset.endpc)
+            ca->testset.endpc = ca->testset.reg = -1; /* discharge */
+          else
+            break; /* this jump is part of the conditional expression */
+        }
         /* there are 4 logical cetegories of jumps:
            (1) conditional backward jump (prevTMode && sbx < 0)
            (2) unconditional backward jump (!prevTMode && sbx < 0)
@@ -2053,6 +2071,15 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
       case OP_CONCAT:
         concat1(ca, fs);
         goto postcallstat;
+      case OP_TESTSET:
+        lua_assert(ca->condpending.r1 == -1 && ca->condpending.r2 == -1);
+        lua_assert(ca->retpending == -1);
+        lua_assert(ca->testset.endpc != -1);
+        if (ca->testset.reg == -1)
+          ca->testset.reg = b;
+        else
+          lua_assert(ca->testset.reg == b);
+        break;
       case OP_RETURN: /* mark a return statement */
         pendingreturn1();
         pendingcond1();
@@ -2275,6 +2302,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
     }
   }
   exitblock:
+  ca->testset.endpc = ca->testset.reg = -1;
   ca->in_bbl[type]--;
   /* pop old values */
   ca->bbl_bounds[BBL1_MAX].start = outerstatstart;
@@ -2303,6 +2331,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
   ca.retpending = -1;
+  ca.testset.endpc = ca.testset.reg = -1;
   ca.condpending.r1 = ca.condpending.r2 = -1;
   ca.code = f->code;
   ca.reg_properties = luaM_newvector(fs->H, f->maxstacksize, lu_byte);
@@ -2325,6 +2354,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   lua_assert(ca.pc <= 0);
   lua_assert(ca.retpending == -1);
   lua_assert(ca.condpending.r1 == -1);
+  lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
 }
 
 static void DecompileFunction(const Proto *f, DFuncState *prev, DecompState *D);
