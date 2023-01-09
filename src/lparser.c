@@ -970,10 +970,10 @@ static const struct {
 } priority[] = {  /* ORDER OPR */
    {6, 6}, {6, 6}, {7, 7}, {7, 7}, {7, 7},  /* `+' `-' `/' `%' */
    {10, 9}, {5, 4},                 /* power and concat (right associative) */
-/* T7 extensions */
+#ifdef LUA_CODT7 /* T7 extensions */
    {5, 5}, {5, 5},                  /* shift left and shift right */
    {4, 4}, {4, 4},                  /* '&' and '|' */
-/* END T7 extensions */
+#endif /* LUA_CODT7 */
    {3, 3}, {3, 3},                  /* equality and inequality */
    {3, 3}, {3, 3}, {3, 3}, {3, 3},  /* order */
    {2, 2}, {1, 1}                   /* logical (and/or) */
