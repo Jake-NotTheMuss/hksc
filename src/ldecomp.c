@@ -677,7 +677,7 @@ static DExp *k2exp(DFuncState *fs, int i, DecompState *D)
 enum INS_FLAG {
   INS_FJT = 0,
   INS_BJT,
-  INS_PREVARSTART, /* first pc that evaluates a new local variable asignment */
+  INS_PRECONCAT, /* first pc that sets up a concat operation */
   INS_PRECALL, /* first pc that sets up a function call */
   INS_PRERETURN, /* first pc that evaluates a returned expression */
   INS_PRERETURN1, /* possible first pc that evaluates a single return value */
@@ -691,7 +691,6 @@ enum INS_FLAG {
   INS_LOOPPASS, /* true-jump out of a loop condition evaluation */
   INS_OPTLOOPFAILEXIT, /* optimized jump target of a loop fail */
   INS_REPEATSTAT, /* first pc in a repeat-loop */
-  INS_REPEATFOREVERSTAT, /* first pc in a repeat-until-false-loop */
   INS_WHILESTAT, /* first pc in a while-loop */
   INS_WHILEEXIT, /* a jump instruction in a while-loop condition */
   INS_IFSTAT, /* first pc in an if-branch */
@@ -707,7 +706,6 @@ enum INS_FLAG {
   INS_BREAKSTAT, /* pc is a break instruction */
   INS_WHILESTATEND, /* last pc in a while-loop, to help detect if-statements */
   INS_REPEATSTATEND, /* last pc in a reoeat-loop */
-  INS_NEWREG, /* first pc to use a given register */
   /* end of instruction flags */
   MAX_INS
 };
@@ -715,7 +713,7 @@ enum INS_FLAG {
 static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_FJT",
   "INS_BJT",
-  "INS_PREVARSTART",
+  "INS_PRECONCAT",
   "INS_PRECALL",
   "INS_PRERETURN",
   "INS_PRERETURN1",
@@ -729,7 +727,6 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_LOOPPASS",
   "INS_OPTLOOPFAILEXIT",
   "INS_REPEATSTAT",
-  "INS_REPEATFOREVERSTAT",
   "INS_WHILESTAT",
   "INS_WHILEEXIT",
   "INS_IFSTAT",
@@ -745,7 +742,6 @@ static const char *const ins_flag_names[MAX_INS+1] = {
   "INS_BREAKSTAT",
   "INS_WHILESTATEND",
   "INS_REPEATSTATEND",
-  "INS_NEWREG",
   /* end of instruction flags */
   "MAX_INS"
 };
@@ -894,8 +890,6 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
     /*CODE_LOOP_DECL(code,pc);*/
     if (test_ins_property(fs, pc, INS_REPEATSTAT))
       DumpLiteral("BEGIN REPEAT\n", D);
-    else if (test_ins_property(fs, pc, INS_REPEATFOREVERSTAT))
-      DumpLiteral("BEGIN REPEAT (UNTIL FALSE)\n", D);
     if (test_ins_property(fs, pc, INS_WHILESTAT))
       DumpLiteral("BEGIN WHILE\n", D);
     if (test_ins_property(fs, pc, INS_IFSTAT))
@@ -920,10 +914,10 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("LOOP FAIL\n", D);
     else if (test_ins_property(fs, pc, INS_LOOPPASS))
       DumpLiteral("LOOP PASS\n", D);
-    if (test_ins_property(fs, pc, INS_PREVARSTART))
-      DumpLiteral("PRE LOCAL VARIABLE START\n", D);
     if (test_ins_property(fs, pc, INS_PRECALL))
       DumpLiteral("PRE FUNCTION CALL\n", D);
+    if (test_ins_property(fs, pc, INS_PRECONCAT))
+      DumpLiteral("PRE CONCAT\n", D);
     if (test_ins_property(fs, pc, INS_PRERETURN))
       DumpLiteral("PRE RETURN\n", D);
     else if (test_ins_property(fs, pc, INS_PRERETURN1))
@@ -1242,6 +1236,60 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
 }
 
 
+static void callstat1(CodeAnalyzer *ca, DFuncState *fs);
+
+/*
+** concat -> ... OP_CONCAT
+** ============================ NESTED CONSTRUCTS ==============================
+** Call Statements: Yes
+** Return Statements: No
+** New Variables: No
+** New Blocks: No
+** =============================================================================
+** Finds and marks the beginning of a concatenated expression.
+*/
+static void concat1(CodeAnalyzer *ca, DFuncState *fs)
+{
+  int endpc; /* pc of OP_CONCAT */
+  int firstreg; /* first register used in concat operation */
+  const Instruction *code = ca->code;
+  {
+    Instruction concat;
+    lua_assert(ca->pc >= 0);
+    concat = code[ca->pc];
+    lua_assert(GET_OPCODE(concat) == OP_CONCAT);
+    firstreg = GETARG_B(concat);
+    endpc = ca->pc--;
+  }
+  for (; ca->pc >= 0; ca->pc--) {
+    const int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    switch (o) {
+      CASE_OP_CALL:
+        callstat1(ca, fs);
+        if (firstreg == a) {
+          init_ins_property(fs, ca->pc, INS_PRECONCAT);
+          return;
+        }
+        break;
+      case OP_CONCAT:
+      case OP_RETURN:
+        lua_assert(0);
+      default:
+        if (beginstempexpr(code, i, pc, firstreg, endpc)) {
+          init_ins_property(fs, pc, INS_PRECONCAT);
+          printf("returning from concat1 at pc %d, OP_%s\n",
+                 pc+1, luaP_opnames[o]);
+          return;
+        }
+        break;
+    }
+  }
+}
+
+
 /*
 ** callstat -> ... [callstat] ... OP_CALL [callstat]
 ** ============================ NESTED CONSTRUCTS ==============================
@@ -1267,12 +1315,20 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     endpc = ca->pc--;
   }
   for (; ca->pc >= 0; ca->pc--) {
-    const int pc = ca->pc;
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
-    int c = GETARG_C(i);
+    int pc;
+    Instruction i;
+    OpCode o;
+    int a, c;
+    recheck:
+    pc = ca->pc;
+    i = code[pc];
+    o = GET_OPCODE(i);
+    a = GETARG_A(i);
+    c = GETARG_C(i);
     switch (o) {
+      case OP_CONCAT:
+        concat1(ca, fs);
+        goto recheck;
       case OP_SELF:
         lua_assert(a == firstreg);
         /* fallthrough */
@@ -1453,10 +1509,16 @@ static int retstat1(CodeAnalyzer *ca, DFuncState *fs)
     ca->pc--;
   }
   for (; ca->pc >= 0; ca->pc--) {
-    const int pc = ca->pc;
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
+    int pc;
+    Instruction i;
+    OpCode o;
+    int a, c;
+    recheck:
+    pc = ca->pc;
+    i = code[pc];
+    o = GET_OPCODE(i);
+    a = GETARG_A(i);
+    c = GETARG_C(i);
     switch (o) {
       CASE_OP_CALL:
         callstat1(ca, fs);
@@ -1465,6 +1527,9 @@ static int retstat1(CodeAnalyzer *ca, DFuncState *fs)
           return -1;
         }
         break;
+      case OP_CONCAT:
+        concat1(ca, fs);
+        goto recheck;
       default:
         lua_assert(o != OP_RETURN); /* cannot have nested return statements */
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
@@ -1521,6 +1586,9 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
           return;
         }
         break;
+      case OP_CONCAT:
+        concat1(ca, fs);
+        /* fallthrough */
       default:
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           init_ins_property(fs, pc, INS_PREFORNUM);
@@ -1571,10 +1639,16 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     startpc = ca->pc--;
   }
   for (; ca->pc >= 0; ca->pc--) {
-    const int pc = ca->pc;
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
+    int pc;
+    Instruction i;
+    OpCode o;
+    int a, c;
+    recheck:
+    pc = ca->pc;
+    i = code[pc];
+    o = GET_OPCODE(i);
+    a = GETARG_A(i);
+    c = GETARG_C(i);
     switch (o) {
       CASE_OP_CALL:
         callstat1(ca, fs);
@@ -1583,6 +1657,9 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
           return;
         }
         break;
+      case OP_CONCAT:
+        concat1(ca, fs);
+        goto recheck;
       default:
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           init_ins_property(fs, pc, INS_PREFORLIST);
@@ -1658,12 +1735,6 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   } \
 } while (0)
 
-#define isloopstart(pc) \
-  (test_ins_property(fs, (pc), INS_WHILESTAT) || \
-   test_ins_property(fs, (pc), INS_REPEATSTAT) || \
-   test_ins_property(fs, (pc), INS_FORLIST) || \
-   test_ins_property(fs, (pc), INS_FORNUM))
-
 
 /*
 ** whilestat -> { test OP_JMP } (to EXIT) ... OP_JMP (to test) EXIT
@@ -1720,6 +1791,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
           forlistprep1(ca, fs, target);
           break;
         }
+        if (pc == 0) {
+          init_ins_property(fs, pc, INS_BREAKSTAT);
+          break;
+        }
         /* check for pending return register */
         if (ca->retpending != -1 && sbx >= 0 && target <= ca->retpc)
           break; /* this jump is part of the return expression */
@@ -1727,7 +1802,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
           pendingreturn1(); /* discarge pending return if needed */
         /* check for pending condition registers */
         if (ca->condpending.r1 != -1 || ca->condpending.r2 != -1) {
-          init_ins_property(fs, nextpc, ca->condpending.flag);
+          init_ins_property(fs, nextpc,
+                            ca->condpending.flag + ca->buildingretval);
           ca->condpending.r1 = ca->condpending.r2 = -1;
         }
         /* excluding the above case, this cannot be the first instruction */
@@ -1974,6 +2050,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
         pendingreturn1ex(!isOpTailCall(o));
         callstat1(ca, fs);
         goto postcallstat; /* check on pending condition registers */
+      case OP_CONCAT:
+        concat1(ca, fs);
+        goto postcallstat;
       case OP_RETURN: /* mark a return statement */
         pendingreturn1();
         pendingcond1();
@@ -2141,7 +2220,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, const int startpc, int type)
             /* A while-loop with `false' as the condition will have an
                unconditional jump at the beginning of the loop, which will be
                marked as a break-statement. It is harmless, but should not be
-               listed when debuggin pass1 results. */
+               listed when debugging pass1 results. */
 #ifdef LUA_DEBUG
             unset_ins_property(fs, pc, INS_BREAKSTAT);
 #endif /* LUA_DEBUG */
