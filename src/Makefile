@@ -42,8 +42,8 @@ MYLIBS=
 LIBS = -lm
 
 CORE_T=	libhksc.a
-CORE_O=	lcode.o lctype.o ldebug.o ldecomp.o ldo.o ldump.o lfunc.o lgc.o llex.o \
-	lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o  \
+CORE_O=	lcode.o lctype.o ldebug.o ldecomp.o ldo.o ldump.o lfunc.o lgc.o  \
+	llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o  \
 	lundump.o lzio.o ltests.o
 AUX_O=	hksclib.o
 

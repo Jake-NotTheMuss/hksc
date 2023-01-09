@@ -59,7 +59,7 @@ DEFCODE_R1(GETFIELD, ABC, 0, 1, R, K, 1)
 /* OP_TEST  A C  if not (R(A) <=> C) then pc++ */
 DEFCODE_R1(TEST, ABC, 1, 1, N, U, 0)
 
-/* OP_CALL */
+/* OP_CALL Lua/C function variants */
 DEFCODE_R1(CALL_I, ABC, 0, 1, U, U, 0)
 DEFCODE1(CALL_C, ABC, 0, 1, U, U, 0)
 
@@ -102,7 +102,7 @@ DEFCODE1(SETTABLE_N_BK, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SETTABLE, ABC, 0, 0, RK, RK, 0)
 DEFCODE1(SETTABLE_BK, ABC, 0, 0, RK, RK, 0)
 
-/* OP_TAILCALL  A B C */
+/* OP_TAILCALL Lua/C function variants */
 DEFCODE_R1(TAILCALL_I, ABC, 0, 1, U, U, 0)
 DEFCODE1(TAILCALL_C, ABC, 0, 1, U, U, 0)
 
@@ -143,27 +143,27 @@ DEFCODE1(GETUPVAL, ABC, 0, 1, U, N, 1)
 /* OP_SETUPVAL  A B  UpValue[B] := R(A) */
 DEFCODE_R1(SETUPVAL, ABC, 0, 1, U, N, 0)
 
-/* OP_ADD     A B C  R(A) := RK(B) + RK(C) */
+/* OP_ADD  A B C  R(A) := RK(B) + RK(C) */
 DEFCODE1(ADD, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(ADD_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_SUB     A B C  R(A) := RK(B) - RK(C) */
+/* OP_SUB  A B C  R(A) := RK(B) - RK(C) */
 DEFCODE1(SUB, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SUB_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_MUL     A B C  R(A) := RK(B) * RK(C) */
+/* OP_MUL  A B C  R(A) := RK(B) * RK(C) */
 DEFCODE1(MUL, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(MUL_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_DIV     A B C  R(A) := RK(B) / RK(C) */
+/* OP_DIV  A B C  R(A) := RK(B) / RK(C) */
 DEFCODE1(DIV, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(DIV_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_MOD     A B C  R(A) := RK(B) % RK(C) */
+/* OP_MOD  A B C  R(A) := RK(B) % RK(C) */
 DEFCODE1(MOD, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(MOD_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_POW     A B C  R(A) := RK(B) ^ RK(C) */
+/* OP_POW  A B C  R(A) := RK(B) ^ RK(C) */
 DEFCODE1(POW, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(POW_BK, ABC, 0, 1, RK, RK, 0)
 
@@ -179,11 +179,11 @@ DEFCODE_R1(NOT, ABC, 0, 1, R, N, 0)
 /* OP_LEN  A B  R(A) := length og R(B) */
 DEFCODE1(LEN, ABC, 0, 1, R, N, 0)
 
-/* OP_LT     A B C  if ((RK(B) < RK(C)) ~= A) then pc++ */
+/* OP_LT  A B C  if ((RK(B) < RK(C)) ~= A) then pc++ */
 DEFCODE1(LT, ABC, 1, 0, RK, RK, 0)
 DEFCODE1(LT_BK, ABC, 1, 0, RK, RK, 0)
 
-/* OP_LE     A B C  if ((RK(B) <= RK(C)) ~= A) then pc++ */
+/* OP_LE  A B C  if ((RK(B) <= RK(C)) ~= A) then pc++ */
 DEFCODE1(LE, ABC, 1, 0, R, K, 0)
 DEFCODE1(LE_BK, ABC, 1, 0, K, K, 0)
 
@@ -191,19 +191,19 @@ DEFCODE1(LE_BK, ABC, 1, 0, K, K, 0)
 /******************************************************************************/
 #ifdef LUA_CODT7
 
-/* OP_LEFT_SHIFT     A B C  R(A) := RK(B) << RK(C) */
+/* OP_LEFT_SHIFT  A B C  R(A) := RK(B) << RK(C) */
 DEFCODE1(LEFT_SHIFT, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(LEFT_SHIFT_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_RIGHT_SHIFT     A B C  R(A) := RK(B) >> RK(C) */
+/* OP_RIGHT_SHIFT  A B C  R(A) := RK(B) >> RK(C) */
 DEFCODE1(RIGHT_SHIFT, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(RIGHT_SHIFT_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_BIT_AND     A B C  R(A) := RK(B) & RK(C) */
+/* OP_BIT_AND  A B C  R(A) := RK(B) & RK(C) */
 DEFCODE1(BIT_AND, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(BIT_AND_BK, ABC, 0, 1, RK, RK, 0)
 
-/* OP_BIT_OR     A B C  R(A) := RK(B) | RK(C) */
+/* OP_BIT_OR  A B C  R(A) := RK(B) | RK(C) */
 DEFCODE1(BIT_OR, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(BIT_OR_BK, ABC, 0, 1, RK, RK, 0)
 
