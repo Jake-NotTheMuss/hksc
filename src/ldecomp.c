@@ -2010,12 +2010,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
               /* a break statement in an inner block/loop at the end of a
                  while-loop will jump backward to the start of the enclosing
                  while-loop */
-              if (target == outerstatstart) {
+              printf("target = (%d), outerstatstart = (%d)\n", target+1,outerstatstart+1);
+              if (target == outerstatstart && ca->in_bbl[BBL1_WHILE] &&
+                  (ca->in_bbl[BBL1_FOR] + ca->in_bbl[BBL1_WHILE]) >= 2) {
                 /* an outer while loop with at least 1 inner for-loop or inner
                    while-loop */
                 printf("num current while-loops: %d\n", ca->in_bbl[BBL1_WHILE]);
-                lua_assert(ca->in_bbl[BBL1_WHILE] &&
-                          (ca->in_bbl[BBL1_FOR] + ca->in_bbl[BBL1_WHILE]) >= 2);
                 init_ins_property(fs, pc, INS_BREAKSTAT);
               }
               else {
