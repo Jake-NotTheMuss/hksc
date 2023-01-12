@@ -14,6 +14,7 @@
 
 #include "lua.h"
 
+#include "ldo.h"
 #include "lobject.h"
 #include "lstate.h"
 #include "lundump.h"
@@ -280,11 +281,30 @@ static void DumpHeader(DumpState *D)
 }
 
 /*
+** Execute a protected bytecode dump.
+*/
+struct SDump {  /* data to `f_dump' */
+  DumpState *D;  /* dump state */
+  const Proto *f;  /* compiled chunk */
+};
+
+static void f_dump (hksc_State *H, void *ud) {
+  struct SDump *sd = (struct SDump *)ud;
+  DumpState *D = sd->D;
+  const Proto *f = sd->f;
+  DumpHeader(D);
+  DumpFunction(f,NULL,D);
+  UNUSED(H);
+}
+
+/*
 ** dump Lua function as precompiled chunk
 */
 int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
   DumpState D;
+  int status;
+  struct SDump sd;
   D.H=H;
   D.writer=w;
   D.data=data;
@@ -295,7 +315,9 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
     D.swapendian=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);
   else /* little endian */
     D.swapendian=(G(H)->bytecode_endianness==HKSC_BIG_ENDIAN);
-  DumpHeader(&D);
-  DumpFunction(f,NULL,&D);
+  sd.D=&D;
+  sd.f=f;
+  status = luaD_pcall(H, f_dump, &sd);
+  if (status) D.status = status;
   return D.status;
 }
