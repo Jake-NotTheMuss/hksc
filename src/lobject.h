@@ -28,6 +28,7 @@
 #define LUA_TPROTO  (LAST_TAG+1)
 #define LUA_TUPVAL  (LAST_TAG+2)
 #define LUA_TDEADKEY  (LAST_TAG+3)
+#define LUA_TANALYZER  (LAST_TAG+4)
 
 
 /*
@@ -276,6 +277,32 @@ typedef struct LocVar {
   int startpc;  /* first point where variable is active */
   int endpc;    /* first point where variable is dead */
 } LocVar;
+
+
+
+/*
+** Function analyzers
+*/
+#ifdef HKSC_DECOMPILER
+
+/* flags defined in lanalyzer.h */
+typedef lu_int32 InstructionFlags;
+typedef lu_byte RegisterFlags;
+struct BBLStart;
+
+typedef struct Analyzer {
+  CommonHeader;
+  InstructionFlags *insproperties; /* instruction flags */
+  RegisterFlags *regproperties; /* register flags */
+  struct LocVar *locvars;  /* information about local variables */
+  int sizeinsproperties;
+  int sizeregproperties;
+  int sizelocvars;
+  struct BBLStart *bbldata;
+  int sizebbldata;
+} Analyzer;
+
+#endif /* HKSC_DECOMPILER */
 
 
 
