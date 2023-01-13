@@ -18,11 +18,11 @@
 */
 #define BBLTYPE_TABLE \
   DEFBBLTYPE(FUNCTION)   /* a Lua function */      \
-  DEFBBLTYPE(DO)         /* a do-block */          \
   DEFBBLTYPE(WHILE)      /* a while-loop */        \
   DEFBBLTYPE(REPEAT)     /* a repeat-loop */       \
   DEFBBLTYPE(FORNUM)     /* a for-number-loop */   \
   DEFBBLTYPE(FORLIST)    /* a for-list-loop */     \
+  DEFBBLTYPE(DO)         /* a do-block */          \
   DEFBBLTYPE(IF)         /* an if-block */         \
   DEFBBLTYPE(ELSEIF)     /* an elseif-block */     \
   DEFBBLTYPE(ELSE)       /* an else-block */
@@ -31,9 +31,8 @@
 enum BBLTYPE {
   BBLTYPE_TABLE
   BBL_MAX,
-  /* special pass 1 values */
-  BBL1_FOR = BBL_FORNUM,
-  BBL1_MAX = BBL1_FOR + 1
+  /* pass 1 only uses BBL_FUNCTION and the loop-types */
+  BBL1_MAX = BBL_FORLIST + 1
 };
 #undef DEFBBLTYPE
 
@@ -42,8 +41,6 @@ enum BBLTYPE {
 ** instruction properties
 */
 #define INSFLAG_TABLE \
-  DEFINSFLAG(FJT)  \
-  DEFINSFLAG(BJT)  \
   DEFINSFLAG(PRECONCAT)  /* first pc that sets up a concat operation */ \
   DEFINSFLAG(PRECALL)  /* first pc that sets up a function call */ \
   DEFINSFLAG(PRERETURN)  /* first pc that evaluates a returned expression */ \
@@ -61,7 +58,7 @@ enum BBLTYPE {
   DEFINSFLAG(PRELOOPTEST1) \
   DEFINSFLAG(LOOPFAIL)  /* false-jump out of a loop condition evaluation */ \
   DEFINSFLAG(LOOPPASS)  /* true-jump out of a loop condition evaluation */ \
-  DEFINSFLAG(OPTLOOPFAILEXIT)  /* optimized jump target of a loop fail */ \
+  DEFINSFLAG(OPTLOOPFAILTARGET)  /* optimized jump target of a loop fail */ \
   DEFINSFLAG(REPEATSTAT)  /* first pc in a repeat-loop */ \
   DEFINSFLAG(WHILESTAT)  /* first pc in a while-loop */ \
   DEFINSFLAG(WHILEEXIT)  /* a jump instruction in a while-loop condition */ \
@@ -76,6 +73,7 @@ enum BBLTYPE {
   DEFINSFLAG(PREFORNUM)  /* first pc to evluate for-num control variables */ \
   DEFINSFLAG(BLOCKEND)  /* last pc in a block */ \
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
+  DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */
 
