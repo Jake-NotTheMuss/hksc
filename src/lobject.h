@@ -288,7 +288,7 @@ typedef struct LocVar {
 /* flags defined in lanalyzer.h */
 typedef lu_int32 InstructionFlags;
 typedef lu_byte RegisterFlags;
-struct BBLStart;
+struct BasicBlock;
 
 typedef struct Analyzer {
   CommonHeader;
@@ -298,8 +298,9 @@ typedef struct Analyzer {
   int sizeinsproperties;
   int sizeregproperties;
   int sizelocvars;
-  struct BBLStart *bbldata;
-  int sizebbldata;
+  struct {
+    struct BasicBlock *first, *last;
+  } bbllist;
 } Analyzer;
 
 #endif /* HKSC_DECOMPILER */

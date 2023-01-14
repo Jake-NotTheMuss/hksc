@@ -30,18 +30,22 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->sizeregproperties = 0;
   a->locvars = NULL;
   a->sizelocvars = 0;
-  a->bbldata = NULL;
-  a->sizebbldata = 0;
+  a->bbllist.first = a->bbllist.last = NULL;
   return a;
 }
 
 
 void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
-  int i;
+  struct BasicBlock *bbl;
   luaM_freearray(H, a->insproperties, a->sizeinsproperties, InstructionFlags);
   luaM_freearray(H, a->regproperties, a->sizeregproperties, RegisterFlags);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
-  luaM_freearray(H, a->bbldata, a->sizebbldata, struct BBLStart);
+  bbl = a->bbllist.first;
+  while (bbl != NULL) {
+    struct BasicBlock *next = bbl->next;
+    luaM_free(H, bbl);
+    bbl = next;
+  }
   luaM_free(H, a);
 }
 

@@ -103,11 +103,15 @@ enum REGFLAG {
 #undef DEFREGFLAG
 
 
-struct BBLStart {
+typedef struct BasicBlock {
+  struct BasicBlock *next;  /* next block */
+  struct BasicBlock *nextsibling;  /* next subling block */
+  struct BasicBlock *firstchild;  /* first child block */
+  int numchildren;  /* number of child blocks */
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
   int type;  /* the type of the block */
-};
+} BasicBlock;
 
 #endif /* ldecomp_c */
 

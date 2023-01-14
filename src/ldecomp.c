@@ -25,7 +25,7 @@
 #include "lundump.h"
 
 
-#define DEFBBLTYPE(e)  "BBL_" #e,
+#define DEFBBLTYPE(e)  #e,
 static const char *const bbltypenames [] = {
   BBLTYPE_TABLE
   "BBL_MAX"
@@ -207,6 +207,19 @@ static void freeexp(DFuncState *fs, DExp *exp) {
   luaM_free(fs->H, exp);
 }
 
+
+static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
+  BasicBlock *bbl = luaM_new(H, BasicBlock);
+  bbl->next = NULL;
+  bbl->nextsibling = NULL;
+  bbl->firstchild = NULL;
+  bbl->startpc = startpc;
+  bbl->endpc = endpc;
+  bbl->type = type;
+  return bbl;
+}
+
+
 static void open_func(DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
@@ -266,75 +279,56 @@ static void close_func(DecompState *D) {
   }
 }
 
-static void addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
-/*  hksc_State *H = fs->H;
-  Analyzer *a = fs->a;
-  struct BBLStart *prev;
-  struct BBLStart *bbl;*/
-  UNUSED(fs);
-  printf("recording new basic block of type %s (%d-%d)\n",
-         bbltypename(type),startpc+1,endpc+1);
-/*  luaM_growvector(H, a->bbldata, fs->nbbl, a->sizebbldata, struct BBLStart);
-  bbl = &a->bbldata[fs->nbbl++];
-  bbl->startpc = startpc;
-  bbl->endpc = endpc;
-  bbl->type = type;*/
+static void addsibling1(BasicBlock *bbl1, BasicBlock *bbl2) {
+  lua_assert(bbl1 != NULL);
+  bbl1->nextsibling = bbl2;
 }
 
-#if 0
-static void bblstart1(DFuncState *fs, int startpc, int type) {
+static void addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
-  struct BBLStart *bbl;
-  int oldsize = a->sizebbldata;
-  printf("marking start (%d) of new basic block of type %s\n",
-         startpc+1, bbltypename(type));
-  if (oldsize > 0) {
-    bbl = &a->bbldata[oldsize-1];
-    lua_assert(bbl->pc >= 0 && bbl->pc < fs->f->sizecode);
-    if (startpc == bbl->pc) {/* entry already exists */
-      goto addtype;
-    }
-    else { /* need to create a new entry */
-      lua_assert(startpc < bbl->pc);
-    }
-  }
-  a->sizebbldata++;
-  luaM_reallocvector(H, a->bbldata, oldsize, a->sizebbldata, struct BBLStart);
-  bbl = &a->bbldata[oldsize];
-  bbl->pc = startpc;
-  bbl->types = NULL;
-  bbl->sizetypes = 0;
-  bbl->ntypes = 0;
-  addtype:
-  if (bbl->ntypes >= bbl->sizetypes) {
-    luaM_growvector(H, bbl->types, bbl->ntypes, bbl->sizetypes, lu_byte,
-                    MAX_INT, "too many basic blocks begin at one instruction");
-  }
-  bbl->types[bbl->ntypes++] = type;
+  BasicBlock *curr, *new;
+  curr = a->bbllist.first;
+  new = newbbl(H, startpc, endpc, type);
+  new->next = curr;
+  a->bbllist.first = new;
+  if (curr == NULL)
+    a->bbllist.last = new;
+  printf("recording new basic block of type %s (%d-%d)\n",
+         bbltypename(type),startpc+1,endpc+1);
 }
 
-static void debugbblstart(DFuncState *fs)
+
+#ifdef LUA_DEBUG
+
+static void debugbbl(Analyzer *a, BasicBlock *bbl, int indent) {
+  BasicBlock *child = bbl->firstchild;
+  BasicBlock *nextsibling = bbl->nextsibling;
+  int i;
+  for (i = 0; i < indent; i++)
+    printf("  ");
+  if (indent) printf("- ");
+  printf("(%d-%d) %s (%s sibling)\n", bbl->startpc+1, bbl->endpc+1,
+         bbltypename(bbl->type), (nextsibling != NULL)?"YES":"NO");
+  indent++;
+  while (child != NULL) {
+    debugbbl(a, child, indent);
+    child = child->nextsibling;
+  }
+}
+
+static void debugbblsummary(DFuncState *fs)
 {
   Analyzer *a = fs->a;
-  struct BBLStart *bbl;
-  int i;
   printf("BASIC BLOCK SUMMARY\n"
-         "--------------------\n");
-  for (i = a->sizebbldata-1; i >= 0; i--) {
-    int n;
-    bbl = &a->bbldata[i];
-    lua_assert(bbl->ntypes > 0);
-    printf("-- %d basic block%s start%s at pc (%d)\n",
-           bbl->ntypes, bbl->ntypes>1?"s":"", bbl->ntypes>1?"":"s",
-           bbl->pc+1);
-    for (n = bbl->ntypes-1; n>= 0; n--) {
-      printf("     %s\n", bbltypename(bbl->types[n]));
-    }
-  }
-  printf("--------------------\n");
+         "-------------------\n");
+  lua_assert(a->bbllist.first != NULL);
+  printf("a->bbllist.first->type = (%s)\n",bbltypename(a->bbllist.first->type));
+  debugbbl(a, a->bbllist.first, 0);
+  printf("-------------------\n");
 }
-#endif
+#endif /* LUA_DEBUG */
+
 
 #define DumpLiteral(s,D) DumpBlock("" s, sizeof(s)-1, D)
 #define DumpString(s,D) DumpBlock(s, strlen(s), D)
@@ -1092,7 +1086,7 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
          beginning of the expression. */
       int sbx = GETARG_sBx(i);
       lua_assert(sbx >= 0);
-      lua_assert(pc + 1 + sbx < jumplimit);
+      lua_assert(pc + 1 + sbx <= jumplimit);
       return 0;
     }
     case OP_LOADBOOL:
@@ -1540,7 +1534,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 #define encountered1(what,pc) printf("  encountered a " what " loop starting" \
 " at (%d)\n", (pc)+1)
 
-#define varstartshere1(fs,pc) (*(fs->D->varstarts))((fs),(pc))
+#define varstartshere1(fs,pc) (*((fs)->D->varstarts))((fs),(pc))
 
 static int varstarts_nodebug(DFuncState *fs, int pc) {
   UNUSED(fs); UNUSED(pc);
@@ -1548,16 +1542,29 @@ static int varstarts_nodebug(DFuncState *fs, int pc) {
 }
 
 static int varstarts_withdebug(DFuncState *fs, int pc) {
+  struct LocVar *var;
   int idx = fs->locvaridx;
-  if (fs->locvars[idx].startpc == pc) {
-    idx--;
-    return 1;
+  int n = 0;
+  while (idx >= 0 && (var = &fs->locvars[idx])->startpc == pc) {
+    idx = --fs->locvaridx;
+    n++;
+    printf("variable '%s' begins at (%d)\n",getstr(var->varname), pc+1);
   }
-  return 0;
+  return n;
 }
+
+#define loop1(ca,fs,startpc,type) do { \
+  struct BasicBlock *new; /* the new block */ \
+  bbl1(ca, fs, startpc, type); /* create the new block */ \
+  new = fs->a->bbllist.first; \
+  lua_assert(new != nextsibling); \
+  addsibling1(new, nextsibling); \
+  nextsibling = new; \
+} while(0)
 
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
 {
+  BasicBlock *nextsibling = NULL;
   int outerstatstart, outerstatend; /* enclosing loop start and end pc */
   int outerstattype; /* type of enclosing loop */
   const Instruction *code = ca->code;
@@ -1615,6 +1622,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
             if (ca->testset.endpc != target) {
               /* bad code */
             }
+
           }
           break;
         }
@@ -1633,7 +1641,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
               encountered1("for-list", target);
               init_ins_property(fs, target, INS_FORLIST);
               markend1(pc, INS_LOOPEND, 1);
-              bbl1(ca, fs, target, BBL_FORLIST);
+              loop1(ca, fs, target, BBL_FORLIST);
             }
             else { /* either an optimized jump or a repeat-loop */
               /* check if this jumps to the start of a while-loop first; in that
@@ -1676,7 +1684,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
                 set_ins_property(fs, target, INS_REPEATSTAT);
                 markend1(pc, INS_LOOPEND, 1);
                 init_ins_property(fs, pc, INS_LOOPPASS);
-                bbl1(ca, fs, target, BBL_REPEAT);
+                loop1(ca, fs, target, BBL_REPEAT);
               }
             }
           }
@@ -1750,7 +1758,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
                      whether a conditional jump is part of a loop or a branch */
                   init_ins_property(fs, nexttarget, INS_OPTLOOPFAILTARGET);
               }
-              bbl1(ca, fs, target, BBL_WHILE);
+              loop1(ca, fs, target, BBL_WHILE);
             }
           }
         }
@@ -1828,7 +1836,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
         int target = pc + 1 + sbx; /* start of for-loop */
         init_ins_property(fs, target, INS_FORNUM);
         markend1(pc, INS_LOOPEND, 1);
-        bbl1(ca, fs, target, BBL_FORNUM);
+        loop1(ca, fs, target, BBL_FORNUM);
         break;
       }
       case OP_FORPREP: { /* mark the start of preparation code */
@@ -1859,6 +1867,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
       default: (void)(a);(void)b;(void)c;
         break;
     }
+    varstartshere1(fs,ca->pc);
     if (ca->pc == startpc)
       break;
   }
@@ -1869,10 +1878,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
   ca->curr.start = outerstatstart;
   ca->curr.end = outerstatend;
   ca->curr.type = outerstattype;
-  if (type != BBL_FUNCTION) {
-    addbbl1(fs, startpc, endpc, type);
-    printf("ca->pc = (%d)\n", ca->pc);
-  }
+  addbbl1(fs, startpc, endpc, type); /* create a new basic block node */
+  /* `nextsibling' will end up being the first child if this new block */
+  fs->a->bbllist.first->firstchild = nextsibling;
+  printf("ca->pc = (%d)\n", ca->pc);
 }
 
 
@@ -1894,6 +1903,12 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   UNUSED(D);
   init_ins_property(fs, ca.pc, INS_BLOCKEND); /* mark end of function */
   bbl1(&ca, fs, 0, BBL_FUNCTION);
+  {
+    BasicBlock *first = fs->a->bbllist.first;
+    lua_assert(first != NULL);
+    lua_assert(first->nextsibling == NULL);
+    lua_assert(first->type == BBL_FUNCTION);
+  }
   printf("ca.pc == (%d)\n", ca.pc);
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
@@ -2113,7 +2128,7 @@ static void DecompileFunction(DecompState *D, const Proto *f)
     printf("-- Decompiling anonymous function (%d)\n", D->funcidx);
   pass1(f,&new_fs,D);
   dumploopinfo(f, &new_fs, D);
-  /*debugbblstart(&new_fs);*/
+  debugbblsummary(&new_fs);
   printf("new_fs.firstclob = (%d)", new_fs.firstclob);
   if (new_fs.firstclob != -1)
     printf(", a = (%d)",GETARG_A(f->code[new_fs.firstclob]));
@@ -2158,9 +2173,9 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.usedebuginfo = (!Settings(H).ignore_debug && f->sizelineinfo > 0);
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
   if (D.usedebuginfo)
-    D.varstarts = varstarts_nodebug;
-  else
     D.varstarts = varstarts_withdebug;
+  else
+    D.varstarts = varstarts_nodebug;
   sd.D=&D;
   sd.f=f;
   status = luaD_pcall(H, f_decompiler, &sd);
