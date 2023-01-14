@@ -183,6 +183,7 @@ typedef struct DFuncState {
   } explist;  /* current chain of pending expressions */
   int nexps;  /* number of expressions in current chain */
   int idx;  /* the nth function */
+  int nbbl; /* number of basic blocks */
   struct LocVar *locvars;  /* information about local variables */
   int locvaridx;
   int nlocvars;  /* number of local variables declared so far */
@@ -219,6 +220,7 @@ static void open_func(DFuncState *fs, DecompState *D, const Proto *f) {
   fs->nexps = 0;
   fs->idx = D->funcidx++;
   fs->nlocvars = 0;
+  fs->nbbl = 0;
   if (D->usedebuginfo) { /* have debug info */
     printf("using debug info for function '%s'\n", f->name ? getstr(f->name) : "(anonymous)");
     fs->sizelocvars = f->sizelocvars;
@@ -264,7 +266,22 @@ static void close_func(DecompState *D) {
   }
 }
 
+static void addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
+/*  hksc_State *H = fs->H;
+  Analyzer *a = fs->a;
+  struct BBLStart *prev;
+  struct BBLStart *bbl;*/
+  UNUSED(fs);
+  printf("recording new basic block of type %s (%d-%d)\n",
+         bbltypename(type),startpc+1,endpc+1);
+/*  luaM_growvector(H, a->bbldata, fs->nbbl, a->sizebbldata, struct BBLStart);
+  bbl = &a->bbldata[fs->nbbl++];
+  bbl->startpc = startpc;
+  bbl->endpc = endpc;
+  bbl->type = type;*/
+}
 
+#if 0
 static void bblstart1(DFuncState *fs, int startpc, int type) {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
@@ -317,7 +334,7 @@ static void debugbblstart(DFuncState *fs)
   }
   printf("--------------------\n");
 }
-
+#endif
 
 #define DumpLiteral(s,D) DumpBlock("" s, sizeof(s)-1, D)
 #define DumpString(s,D) DumpBlock(s, strlen(s), D)
@@ -1042,28 +1059,6 @@ struct regpending {
   int endpc; /* pc of the instruction that uses the pending registere */
 };
 
-#define initregpending(s) (((s).reg = (s).endpc = -1), (s))
-
-/*
-** `Code Analyzer' - the main structure used in the first pass. It populates the
-** `insproperties' array of its corresponding `DFuncState'.
-*/
-typedef struct CodeAnalyzer {
-  /* a record of all encountered loops is saved implicitly on the callstack;
-     these values hold the bounds of the current loop */
-  struct {
-    int start, end, type;
-  } curr; /* the start and end of the current basic block */
-  int in_bbl[BBL1_MAX]; /* number currently active for each loop type */
-  int pc; /* current pc */
-  /* most of these values could be local to `whilestat1', but are kept in this
-     structure to avoid allocating new copies on every recursive call */
-  lu_byte prevTMode; /* previous pc is a test instruction */
-  struct {
-    int endpc, reg;
-  } testset; /* the current OP_TESTSET expression */
-  const Instruction *code; /* f->code */
-} CodeAnalyzer;
 
 /*
 ** Returns true if the instruction at (PC-1) is OP_JMP.
@@ -1158,7 +1153,51 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
 }
 
 
+/*
+** `Code Analyzer' - the main structure used in the first pass. It populates the
+** `insproperties' array of its corresponding `DFuncState'.
+*/
+typedef struct CodeAnalyzer {
+  /* a record of all encountered loops is saved implicitly on the callstack;
+     these values hold the bounds of the current loop */
+  struct {
+    int start, end, type;
+  } curr; /* the start and end of the current basic block */
+  int in_bbl[BBL1_MAX]; /* number currently active for each loop type */
+  int pc; /* current pc */
+  /* most of these values could be local to `whilestat1', but are kept in this
+     structure to avoid allocating new copies on every recursive call */
+  lu_byte prevTMode; /* previous pc is a test instruction */
+  struct {
+    int endpc, reg;
+  } testset; /* the current OP_TESTSET expression */
+  const Instruction *code; /* f->code */
+} CodeAnalyzer;
+
+
 static void callstat1(CodeAnalyzer *ca, DFuncState *fs);
+
+
+struct compundstat1 {
+  struct compoundstat1 *prev;
+  int type; /* instruction flag representing the type of statement */
+};
+
+
+#define STAT1_CASE_CALL(label) \
+  CASE_OP_CALL: \
+    callstat1(ca, fs); \
+    pc = ca->pc; \
+    o = GET_OPCODE(code[pc]); \
+    if (firstreg == a && !isOpCall(o)) \
+      goto label; \
+    break;
+
+#define encounteredstat1(what) \
+  printf("  encountered " what " ending at (%d)\n", endpc+1)
+
+#define leavingstat1(what) \
+printf("  leaving " what " ending at (%d), (%d-%d)\n", endpc+1,ca->pc+1,endpc+1)
 
 /*
 ** concat -> ... OP_CONCAT
@@ -1183,32 +1222,34 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
     firstreg = GETARG_B(concat);
     endpc = ca->pc--;
   }
-  for (; ca->pc >= 0; ca->pc--) {
-    const int pc = ca->pc;
+  encounteredstat1("concat");
+  for (; ca->pc > 0; ca->pc--) {
+    int pc = ca->pc;
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
     switch (o) {
       CASE_OP_CALL:
         callstat1(ca, fs);
-        if (firstreg == a) {
-          init_ins_property(fs, ca->pc, INS_PRECONCAT);
-          return;
-        }
+        pc = ca->pc;
+        o = GET_OPCODE(code[pc]);
+        if (firstreg == a && !isOpCall(o))
+          goto markconcat;
         break;
       case OP_CONCAT:
       case OP_RETURN:
         lua_assert(0);
       default:
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
+          markconcat:
           init_ins_property(fs, pc, INS_PRECONCAT);
-          printf("returning from concat1 at pc %d, OP_%s\n",
-                 pc+1, luaP_opnames[o]);
+          leavingstat1("concat");
           return;
         }
         break;
     }
   }
+  init_ins_property(fs, 0, INS_PRECONCAT);
 }
 
 
@@ -1236,18 +1277,17 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     firstreg = GETARG_A(call);
     endpc = ca->pc--;
   }
-  for (; ca->pc >= 0; ca->pc--) {
-    int pc;
-    Instruction i;
-    OpCode o;
-    int a, c;
-    recheck:
-    pc = ca->pc;
-    i = code[pc];
-    o = GET_OPCODE(i);
-    a = GETARG_A(i);
-    c = GETARG_C(i);
+  encounteredstat1("call");
+  for (; ca->pc > 0; ca->pc--) {
+    int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    int c = GETARG_C(i);
     switch (o) {
+      /*case OP_SELF:
+        lua_assert(a == firstreg);
+        break;*/
       case OP_CONCAT:
         concat1(ca, fs);
         /* The beginnig of the concat expression may already have been marked
@@ -1257,13 +1297,21 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
            In this case, mark the pc of OP_CONCAT with INS_PRECALL. Like OP_CALL
            and its variants, OP_CONCAT cannot start a call expression, so this
            is safe to use as a marker for this special case. */
-        if (test_ins_property(fs, ca->pc, INS_PRECALL)) {
+/*        if (a == firstreg && test_ins_property(fs, ca->pc, INS_PRECALL)) {
           init_ins_property(fs, pc, INS_PRECALL);
+          leavingstat1("call");
           return;
+        }*/
+        if (a == firstreg) {
+          if (!test_ins_property(fs, ca->pc, INS_PRECALL))
+            pc = ca->pc; /* mark actual startpc */
+          goto markcall;
         }
-        goto recheck;
-      case OP_SELF:
-        /*lua_assert(a == firstreg);*/
+        pc = ca->pc;
+        i = code[pc];
+        o = GET_OPCODE(i);
+        a = GETARG_A(i);
+        c = GETARG_C(i);
         /* fallthrough */
       default: {
         if (isOpCall(o)) { /* a nested call expression */
@@ -1277,21 +1325,31 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
              start of multiple calls that each call the return value of the
              previous call). */
           if (a == firstreg && c > 1) {
-            init_ins_property(fs, pc, INS_PRECALL);
-            return;
+            goto markcall;
           }
         }
         else if (beginstempexpr(code, i, pc, firstreg, endpc)) {
+          markcall:
           init_ins_property(fs, pc, INS_PRECALL);
-          printf("returning from callstat1 at pc %d, OP_%s\n",
-                 pc+1, luaP_opnames[o]);
+          leavingstat1("call");
           return;
         }
         break;
       }
     }
   }
+  init_ins_property(fs, 0, INS_PRECALL);
 }
+
+/* only put this before the default case */
+#define STAT1_CASE_CONCAT \
+  case OP_CONCAT: \
+    concat1(ca, fs); \
+    pc = ca->pc; \
+    i = code[pc]; \
+    o = GET_OPCODE(i); \
+    a = GETARG_A(i); \
+    /* fallthrough */
 
 /*
 ** retstat -> ... OP_RETURN
@@ -1332,40 +1390,27 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
     }
     ca->pc--;
   }
-  for (; ca->pc >= 0; ca->pc--) {
-    int pc;
-    Instruction i;
-    OpCode o;
-    int a, c;
-    recheck:
-    pc = ca->pc;
-    i = code[pc];
-    o = GET_OPCODE(i);
-    a = GETARG_A(i);
-    c = GETARG_C(i);
+  encounteredstat1("return");
+  for (; ca->pc > 0; ca->pc--) {
+    int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
     switch (o) {
-      CASE_OP_CALL:
-        callstat1(ca, fs);
-        if (firstreg == a) {
-          init_ins_property(fs, ca->pc, INS_PRERETURN);
-          return;
-        }
-        break;
-      case OP_CONCAT:
-        concat1(ca, fs);
-        goto recheck;
+      STAT1_CASE_CALL(markret)
+      STAT1_CASE_CONCAT
       default:
         lua_assert(o != OP_RETURN); /* cannot have nested return statements */
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
+          markret:
           init_ins_property(fs, pc, INS_PRERETURN);
-          printf("returning from retstat1 at pc %d, OP_%s\n",
-                 pc+1, luaP_opnames[o]);
+          leavingstat1("return");
           return;
         }
         break;
     }
   }
-  lua_assert(0); /* cannot happen - void-return should already be handled */
+  init_ins_property(fs, 0, INS_PRERETURN);
   return;
 }
 
@@ -1397,27 +1442,20 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     firstreg = GETARG_A(entry);
     startpc = ca->pc--;
   }
-  for (; ca->pc >= 0; ca->pc--) {
-    const int pc = ca->pc;
+  encounteredstat1("numeric for-loop prep");
+  for (; ca->pc > 0; ca->pc--) {
+    int pc = ca->pc;
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
     switch (o) {
-      CASE_OP_CALL:
-        callstat1(ca, fs);
-        if (firstreg == a) {
-          init_ins_property(fs, ca->pc, INS_PREFORNUM);
-          return;
-        }
-        break;
-      case OP_CONCAT:
-        concat1(ca, fs);
-        /* fallthrough */
+      STAT1_CASE_CALL(markfornum)
+      STAT1_CASE_CONCAT
       default:
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
+          markfornum:
           init_ins_property(fs, pc, INS_PREFORNUM);
-          printf("returning from fornumprep1 at pc %d, OP_%s\n",
-                 pc+1, luaP_opnames[o]);
+          leavingstat1("numeric for-loop prep");
           return;
         }
         break;
@@ -1428,7 +1466,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
           ...
       end
   */
-  lua_assert(ca->pc < 0);
+  /*lua_assert(ca->pc < 0);*/
   init_ins_property(fs, 0, INS_PREFORNUM);
 }
 
@@ -1462,33 +1500,20 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     firstreg = GETARG_A(test);
     startpc = ca->pc--;
   }
-  for (; ca->pc >= 0; ca->pc--) {
-    int pc;
-    Instruction i;
-    OpCode o;
-    int a, c;
-    recheck:
-    pc = ca->pc;
-    i = code[pc];
-    o = GET_OPCODE(i);
-    a = GETARG_A(i);
-    c = GETARG_C(i);
+  encounteredstat1("list for-loop prep");
+  for (; ca->pc > 0; ca->pc--) {
+    int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
     switch (o) {
-      CASE_OP_CALL:
-        callstat1(ca, fs);
-        if (firstreg == a) {
-          init_ins_property(fs, ca->pc, INS_PREFORLIST);
-          return;
-        }
-        break;
-      case OP_CONCAT:
-        concat1(ca, fs);
-        goto recheck;
+      STAT1_CASE_CALL(markforlist)
+      STAT1_CASE_CONCAT
       default:
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
+          markforlist:
           init_ins_property(fs, pc, INS_PREFORLIST);
-          printf("returning from forlistprep1 at pc %d, OP_%s\n",
-                 pc+1, luaP_opnames[o]);
+          leavingstat1("list for-loop prep");
           return;
         }
         break;
@@ -1499,7 +1524,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
           ...
       end
   */
-  lua_assert(ca->pc < 0);
+  /*lua_assert(ca->pc < 0);*/
   init_ins_property(fs, 0, INS_PREFORLIST);
 }
 
@@ -1548,7 +1573,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
   ca->curr.type = type;
   lua_assert(type < BBL1_MAX); /* first pass only handles loop types */
   printf("entering new basic block of type (%s)\n", bbltypename(type));
-  for (; ca->pc >= startpc; ca->pc--) {
+  for (; ca->pc >= 0; ca->pc--) {
     int pc = ca->pc;
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
@@ -1575,10 +1600,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
         if (prevop == OP_TESTSET) {/* a jump after OP_TESTSET is not a branch */
           if (ca->testset.endpc == -1) {
             ca->testset.endpc = target;
+            init_ins_property(fs, target-1, INS_TESTSETEND);
             if (test_ins_property(fs, target-1, INS_BLOCKEND)) {
               int testsetpc;
               unset_ins_property(fs, target-1, INS_BLOCKEND);
-              init_ins_property(fs, target-1, INS_TESTSETEND);
               for (testsetpc = target-2; testsetpc > pc; testsetpc--) {
                 unset_ins_property(fs, testsetpc, INS_BRANCHFAIL);
                 unset_ins_property(fs, testsetpc, INS_BRANCHPASS);
@@ -1834,6 +1859,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
       default: (void)(a);(void)b;(void)c;
         break;
     }
+    if (ca->pc == startpc)
+      break;
   }
   exitblock:
   ca->testset.endpc = ca->testset.reg = -1;
@@ -1843,7 +1870,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type)
   ca->curr.end = outerstatend;
   ca->curr.type = outerstattype;
   if (type != BBL_FUNCTION) {
-    bblstart1(fs, startpc, type);
+    addbbl1(fs, startpc, endpc, type);
+    printf("ca->pc = (%d)\n", ca->pc);
   }
 }
 
@@ -2085,7 +2113,7 @@ static void DecompileFunction(DecompState *D, const Proto *f)
     printf("-- Decompiling anonymous function (%d)\n", D->funcidx);
   pass1(f,&new_fs,D);
   dumploopinfo(f, &new_fs, D);
-  debugbblstart(&new_fs);
+  /*debugbblstart(&new_fs);*/
   printf("new_fs.firstclob = (%d)", new_fs.firstclob);
   if (new_fs.firstclob != -1)
     printf(", a = (%d)",GETARG_A(f->code[new_fs.firstclob]));

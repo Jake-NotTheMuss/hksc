@@ -41,10 +41,6 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   luaM_freearray(H, a->insproperties, a->sizeinsproperties, InstructionFlags);
   luaM_freearray(H, a->regproperties, a->sizeregproperties, RegisterFlags);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
-  for (i = 0; i < a->sizebbldata; i++) {
-    struct BBLStart *bbl = &a->bbldata[i];
-    luaM_freearray(H, bbl->types, bbl->sizetypes, lu_byte);
-  }
   luaM_freearray(H, a->bbldata, a->sizebbldata, struct BBLStart);
   luaM_free(H, a);
 }

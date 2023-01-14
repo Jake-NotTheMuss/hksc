@@ -104,10 +104,9 @@ enum REGFLAG {
 
 
 struct BBLStart {
-  lu_byte *types;  /* the vector of basic block types that start here */
-  int pc;  /* startpc of the block */
-  int ntypes;  /* number of blocks that start here */
-  int sizetypes;
+  int startpc;  /* startpc of the block */
+  int endpc;  /* endpc of the block */
+  int type;  /* the type of the block */
 };
 
 #endif /* ldecomp_c */
