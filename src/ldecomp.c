@@ -944,12 +944,20 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("PRE FORNUM\n", D);
     if (test_ins_property(fs, pc, INS_FORNUM))
       DumpLiteral("BEGIN FORNUM\n", D);
-    if (test_ins_property(fs, pc, INS_BRANCHFAIL))
+    if (test_ins_property(fs, pc, INS_BRANCHFAIL)) {
+      lua_assert(!test_ins_property(fs, pc, INS_BLOCKEND));
+      lua_assert(!test_ins_property(fs, pc, INS_BRANCHPASS));
       DumpLiteral("BRANCH FAIL\n", D);
-    else if (test_ins_property(fs, pc, INS_BRANCHPASS))
+    }
+    else if (test_ins_property(fs, pc, INS_BRANCHPASS)) {
+      lua_assert(!test_ins_property(fs, pc, INS_BLOCKEND));
       DumpLiteral("BRANCH PASS\n", D);
-    if (test_ins_property(fs, pc, INS_LOOPFAIL))
+    }
+    if (test_ins_property(fs, pc, INS_LOOPFAIL)) {
+      lua_assert(!test_ins_property(fs, pc, INS_LOOPPASS));
+      lua_assert(!test_ins_property(fs, pc, INS_LOOPEND));
       DumpLiteral("LOOP FAIL\n", D);
+    }
     else if (test_ins_property(fs, pc, INS_LOOPPASS))
       DumpLiteral("LOOP PASS\n", D);
     if (test_ins_property(fs, pc, INS_PRECALL))
@@ -972,8 +980,11 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("BREAK\n", D);
     if (test_ins_property(fs, pc, INS_DOSTAT))
       DumpLiteral("BEGIN DO\n", D);
-    if (test_ins_property(fs, pc, INS_BLOCKEND))
+    if (test_ins_property(fs, pc, INS_BLOCKEND)) {
+      lua_assert(!test_ins_property(fs, pc, INS_BRANCHFAIL));
+      lua_assert(!test_ins_property(fs, pc, INS_BRANCHPASS));
       DumpLiteral("END BLOCK\n", D);
+    }
     else if (test_ins_property(fs, pc, INS_TESTSETEND))
       DumpLiteral("END TESTSET\n", D);
     if (test_ins_property(fs, pc, INS_LOOPEND))
