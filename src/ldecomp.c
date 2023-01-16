@@ -1746,12 +1746,43 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             if (test_ins_property(fs, target-1, INS_BLOCKEND)) {
               int testsetpc;
               unset_ins_property(fs, target-1, INS_BLOCKEND);
-              for (testsetpc = target-2; testsetpc > pc; testsetpc--) {
+              lua_assert(nextsibling == NULL ||
+                         nextsibling == fs->a->bbllist.first);
+              printf("nextbranch = (%p), (%s) (%d-%d)\n", (void *)nextbranch,
+                     bbltypename(nextbranch->type), nextbranch->startpc+1,
+                     nextbranch->endpc+1);
+              printf("cleaning up testset expression from (%d-%d)\n",
+                     pc+1, target);
+              printf("--\n");
+              for (testsetpc = pc; testsetpc < target; testsetpc++) {
+                while (nextsibling && nextsibling->startpc == testsetpc) {
+                  BasicBlock *nextnextsibling = nextsibling->nextsibling;
+                  fs->a->bbllist.first = nextsibling->next;
+                  if (nextsibling == fs->a->bbllist.last)
+                    fs->a->bbllist.last = fs->a->bbllist.first;
+                  printf("deleting erroneous block (%s) (%d-%d)\n",
+                         bbltypename(nextsibling->type),nextsibling->startpc+1,
+                         nextsibling->endpc+1);
+                  luaM_free(fs->H, nextsibling);
+                  nextsibling = nextnextsibling;
+                }
                 unset_ins_property(fs, testsetpc, INS_BRANCHFAIL);
                 unset_ins_property(fs, testsetpc+1, INS_BRANCHBEGIN);
                 unset_ins_property(fs, testsetpc, INS_BRANCHPASS);
                 unset_ins_property(fs, testsetpc, INS_BLOCKEND);
               }
+              printf("--\n");
+              if (nextsibling && nextsibling->type == BBL_IF)
+                nextbranch = nextsibling;
+              else
+                nextbranch = NULL;
+              printf("nextbranch = (%p)", (void *)nextbranch);
+              if (nextbranch)
+                printf("(%s) (%d-%d)\n",
+                     bbltypename(nextbranch->type), nextbranch->startpc+1,
+                     nextbranch->endpc+1);
+              printf("\n");
+              /*if (nextsibling && nextsibling->)*/
             }
           }
           else {
@@ -1767,7 +1798,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         if (ca->testset.endpc != -1) { /* in a OP_TESTSET expression */
           /* an unconditional jump cannot be in a conditional expression, nor a
              backwards jump, nor one which jumps past the expression */
-          if (!ca->prevTMode || sbx < 0 || target >= ca->testset.endpc)
+          if (!ca->prevTMode || sbx < 0 || target > ca->testset.endpc)
             ca->testset.endpc = ca->testset.reg = -1; /* discharge */
           else
             break; /* this jump is part of the conditional expression */
@@ -1967,6 +1998,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       if (next->endpc == branchendpc &&
                           nextbranchtarget == target) {
                         block = next;
+                        printf("merging this branch with the next block (%s) "
+                               "(%d-%d)\n", bbltypename(next->type),
+                               next->startpc+1, next->endpc+1);
                         block->startpc = branchstartpc;
                         issingle = 0;
                         nextsibling = block->nextsibling;
@@ -1981,7 +2015,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   /* at this point the start and endpc of the block is known */
                   lua_assert(branchendpc >= branchstartpc);
                   lua_assert(issingle == 0 || issingle == 1);
-                  if (issingle) {
+                  if (issingle && branch != NULL) {
                     printf("THIS BRANCH IS A CHILD BLOCK of the top-level one\n");
                   }
                   addbbl1(fs, branchstartpc, branchendpc, BBL_IF);
@@ -1998,6 +2032,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     branch->next = block;
                     ca->testset.endpc = ca->testset.reg = -1;
                     return;
+                  }
+                  else {
+                    nextbranch = block;
+                    nextbranchtarget = target;
                   }
                 }
               }
@@ -2039,6 +2077,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                        block->startpc+1, block->endpc+1);
                 nextsibling = block;
                 nextbranch = block;
+                printf("setting nextbranch to (%p)\n", (void *)block);
                 nextbranchtarget = new_branch.target1;
               }
             }
@@ -2227,9 +2266,6 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bl)
       nextchild = nextchild->nextsibling;
       nextchildstart = nextchild ? nextchild->startpc : -1;
       continue;
-    }
-    if (test_ins_property(fs, pc, INS_BRANCHBEGIN)) {
-      ;
     }
     if (pc == endpc)
       break;
