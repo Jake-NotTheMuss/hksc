@@ -1938,11 +1938,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else {
                 nextbranchpc = pc;
                 init_ins_property(fs, pc, INS_BRANCHFAIL);
-                init_ins_property(fs, pc+1, INS_BRANCHBEGIN);
                 if (!test_ins_property(fs, target-1, INS_BRANCHPASS)) {
                   /* if it jumps past an already-marked end of a block, and that
                      block ends with a jump, mark the block-ending for that jump
                      target as well */
+                  init_ins_property(fs, pc+1, INS_BRANCHBEGIN);
                   if (test_ins_property(fs, target-1, INS_BLOCKEND) &&
                       GET_OPCODE(code[target-1]) == OP_JMP) {
                     int nexttarget = target + GETARG_sBx(code[target-1]);
@@ -1953,7 +1953,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   else {
                     set_ins_property(fs, target-1, INS_BLOCKEND);
                   }
-                }
                 /* create a basic block for this branch */
                 {
                   /* true if this branch has no else-block; this is significant
@@ -2012,6 +2011,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     ca->testset.endpc = ca->testset.reg = -1;
                     return;
                   }
+                }
                 }
               }
             }
