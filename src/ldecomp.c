@@ -1667,7 +1667,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   if (branch->prev)
     branch->optimalexit = branch->prev->optimalexit;
   else
-    branch->optimalexit = endpc+1;
+    branch->optimalexit = jumptarget;
   addbbl1(fs, midpc, endpc, BBL_ELSE);
   block = fs->a->bbllist.first;
   lua_assert(block != NULL);
@@ -1681,7 +1681,6 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  struct branch1 *branch)
 {
-  int nextbranchpc = -1;
   BasicBlock *nextsibling;
   BasicBlock *nextbranch = NULL;
   int nextbranchtarget = -1;
@@ -1726,6 +1725,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     switch (o) {
       case OP_JMP: {
         int target = pc + 1 + sbx; /* the jump target pc */
+        int branchstartpc, branchendpc;
+        int tailbranchjump=0;
         OpCode prevop; /* previous opcode to see if it is a test instruction */
         if (test_ins_property(fs, pc+1, INS_FORLIST)) {
           forlistprep1(ca, fs, target);
@@ -1751,7 +1752,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 unset_ins_property(fs, testsetpc, INS_BRANCHPASS);
                 unset_ins_property(fs, testsetpc, INS_BLOCKEND);
               }
-              nextbranchpc = -1;
             }
           }
           else {
@@ -1788,10 +1788,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 if (target == startpc) { /* jumps to the start of the loop */
                   /* this is an optimized jump from a branch test that would
                      otherwise jump to the very end of the loop */
-                  nextbranchpc = pc;
+                  tailbranchjump=1;
+                  branchendpc = endpc-1;
                   init_ins_property(fs, pc, INS_BRANCHFAIL);
-                  init_ins_property(fs, pc+1, INS_BRANCHBEGIN);
-                  set_ins_property(fs, endpc-1, INS_BLOCKEND);
+                  goto ifbranch;
                 }
                 else if (target < startpc) { /* jumps to an enclosing loop */
                   /* this is an optimized jump from a loop test that would
@@ -1871,8 +1871,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               if (pc == endpc-1)
                 goto markwhilestat;
               /* this instruction is the end of a basic block */
-              init_ins_property(fs, pc, INS_BLOCKEND);
-              set_ins_property(fs, endpc-1, INS_BLOCKEND);
+              branchendpc = endpc-1;
+              goto elsebranch;
             }
             /* inside a loop enclosed by a while-loop, jumping back to the start
                of the while-loop, i.e. an optimized `break' out of the for-loop
@@ -1936,42 +1936,28 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
                 init_ins_property(fs, pc, INS_BRANCHPASS);
               else {
-                nextbranchpc = pc;
                 init_ins_property(fs, pc, INS_BRANCHFAIL);
                 if (!test_ins_property(fs, target-1, INS_BRANCHPASS)) {
-                  /* if it jumps past an already-marked end of a block, and that
-                     block ends with a jump, mark the block-ending for that jump
-                     target as well */
-                  init_ins_property(fs, pc+1, INS_BRANCHBEGIN);
-                  if (test_ins_property(fs, target-1, INS_BLOCKEND) &&
-                      GET_OPCODE(code[target-1]) == OP_JMP) {
-                    int nexttarget = target + GETARG_sBx(code[target-1]);
-                    if (nexttarget - 1 > pc) {
-                      /*set_ins_property(fs, nexttarget-1, INS_BLOCKEND);*/
-                    }
-                  }
-                  else {
-                    set_ins_property(fs, target-1, INS_BLOCKEND);
-                  }
-                /* create a basic block for this branch */
-                {
+                  /* create a basic block for this branch */
                   /* true if this branch has no else-block; this is significant
                      because only branches with an else-block cause a recursive
                      call, whereas else-less branches are always child blocks in
                      the current branch context */
                   int issingle;
-                  int branchstartpc = pc+1;
-                  int branchendpc;
                   BasicBlock *block;
+                  ifbranch:
+                  branchstartpc = pc+1;
                   if (branch != NULL)
-                    branch->startpc = pc+1;
-                  if (branch != NULL && target == branch->midpc) {
                     branch->startpc = branchstartpc;
+                  if (branch != NULL &&
+                      (target == branch->midpc || tailbranchjump)) {
                     branchendpc = branch->midpc-1; /* the end of the if-part */
                     issingle = 0; /* there is an else-block */
                   }
                   else {
-                    if (branch == NULL || target < branch->midpc)
+                    if (tailbranchjump && branch == NULL)
+                      branchendpc = endpc-1;
+                    else if (branch == NULL || target < branch->midpc)
                       branchendpc = target-1;
                     else
                       branchendpc = branch->midpc-1;
@@ -2001,6 +1987,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   addbbl1(fs, branchstartpc, branchendpc, BBL_IF);
                   block = fs->a->bbllist.first;
                   blockcreated:
+                  init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
+                  set_ins_property(fs, branchendpc, INS_BLOCKEND);
                   lua_assert(block != NULL);
                   printf("BRANCH BLOCK - (IF) (%d-%d)\n", block->startpc+1,
                          block->endpc+1);
@@ -2011,7 +1999,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     ca->testset.endpc = ca->testset.reg = -1;
                     return;
                   }
-                }
                 }
               }
             }
@@ -2026,16 +2013,16 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
             else { /* exiting a branch */
               struct branch1 new_branch;
-              int branchstartpc = pc+1;
-              int branchendpc;
-              init_ins_property(fs, pc, INS_BLOCKEND);
-              set_ins_property(fs, target-1, INS_BLOCKEND);
-              init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
               if (branch != NULL &&
                   (target == branch->optimalexit || target == branch->endpc+1))
                 branchendpc = branch->midpc-1;
               else
                 branchendpc = target-1;
+              elsebranch:
+              branchstartpc = pc+1;
+              init_ins_property(fs, pc, INS_BLOCKEND);
+              init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
+              set_ins_property(fs, branchendpc, INS_BLOCKEND);
               new_branch.prev = branch;
               /* keep the same loop context */
               new_branch.outerstatstart = outerstatstart;
