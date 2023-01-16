@@ -72,6 +72,7 @@ enum BBLTYPE {
   DEFINSFLAG(FORNUM)  /* first pc in a numeric for-loop */ \
   DEFINSFLAG(PREFORNUM)  /* first pc to evluate for-num control variables */ \
   DEFINSFLAG(BLOCKEND)  /* last pc in a block */ \
+  DEFINSFLAG(BRANCHBEGIN)  /* start of branch block */ \
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
