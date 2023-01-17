@@ -330,6 +330,16 @@ static void debugbblsummary(DFuncState *fs)
 }
 #endif /* LUA_DEBUG */
 
+static void printbblmsg(const char *msg, BasicBlock *block) {
+  fputs(msg, stdout);
+  fputs(" ", stdout);
+  if (block != NULL)
+    printf("(%s) (%d-%d)\n", bbltypename(block->type), block->startpc+1,
+           block->endpc+1);
+  else
+    printf("(NULL)\n");
+}
+
 
 #define DumpLiteral(s,D) DumpBlock("" s, sizeof(s)-1, D)
 #define DumpString(s,D) DumpBlock(s, strlen(s), D)
@@ -1133,15 +1143,9 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
 }
 
 
-/* structure for handling nested do-blocks with OP_CLOSE */
-struct doblock {
-  int reg; /* the register to close up to in OP_CLOSE */
-  int firstclob; /* pc of first possible instruction which clobbers REG */
-  int endbeforecall; /* true if the analyzer encountered another OP_CLOSE while
-  in a block and concluded the block was not nested, and therefore returned
-  before calling `bbl1' for the new OP_CLOSE, and now has to go backward and
-  push this OP_CLOSE context */
-  struct doblock *prev; /* enclosing do-block */
+/* a loop in the first pass, described by its start and end pc and its type */
+struct stat1 {
+  int start, end, type;
 };
 
 
@@ -1152,9 +1156,7 @@ struct doblock {
 typedef struct CodeAnalyzer {
   /* a record of all encountered loops is saved implicitly on the callstack;
      these values hold the bounds of the current loop */
-  struct {
-    int start, end, type;
-  } curr;  /* the start and end of the current basic block */
+  struct stat1 curr; /* the start and end of the current basic block */
   int pc;  /* current pc */
   /* most of these values could be local to `whilestat1', but are kept in this
      structure to avoid allocating new copies on every recursive call */
@@ -1529,6 +1531,10 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   lua_assert(new != nextsibling); \
   addsibling1(new, nextsibling); \
   nextsibling = new; \
+  /* if enclosed by a block, save a previous sibling for it, as the block may \
+     really begin after this newly created block */ \
+  if (block != NULL && block->prevsibling == NULL) \
+    block->prevsibling = new; \
 } while(0)
 
 
@@ -1538,11 +1544,10 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 struct branch1 {
   struct branch1 *prev;  /* previous branch context */
   BasicBlock *next;  /* the next branch block in this group */
+  struct stat1 *outer;  /* saved values for the outer loop statement */
   int target1;  /* jump target out of the branch condition */
   int startpc, endpc, midpc;  /* midpc is the start of the else-part */
   int optimalexit;  /* target of optimized jumps out of this branch */
-  /* saved values for the outer loop statement */
-  int outerstatstart, outerstatend, outerstattype;
 };
 
 
@@ -1553,14 +1558,13 @@ struct block1 {
   struct block1 *prev;  /* previous block context */
   BasicBlock *nextbranch;
   BasicBlock *nextsibling;
+  BasicBlock *prevsibling;
   BasicBlock *firstchild;
+  struct stat1 *outer;  /* saved values for the outer loop statement */
   int pass;
   int reg;  /* register to close up to in OP_CLOSE */
-  int firstclob;  /* first pc to clobber REG */
   int seenclosure;
   int startpc, endpc;
-  /* saved values for the outer loop statement */
-  int outerstatstart, outerstatend, outerstattype;
 };
 
 
@@ -1575,8 +1579,7 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   printf("--\n");
   while (nextsibling && nextsibling->startpc <= endpc) {
     lastchild = nextsibling;
-    printf("found child (%s) (%d-%d)\n", bbltypename(nextsibling->type),
-           nextsibling->startpc+1, nextsibling->endpc+1);
+    printbblmsg("found child", nextsibling);
     nextsibling = nextsibling->nextsibling;
     if (prevtype != BBL_ELSEIF && lastchild->type == BBL_ELSEIF)
       lastchild->type = BBL_IF;
@@ -1589,24 +1592,16 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
     /*if (firstsibling && firstsibling->type == BBL_ELSEIF)
       firstsibling->type = BBL_IF;*/
     if (firstsibling) {
-      printf("first child is (%s) (%d-%d)\n", bbltypename(firstsibling->type),
-             firstsibling->startpc+1, firstsibling->endpc+1);
+      printbblmsg("first child is", firstsibling);
     }
     /* fix sibling chain for last child */
     lastchild->nextsibling = NULL;
-    printf("last child is (%s) (%d-%d)\n", bbltypename(lastchild->type),
-           lastchild->startpc+1, lastchild->endpc+1);
+    printbblmsg("last child is", lastchild);
   }
   else {
     printf("found no children for this block\n");
   }
-  if (nextsibling) {
-    printf("next sibling changed to (%s) (%d-%d)\n",
-           bbltypename(nextsibling->type), nextsibling->startpc+1,
-           nextsibling->endpc+1);
-  }
-  else
-    printf("next sibling changed to (NULL)\n");
+  printbblmsg("next sibling changed to", nextsibling);
   block->nextsibling = nextsibling;
   return lastchild;
 }
@@ -1637,46 +1632,40 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  struct branch1 *branch, struct block1 *block)
 {
+  struct stat1 outer;
   BasicBlock *nextsibling;
   BasicBlock *nextbranch = NULL;
   int nextbranchtarget = -1;
   int endpc;
-  int outerstatstart, outerstatend; /* enclosing loop start and end pc */
-  int outerstattype; /* type of enclosing loop */
   const Instruction *code = ca->code;
   if (branch == NULL && block == NULL) { /* inside a loop */
     nextsibling = NULL;
     endpc = ca->pc;
-    /* save old values */
-    outerstatstart = ca->curr.start;
-    outerstatend = ca->curr.end;
-    outerstattype = ca->curr.type;
-    /* update current */
-    ca->curr.start = startpc;
+    outer = ca->curr; /* save old values */
+    ca->curr.start = startpc; /* update current */
     ca->curr.end = endpc;
     ca->curr.type = type;
     printf("entering new basic block of type (%s)\n", bbltypename(type));
   }
-  else { /* inside a branch construct */
-    if (branch != NULL) {
+  else {
+    struct stat1 *outersaved;
+    if (branch != NULL) { /* inside a branch construct */
       lua_assert(block == NULL);
       nextsibling = branch->next; /* the else-block */
-      outerstatstart = branch->outerstatstart;
-      outerstatend = branch->outerstatend;
-      outerstattype = branch->outerstattype;
+      outersaved = branch->outer;
       printf("entering new branch\n");
     }
-    else {
+    else { /* inside a block */
+      lua_assert(block != NULL);
       nextsibling = NULL;
-      outerstatstart = block->outerstatstart;
-      outerstatend = block->outerstatend;
-      outerstattype = block->outerstattype;
+      outersaved = block->outer;
       printf("entering new do-block\n");
     }
     endpc = ca->curr.end;  /* endpc must be the end of the current loop */
+    lua_assert(outersaved != NULL);
+    outer = *outersaved;
   }
   ca->pc--;
-  lua_assert(type < BBL1_MAX); /* first pass only handles loop types */
   for (; ca->pc >= 0; ca->pc--) {
     int pc = ca->pc;
     Instruction i = code[pc];
@@ -1712,9 +1701,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               unset_ins_property(fs, target-1, INS_BLOCKEND);
               lua_assert(nextsibling == NULL ||
                          nextsibling == fs->a->bbllist.first);
-              printf("nextbranch = (%p), (%s) (%d-%d)\n", (void *)nextbranch,
-                     bbltypename(nextbranch->type), nextbranch->startpc+1,
-                     nextbranch->endpc+1);
+              printbblmsg("nextbranch =", nextbranch);
               printf("cleaning up testset expression from (%d-%d)\n",
                      pc+1, target);
               printf("--\n");
@@ -1724,9 +1711,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   fs->a->bbllist.first = nextsibling->next;
                   if (nextsibling == fs->a->bbllist.last)
                     fs->a->bbllist.last = fs->a->bbllist.first;
-                  printf("deleting erroneous block (%s) (%d-%d)\n",
-                         bbltypename(nextsibling->type),nextsibling->startpc+1,
-                         nextsibling->endpc+1);
+                  printbblmsg("deleting erroneous block", nextsibling);
                   luaM_free(fs->H, nextsibling);
                   nextsibling = nextnextsibling;
                 }
@@ -1740,12 +1725,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 nextbranch = nextsibling;
               else
                 nextbranch = NULL;
-              printf("nextbranch = (%p)", (void *)nextbranch);
-              if (nextbranch)
-                printf("(%s) (%d-%d)\n",
-                     bbltypename(nextbranch->type), nextbranch->startpc+1,
-                     nextbranch->endpc+1);
-              printf("\n");
+              printbblmsg("nextbranch =", nextbranch);
             }
           }
           else {
@@ -1866,8 +1846,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             /* inside a loop enclosed by a while-loop, jumping back to the start
                of the while-loop, i.e. an optimized `break' out of the for-loop
                */
-            else if (type != BBL_FUNCTION && outerstattype == BBL_WHILE &&
-                     target == outerstatstart) {
+            else if (type != BBL_FUNCTION && outer.type == BBL_WHILE &&
+                     target == outer.start) {
               init_ins_property(fs, pc, INS_BREAKSTAT);
             }
             else { /* a while-loop */
@@ -1912,13 +1892,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             else if (type == BBL_WHILE &&
                       /* a break statement follows the while-loop, which means
                          this fail-jump is optimized */
-                     ((target-1 == outerstatend &&
+                     ((target-1 == outer.end &&
                        test_ins_property(fs, endpc+1, INS_BREAKSTAT)) ||
                       /* the typical case, a jump past the end of the loop */
                       (target-1 == endpc) ||
                       /* a specially marked target for optimized fail-jumps */
                       (test_ins_property(fs, target, INS_OPTLOOPFAILTARGET)))) {
-              lua_assert(outerstatend != -1);
+              lua_assert(outer.end != -1);
               init_ins_property(fs, pc, INS_LOOPFAIL);
             }
             else { /* jumping inside a branch-condition */
@@ -1927,7 +1907,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else {
                 init_ins_property(fs, pc, INS_BRANCHFAIL);
                 if (!test_ins_property(fs, target-1, INS_BRANCHPASS)) {
-                  /* create a basic block for this branch */
                   /* true if this branch has no else-block; this is significant
                      because only branches with an else-block cause a recursive
                      call, whereas else-less branches are always child blocks in
@@ -1938,6 +1917,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   branchstartpc = pc+1;
                   if (branch != NULL)
                     branch->startpc = branchstartpc;
+                  /* determine if this is a single branch statement ot not and
+                     calculate the endpc of the if-part */
                   if (branch != NULL &&
                       (target == branch->midpc || tailbranchjump)) {
                     branchendpc = branch->midpc-1; /* the end of the if-part */
@@ -1945,20 +1926,22 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   }
                   else {
                     if (tailbranchjump && branch == NULL)
+                      /* a single tail if-statement in a while-loop */
                       branchendpc = endpc-1;
                     else if (branch == NULL || target < branch->midpc)
+                      /* a single (possibly child) if-statement */
                       branchendpc = target-1;
                     else
                       branchendpc = branch->midpc-1;
+                    /*  */
                     if (nextbranch != NULL) {
                       BasicBlock *next = nextbranch;
                       lua_assert(nextbranchtarget != -1);
                       if (next->endpc == branchendpc &&
                           nextbranchtarget == target) {
                         new_block = next;
-                        printf("merging this branch with the next block (%s) "
-                               "(%d-%d)\n", bbltypename(next->type),
-                               next->startpc+1, next->endpc+1);
+                        printbblmsg("merging this branch with the next block",
+                                    next);
                         new_block->startpc = branchstartpc;
                         issingle = 0;
                         nextsibling = new_block->nextsibling;
@@ -1982,8 +1965,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
                   set_ins_property(fs, branchendpc, INS_BLOCKEND);
                   lua_assert(new_block != NULL);
-                  printf("BRANCH BLOCK - (IF) (%d-%d)\n", new_block->startpc+1,
-                         new_block->endpc+1);
+                  printbblmsg("BRANCH BLOCK -", new_block);
                   fixsiblingchain1(new_block, &nextsibling);
                   nextsibling = new_block;
                   if (branch) {
@@ -2020,7 +2002,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
             else { /* exiting a branch */
               struct branch1 new_branch;
-              int noblock;
+              int noblock; /* true if the analyzer marked this branch as a
+                              do-block and needs to correct */
               if (branch != NULL &&
                   (target == branch->optimalexit || target == branch->endpc+1))
                 branchendpc = branch->midpc-1;
@@ -2029,22 +2012,36 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               elsebranch:
               if (block != NULL && block->endpc <= branchendpc) {
                 struct block1 *bl = block;
-                BasicBlock *childblock = NULL;
+                struct block1 *lastbl = NULL;
+                int i=0;
+                BasicBlock *childblock = bl->firstchild;
+                printf("encountered an else-block which closes variables, "
+                       "correcting erroneous do-block detection\n");
                 /* the OP_CLOSE at the end of this branch is not for a block */
                 noblock = 1;
+                /* need to close all the child blocks that are contained inside
+                   the else-part as well */
                 for (; bl != NULL; bl = bl->prev) {
+                  printf("i = (%d), bl = (%p)\n", i, (void *)bl);
+                  lastbl = bl;
                   if (bl->endpc < branchendpc) {
                     BasicBlock *currblock;
-                    bl->startpc = bl->firstclob;
                     addbbl1(fs, bl->startpc, bl->endpc, BBL_DO);
                     currblock = fs->a->bbllist.first;
                     lua_assert(currblock != NULL);
+                    printbblmsg("found an inner block", currblock);
                     currblock->firstchild = childblock;
                     childblock = currblock;
-                    bl->pass = 1;
+                    bl->pass = 1; /* need to pass branch data to parent */
                   }
+                  else
+                    break;
+                  i++;
                 }
-                bl->pass = 0;
+                lua_assert(lastbl != NULL);
+                lastbl->pass = 0;
+                nextsibling = childblock;
+                lua_assert(nextsibling != NULL);
               }
               else
                 noblock = 0;
@@ -2053,10 +2050,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
               set_ins_property(fs, branchendpc, INS_BLOCKEND);
               new_branch.prev = branch;
-              /* keep the same loop context */
-              new_branch.outerstatstart = outerstatstart;
-              new_branch.outerstatend = outerstatend;
-              new_branch.outerstattype = outerstattype;
+              new_branch.outer = &outer; /* keep the same loop context */
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
                          &nextsibling);
               bbl1(ca, fs, startpc, type, &new_branch, NULL);
@@ -2064,13 +2058,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 BasicBlock *first_block = new_branch.next;
                 lua_assert(first_block != NULL);
                 lua_assert(first_block->type == BBL_IF);
-                printf("exited block (%s) (%d-%d)\n", bbltypename(first_block->type),
-                       first_block->startpc+1, first_block->endpc+1);
+                printbblmsg("exited block", first_block);
                 nextsibling = first_block;
                 nextbranch = first_block;
                 printf("setting nextbranch to (%p)\n", (void *)first_block);
                 nextbranchtarget = new_branch.target1;
-                if (noblock) {
+                if (noblock) { /* close the erroneous block and pass data */
                   lua_assert(block != NULL);
                   block->nextbranch = nextbranch;
                   return; /* return from the do-block context */
@@ -2105,56 +2098,70 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
              there is a previous OP_CLOSE context, check its register. If it is
              greater than or equal to this A, it cannot logically be nested. */
           if (block != NULL && block->reg >= a) {
+            /* this block is adjacent to the previous, switch out the context
+               instead of pushing a new one */
             BasicBlock *new_block;
-            addbbl1(fs, pc+1, block->endpc, BBL_DO);
+            printf("encountered adjacent do-block\n");
+            addbbl1(fs, block->startpc, block->endpc, BBL_DO);
             new_block = fs->a->bbllist.first;
             lua_assert(new_block != NULL);
-            new_block->firstchild = nextsibling;
+            new_block->firstchild = block->firstchild;
+            printbblmsg("setting first child for block to", block->firstchild);
             new_block->nextsibling = block->nextsibling;
-            block->nextsibling = new_block;
-            nextsibling = NULL;
+            printbblmsg("setting next sibling for block to",block->nextsibling);
+            /* link the last sibling before the adjacent block to it */
+            if (block->prevsibling) {
+              block->prevsibling->nextsibling = new_block;
+              printbblmsg("connecting previous sibling", block->prevsibling);
+            }
+            else
+              nextsibling = new_block;
+            /* re-initialize the context and continue without recursing */
+            block->prevsibling = NULL;
+            block->nextsibling = nextsibling;
+            block->firstchild = NULL;
             block->nextbranch = NULL;
-            /* overwrite the current context and continue as normal */
-            block->pass = 1;
-            block->startpc = -1;
+            block->pass = 0;
+            block->startpc = pc;
             block->endpc = pc;
             block->reg = a;
-            block->firstclob = pc;
-            block->firstchild = NULL;
+            nextsibling = NULL; /* set to NULL as if recursing */
           }
           else {
             struct block1 new_block;
             new_block.prev = block;
             new_block.nextbranch = NULL;
             new_block.nextsibling = nextsibling;
+            new_block.prevsibling = NULL;
             new_block.firstchild = NULL;
             new_block.pass = 0;
-            new_block.outerstatstart = outerstatstart;
-            new_block.outerstatend = outerstatend;
-            new_block.outerstattype = outerstattype;
-            new_block.startpc = -1;
+            new_block.outer = &outer; /* keep the same loop context */
+            new_block.startpc = pc;
             new_block.endpc = pc;
             new_block.reg = a;
-            new_block.firstclob = pc;
             bbl1(ca, fs, startpc, type, NULL, &new_block);
+            /* check if the block was inside an else-branch */
             if (new_block.nextbranch != NULL) {
               nextbranch = new_block.nextbranch;
               nextsibling = nextbranch;
-              if (new_block.pass) {
+              /* check if the parent was also inside the else-branch */
+              if (new_block.pass) { /* also pass this data to the parent */
                 lua_assert(block != NULL);
                 block->nextbranch = nextbranch;
-                return;
+                return; /* return for each block that was in the else-branch */
               }
             }
-            else {
+            else { /* create a new basic block entry */
               BasicBlock *doblock;
               lua_assert(new_block.pass == 0);
               addbbl1(fs, new_block.startpc, new_block.endpc, BBL_DO);
               doblock = fs->a->bbllist.first;
               lua_assert(doblock != NULL);
               doblock->firstchild = new_block.firstchild;
-              doblock->nextsibling = nextsibling;
+              doblock->nextsibling = new_block.nextsibling;
               nextsibling = doblock;
+              if (block != NULL)
+                block->firstchild = doblock; /* update child for the parent */
             }
           }
         }
@@ -2186,15 +2193,22 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         b = GETARG_B(i);
         c = GETARG_C(i);
       default:
-        if (/*testAMode(o)*/ beginseval(o, a, b, c, 0)) {
+        if (beginseval(o, a, b, c, 0)) {
           fs->firstclob = pc; /* update first unstruction that clobbers A */
-          if (block != NULL) {
+          if (block != NULL) { /* update for enclosing block contexts */
             struct block1 *bl = block;
             int i = 0;
-            for (; bl != NULL; bl = bl->prev) {
+            if (bl->reg == a) {
+              /* this block is now caught up to the current pc */
+              bl->startpc = pc; /* update start */
+              bl->firstchild = nextsibling; /* update first child */
+              bl->prevsibling = NULL; /* discharge saved previous sibling */
+            }
+            /* update the rest of the parents but only update startpc */
+            for (bl = bl->prev; bl != NULL; bl = bl->prev) {
               if (bl->reg == a) {
-                bl->firstclob = pc;
-                printf("updating .firstclob for (%d) to (%d), block %d removed\n",
+                bl->startpc = pc;
+                printf("updating .firstclob for (%d) to (%d), %d block removed\n",
                        bl->reg, pc+1, i);
               }
               i++;
@@ -2208,19 +2222,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   }
   ca->testset.endpc = ca->testset.reg = -1;
   if (branch == NULL && block == NULL) {
-    /* pop old values */
-    ca->curr.start = outerstatstart;
-    ca->curr.end = outerstatend;
-    ca->curr.type = outerstattype;
+    ca->curr = outer; /* pop old values */
   }
   else {
     if (branch != NULL)
       lua_assert(branch->next != NULL && branch->next->type == BBL_IF);
-    else {
-      lua_assert(block != NULL);
-      block->firstchild = nextsibling;
-      block->startpc = block->firstclob;
-    }
     return;
   }
   addbbl1(fs, startpc, endpc, type); /* create a new basic block node */
@@ -2280,10 +2286,6 @@ static int varstarts_withdebug(DFuncState *fs, int pc) {
 }
 
 typedef struct StackAnalyzer {
-  struct {
-    int start, end, type;
-  } curr;
-  int needendpc;
   int firstfree;
   int pc;
   int sizecode;
@@ -2292,10 +2294,9 @@ typedef struct StackAnalyzer {
 } StackAnalyzer;
 
 /*
-** Second pass `basic block' handler - it is aware of all loops in the current
-** function. The rest of the blocks are identified and the function's registers
-** and stack are analyzed and local variables are detected. With information
-** about the local variables, do-end blocks can be detected in this pass.
+** Second pass `basic block' handler - the function's registers and stack are
+** analyzed and local variables are detected. With information about the local
+** variables, any undetected do-end blocks can be detected in this pass.
 */
 static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bl)
 {
