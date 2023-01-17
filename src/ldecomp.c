@@ -1552,16 +1552,46 @@ struct branch1 {
 
 
 /*
-** `block1' holds the context for a do-end block
+** `block1' holds the context for a do-end block in the first pass
 */
 struct block1 {
-  struct block1 *prev;  /* previous block context */
+  struct block1 *prev;  /* parent block context if nested */
+  /* the following fields may have less obvious purposes than it seems */
+  /* `nextbranch' is used when an else-branch is encountered and recursed into,
+     where the else-branch closes variables, which caused the analyzer to think
+     that there was a do-end block which wasn't there. Because at that point the
+     analyzer would have already recursed into a do-block context, it passes the
+     resulting data (needed after the branch recursion) with the block context
+     and then returns for that context. This way, the branch data gets saved
+     even when the function returns again (after returning from the branch
+     context) in order to pop off the erroneous block context */
   BasicBlock *nextbranch;
+  /* `nextsibling' is used when 2 adjacent blocks are detected. The analyzer
+     will end the existing block and overwrite the current context for the new
+     block instead of recursing into a new context. In this case, the basic
+     block entry for the adjacent block is created and the function continues
+     as normal without returning or calling. This field is saved for each new
+     block context so that when adjacent blocks are encountered, the block can
+     be created and linked to its sibling wihtout returning to the caller which
+     has the correct `nextsibling' */
   BasicBlock *nextsibling;
+  /* `prevsibling' holds the last sibling before the start of the do-block. This
+     is needed because do-blocks will not always return on the exact pc that
+     they actually start. The analyzer will keep going until the start of the
+     enclosing loop/function and then truncate the block to start on the first
+     instruction that clobbers the first register that is closed by the block.
+     The `nextsibling' block will continue to be updated even past the real
+     start of the block, so the block's true previous sibling is saved */
   BasicBlock *prevsibling;
+  /* `firstsibling' is used to pass the local variable `nextsibling' back to the
+     caller, so that it may update its `nextsibling' to that value */
+  BasicBlock *firstsibling;
+  /* `firstchild' holds the first block that starts after the real start of the
+     block. This is needed for the same reason as described in the description
+     for `prevsibling' */
   BasicBlock *firstchild;
   struct stat1 *outer;  /* saved values for the outer loop statement */
-  int pass;
+  int pass;  /* true if passing data to its caller/parent block */
   int reg;  /* register to close up to in OP_CLOSE */
   int seenclosure;
   int startpc, endpc;
@@ -1589,8 +1619,6 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   *chain = nextsibling;
   if (lastchild) {
     block->firstchild = firstsibling;
-    /*if (firstsibling && firstsibling->type == BBL_ELSEIF)
-      firstsibling->type = BBL_IF;*/
     if (firstsibling) {
       printbblmsg("first child is", firstsibling);
     }
@@ -2119,6 +2147,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             /* re-initialize the context and continue without recursing */
             block->prevsibling = NULL;
             block->nextsibling = nextsibling;
+            block->firstsibling = NULL;
             block->firstchild = NULL;
             block->nextbranch = NULL;
             block->pass = 0;
@@ -2132,6 +2161,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.prev = block;
             new_block.nextbranch = NULL;
             new_block.nextsibling = nextsibling;
+            new_block.firstsibling = NULL;
             new_block.prevsibling = NULL;
             new_block.firstchild = NULL;
             new_block.pass = 0;
@@ -2140,6 +2170,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.endpc = pc;
             new_block.reg = a;
             bbl1(ca, fs, startpc, type, NULL, &new_block);
+            printbblmsg("new_block.prevsibling =", new_block.prevsibling);
             /* check if the block was inside an else-branch */
             if (new_block.nextbranch != NULL) {
               nextbranch = new_block.nextbranch;
@@ -2159,7 +2190,16 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               lua_assert(doblock != NULL);
               doblock->firstchild = new_block.firstchild;
               doblock->nextsibling = new_block.nextsibling;
-              nextsibling = doblock;
+              if (new_block.prevsibling) {
+                printbblmsg("connecting previous sibling", new_block.prevsibling);
+                new_block.prevsibling->nextsibling = doblock;
+                /* there were blocks encountered that come before this block */
+                nextsibling = new_block.firstsibling;
+              }
+              else {
+                /* this is the actual earliest block so far */
+                nextsibling = doblock;
+              }
               if (block != NULL)
                 block->firstchild = doblock; /* update child for the parent */
             }
@@ -2227,6 +2267,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   else {
     if (branch != NULL)
       lua_assert(branch->next != NULL && branch->next->type == BBL_IF);
+    else {
+      printbblmsg("setting block->firstsibling to", nextsibling);
+      block->firstsibling = nextsibling;
+    }
     return;
   }
   addbbl1(fs, startpc, endpc, type); /* create a new basic block node */
@@ -2380,8 +2424,8 @@ static void DecompileFunction(DecompState *D, const Proto *f)
     printf(", a = (%d)",GETARG_A(f->code[new_fs.firstclob]));
   printf("\n");
   DumpLiteral("\n\n", D);
-  pass2(f,&new_fs,D);
   debugbblsummary(&new_fs);
+  pass2(f,&new_fs,D);
   /*DecompileCode(f,&new_fs,D);*/
   /*discharge(&new_fs, D);*/ /* todo: should the chain always be empty by this point? */
   close_func(D);
