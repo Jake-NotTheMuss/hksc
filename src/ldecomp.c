@@ -1134,36 +1134,14 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
 
 
 /* structure for handling nested do-blocks with OP_CLOSE */
-struct doblockctx {
+struct doblock {
   int reg; /* the register to close up to in OP_CLOSE */
   int firstclob; /* pc of first possible instruction which clobbers REG */
   int endbeforecall; /* true if the analyzer encountered another OP_CLOSE while
   in a block and concluded the block was not nested, and therefore returned
   before calling `bbl1' for the new OP_CLOSE, and now has to go backward and
   push this OP_CLOSE context */
-  struct doblockctx *prev; /* enclosing do-block */
-};
-
-/*
-** a pending temporary register
-*/
-struct regpending {
-  int reg; /* the pending register */
-  int endpc; /* pc of the instruction that uses the pending registere */
-};
-
-
-#define TESTPENDING_NEXT (-2)  /* the next instruction begins a condition */
-#define TESTPENDING_INVALID (-1)  /* pending condition is discharged */
-
-/*
-** a pending test condition
-*/
-struct testpending {
-  int startpc;  /* startpc of the condition evluation */
-  int r1;  /* first register operandin the test */
-  int r2;  /* second (optional) register operand in the test */
-  int target;  /* fail-jump target */
+  struct doblock *prev; /* enclosing do-block */
 };
 
 
@@ -1176,27 +1154,23 @@ typedef struct CodeAnalyzer {
      these values hold the bounds of the current loop */
   struct {
     int start, end, type;
-  } curr; /* the start and end of the current basic block */
-  int pc; /* current pc */
-  struct testpending inittestreg;
-  struct testpending *testreg;
+  } curr;  /* the start and end of the current basic block */
+  int pc;  /* current pc */
   /* most of these values could be local to `whilestat1', but are kept in this
      structure to avoid allocating new copies on every recursive call */
   lu_byte prevTMode;  /* previous pc is a test instruction */
   struct {
     int endpc, reg;
-  } testset; /* the current OP_TESTSET expression */
-  const Instruction *code; /* f->code */
+  } testset;  /* the current OP_TESTSET expression */
+  const Instruction *code;  /* f->code */
 } CodeAnalyzer;
 
 
+/*
+** prototypes for recursive non-terminal functions
+*/
 static void callstat1(CodeAnalyzer *ca, DFuncState *fs);
-
-
-struct compundstat1 {
-  struct compoundstat1 *prev;
-  int type; /* instruction flag representing the type of statement */
-};
+static void concat1(CodeAnalyzer *ca, DFuncState *fs);
 
 
 #define STAT1_CASE_CALL(label) \
@@ -1550,7 +1524,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 
 #define loop1(ca,fs,startpc,type) do { \
   struct BasicBlock *new; /* the new block */ \
-  bbl1(ca, fs, startpc, type, NULL); /* create the new block */ \
+  bbl1(ca, fs, startpc, type, NULL, NULL); /* create the new block */ \
   new = fs->a->bbllist.first; \
   lua_assert(new != nextsibling); \
   addsibling1(new, nextsibling); \
@@ -1558,51 +1532,35 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 } while(0)
 
 
-#define varstartshere1(fs,pc) (*((fs)->D->varstarts))((fs),(pc))
-
-static int varstarts_nodebug(DFuncState *fs, int pc) {
-  UNUSED(fs); UNUSED(pc);
-  return 0;
-}
-
-static int varstarts_withdebug(DFuncState *fs, int pc) {
-  struct LocVar *var;
-  int idx = fs->locvaridx;
-  int n = 0;
-  while (idx >= 0) {
-    var = &fs->locvars[idx];
-    printf("checking var '%s' (%d-%d) against pc (%d)... ",
-           getstr(var->varname), var->startpc+1, var->endpc+1, pc+1);
-    if (var->startpc == pc) {
-      do {
-        printf("yes\n");
-        n++;
-        idx = --fs->locvaridx;
-        var = &fs->locvars[idx];
-    printf("checking var '%s' (%d-%d) against pc (%d)... ",
-           getstr(var->varname), var->startpc+1, var->endpc+1, pc+1);
-      } while (var->startpc == pc);
-      printf("no\n");
-      break;
-    }
-    printf("no\n");
-    if (var->startpc < pc)
-      break;
-    idx = --fs->locvaridx;
-  }
-  return n;
-}
-
+/*
+** `branch1' holds the context for an if-else branch construct in the first pass
+*/
 struct branch1 {
   struct branch1 *prev;  /* previous branch context */
   BasicBlock *next;  /* the next branch block in this group */
-  int toplev;
-  int target1;  /* jump target out of the branch */
-  int target2;  /* actual jump target out of this branch */
+  int target1;  /* jump target out of the branch condition */
   int startpc, endpc, midpc;  /* midpc is the start of the else-part */
   int optimalexit;  /* target of optimized jumps out of this branch */
+  /* saved values for the outer loop statement */
   int outerstatstart, outerstatend, outerstattype;
-  struct testpending testreg;
+};
+
+
+/*
+** `block1' holds the context for a do-end block
+*/
+struct block1 {
+  struct block1 *prev;  /* previous block context */
+  BasicBlock *nextbranch;
+  BasicBlock *nextsibling;
+  BasicBlock *firstchild;
+  int pass;
+  int reg;  /* register to close up to in OP_CLOSE */
+  int firstclob;  /* first pc to clobber REG */
+  int seenclosure;
+  int startpc, endpc;
+  /* saved values for the outer loop statement */
+  int outerstatstart, outerstatend, outerstattype;
 };
 
 
@@ -1615,7 +1573,7 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   lua_assert(chain != NULL);
   printf("fixing up sibling chain\n");
   printf("--\n");
-  while (nextsibling && nextsibling->startpc < endpc) {
+  while (nextsibling && nextsibling->startpc <= endpc) {
     lastchild = nextsibling;
     printf("found child (%s) (%d-%d)\n", bbltypename(nextsibling->type),
            nextsibling->startpc+1, nextsibling->endpc+1);
@@ -1658,12 +1616,10 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
                        int endpc, int jumptarget, BasicBlock **nextsibling)
 {
   BasicBlock *block;
-  branch->startpc = -1;  /* startpc of elseif-block is unknown right now */
+  branch->startpc = -1;  /* startpc of the if-part is unknown right now */
   branch->midpc = midpc;
   branch->endpc = endpc;
-  branch->toplev = 1;
   branch->target1 = -1;
-  branch->target2 = jumptarget;
   if (branch->prev)
     branch->optimalexit = branch->prev->optimalexit;
   else
@@ -1679,7 +1635,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
 
 
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
-                 struct branch1 *branch)
+                 struct branch1 *branch, struct block1 *block)
 {
   BasicBlock *nextsibling;
   BasicBlock *nextbranch = NULL;
@@ -1688,7 +1644,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   int outerstatstart, outerstatend; /* enclosing loop start and end pc */
   int outerstattype; /* type of enclosing loop */
   const Instruction *code = ca->code;
-  if (branch == NULL) { /* inside a loop */
+  if (branch == NULL && block == NULL) { /* inside a loop */
     nextsibling = NULL;
     endpc = ca->pc;
     /* save old values */
@@ -1699,17 +1655,25 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     ca->curr.start = startpc;
     ca->curr.end = endpc;
     ca->curr.type = type;
-    ca->testreg = &ca->inittestreg;
     printf("entering new basic block of type (%s)\n", bbltypename(type));
   }
   else { /* inside a branch construct */
-    nextsibling = branch->next;
+    if (branch != NULL) {
+      lua_assert(block == NULL);
+      nextsibling = branch->next; /* the else-block */
+      outerstatstart = branch->outerstatstart;
+      outerstatend = branch->outerstatend;
+      outerstattype = branch->outerstattype;
+      printf("entering new branch\n");
+    }
+    else {
+      nextsibling = NULL;
+      outerstatstart = block->outerstatstart;
+      outerstatend = block->outerstatend;
+      outerstattype = block->outerstattype;
+      printf("entering new do-block\n");
+    }
     endpc = ca->curr.end;  /* endpc must be the end of the current loop */
-    outerstatstart = branch->outerstatstart;
-    outerstatend = branch->outerstatend;
-    outerstattype = branch->outerstattype;
-    ca->testreg = &branch->testreg;
-    printf("entering new branch\n");
   }
   ca->pc--;
   lua_assert(type < BBL1_MAX); /* first pass only handles loop types */
@@ -1782,7 +1746,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      bbltypename(nextbranch->type), nextbranch->startpc+1,
                      nextbranch->endpc+1);
               printf("\n");
-              /*if (nextsibling && nextsibling->)*/
             }
           }
           else {
@@ -1879,7 +1842,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      repeat-loop, the instruction that precedes the OP_JMP at
                      `pc1' must be a test instruction. */
                     pc1--;
-                    if (pc1 >= 0 && testTMode(code[pc1]))
+                    if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])))
                       goto markrepeatstat; /* repeat-loop that has upvalues */
                     break;
                   }
@@ -1888,17 +1851,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   break;
                 pc1--;
               }
-              if (type == BBL_REPEAT && i1 == 1) {
-                /* this is the same as the above case, 2 instructions removed */
-                pc1--;
-                if (pc1 >= 0 && testTMode(code[pc1]))
-                  goto markrepeatfail; /* fail-jump out of a repeat-loop */
-              }
+              /* fallthrough */
             }
             /* inside a while-loop, jumping unconditionally back to the start
                is an optimized jump out of a branch-block which would otherwise
                jump to the very end of the loop */
-            else if (type == BBL_WHILE && target == startpc) {
+            if (type == BBL_WHILE && target == startpc) {
               if (pc == endpc-1)
                 goto markwhilestat;
               /* this instruction is the end of a basic block */
@@ -1975,7 +1933,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      call, whereas else-less branches are always child blocks in
                      the current branch context */
                   int issingle;
-                  BasicBlock *block;
+                  BasicBlock *new_block;
                   ifbranch:
                   branchstartpc = pc+1;
                   if (branch != NULL)
@@ -1997,13 +1955,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       lua_assert(nextbranchtarget != -1);
                       if (next->endpc == branchendpc &&
                           nextbranchtarget == target) {
-                        block = next;
+                        new_block = next;
                         printf("merging this branch with the next block (%s) "
                                "(%d-%d)\n", bbltypename(next->type),
                                next->startpc+1, next->endpc+1);
-                        block->startpc = branchstartpc;
+                        new_block->startpc = branchstartpc;
                         issingle = 0;
-                        nextsibling = block->nextsibling;
+                        nextsibling = new_block->nextsibling;
                         goto blockcreated;
                       }
                     }
@@ -2019,29 +1977,40 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     printf("THIS BRANCH IS A CHILD BLOCK of the top-level one\n");
                   }
                   addbbl1(fs, branchstartpc, branchendpc, BBL_IF);
-                  block = fs->a->bbllist.first;
+                  new_block = fs->a->bbllist.first;
                   blockcreated:
                   init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
                   set_ins_property(fs, branchendpc, INS_BLOCKEND);
-                  lua_assert(block != NULL);
-                  printf("BRANCH BLOCK - (IF) (%d-%d)\n", block->startpc+1,
-                         block->endpc+1);
-                  fixsiblingchain1(block, &nextsibling);
-                  nextsibling = block;
-                  if (branch && nextbranch == NULL) {
-                    branch->next = block;
-                    ca->testset.endpc = ca->testset.reg = -1;
-                    return;
-                  }
-                  else {
-                    nextbranch = block;
-                    nextbranchtarget = target;
+                  lua_assert(new_block != NULL);
+                  printf("BRANCH BLOCK - (IF) (%d-%d)\n", new_block->startpc+1,
+                         new_block->endpc+1);
+                  fixsiblingchain1(new_block, &nextsibling);
+                  nextsibling = new_block;
+                  if (branch) {
+                    if (nextbranch == NULL) {
+                      branch->next = new_block;
+                      ca->testset.endpc = ca->testset.reg = -1;
+                      return;
+                    }
+                    else {
+                      nextbranch = new_block;
+                      nextbranchtarget = target;
+                    }
                   }
                 }
               }
             }
           }
           else { /* unconditional forward jump */
+            if (prevop == OP_CLOSE && type == BBL_REPEAT && target-1 == endpc) {
+              int pc1 = pc-2;
+              if (pc1 >= 0 && GET_OPCODE(code[pc1]) == OP_JMP) {
+                pc1--;
+                if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])))
+                  goto markrepeatfail; /* fail-jump out of repeat-loop */
+              }
+              /* fallthrough */
+            }
             if (test_ins_property(fs, target-1, INS_LOOPEND) &&
                 target-1 == endpc) { /* break statement */
               /* a while-loop can begin with a jump that is not a break if it
@@ -2051,12 +2020,34 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
             else { /* exiting a branch */
               struct branch1 new_branch;
+              int noblock;
               if (branch != NULL &&
                   (target == branch->optimalexit || target == branch->endpc+1))
                 branchendpc = branch->midpc-1;
               else
                 branchendpc = target-1;
               elsebranch:
+              if (block != NULL && block->endpc <= branchendpc) {
+                struct block1 *bl = block;
+                BasicBlock *childblock = NULL;
+                /* the OP_CLOSE at the end of this branch is not for a block */
+                noblock = 1;
+                for (; bl != NULL; bl = bl->prev) {
+                  if (bl->endpc < branchendpc) {
+                    BasicBlock *currblock;
+                    bl->startpc = bl->firstclob;
+                    addbbl1(fs, bl->startpc, bl->endpc, BBL_DO);
+                    currblock = fs->a->bbllist.first;
+                    lua_assert(currblock != NULL);
+                    currblock->firstchild = childblock;
+                    childblock = currblock;
+                    bl->pass = 1;
+                  }
+                }
+                bl->pass = 0;
+              }
+              else
+                noblock = 0;
               branchstartpc = pc+1;
               init_ins_property(fs, pc, INS_BLOCKEND);
               init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
@@ -2068,17 +2059,22 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               new_branch.outerstattype = outerstattype;
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
                          &nextsibling);
-              bbl1(ca, fs, startpc, type, &new_branch);
+              bbl1(ca, fs, startpc, type, &new_branch, NULL);
               {
-                BasicBlock *block = new_branch.next;
-                lua_assert(block != NULL);
-                lua_assert(block->type == BBL_IF);
-                printf("exited block (%s) (%d-%d)\n", bbltypename(block->type),
-                       block->startpc+1, block->endpc+1);
-                nextsibling = block;
-                nextbranch = block;
-                printf("setting nextbranch to (%p)\n", (void *)block);
+                BasicBlock *first_block = new_branch.next;
+                lua_assert(first_block != NULL);
+                lua_assert(first_block->type == BBL_IF);
+                printf("exited block (%s) (%d-%d)\n", bbltypename(first_block->type),
+                       first_block->startpc+1, first_block->endpc+1);
+                nextsibling = first_block;
+                nextbranch = first_block;
+                printf("setting nextbranch to (%p)\n", (void *)first_block);
                 nextbranchtarget = new_branch.target1;
+                if (noblock) {
+                  lua_assert(block != NULL);
+                  block->nextbranch = nextbranch;
+                  return; /* return from the do-block context */
+                }
               }
             }
           }
@@ -2101,16 +2097,78 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         fornumprep1(ca, fs, target);
         goto poststat;
       }
+      case OP_CLOSE: /* check for a block-ending if the next op is not a jump */
+        if (GET_OPCODE(code[pc+1]) != OP_JMP) {
+          /* when multiple, possibly nested OP_CLOSE are encountered, it is
+             important to compare the argA of each. A nested block would not
+             close up to register <= to that of its enclosing block. So, if
+             there is a previous OP_CLOSE context, check its register. If it is
+             greater than or equal to this A, it cannot logically be nested. */
+          if (block != NULL && block->reg >= a) {
+            BasicBlock *new_block;
+            addbbl1(fs, pc+1, block->endpc, BBL_DO);
+            new_block = fs->a->bbllist.first;
+            lua_assert(new_block != NULL);
+            new_block->firstchild = nextsibling;
+            new_block->nextsibling = block->nextsibling;
+            block->nextsibling = new_block;
+            nextsibling = NULL;
+            block->nextbranch = NULL;
+            /* overwrite the current context and continue as normal */
+            block->pass = 1;
+            block->startpc = -1;
+            block->endpc = pc;
+            block->reg = a;
+            block->firstclob = pc;
+            block->firstchild = NULL;
+          }
+          else {
+            struct block1 new_block;
+            new_block.prev = block;
+            new_block.nextbranch = NULL;
+            new_block.nextsibling = nextsibling;
+            new_block.firstchild = NULL;
+            new_block.pass = 0;
+            new_block.outerstatstart = outerstatstart;
+            new_block.outerstatend = outerstatend;
+            new_block.outerstattype = outerstattype;
+            new_block.startpc = -1;
+            new_block.endpc = pc;
+            new_block.reg = a;
+            new_block.firstclob = pc;
+            bbl1(ca, fs, startpc, type, NULL, &new_block);
+            if (new_block.nextbranch != NULL) {
+              nextbranch = new_block.nextbranch;
+              nextsibling = nextbranch;
+              if (new_block.pass) {
+                lua_assert(block != NULL);
+                block->nextbranch = nextbranch;
+                return;
+              }
+            }
+            else {
+              BasicBlock *doblock;
+              lua_assert(new_block.pass == 0);
+              addbbl1(fs, new_block.startpc, new_block.endpc, BBL_DO);
+              doblock = fs->a->bbllist.first;
+              lua_assert(doblock != NULL);
+              doblock->firstchild = new_block.firstchild;
+              doblock->nextsibling = nextsibling;
+              nextsibling = doblock;
+            }
+          }
+        }
+        break;
       CASE_OP_CALL: /* a function call expression */
         callstat1(ca, fs);
         goto poststat;
-      case OP_CONCAT:
+      case OP_CONCAT: /* a concat expression */
         concat1(ca, fs);
         goto poststat;
-      case OP_RETURN:
+      case OP_RETURN: /* a return expression */
         retstat1(ca, fs);
         goto poststat;
-      case OP_TESTSET:
+      case OP_TESTSET: /* a testset expression */
         if (ca->testset.reg == -1)
           ca->testset.reg = b;
         else {
@@ -2120,7 +2178,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         }
         fs->firstclob = pc;
         break;
-      poststat:
+      poststat: /* update variables after calls which change the pc */
         pc = ca->pc;
         i = code[pc];
         o = GET_OPCODE(i);
@@ -2128,8 +2186,20 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         b = GETARG_B(i);
         c = GETARG_C(i);
       default:
-        if (beginseval(o, a, b, c, 0)) {
-          fs->firstclob = pc;
+        if (/*testAMode(o)*/ beginseval(o, a, b, c, 0)) {
+          fs->firstclob = pc; /* update first unstruction that clobbers A */
+          if (block != NULL) {
+            struct block1 *bl = block;
+            int i = 0;
+            for (; bl != NULL; bl = bl->prev) {
+              if (bl->reg == a) {
+                bl->firstclob = pc;
+                printf("updating .firstclob for (%d) to (%d), block %d removed\n",
+                       bl->reg, pc+1, i);
+              }
+              i++;
+            }
+          }
         }
         break;
     }
@@ -2137,18 +2207,24 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       break;
   }
   ca->testset.endpc = ca->testset.reg = -1;
-  if (branch == NULL) {
+  if (branch == NULL && block == NULL) {
     /* pop old values */
     ca->curr.start = outerstatstart;
     ca->curr.end = outerstatend;
     ca->curr.type = outerstattype;
   }
   else {
-    lua_assert(branch->next != NULL && branch->next->type == BBL_IF);
+    if (branch != NULL)
+      lua_assert(branch->next != NULL && branch->next->type == BBL_IF);
+    else {
+      lua_assert(block != NULL);
+      block->firstchild = nextsibling;
+      block->startpc = block->firstclob;
+    }
     return;
   }
   addbbl1(fs, startpc, endpc, type); /* create a new basic block node */
-  /* `nextsibling' will end up being the first child if this new block */
+  /* `nextsibling' will end up being the first child of this new block */
   fs->a->bbllist.first->firstchild = nextsibling;
   printf("ca->pc = (%d)\n", ca->pc);
 }
@@ -2165,16 +2241,13 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 {
   CodeAnalyzer ca;
   ca.curr.start = ca.curr.end = ca.curr.type = -1;
-  ca.inittestreg.r1 = ca.inittestreg.r2 = TESTPENDING_INVALID;
-  ca.inittestreg.startpc = -1;
-  ca.inittestreg.target = -1;
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
   ca.testset.endpc = ca.testset.reg = -1;
   ca.code = f->code;
   UNUSED(D);
-  init_ins_property(fs, ca.pc, INS_BLOCKEND); /* mark end of function */
-  bbl1(&ca, fs, 0, BBL_FUNCTION, NULL);
+  bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL);
+  /*init_ins_property(fs, f->sizecode - 1, INS_BLOCKEND);*/ /* mark end of function */
   {
     BasicBlock *first = fs->a->bbllist.first;
     lua_assert(first != NULL);
@@ -2188,7 +2261,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 
 
 #define varstartshere2(fs,pc) (*((fs)->D->varstarts))((fs),(pc))
-#if 0
+
 static int varstarts_nodebug(DFuncState *fs, int pc) {
   UNUSED(fs); UNUSED(pc);
   return 0;
@@ -2205,7 +2278,7 @@ static int varstarts_withdebug(DFuncState *fs, int pc) {
   }
   return n;
 }
-#endif
+
 typedef struct StackAnalyzer {
   struct {
     int start, end, type;
@@ -2274,31 +2347,6 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bl)
   printf("pass2: leaving block %s (%d-%d) at pc (%d)\n", bbltypename(type),
          startpc+1,endpc+1,sa->pc+1);
 }
-
-/*static void debugbbl(Analyzer *a, BasicBlock *bbl, int indent) {
-  BasicBlock *child = bbl->firstchild;
-  BasicBlock *nextsibling = bbl->nextsibling;
-  int i;
-  for (i = 0; i < indent; i++)
-    printf("  ");
-  if (indent) printf("- ");
-  printf("(%d-%d) %s (%s sibling)\n", bbl->startpc+1, bbl->endpc+1,
-         bbltypename(bbl->type), (nextsibling != NULL)?"YES":"NO");
-  indent++;
-  while (child != NULL) {
-    debugbbl(a, child, indent);
-    child = child->nextsibling;
-  }
-}
-
-static void debugbblsummary(DFuncState *fs)
-{
-  Analyzer *a = fs->a;
-  fputs("BASIC BLOCK SUMMARY\n"
-        "-------------------\n", stdout);
-  debugbbl(a, a->bbllist.first, 0);
-  fputs("-------------------\n", stdout);
-}*/
 
 static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
 {
@@ -2378,8 +2426,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   sd.f=f;
   status = luaD_pcall(H, f_decompiler, &sd);
   if (status) D.status = status;
-
-  (void)f;
   (void)addargs;
   (void)insert_exp_before;
   (void)insert_exp_after;
