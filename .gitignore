@@ -1,3 +1,5 @@
+*.log
+*.status
 *.a
 *.o
 *.d
@@ -6,3 +8,5 @@ hksc
 *.luadebug
 *.luacallstackdb
 *.dec.lua
+/Makefile
+/src/Makefile

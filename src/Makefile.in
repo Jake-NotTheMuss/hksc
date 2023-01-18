@@ -15,19 +15,17 @@ CWARNS= -ansi -pedantic -Wall -Wextra
 # -fomit-frame-pointer #-pg -malign-double
 TESTS= -g -DLUA_USER_H='"ltests.h"'
 
-LOCAL = $(TESTS) $(CWARNS)
 
 
 CC= cc
-CFLAGS= -Wall $(MYCFLAGS)
+CFLAGS= $(MYCFLAGS) $(CWARNS)
 AR= ar rcu
 RANLIB= ranlib
 RM= rm -f
 
-MYCFLAGS= $(LOCAL)
+MYCFLAGS=
 MYLDFLAGS=
 MYLIBS=
-
 
 # enable Linux goodies
 # MYCFLAGS= $(LOCAL) -DLUA_USE_LINUX
@@ -38,6 +36,7 @@ MYLIBS=
 
 # == END OF USER SETTINGS. NO NEED TO CHANGE ANYTHING BELOW THIS LINE =========
 
+topdir=..
 
 LIBS = -lm
 
@@ -73,7 +72,13 @@ clean:
 	$(RM) $(ALL_T) $(ALL_O)
 
 depend:
-	@$(CC) $(CFLAGS) -MM *.c
+	-@ TEMPFILE=tmp_$$; \
+	$(CC) $(CFLAGS) -MM *.c > $$TEMPFILE && \
+	sed -i -e "/^# DO NOT DELETE$$/,/^# (end of Makefile)$$/{ \
+		/^# DO NOT DELETE$$/{G;p;r $$TEMPFILE" -e "\
+		}; \
+		/^# (end of Makefile)$$/{H;g;p;}; d; }" Makefile.in; \
+	$(RM) -f $$TEMPFILE
 
 echo:
 	@echo "CC = $(CC)"
@@ -85,6 +90,9 @@ echo:
 	@echo "MYLDFLAGS = $(MYLDFLAGS)"
 	@echo "MYLIBS = $(MYLIBS)"
 	@echo "DL = $(DL)"
+
+Makefile: Makefile.in
+	@cd $(topdir) && ./configure > /dev/null
 
 # list targets that do not create files (but not all makes understand .PHONY)
 .PHONY: all default o a clean depend echo
@@ -100,7 +108,6 @@ hkscaux.o: hkscaux.c lua.h luaconf.h hkscconf.h ltests.h hksclib.h \
 hksclib.o: hksclib.c luaconf.h hkscconf.h lua.h ltests.h hksclib.h \
   lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def \
   lctype.h ldo.h lgc.h lparser.h ltable.h lstring.h
-hkscopt.o: hkscopt.c hkscopt.def
 lanalyzer.o: lanalyzer.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h \
   lobject.h llimits.h lgc.h lmem.h lstate.h lundump.h lzio.h ltype.def \
   lstring.h
@@ -115,9 +122,6 @@ ldebug.o: ldebug.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
 ldecomp.o: ldecomp.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h \
   lobject.h llimits.h ldebug.h lstate.h lundump.h lzio.h lmem.h \
   ltype.def ldo.h lopcodes.h lopcodes.def lstring.h lgc.h
-ldecomp1.o: ldecomp1.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h \
-  lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def \
-  lopcodes.h lopcodes.def lstring.h lgc.h
 ldo.o: ldo.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
   lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
   lopcodes.h lopcodes.def lparser.h ltable.h lstring.h lgc.h
@@ -131,6 +135,7 @@ lgc.o: lgc.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h lobject.h \
 llex.o: llex.c lua.h luaconf.h hkscconf.h ltests.h lctype.h llimits.h \
   ldebug.h lstate.h lobject.h lundump.h lzio.h lmem.h ltype.def ldo.h \
   llex.h ltoken.def lparser.h ltable.h lstring.h lgc.h
+llog.o: llog.c lua.h luaconf.h hkscconf.h ltests.h
 lmem.o: lmem.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
   lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h
 lobject.o: lobject.c lua.h luaconf.h hkscconf.h ltests.h lctype.h \

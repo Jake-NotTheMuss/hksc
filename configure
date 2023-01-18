@@ -1,0 +1,246 @@
+#!/bin/sh
+# developer configure script for libhksc
+#
+
+logfile=config.log
+configfile=config.status
+
+# the default configuration (this project is made primarily for Black Ops III)
+defaultbuildsetting=codt7
+
+commandline="$0 $*"
+test $# -lt 1 && commandline="$0"
+
+# start of configure.log
+echo -------------------- > $logfile
+echo $0 $* >> $logfile
+date >> $logfile
+
+SRCDIR=`dirname $0`/src
+
+error()
+{
+	echo "$0: error: $*"
+	exit 1
+}
+
+warn()
+{
+	echo "warning: $*"
+}
+
+infolog()
+{
+	echo $* | tee -a $logfile
+}
+
+reset=0
+
+varstatus()
+{
+	# $1 = variable name
+	# $2 = default value
+	test $reset = 1 && eval "unset $1"
+	eval "val=\${$1:-$2}"
+	echo "$1=$val"
+}
+
+updateconfigfile()
+{
+	cat <<EOF > $configfile
+# $configfile: configure settings for libhksc
+# $commandline
+# `date`
+
+# emulate ui64 using structures with a hi/lo field for C89 with no 64-bit type
+`varstatus EMU_UI64 0`
+# build decompiler machinery
+`varstatus DECOMPILER 1`
+# make a release build
+`varstatus release 0`
+# build configuration label (named after the games that use a particular config)
+`varstatus buildsetting $defaultbuildsetting`
+# enable loading/dumping bytecode for multiple platforms in one binary
+`varstatus multiplat 0`
+# enable logging in Lua
+`varstatus LOGGING 0`
+
+# compatibility settings
+`varstatus STRUCTURE_EXTENSION_ON 0`
+`varstatus WITHNATIVEINT 0`
+`varstatus WITHDOUBLES 0`
+`varstatus SELF 0`
+`varstatus GETGLOBAL_MEMOIZATION 0`
+EOF
+}
+
+LC_ALL=C
+export LC_ALL
+
+# create the config file with default values if it doesn't exist
+test -e $configfile || updateconfigfile
+
+# load existing config settings
+. $configfile
+
+show_help()
+{
+	cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --help                   Print this message and exit
+  --reset, --default       Reset configuration to default settings
+  --emu-ui64               Use C struct to emulate UI64 values, disabled by
+                           default
+  --no-emu-ui64            Check for supported 64-bit types before resorting to
+                           emulation using C struct
+  --with-decompiler        Enable Lua decompiler, enabled by default
+  --no-decompiler          Disable building Lua decompiler
+  -r, --release            Build a release binary
+  -d, --debug              Build a debug binary
+  -b, --build=GAME         Configure compatibility settings for GAME
+                           Supported values:
+                             codt6
+                             codt7
+  --with-logging           Enable logging information and warning mesages
+  --disable-logging        Disable logging, disabled by default
+  --                       Stop handling options
+EOF
+	exit 0
+}
+
+while test $# -ge 1; do
+	case "$1" in
+		-h* | --help) show_help ;;
+		--reset | --default)
+			rm -f -- $configfile
+			reset=1
+			updateconfigfile
+			. $configfile ;;
+		--emu-ui64) EMU_UI64=1 ;;
+		--no-emu-ui64) EMU_UI64=0 ;;
+		--no-dec* | --disable-dec*) DECOMPILER=0 ;;
+		--with-dec* | --enable-dec*) DECOMPILER=1 ;;
+		-r | --release | --no-debug) release=1 ;;
+		-d | --debug | --no-rel*) release=0 ;;
+		-b=* | --build=*) buildsetting=`echo $1 | sed 's/.*=//'` ;;
+		-b | --build) shift; buildsetting=$1 ;;
+		--with-log* | --enable-log*) LOGGING=1 ;;
+		--no-log* | --disable-log*) LOGGING=0 ;;
+		--)
+			shift
+			break ;;
+		*)
+			echo "unknown option: $1" | tee -a $logfile
+			echo "$0 --help for help" | tee -a $logfile
+			exit 1 ;;
+	esac
+	shift
+done
+
+# configure compatibility settings based on the build config type
+case "$buildsetting" in
+	cod)
+		warn "ambiguous build setting 'cod', setting build config to 'codt6'" ;;
+	codiw* | cods1)
+		buildsetting=codt6
+		warn "specified '$buildsetting', using 'codt6'" ;;
+	codt6 | codt7) ;; # cod builds disable all compatibility settings
+	# add other titles below as their compatibility features become supported
+	*) error "Unsupported build configuration '$buildsetting'" ;;
+esac
+
+case "$buildsetting" in
+	codt6) LUA_COD=1 ;;
+	codt7) LUA_COD=1; LUA_CODT7=1 ;;
+esac
+
+updateconfigfile
+
+infolog "updated configuration settings in '$configfile'"
+
+logvar()
+{
+	eval "val=\$$1"
+	infolog $1 = $val
+}
+
+cppdefine()
+{
+	eval "val=\$$1"
+	test x$val != x0 && CFLAGS="-DHKSC_$1 $CFLAGS"
+}
+
+cppdefineval()
+{
+	eval "val=\$$1"
+	CFLAGS="-DHKSC_$1=$val $CFLAGS"
+}
+
+
+test x$CC = x && CC=cc
+
+if test $release = 0; then
+	CFLAGS="\$(TESTS)"
+else
+	CFLAGS="-Os"
+fi
+
+cppdefine EMU_UI64
+cppdefine LOGGING
+cppdefine DECOMPILER
+
+cppdefineval GETGLOBAL_MEMOIZATION
+cppdefineval STRUCTURE_EXTENSION_ON
+cppdefineval SELF
+cppdefineval WITHNATIVEINT
+cppdefineval WITHDOUBLES
+
+if test x$LUA_COD = x1; then
+	if test x$LUA_CODT7 = x1; then
+		CFLAGS="-DLUA_CODT7 $CFLAGS"
+	fi
+	CFLAGS="-DLUA_COD $CFLAGS"
+fi
+
+infolog ""
+
+infolog "Configuration settings"
+infolog "--------------------"
+logvar release
+logvar buildsetting
+logvar multiplat
+logvar EMU_UI64
+logvar LOGGING
+logvar DECOMPILER
+logvar LUA_COD
+logvar LUA_CODT7
+infolog "--------------------"
+
+infolog ""
+
+infolog "Compatibility settings"
+infolog "--------------------"
+logvar GETGLOBAL_MEMOIZATION
+logvar STRUCTURE_EXTENSION_ON
+logvar SELF
+logvar WITHNATIVEINT
+logvar WITHDOUBLES
+infolog "--------------------"
+
+
+configurefile()
+{
+	sed < $1.in "
+	/^CC *=/s#=.*#=$CC#
+	/^MYCFLAGS *=/s#=.*#=$CFLAGS#
+	/^MYLDFLAGS *=/s#=.*#=$LDFLAGS#
+	/^SRCDIR *=/s#=.*#=$SRCDIR#
+	" > $1
+}
+
+configurefile Makefile
+configurefile $SRCDIR/Makefile
+
+cd $SRCDIR && make clean > /dev/null 2>&1

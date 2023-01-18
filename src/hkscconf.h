@@ -8,8 +8,6 @@
 #ifndef hconfig_h
 #define hconfig_h
 
-#define HKSC_TEST_UI64_S
-
 /* compatibility bits */
 #define HKSC_COMPATIBILITY_BIT_MEMOIZATION  0
 #define HKSC_COMPATIBILITY_BIT_STRUCTURES   1
@@ -25,7 +23,7 @@
 #endif
 
 #ifndef HKSC_DECOMPILER
-#define HKSC_DECOMPILER
+/*#define HKSC_DECOMPILER*/
 #endif
 
 /*
@@ -38,13 +36,13 @@
 ** macro `LUA_COD' if you are not developing for a Call of Duty game.
 */
 
-/* #ifdef LUA_COD */
+#ifndef HKSC_GETGLOBAL_MEMOIZATION
 #define HKSC_GETGLOBAL_MEMOIZATION 0
 #define HKSC_STRUCTURE_EXTENSION_ON 0
 #define HKSC_SELF 0
 #define HKSC_WITHDOUBLES 0
 #define HKSC_WITHNATIVEINT 0
-/* #endif */
+#endif
 
 #if !defined(LUA_COD) && defined(LUA_CODT7)
 #undef LUA_CODT7
