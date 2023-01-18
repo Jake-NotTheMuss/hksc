@@ -131,6 +131,7 @@ static lu_int64 LoadUI64(LoadState *S)
   correctendianness(S,x.hi);
   correctendianness(S,x.lo);
 #else
+  (void)isbigendian;
   LoadVar(S,x);
   correctendianness(S,x);
 #endif

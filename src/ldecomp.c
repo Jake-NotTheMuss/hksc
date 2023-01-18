@@ -8,7 +8,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <string.h> /* memset */
+#include <string.h>
 
 #define ldecomp_c
 #define LUA_CORE
@@ -24,28 +24,33 @@
 #include "lstring.h"
 #include "lundump.h"
 
-
+/*
+** Check whether an op loads a constant into register A. Helps determine if a
+** tested expression starts evaluating at an instruction. Ops that load
+** constants warrant their own statements, as otherwise the constant would be
+** indexed as an operand directly in the test-instruction.
+*/
 #define opLoadsK(o) ((o) == OP_LOADK || (o) == OP_LOADBOOL || (o) == OP_LOADNIL)
 
 
 #define DEFBBLTYPE(e)  #e,
 static const char *const bbltypenames [] = {
   BBLTYPE_TABLE
-  "BBL_MAX"
+  "MAX_BBLTYPE"
 };
 #undef DEFBBLTYPE
 
 #define DEFINSFLAG(e)  "INS_" #e,
 static const char *const insflagnames [] = {
   INSFLAG_TABLE
-  "INS_MAX"
+  "MAX_INSFLAG"
 };
 #undef DEFINSFLAG
 
 #define DEFREGFLAG(e)  "REG_" #e,
 static const char *const regflagnames [] = {
   REGFLAG_TABLE
-  "REG_MAX"
+  "MAX_REGFLAG"
 };
 #undef DEFREGFLAG
 
@@ -1599,21 +1604,18 @@ struct block1 {
 
 
 static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
-  int prevtype = -1;
   int endpc = block->endpc;
   BasicBlock *lastchild = NULL;
-  BasicBlock *nextsibling = *chain;
-  BasicBlock *firstsibling = nextsibling;
+  BasicBlock *nextsibling;
+  BasicBlock *firstsibling;
   lua_assert(chain != NULL);
+  nextsibling = firstsibling = *chain;
   printf("fixing up sibling chain\n");
   printf("--\n");
   while (nextsibling && nextsibling->startpc <= endpc) {
     lastchild = nextsibling;
     printbblmsg("found child", nextsibling);
     nextsibling = nextsibling->nextsibling;
-    if (prevtype != BBL_ELSEIF && lastchild->type == BBL_ELSEIF)
-      lastchild->type = BBL_IF;
-    prevtype = lastchild->type;
   }
   printf("--\n");
   *chain = nextsibling;

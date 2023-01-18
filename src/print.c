@@ -69,7 +69,7 @@ static void PrintConstant(const Proto *f, int i)
       printf(bvalue(o) ? "true" : "false");
       break;
     case LUA_TLIGHTUSERDATA:
-      printf("%phi", pvalue(o));
+      printf("%zxhi", cast(size_t, pvalue(o)));
       break;
     case LUA_TNUMBER:
       printf(LUA_NUMBER_FMT,nvalue(o));

@@ -1,6 +1,6 @@
 /*
 ** $Id: lanalyzer.h $
-** Auxiliary functions to manipulate code analyzer structures
+** Auxiliary functions to manipulate function analyzer structures
 ** See Copyright Notice in lua.h
 */
 
@@ -30,9 +30,7 @@
 #define DEFBBLTYPE(e)  BBL_##e,
 enum BBLTYPE {
   BBLTYPE_TABLE
-  BBL_MAX,
-  /* pass 1 only uses BBL_FUNCTION and the loop-types */
-  BBL1_MAX = BBL_FORLIST + 1
+  MAX_BBLTYPE
 };
 #undef DEFBBLTYPE
 
