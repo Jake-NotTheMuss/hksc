@@ -333,6 +333,11 @@ static void debugbblsummary(DFuncState *fs)
   debugbbl(a, a->bbllist.first, 0);
   fputs("-------------------\n", stdout);
 }
+#else
+static void debugbblsummary(DFuncState *fs)
+{
+  UNUSED(fs);
+}
 #endif /* LUA_DEBUG */
 
 static void printbblmsg(const char *msg, BasicBlock *block) {
