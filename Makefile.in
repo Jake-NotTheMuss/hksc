@@ -106,11 +106,11 @@ pecho:
 newer:
 	@$(FIND) . -newer MANIFEST -type f
 
-Makefile: Makefile.in configure
+Makefile: Makefile.in configure config.status
 	@echo rebuilding Makefile
 	@./configure --no-clean > /dev/null
 
-$(SRCDIR)/Makefile: $(SRCDIR)/Makefile.in configure
+$(SRCDIR)/Makefile: $(SRCDIR)/Makefile.in configure config.status
 	@echo rebuilding $(SRCDIR)/Makefile
 	@./configure --no-clean > /dev/null
 

@@ -44,6 +44,7 @@ SHAREDLIB=libhksc.so
 prefix=/usr/local
 libdir=$(prefix)/lib
 
+# linker arguments when linking standalone to the shared library
 LINK_LIBHKSC=-Wl,-rpath,"@executable_path" -Wl,-rpath,"$(libdir)"
 
 LIBS = -lm $(MYLIBS)
@@ -94,16 +95,12 @@ $(CORE_T): $(CORE_O) $(AUX_O)
 	$(AR) $@ $?
 	$(RANLIB) $@
 
-# shared library --> PIC objects
-# also depends on the static library so that gets built first
-# $(SHAREDLIB): $(ALL_PIC_O) $(CORE_T)
-# 	$(CC) -o $@ -shared $(MYLDFLAGS) $(ALL_PIC_O) $(LIBS)
-
 # standalone compiler/decompiler --> hksc.o, libhksc.a
 $(LUAC_T): $(LUAC_O) $(CORE_T)
 	$(CC) -o $@ $(MYLDFLAGS) $(LUAC_O) $(CORE_T) $(LIBS)
 
 # rules for $(SHAREDLIB)
+# depends on the static library so that gets built first
 # shared library --> PIC objects
 libhksc.so: $(ALL_PIC_O) $(CORE_T)
 	$(CC) -shared -Wl,-soname,$@ -o $@ $(ALL_PIC_O) $(MYLDFLAGS) $(LIBS)
@@ -143,12 +140,8 @@ echo:
 	@echo "MYLIBS = $(MYLIBS)"
 	@echo "DL = $(DL)"
 
-# rule for building this Makefile: ./configure --no-clean just updates Makefiles
-# Makefile: Makefile.in
-# 	@cd $(TOP) && ./configure --no-clean > /dev/null
-
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all default o a lo clean depend echo
+.PHONY: default all static shared o a lo clean depend echo
 
 # DO NOT DELETE
 

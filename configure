@@ -65,7 +65,8 @@ updateconfigfile()
 `varstatus prefix /usr/local`
 
 # emulate ui64 using structures with a hi/lo field for C89 with no 64-bit type
-`varstatus EMU_UI64 0`
+# default value is 1 when developing for testing
+`varstatus EMU_UI64 1`
 # build decompiler machinery
 `varstatus DECOMPILER 1`
 # make a release build
@@ -87,6 +88,7 @@ updateconfigfile()
 # shared library extension
 `varstatus sharedext`
 EOF
+	reset=0
 }
 
 LC_ALL=C
