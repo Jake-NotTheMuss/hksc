@@ -300,7 +300,7 @@ static void f_dump (hksc_State *H, void *ud) {
 /*
 ** dump Lua function as precompiled chunk
 */
-int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
+LUA_API int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
   DumpState D;
   int status;
@@ -309,7 +309,7 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.writer=w;
   D.data=data;
   D.pos=0;
-  D.striplevel=hksc_getBytecodeStrippingLevel(H);
+  D.striplevel=lua_getBytecodeStrippingLevel(H);
   D.status=0;
   if (isbigendian())
     D.swapendian=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);

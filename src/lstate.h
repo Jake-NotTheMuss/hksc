@@ -14,9 +14,6 @@
 #include "lzio.h"
 
 
-/* user-defined callbacks for beginning/end of cycles */
-typedef void (*hksc_CycleCallback)(hksc_State *H, const char *name);
-
 
 struct lua_longjmp;  /* defined in ldo.c */
 
@@ -30,41 +27,6 @@ typedef struct stringtable {
 
 
 
-
-/*
-** int literal options
-*/
-#define INT_LITERALS_NONE   0 /* disable all literals */
-#define INT_LITERALS_LUD    1 /* enable LUD literal constants */
-#define INT_LITERALS_32BIT  INT_LITERALS_LUD
-#define INT_LITERALS_UI64   2 /* enable UI64 literal constants */
-#define INT_LITERALS_64BIT  INT_LITERALS_UI64
-#define INT_LITERALS_ALL    3 /* enable all literals */
-
-
-/*
-** bytecode sharing modes
-*/
-#define HKSC_SHARING_MODE_OFF  0
-#define HKSC_SHARING_MODE_ON   1
-#define HKSC_SHARING_MODE_SECURE 2
-
-
-/*
-** bytecode sharing formats
-*/
-#define HKSC_BYTECODE_DEFAULT  0
-#define HKSC_BYTECODE_INPLACE  1
-#define HKSC_BYTECODE_REFERENCED 2
-
-/*
-** bytecode endianness
-*/
-#define HKSC_DEFAULT_ENDIAN   0
-#define HKSC_BIG_ENDIAN       1
-#define HKSC_LITTLE_ENDIAN    2
-
-/*typedef int (*lua_LineMap)(const char *, int);*/
 
 /*
 ** global settings shared by all states
@@ -87,12 +49,6 @@ typedef struct hksc_Settings
 #endif /* HKSC_DECOMPILER */
 } hksc_Settings;
 
-/*
-** hksc modes
-*/
-#define HKSC_MODE_DEFAULT   0 /* infer from content of first file */
-#define HKSC_MODE_COMPILE   1 /* compiling source */
-#define HKSC_MODE_DECOMPILE 2 /* decompiling bytecode */
 
 /*
 ** `global state', shared by all threads of this state
@@ -148,24 +104,11 @@ struct hksc_State {
 #define G(H)	((H)->h_G)
 #define Settings(H) (G(H)->settings)
 
+#define hksc_mode(H) (G(H)->mode)
 
-/* macros for getting/setting the error message of an hksc_State */
-#define hksc_luaE_geterrormsg(H) ((H)->errormsg)
-#define hksc_luaE_seterrormsg(H,s) ((H)->errormsg = (s))
-#define luaE_geterrormsg(H) hksc_luaE_geterrormsg(H)
-#define luaE_seterrormsg(H,s) hksc_luaE_seterrormsg(H,s)
-
-#define luaE_mode(H) (G(H)->mode)
+#define hksc_seterror(H,s) ((H)->errormsg = (s))
 
 /* macros for setting compiler options */
-#define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
-#define hksc_setIntLiteralsEnabled(H,v) (Settings(H).enable_int_literals = (v))
-#define hksc_setBytecodeStrippingLevel(H,v) (Settings(H).strip = (v))
-#define hksc_setIgnoreDebug(H,v) (Settings(H).ignore_debug = (v))
-#define hksc_setMatchLineInfo(H,v) (Settings(H).match_line_info = (v))
-
-#define hksc_getSharingFmt(H) (Settings(H).sharing_format)
-#define hksc_getSharingMode(H) (Settings(H).sharing_mode)
 #define hksc_getEmitStruct(H) (Settings(H).emit_struct)
 #define hksc_getIntLiteralsEnabled(H) (Settings(H).enable_int_literals)
 #define hksc_getBytecodeStrippingLevel(H) (Settings(H).strip)
@@ -173,6 +116,10 @@ struct hksc_State {
 #define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
 
 #define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
+#define hksc_setIntLiteralsEnabled(H,v) (Settings(H).enable_int_literals = (v))
+#define hksc_setBytecodeStrippingLevel(H,v) (Settings(H).strip = (v))
+#define hksc_setIgnoreDebug(H,v) (Settings(H).ignore_debug = (v))
+#define hksc_setMatchLineInfo(H,v) (Settings(H).match_line_info = (v))
 
 
 /*
@@ -212,24 +159,8 @@ union GCObject {
 /* macro to convert any Lua object into a GCObject */
 #define obj2gco(v)	(cast(GCObject *, (v)))
 
-/* functions for setting user callbacks */
-#define SETCALLBACK_DECL(type, field, suffix) \
-LUAI_FUNC type hksc_##suffix (hksc_State *H, type f);
-
-SETCALLBACK_DECL(lua_CFunction, panic, atpanic)
-SETCALLBACK_DECL(hksc_CycleCallback, startcycle, onstartcycle)
-SETCALLBACK_DECL(hksc_CycleCallback, endcycle, onendcycle)
-
-#undef SETCALLBACK_DECL
-
 LUAI_FUNC hksc_State *luaE_newthread (hksc_State *H);
 LUAI_FUNC void luaE_freethread (hksc_State *H, hksc_State *H1);
-
-LUAI_FUNC lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf);
-
-LUAI_FUNC hksc_State *hksc_newstate (lua_Alloc f, void *ud);
-LUAI_FUNC void hksc_close (hksc_State *H);
-LUAI_FUNC void luaE_clearerr (hksc_State *H);
 
 #endif
 

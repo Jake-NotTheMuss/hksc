@@ -44,7 +44,7 @@ void *debug_realloc (void *ud, void *block, size_t osize, size_t nsize);
 hksc_State *debug_newstate (int mode);
 
 #ifdef hksc_c
-#define hksI_newstate(m) debug_newstate(m)
+#define hksI_newstate(mode) debug_newstate(mode)
 #endif
 
 
@@ -69,11 +69,8 @@ struct L_EXTRA { int lock; int *plock; };
 #define lua_unlock(l)   lua_assert(--(*getlock(l)->plock) == 0)
 
 
+LUAI_FUNC void luaB_opentests (hksc_State *H);
 
-
-/* real main will be defined at `ltests.c' */
-int l_main (int argc, char *argv[]);
-#define main  l_main
 
 
 

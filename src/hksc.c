@@ -10,19 +10,15 @@
 #include <string.h>
 
 #define hksc_c
-#define LUA_CORE
 
 #include "lua.h"
 
 #include "hksclib.h"
 
-#include "lctype.h"
-#include "lundump.h"
-
 #include "hkscaux.h" /* auxiliary functions for standalone program */
 
 
-#define HKSC_NAME "Hksc" /* default program name */
+#define HKSC_NAME "hksc" /* default program name */
 
 #define HKSC_VERSION "0.0"
 
@@ -323,8 +319,8 @@ static hksc_DumpFunction dumpf;
 
 /* dump function for -l */
 static int hksc_dump_l(hksc_State *H, const Proto *f, void *ud) {
-  (void)H; (void)ud;
-  luaU_print(f, listing > 1);
+  (void)ud;
+  luaU_print(H, f, listing > 1);
   return 0;
 }
 
@@ -349,10 +345,10 @@ static int dofiles (hksc_State *H, int argc, char *argv[]) {
     error |= (status = hksI_parser_file(H, argv[i], dumpf, argv[i]));
     if (status) {
       if (status == LUA_ERRSYNTAX) {
-        fprintf(stderr, "%s\n", luaE_geterrormsg(H));
-        luaE_clearerr(H); /* discharge the error message */
+        fprintf(stderr, "%s\n", lua_geterror(H));
+        lua_clearerror(H); /* discharge the error message */
       } else {
-        fprintf(stderr, "%s: %s\n", progname, luaE_geterrormsg(H));
+        fprintf(stderr, "%s: %s\n", progname, lua_geterror(H));
         break; /* fatal */
       }
     }
@@ -381,27 +377,20 @@ int main(int argc, char *argv[])
   }
   H = hksI_newstate(mode);
   if (H==NULL) fatal("cannot create state: not enough memory");
+  lua_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD
   if (dumping) {
     hksc_onstartcycle(H, luacod_startcycle);
     hksc_onendcycle(H, luacod_endcycle);
   }
-#endif /* LUA_COD */
-  hksc_setIntLiteralsEnabled(H,literals_enabled);
-#ifdef LUA_COD
-  hksc_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
+  lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
   debugfile_arg = (debugfile != NULL);
   callstackdb_arg = (callstackdb != NULL);
   withdebug = (withdebug || debugfile_arg || callstackdb_arg);
-  Settings(H).ignore_debug=!withdebug;
-# ifdef HKSC_DECOMPILER
-  /* Call of Duty needs a separate debug reader when loading bytecode */
-  G(H)->debugLoadStateOpen = init_debug_reader;
-  G(H)->debugLoadStateClose = close_debug_reader;
-# endif /* HKSC_DECOMPILER */
+  lua_setIgnoreDebug(H, !withdebug);
 #else /* !LUA_COD */
-  hksc_setBytecodeStrippingLevel(H,striplevel);
-  Settings(H).ignore_debug=ignore_debug;
+  lua_setBytecodeStrippingLevel(H,striplevel);
+  lua_setIgnoreDebug(H, ignore_debug);
 #endif /* LUA_COD */
   if (listing)
     dumpf = hksc_dump_l;

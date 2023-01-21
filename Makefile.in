@@ -10,7 +10,7 @@ PLAT= none
 # if INSTALL_TOP is not an absolute path. (Man pages are installed from the
 # doc directory.)
 #
-INSTALL_TOP= /usr/local
+INSTALL_TOP= $(prefix)
 INSTALL_BIN= $(INSTALL_TOP)/bin
 INSTALL_INC= $(INSTALL_TOP)/include
 INSTALL_LIB= $(INSTALL_TOP)/lib
@@ -33,19 +33,29 @@ RANLIB= ranlib
 
 # == END OF USER SETTINGS. NO NEED TO CHANGE ANYTHING BELOW THIS LINE =========
 
+prefix=/usr/local
+
+SHAREDLIB=libhksc.so
+
 SRCDIR=src
 DOCDIR=doc
 
 # What to install.
 TO_BIN= hksc
-TO_INC= lua.h luaconf.h hkscconf.h
-TO_LIB= libhksc.a
+TO_INC= lua.h luaconf.h hksclib.h hkscconf.h
+TO_LIB= libhksc.a $(SHAREDLIB)
 # TO_MAN= lua.1 luac.1
 
 INSTALL_EXEC="cp -p"
 INSTALL_DATA="cp -p"
 
-default clean depend:
+# set prefix for the child Makefile to use with `rpath'
+all: $(SRCDIR)
+
+$(SRCDIR): $(SRCDIR)/Makefile
+	@cd $(SRCDIR) && $(MAKE) prefix=$(prefix)
+
+clean depend:
 	@cd $(SRCDIR) && $(MAKE) $@
 
 install: dummy
@@ -65,10 +75,12 @@ echo:
 	@echo ""
 	@echo "These are the parameters currently set in src/Makefile to build Lua:"
 	@echo ""
-	@cd src && $(MAKE) -s echo
+	@cd $(SRCDIR) && $(MAKE) -s echo
 	@echo ""
 	@echo "These are the parameters currently set in Makefile to install Lua:"
 	@echo ""
+	@echo "prefix = $(prefix)"
+	@echo "SHAREDLIB = $(SHAREDLIB)"
 	@echo "PLAT = $(PLAT)"
 	@echo "INSTALL_TOP = $(INSTALL_TOP)"
 	@echo "INSTALL_BIN = $(INSTALL_BIN)"
@@ -94,12 +106,15 @@ pecho:
 newer:
 	@$(FIND) . -newer MANIFEST -type f
 
-Makefile: Makefile.in config.status
-	@./configure > /dev/null
+Makefile: Makefile.in configure
+	@echo rebuilding Makefile
+	@./configure --no-clean > /dev/null
 
-config.status: configure
+$(SRCDIR)/Makefile: $(SRCDIR)/Makefile.in configure
+	@echo rebuilding $(SRCDIR)/Makefile
+	@./configure --no-clean > /dev/null
 
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all $(PLATS) clean test install local none dummy echo pecho lecho newer
+.PHONY: all $(SRCDIR) clean test install local echo pecho lecho newer
 
 # (end of Makefile)

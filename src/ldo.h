@@ -14,15 +14,6 @@
 #include "lzio.h"
 
 
-#define hksc_setliteralmsg(H,s) \
-  (luaE_seterrormsg(H, getstr(luaS_newliteral(H, s))))
-
-#define hksc_setmsg(H,s) (luaE_seterrormsg(H, getstr(luaS_new(H, s))))
-
-/* hksc additions */
-#define hksc_setvfmsg luaD_setvfmsg
-#define hksc_setfmsg luaD_setfmsg
-
 /* type of protected functions, to be ran by `runprotected' */
 typedef void (*Pfunc) (hksc_State *H, void *ud);
 
@@ -33,7 +24,7 @@ LUAI_FUNC int luaD_rawrunprotected (hksc_State *H, Pfunc f, void *ud);
 
 LUAI_FUNC void luaD_seterrorobj (hksc_State *H, int errcode);
 
-LUAI_FUNC void luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp);
-LUAI_FUNC void luaD_setfmsg (hksc_State *H, const char *fmt, ...);
+LUAI_FUNC void luaD_setvferror (hksc_State *H, const char *fmt, va_list argp);
+LUAI_FUNC void luaD_setferror (hksc_State *H, const char *fmt, ...);
 
 #endif

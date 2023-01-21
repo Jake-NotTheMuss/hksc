@@ -41,7 +41,7 @@ typedef struct {
 
 static void error(LoadState *S, const char *why)
 {
-  hksc_setfmsg(S->H,"%s: %s in precompiled chunk",S->name,why);
+  luaD_setferror(S->H,"%s: %s in precompiled chunk",S->name,why);
   luaD_throw(S->H,LUA_ERRSYNTAX);
 }
 
@@ -261,7 +261,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
     if (debugS != NULL) {
 #ifdef LUA_COD
       if (LoadInt(debugS) != 1) {
-        hksc_setfmsg(S->H, "%s: bad debug info in file `%s'", S->name,
+        luaD_setferror(S->H, "%s: bad debug info in file `%s'", S->name,
                      S->H->currdebugfile);
         luaD_throw(S->H,LUA_ERRSYNTAX);
       }

@@ -255,7 +255,7 @@ int luaG_checkcode (const Proto *pt) {
 void luaG_runerror (hksc_State *H, const char *fmt, ...) {
   va_list argp;
   va_start(argp, fmt);
-  luaD_setvfmsg(H, fmt, argp);
+  luaD_setvferror(H, fmt, argp);
   va_end(argp);
   luaD_throw(H, LUA_ERRRUN);
 }

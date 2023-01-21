@@ -1,5 +1,5 @@
 /*
-** $Id: hkscdump.c $
+** $Id: hkscaux.c $
 ** Dumping bytecode to files
 ** See Copyright Notice in lua.h
 */
@@ -8,20 +8,16 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
+#include <ctype.h>
 
-#define hkscdump_c
-#define LUA_CORE
+#define hkscaux_c
 
 #include "lua.h"
 #include "luaconf.h"
 
 #include "hksclib.h"
 
-#include "lctype.h"
-#include "ldo.h"
-#include "lobject.h"
-#include "lstring.h"
-#include "lundump.h"
+#include "hkscaux.h"
 
 extern const char *output;
 
@@ -66,7 +62,7 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
   lua_assert(extlen < MAXEXT);
   if (namelen < extlen || extlen < 2) return 0;
   for (n = 0; n < extlen; n++)
-    buff[n]=ltolower(name[namelen-(extlen-n)]);
+    buff[n]=tolower(name[namelen-(extlen-n)]);
   buff[n]='\0';
   return (strcmp(buff, ext) == 0);
 }
@@ -99,7 +95,7 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
   memcpy(buff+n, ext, extlen);
   n+=extlen;
   buff[n]='\0';
-  return getstr(luaS_newlstr(H, buff, n));
+  return lua_newlstring(H, buff, n);
 }
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
@@ -109,7 +105,7 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 
 /* push error string "cannot <what> <filename>" */
 #define cannot(what,name) do { \
-  hksc_setfmsg(H, "cannot " what " %s: %s", name, strerror(errno)); \
+  lua_setferror(H, "cannot " what " %s: %s", name, strerror(errno)); \
   return LUA_ERRFILE; \
 } while (0)
 
@@ -119,55 +115,6 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 } while (0)
 
 #ifdef LUA_COD
-# ifdef HKSC_DECOMPILER /* (COD) debug loader stuff */
-
-typedef struct LoadDebug
-{
-  FILE *f;
-  char buff[LUAL_BUFFERSIZE];
-} LoadDebug;
-
-static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
-  LoadDebug *ld = (LoadDebug *)ud;
-  UNUSED(H);
-  if (feof(ld->f)) return NULL;
-  *size = fread(ld->buff, 1, LUAL_BUFFERSIZE, ld->f);
-  return (*size > 0) ? ld->buff : NULL;
-}
-
-int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
-  LoadDebug *ld = luaM_new(H, LoadDebug);
-  /* todo: this assertion is awkward because it expects the library to have
-     particular internal behavior */
-  lua_assert(Settings(H).ignore_debug == 0);
-  if (H->currdebugfile == NULL) {
-    hksc_setfmsg(H, "debug file name not set for input `%s'", name);
-    return LUA_ERRRUN;
-  }
-  ld->f = fopen(H->currdebugfile, "rb");
-  if (ld->f == NULL) cannot("open", H->currdebugfile);
-  luaZ_init(H, z, debug_reader, ld);
-  luaZ_initbuffer(H, buff);
-  return 0;
-}
-
-int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
-  int readstatus, closestatus;
-  LoadDebug *ld = z->data;
-  lua_assert(Settings(H).ignore_debug == 0);
-  (void)z; (void)name;
-  if (ld->f == NULL) return 0;
-  luaZ_freebuffer(H, buff); UNUSED(buff);
-  readstatus = ferror(ld->f);
-  closestatus = fclose(ld->f);
-  luaM_free(H, ld); UNUSED(ld);
-  if (readstatus) cannot("read", H->currdebugfile);
-  if (closestatus) cannot("close", H->currdebugfile);
-  return 0;
-}
-
-# endif /* HKSC_DECOMPIELR */
-
 
 void luacod_startcycle(hksc_State *H, const char *name) {
   /* err on the side of generating names from the input file - output debug
@@ -175,15 +122,15 @@ void luacod_startcycle(hksc_State *H, const char *name) {
      needed from the start; if dumping, the names will be regenerated to go to
      the output directory; this doesn't apply when the names are provided
      explicitly in the command line  */
-  if (luaE_mode(H) == HKSC_MODE_COMPILE && output != NULL)
+  if (lua_getmode(H) == HKSC_MODE_COMPILE && output != NULL)
     name = output;/* the debug files go the directory with the output file */
-  if (!Settings(H).ignore_debug) {
+  if (!lua_getIgnoreDebug(H)) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
     if (callstackdb == NULL)
       callstackdb = lua2luacallstackdb(H, name);
 # ifdef HKSC_DECOMPILER
-    H->currdebugfile = debugfile;
+    lua_setDebugFile(H, debugfile);
 # endif /* HKSC_DECOMPILER */
   }
 }
@@ -196,14 +143,14 @@ void luacod_endcycle(hksc_State *H, const char *name) {
   debugfile = NULL;
   callstackdb = NULL;
 # ifdef HKSC_DECOMPILER
-    H->currdebugfile = NULL;
+  lua_setDebugFile(H, NULL);
 # endif /* HKSC_DECOMPILER */
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
   FILE *debug_file_; \
   xopenfile(debug_file_,name,mode); \
-  hksc_setBytecodeStrippingLevel(H,striplevel); \
+  lua_setBytecodeStrippingLevel(H,striplevel); \
   luaU_dump(H,f,writer_2file,debug_file_); \
   if (ferror(debug_file_)) cannot("write",name); \
   if (fclose(debug_file_)) cannot("close",name); \
@@ -212,7 +159,7 @@ void luacod_endcycle(hksc_State *H, const char *name) {
 
 /* (COD) dump debug info to files */
 static int luacod_dumpdebug(hksc_State *H, const Proto *f, const char *outname){
-  if (Settings(H).ignore_debug) return 0;
+  if (lua_getIgnoreDebug(H)) return 0;
   /* make sure generated names are in the same directory as outname */
   if (!debugfile_arg)
     debugfile = lua2luadebug(H, outname);
@@ -222,7 +169,7 @@ static int luacod_dumpdebug(hksc_State *H, const Proto *f, const char *outname){
   dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
   /* callstack reconstruction */
   dumpdebugfile(callstackdb,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
-  hksc_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
+  lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }
 #endif /* LUA_COD */
@@ -232,7 +179,7 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   int status;
   FILE *out; /* output file */
   const char *outname; /* output file name */
-  const int compiling = luaE_mode(H) == HKSC_MODE_COMPILE;
+  const int compiling = lua_getmode(H) == HKSC_MODE_COMPILE;
   lua_assert(f != NULL); /* parse errors should be caught before calling */
   if (output == NULL) { /* generate an output name if needed */
     if (compiling)

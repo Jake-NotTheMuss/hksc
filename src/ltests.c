@@ -46,7 +46,8 @@ int islocked = 0;
 hksc_State *debug_newstate(int mode) {
   hksc_State *H = hksc_newstate(debug_realloc, &memcontrol);
   if (H) {
-    luaE_mode(H) = mode;
+    lua_setmode(H, mode);
+    luaB_opentests(H);
   }
   return H;
 }
@@ -79,7 +80,7 @@ hksc_State *debug_newstate(int mode) {
 #endif
 
 
-Memcontrol memcontrol = {0L, 0L, 0L, ULONG_MAX};
+Memcontrol memcontrol = {0L, 0L, 0L, 0L};
 
 
 static void *checkblock (void *block, size_t size) {
@@ -106,6 +107,10 @@ static void freeblock (Memcontrol *mc, void *block, size_t size) {
 void *debug_realloc (void *ud, void *block, size_t oldsize, size_t size) {
   Memcontrol *mc = cast(Memcontrol *, ud);
   lua_assert(oldsize == 0 || checkblocksize(block, oldsize));
+  if (mc->memlimit == 0) {  /* first time? */
+    char *limit = getenv("MEMLIMIT");  /* initialize memory limit */
+    mc->memlimit = limit ? strtoul(limit, NULL, 10) : ULONG_MAX;
+  }
   if (size == 0) {
     freeblock(mc, block, oldsize);
     return NULL;
@@ -325,17 +330,19 @@ void luaI_printcode (Proto *pt, int size) {
 
 
 
-#undef main
-int main (int argc, char *argv[]) {
-  int ret;
-  char *limit = getenv("MEMLIMIT");
-  if (limit)
-    memcontrol.memlimit = strtoul(limit, NULL, 10);
-  ret = l_main(argc, argv);
+static void checkfinalmem (void) {
   lua_assert(memcontrol.numblocks == 0);
   lua_assert(memcontrol.total == 0);
-  UNUSED(lua_state);
-  return ret;
+}
+
+
+void luaB_opentests (hksc_State *H) {
+  void *ud;
+  atexit(checkfinalmem);
+  lua_assert(lua_getallocf(H, &ud) == debug_realloc);
+  lua_assert(ud == cast(void *, &memcontrol));
+  lua_setallocf(H, lua_getallocf(H, NULL), ud);
+  lua_state = H;  /* keep first state to be opened */
 }
 
 #endif

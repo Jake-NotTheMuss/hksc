@@ -8,11 +8,7 @@
 #ifndef HKSC_LIB_H
 #define HKSC_LIB_H
 
-#include "luaconf.h"
 #include "lua.h"
-
-#include "lstate.h"
-#include "lobject.h" /* Proto */
 
 
 typedef int (*hksc_DumpFunction) (hksc_State *H, const Proto *f, void *ud);

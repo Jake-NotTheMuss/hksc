@@ -237,7 +237,7 @@ typedef union Udata {
 /*
 ** Function Prototypes
 */
-typedef struct Proto {
+struct Proto {
   CommonHeader;
   TValue *k;  /* constants used by the function */
   Instruction *code;
@@ -263,7 +263,7 @@ typedef struct Proto {
   lu_byte numparams;
   lu_byte is_vararg;
   lu_byte maxstacksize;
-} Proto;
+};
 
 
 /* masks for new-style vararg */

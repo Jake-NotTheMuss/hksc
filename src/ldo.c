@@ -48,16 +48,16 @@ struct lua_longjmp {
   volatile int status;  /* error code */
 };
 
-void luaD_setvfmsg (hksc_State *H, const char *fmt, va_list argp)
+void luaD_setvferror (hksc_State *H, const char *fmt, va_list argp)
 {
-  luaE_seterrormsg(H, luaO_pushvfstring(H, fmt, argp));
+  hksc_seterror(H, luaO_pushvfstring(H, fmt, argp));
 }
 
 
-void luaD_setfmsg (hksc_State *H, const char *fmt, ...) {
+void luaD_setferror (hksc_State *H, const char *fmt, ...) {
   va_list argp;
   va_start(argp, fmt);
-  luaD_setvfmsg(H, fmt, argp);
+  luaD_setvferror(H, fmt, argp);
   va_end(argp);
 }
 
@@ -65,11 +65,11 @@ void luaD_setfmsg (hksc_State *H, const char *fmt, ...) {
 void luaD_seterrorobj (hksc_State *H, int errcode) {
   switch (errcode) {
     case LUA_ERRMEM: {
-      luaE_seterrormsg(H, getstr(luaS_newliteral(H, MEMERRMSG)));
+      lua_seterror(H, getstr(luaS_newliteral(H, MEMERRMSG)));
       break;
     }
     case LUA_ERRERR: {
-      luaE_seterrormsg(H,
+      lua_seterror(H,
         getstr(luaS_newliteral(H, "error in error handling")));
       break;
     }
@@ -135,7 +135,7 @@ static void f_parser (hksc_State *H, void *ud) {
   int c = luaZ_lookahead(p->z);
   if (c == LUA_SIGNATURE[0]) { /* binary file */
 #ifdef HKSC_DECOMPILER
-    lua_assert(luaE_mode(H) == HKSC_MODE_DECOMPILE);
+    lua_assert(hksc_mode(H) == HKSC_MODE_DECOMPILE);
     tf = luaU_undump(H, p->z, &p->buff, p->name);
 #else /* !HKSC_DECOMPILER */
     lua_assert(0); /* cannot happen */
@@ -143,7 +143,7 @@ static void f_parser (hksc_State *H, void *ud) {
     tf = NULL; /* avoid warnings */
 #endif /* HKSC_DECOMPILER */
   } else {
-    lua_assert(luaE_mode(H) == HKSC_MODE_COMPILE);
+    lua_assert(hksc_mode(H) == HKSC_MODE_COMPILE);
     tf = luaY_parser(H, p->z, &p->buff, p->name);
   }
   /*tf = luaY_parser(H, p->z, &p->buff, p->name);*/

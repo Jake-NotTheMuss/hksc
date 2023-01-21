@@ -107,10 +107,10 @@ void luaX_lexerror (LexState *ls, const char *msg, int token) {
   char buff[MAXSRC];
   luaO_chunkid(buff, getstr(ls->source), MAXSRC);
   if (token)
-    hksc_setfmsg(ls->H, "%s:%d: %s near %s", buff, ls->linenumber, msg,
+    luaD_setferror(ls->H, "%s:%d: %s near %s", buff, ls->linenumber, msg,
                  txtToken(ls, token));
   else
-    hksc_setfmsg(ls->H, "%s:%d: %s", buff, ls->linenumber, msg);
+    luaD_setferror(ls->H, "%s:%d: %s", buff, ls->linenumber, msg);
   luaD_throw(ls->H, LUA_ERRSYNTAX);
 }
 

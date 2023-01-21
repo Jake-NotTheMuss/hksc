@@ -47,7 +47,7 @@
 #else /* !HKSC_DECOMPILER */
 #define checkmodematches(H,c,f) do { \
   if ((c) == LUA_SIGNATURE[0]) { \
-    hksc_setfmsg((H), "`%s' is already a pre-compiled Lua file", (f)); \
+    luaD_setferror((H), "`%s' is already a pre-compiled Lua file", (f)); \
     return LUA_ERRRUN; \
   } \
   checkmode((H),HKSC_MODE_COMPILE,(f)); \
@@ -55,15 +55,16 @@
 #endif /* HKSC_DECOMPILER */
 
 static int checkmode_(hksc_State *H, int mode, const char *filename) {
+  int oldmode = hksc_mode(H);
   lua_assert(mode != HKSC_MODE_DEFAULT);
-  if (luaE_mode(H) == HKSC_MODE_DEFAULT)
-    luaE_mode(H) = mode; /* set the mode if it wasn't set */
-  else if (luaE_mode(H) != mode) {
-    if (luaE_mode(H) == HKSC_MODE_COMPILE)
-      hksc_setfmsg(H, "cannot process `%s' in compile-mode, it is already a "
+  if (oldmode == HKSC_MODE_DEFAULT)
+    hksc_mode(H) = mode; /* set the mode if it wasn't set */
+  else if (oldmode != mode) {
+    if (oldmode == HKSC_MODE_COMPILE)
+      luaD_setferror(H, "cannot process `%s' in compile-mode, it is already a "
         "pre-compiled Lua file", filename);
     else
-      hksc_setfmsg(H, "cannot process `%s' in decompile-mode, it is not a "
+      luaD_setferror(H, "cannot process `%s' in decompile-mode, it is not a "
         "pre-compiled Lua file", filename);
     return 1;
   }
@@ -119,7 +120,7 @@ static const char *getF (hksc_State *H, void *ud, size_t *size) {
 
 static int errfile (hksc_State *H, const char *what, const char *filename) {
   const char *serr = strerror(errno);
-  hksc_setfmsg(H, "cannot %s %s: %s", what, filename, serr);
+  luaD_setferror(H, "cannot %s %s: %s", what, filename, serr);
   return LUA_ERRFILE;
 }
 
@@ -128,8 +129,8 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
                 const char *chunkname) {
   ZIO z;
   int status;
+  lua_assert(hksc_mode(H) != HKSC_MODE_DEFAULT); /* the mode must be known */
   lua_lock(H);
-  lua_assert(luaE_mode(H) != HKSC_MODE_DEFAULT); /* the mode must be known */
   if (!chunkname) chunkname = "?";
   luaZ_init(H, &z, reader, data);
   status = luaD_protectedparser(H, &z, chunkname);
@@ -145,7 +146,7 @@ static int loadfile(hksc_State *H, const char *filename) {
   const char *chunkname;
   lf.extraline = 0;
   if (filename == NULL) { /* shouldn't happen */
-    hksc_setliteralmsg(H, "Hksc does not support reading from stdin");
+    lua_seterror(H, "Hksc does not support reading from stdin");
     return LUA_ERRRUN;
   } else {
     chunkname = luaO_pushfstring(H, "@%s", filename);
@@ -161,7 +162,7 @@ static int loadfile(hksc_State *H, const char *filename) {
   if (c == LUA_SIGNATURE[0] && lf.f != stdin) {  /* binary file? */
     fclose(lf.f);
 #ifndef HKSC_DECOMPILER /* built without a decompiler */
-    hksc_setliteralmsg(H, "Attempt to compile a binary Lua file, source file "
+    lua_seterror(H, "Attempt to compile a binary Lua file, source file "
                        "expected");
     return LUA_ERRRUN;
 #else /* HKSC_DECOMPILER */
@@ -254,33 +255,65 @@ static void endcycle(hksc_State *H, const char *name) {
 ** =======================================================
 */
 
+struct SParser {
+  union {
+    const char *filename;
+    const char *buff;
+  } arg1;
+  size_t size;
+  char *source;
+  hksc_DumpFunction dumpf;
+  void *ud;
+};
 
-int hksI_parser_file(hksc_State *H, const char *filename,
-                     hksc_DumpFunction dumpf, void *ud) {
+static void fparser_file(hksc_State *H, void *ud) {
+  struct SParser *p = (struct SParser *)ud;
   int status;
-  startcycle(H, filename);
-  status = loadfile(H, filename); /* parse file */
+  startcycle(H, p->arg1.filename);
+  status = loadfile(H, p->arg1.filename); /* parse file */
   if (status) goto fail;
   lua_lock(H);
-  status = (*dumpf)(H, H->last_result, ud);
+  status = (*p->dumpf)(H, H->last_result, p->ud);
   lua_unlock(H);
   fail:
-  endcycle(H, filename);
+  endcycle(H, p->arg1.filename);
+  if (status) luaD_throw(H, status);
+}
+
+static void fparser_buffer(hksc_State *H, void *ud) {
+  struct SParser *p = (struct SParser *)ud;
+  int status;
+  startcycle(H, p->source);
+  status = lua_loadbuffer(H, p->arg1.buff, p->size, p->source);
+  if (status) goto fail;
+  lua_lock(H);
+  status = (*p->dumpf)(H, H->last_result, p->ud);
+  lua_unlock(H);
+  fail:
+  endcycle(H, p->source);
+  if (status) luaD_throw(H, status);
+}
+
+
+LUALIB_API int hksI_parser_file(hksc_State *H, const char *filename,
+                     hksc_DumpFunction dumpf, void *ud) {
+  int status;
+  struct SParser p;
+  p.arg1.filename = filename;
+  p.dumpf = dumpf; p.ud = ud;
+  status = luaD_pcall(H, &fparser_file, &p);
   return status;
 }
 
 
-int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
+LUALIB_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
                        char *source, hksc_DumpFunction dumpf, void *ud) {
   int status;
-  startcycle(H, source);
-  status = lua_loadbuffer(H, buff, size, source);
-  if (status) goto fail;
-  lua_lock(H);
-  status = (*dumpf)(H, H->last_result, ud);
-  lua_unlock(H);
-  fail:
-  endcycle(H, source);
+  struct SParser p;
+  p.arg1.buff = buff;
+  p.size = size; p.source = source;
+  p.dumpf = dumpf; p.ud = ud;
+  status = luaD_pcall(H, &fparser_buffer, &p);
   return status;
 }
 
@@ -299,20 +332,77 @@ static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize) {
 static int panic (hksc_State *H) {
   (void)H;  /* to avoid warnings */
   fprintf(stderr, "PANIC: unprotected error in call to Lua API (%s)\n",
-                   luaE_geterrormsg(H));
+                   lua_geterror(H));
   return 0;
 }
 
-hksc_State *hksI_newstate(int mode) {
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+
+typedef struct LoadDebug
+{
+  FILE *f;
+  char buff[LUAL_BUFFERSIZE];
+} LoadDebug;
+
+static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
+  LoadDebug *ld = (LoadDebug *)ud;
+  UNUSED(H);
+  if (feof(ld->f)) return NULL;
+  *size = fread(ld->buff, 1, LUAL_BUFFERSIZE, ld->f);
+  return (*size > 0) ? ld->buff : NULL;
+}
+
+
+static int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
+                             const char *name) {
+  LoadDebug *ld = luaM_new(H, LoadDebug);
+  lua_assert(hksc_getIgnoreDebug(H) == 0);
+  if (H->currdebugfile == NULL) {
+    luaD_setferror(H, "debug file name not set for input `%s'", name);
+    return LUA_ERRRUN;
+  }
+  ld->f = fopen(H->currdebugfile, "rb");
+  if (ld->f == NULL) return errfile(H, "open", H->currdebugfile);
+  luaZ_init(H, z, debug_reader, ld);
+  luaZ_initbuffer(H, buff);
+  return 0;
+}
+
+static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
+                              const char *name) {
+  int readstatus, closestatus;
+  LoadDebug *ld = z->data;
+  lua_assert(Settings(H).ignore_debug == 0);
+  UNUSED(z); UNUSED(name);
+  if (ld->f == NULL) return 0;
+  luaZ_freebuffer(H, buff); UNUSED(buff);
+  readstatus = ferror(ld->f);
+  closestatus = fclose(ld->f);
+  luaM_free(H, ld); UNUSED(ld);
+  if (readstatus) return errfile(H, "read", H->currdebugfile);
+  if (closestatus) return errfile(H, "close", H->currdebugfile);
+  return 0;
+}
+
+#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+
+LUA_API hksc_State *hksI_newstate(int mode) {
   hksc_State *H = hksc_newstate(l_alloc, NULL);
   if (H) {
     hksc_atpanic(H, &panic);
-    luaE_mode(H) = mode;
+    hksc_mode(H) = mode;
+#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+    /* Call of Duty needs a separate debug reader when loading bytecode */
+    lua_lock(H);
+    G(H)->debugLoadStateOpen = init_debug_reader;
+    G(H)->debugLoadStateClose = close_debug_reader;
+    lua_unlock(H);
+#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
   }
   return H;
 }
 
-void hksI_close(hksc_State *H) {
+LUA_API void hksI_close(hksc_State *H) {
   hksc_close(H);
 }
 

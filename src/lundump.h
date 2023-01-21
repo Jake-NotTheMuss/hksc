@@ -64,21 +64,6 @@ LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
 /* make header; from lundump.c */
 LUAI_FUNC void luaU_header (char *h, int swapendian);
 
-/* dump one chunk; from ldump.c */
-LUAI_FUNC int luaU_dump (hksc_State *H,
-                         const Proto *f, lua_Writer w, void *data);
-
-
-#ifdef HKSC_DECOMPILER
-/* decompile one chunk; from ldecomp.c */
-LUAI_FUNC int luaU_decompile (hksc_State *H,
-                         const Proto *f, lua_Writer w, void *data);
-#endif /* HKSC_DECOMPILER */
-
-#ifdef hksc_c
-/* print one chunk; from print.c */
-LUAI_FUNC void luaU_print (const Proto *f, int full);
-#endif
 
 /* for header of binary files -- this is Lua 5.1 */
 #define LUAC_VERSION		0x51
@@ -123,16 +108,6 @@ union max_type_length {
 #undef DEFTYPE
 
 #define MAX_TYPE_LENGTH (sizeof(union max_type_length)/sizeof(char))
-
-
-/* bytecode stripping levels */
-#define BYTECODE_STRIPPING_NONE 0
-#define BYTECODE_STRIPPING_PROFILING 1
-#define BYTECODE_STRIPPING_ALL 2
-#ifdef LUA_COD /* Cod extensions */
-#define BYTECODE_STRIPPING_DEBUG_ONLY 3
-#define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
-#endif /* LUA_COD */
 
 
 /* stream position alignment in bytecode */

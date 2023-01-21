@@ -263,10 +263,10 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
   TValue o;
   lua_assert(type == TK_SHORT_LITERAL || type == TK_LONG_LITERAL);
   if (type == TK_SHORT_LITERAL &&
-      (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
+      (lua_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
     setpvalue(&o, lua_ui64tolud(l));
   else if (type == TK_LONG_LITERAL &&
-           (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64))
+           (lua_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64))
     setui64value(&o, l);
   else
     luaX_syntaxerror(fs->ls, "int literals not enabled in compiler options");

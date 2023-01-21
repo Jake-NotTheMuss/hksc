@@ -1,5 +1,5 @@
 /*
-** $Id: hkscdump.c $
+** $Id: hkscaux.c $
 ** Dumping bytecode to files
 ** See Copyright Notice in lua.h
 */
@@ -9,17 +9,7 @@
 
 #include "lua.h"
 
-#include "lzio.h"
-
 #ifdef LUA_COD
-# ifdef HKSC_DECOMPILER
-
-extern int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                             const char *name);
-extern int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                              const char *name);
-
-# endif /* HKSC_DECOMPILER */
 
 extern void luacod_startcycle(hksc_State *H, const char *name);
 extern void luacod_endcycle(hksc_State *H, const char *name);
