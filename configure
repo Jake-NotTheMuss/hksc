@@ -274,6 +274,7 @@ configurefile()
 
 configurefile Makefile
 configurefile $SRCDIR/Makefile
+configurefile test/Makefile
 
 test x$makeclean = x1 && cd $SRCDIR && make clean > /dev/null 2>&1
 

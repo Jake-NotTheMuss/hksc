@@ -1,0 +1,22 @@
+# makefile for testing Lua
+
+TOP=..
+SRCDIR=src
+TOPSRC=$(TOP)/$(SRCDIR)
+
+HKSC=$(TOPSRC)/hksc
+HKSCSH=$(TOPSRC)/hkscsh
+
+TESTS=version
+
+test:
+	@$(MAKE) --no-print-directory -s clean
+	@$(MAKE) --no-print-directory -s -r $(TESTS)
+
+version:
+	$(HKSC) --version
+	$(HKSCSH) --version
+
+clean:
+
+.PHONY: test clean version

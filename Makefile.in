@@ -52,6 +52,9 @@ INSTALL_DATA="cp -p"
 # set prefix for the child Makefile to use with `rpath'
 all: $(SRCDIR)
 
+test: test/Makefile
+	@cd test && $(MAKE) test
+
 $(SRCDIR): $(SRCDIR)/Makefile
 	@cd $(SRCDIR) && $(MAKE) prefix=$(prefix)
 
@@ -106,12 +109,12 @@ pecho:
 newer:
 	@$(FIND) . -newer MANIFEST -type f
 
-Makefile: Makefile.in configure config.status
-	@echo rebuilding Makefile
-	@./configure --no-clean > /dev/null
+Makefile: Makefile.in
+$(SRCDIR)/Makefile: $(SRCDIR)/Makefile.in
+test/Makefile: test/Makefile.in
 
-$(SRCDIR)/Makefile: $(SRCDIR)/Makefile.in configure config.status
-	@echo rebuilding $(SRCDIR)/Makefile
+Makefile $(SRCDIR)/Makefile test/Makefile: configure config.status
+	@echo rebuilding $@
 	@./configure --no-clean > /dev/null
 
 # list targets that do not create files (but not all makes understand .PHONY)
