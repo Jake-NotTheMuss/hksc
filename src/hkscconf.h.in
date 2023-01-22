@@ -24,7 +24,7 @@
 ** macro `LUA_COD' if you are not developing for a Call of Duty game.
 */
 
-/* UI64 umulation */
+/* UI64 emulation */
 #if @LUACONFIG_EMU_UI64@
 #define HKSC_EMU_UI64
 #else
