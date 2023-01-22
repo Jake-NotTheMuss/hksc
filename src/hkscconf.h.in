@@ -17,10 +17,9 @@
 
 /*
 ** NOTE for non-Call-of-Duty developers:
-** This version of Hksc is only intended to work with Call of Duty. Because Call
-** of Duty disables all compatibiliy flags, none of those features are
-** implemented in the compiler. If the game you are developing for enables any
-** of the compatibility features, you will need to find out which ones are
+** Because Call of Duty disables all compatibiliy flags, none of those features
+** are implemented in the compiler. If the game you are developing for enables
+** any of the compatibility features, you will need to find out which ones are
 ** enabled and provide implementations for them. Also make sure to undefine the
 ** macro `LUA_COD' if you are not developing for a Call of Duty game.
 */
@@ -61,7 +60,7 @@
 #undef LUA_CODT7
 #endif
 
-/* compatibility settings */
+/* compatibility flags */
 #define HKSC_GETGLOBAL_MEMOIZATION @HKSC_GETGLOBAL_MEMOIZATION@
 #define HKSC_STRUCTURE_EXTENSION_ON @HKSC_STRUCTURE_EXTENSION_ON@
 #define HKSC_SELF @HKSC_SELF@
