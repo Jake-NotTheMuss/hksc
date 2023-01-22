@@ -18,7 +18,11 @@ typedef int (*hksc_DumpFunction) (hksc_State *H, void *ud);
 */
 
 /* Lua state constructor/destructor */
+#ifdef HKSC_LOGGING
+LUA_API hksc_State *hksI_newstate(int mode, hksc_LogContext *logctx);
+#else /* !HKSC_LOGGING */
 LUA_API hksc_State *hksI_newstate(int mode);
+#endif /* HKSC_LOGGING */
 LUA_API void hksI_close(hksc_State *H);
 
 

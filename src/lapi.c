@@ -31,6 +31,18 @@ const char lua_ident[] =
   "$Authors: " LUA_AUTHORS " $\n"
   "$URL: www.lua.org $\n";
 
+#ifdef HKSC_LOGGING
+
+LUA_API hksc_LogFunction lua_atlog (hksc_State *H, hksc_LogFunction logf) {
+  hksc_LogFunction old;
+  lua_lock(H);
+  old = G(H)->log;
+  G(H)->log = logf;
+  lua_unlock(H);
+  return old;
+}
+
+#endif /* HKSC_LOGGING */
 
 LUA_API lua_CFunction lua_atpanic (hksc_State *H, lua_CFunction panicf) {
   lua_CFunction old;
@@ -126,6 +138,7 @@ LUA_API void lua_setvferror (hksc_State *H, const char *fmt, va_list argp) {
   lua_unlock(H);
 }
 
+
 LUA_API void lua_clearerror (hksc_State *H) {
   lua_lock(H);
   H->status = 0;
@@ -168,6 +181,45 @@ LUA_API void lua_setallocf (hksc_State *H, lua_Alloc f, void *ud) {
 }
 
 
+#ifdef HKSC_LOGGING
+
+LUA_API hksc_LogFunction lua_getlogf (hksc_State *H, void **ud) {
+  hksc_LogFunction f;
+  lua_lock(H);
+  if (ud) *ud = G(H)->logctx.ud;
+  f = G(H)->logctx.f;
+  lua_unlock(H);
+  return f;
+}
+
+
+LUA_API void lua_setlogf (hksc_State *H, hksc_LogFunction f, void *ud) {
+  lua_lock(H);
+  G(H)->logctx.ud = ud;
+  G(H)->logctx.f = f;
+  lua_unlock(H);
+}
+
+
+LUA_API int lua_getlogpriority (hksc_State *H) {
+  int priority;
+  lua_lock(H);
+  priority = G(H)->logctx.priority;
+  lua_unlock(H);
+  return priority;
+}
+
+
+LUA_API void lua_setlogpriority (hksc_State *H, int priority) {
+  lua_lock(H);
+  api_check(H, priority >= 0 && priority < LOG_PRIORITY_MAX);
+  G(H)->logctx.priority = priority;
+  lua_unlock(H);
+}
+
+#endif /* HKSC_LOGGING */
+
+
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
 
 LUA_API const char *lua_getDebugFile (hksc_State *H) {
@@ -186,6 +238,9 @@ LUA_API void lua_setDebugFile (hksc_State *H, const char *name) {
 
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 
+/*
+** compiler/decompiler settings (C -> stack)
+*/
 
 LUA_API int lua_getEmitStruct (hksc_State *H) {
   int emit_struct;
@@ -252,6 +307,8 @@ LUA_API void lua_setIgnoreDebug (hksc_State *H, int ignore_debug) {
 }
 
 
+#ifdef HKSC_DECOMPILER
+
 LUA_API int lua_getMatchLineInfo (hksc_State *H) {
   int match_line_info;
   lua_lock(H);
@@ -266,6 +323,8 @@ LUA_API void lua_setMatchLineInfo (hksc_State *H, int match_line_info) {
   hksc_setMatchLineInfo(H, match_line_info);
   lua_unlock(H);
 }
+
+#endif /* HKSC_DECOMPILER */
 
 
 LUA_API int lua_dump (hksc_State *H, lua_Writer w, void *data) {

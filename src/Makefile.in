@@ -14,7 +14,7 @@ CWARNS= -ansi -pedantic -Wall -Wextra
 # -g -DLUA_USER_H='"ltests.h"'
 # -fomit-frame-pointer #-pg -malign-double
 TESTS= -g -DLUA_USER_H='"ltests.h"'
-
+RELEASE=-Os
 
 
 CC= cc

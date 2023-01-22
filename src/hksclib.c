@@ -230,9 +230,10 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 /* put here all logic to be run at the start of a parser cycle */
 static void startcycle(hksc_State *H, const char *name) {
   lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
+  lua_assert(H->last_result == NULL);
   luaC_newcycle(H); /* collect garbage */
   /* end of library start-cycle logic */
-  if (G(H)->startcycle) /* user-defined logic */ {
+  if (G(H)->startcycle) { /* user-defined logic */
     lua_unlock(H);
     (*G(H)->startcycle)(H, name);
     lua_lock(H);
@@ -394,8 +395,31 @@ static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
 
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 
-LUA_API hksc_State *hksI_newstate(int mode) {
-  hksc_State *H = lua_newstate(l_alloc, NULL);
+
+#ifdef HKSC_LOGGING
+
+void defaultlog(hksc_State *H, const char *label, int priority, const char *msg,
+         void *ud) {
+  (void)H; (void)priority; (void)ud;
+  fprintf(stderr, "[%s] %s\n", label, msg);
+}
+
+#endif /* HKSC_LOGGING */
+
+#ifdef HKSC_LOGGING
+LUA_API hksc_State *hksI_newstate(int mode, hksc_LogContext *logctx)
+#else /* !HKSC_LOGGING */
+LUA_API hksc_State *hksI_newstate(int mode)
+#endif /* HKSC_LOGGING */
+{
+  hksc_State *H;
+#ifdef HKSC_LOGGING
+  if (logctx != NULL && logctx->f == NULL)
+    logctx->f = &defaultlog;
+  H = lua_newstate(l_alloc, NULL, logctx);
+#else /* !HKSC_LOGGING */
+  H = lua_newstate(l_alloc, NULL);
+#endif /* HKSC_LOGGING */
   if (H) {
     lua_atpanic(H, &panic);
     lua_setmode(H, mode);

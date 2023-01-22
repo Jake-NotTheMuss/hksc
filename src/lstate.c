@@ -99,7 +99,13 @@ hksc_default_settings(hksc_Settings *settings)
 }
 
 
-LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud) {
+#ifdef HKSC_LOGGING
+LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud,
+                                  hksc_LogContext *logctx)
+#else /* !HKSC_LOGGING */
+LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud)
+#endif /* HKSC_LOGGING */
+{
   int i;
   hksc_State *H;
   global_State *g;
@@ -124,6 +130,9 @@ LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud) {
   g->bytecode_endianness = HKSC_DEFAULT_ENDIAN;
   hksc_default_settings(&g->settings);
   luaZ_initbuffer(H, &g->buff);
+#ifdef HKSC_LOGGING
+  g->logctx = logctx != NULL ? *logctx : DEFAULT_LOGCTX;
+#endif /* HKSC_LOGGING */
   g->panic = NULL;
   g->gcstate = GCSpause;
   g->rootgc = obj2gco(H);

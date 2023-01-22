@@ -15,17 +15,6 @@
 #define HKSC_COMPATIBILITY_BIT_DOUBLES      3
 #define HKSC_COMPATIBILITY_BIT_NATIVEINT    4
 
-#ifndef LUA_COD
-#define LUA_COD /* general cod compatibility */
-#endif
-#ifndef LUA_CODT7
-#define LUA_CODT7 /* support bitwise operations */
-#endif
-
-#ifndef HKSC_DECOMPILER
-/*#define HKSC_DECOMPILER*/
-#endif
-
 /*
 ** NOTE for non-Call-of-Duty developers:
 ** This version of Hksc is only intended to work with Call of Duty. Because Call
@@ -36,24 +25,56 @@
 ** macro `LUA_COD' if you are not developing for a Call of Duty game.
 */
 
-#ifndef HKSC_GETGLOBAL_MEMOIZATION
-#define HKSC_GETGLOBAL_MEMOIZATION 0
-#define HKSC_STRUCTURE_EXTENSION_ON 0
-#define HKSC_SELF 0
-#define HKSC_WITHDOUBLES 0
-#define HKSC_WITHNATIVEINT 0
+/* UI64 umulation */
+#if @LUACONFIG_EMU_UI64@
+#define HKSC_EMU_UI64
+#else
+#undef HKSC_EMU_UI64
 #endif
 
-#if !defined(LUA_COD) && defined(LUA_CODT7)
+/* Lua decompiler */
+#if @LUACONFIG_DECOMPILER@
+#define HKSC_DECOMPILER
+#else
+#undef HKSC_DECOMPILER
+#endif
+
+/* Lua logging */
+#if @LUACONFIG_LOGGING@
+#define HKSC_LOGGING
+#else
+#undef HKSC_LOGGING
+#endif
+
+/* T7 compatibility */
+#if @LUACONFIG_CODT7@
+#define LUA_CODT7
+#else
 #undef LUA_CODT7
 #endif
 
+/* COD compatibility */
+#if @LUACONFIG_COD@
+#define LUA_COD
+#else
+#undef LUA_COD
+#undef LUA_CODT7
+#endif
+
+/* compatibility settings */
+#define HKSC_GETGLOBAL_MEMOIZATION @HKSC_GETGLOBAL_MEMOIZATION@
+#define HKSC_STRUCTURE_EXTENSION_ON @HKSC_STRUCTURE_EXTENSION_ON@
+#define HKSC_SELF @HKSC_SELF@
+#define HKSC_WITHDOUBLES @HKSC_WITHDOUBLES@
+#define HKSC_WITHNATIVEINT @HKSC_WITHNATIVEINT@
+
+/* put here any errors that need to happen for unsupported configurations */
 #if HKSC_GETGLOBAL_MEMOIZATION
 #error "Global Memoization not implemented"
 #endif
 
 #if HKSC_STRUCTURE_EXTENSION_ON
-#error "Structure extension not implemented"
+#error "Structures not implemented"
 #endif
 
 #if HKSC_SELF

@@ -78,7 +78,9 @@
 #define HKSC_MODE_DECOMPILE 2 /* decompiling bytecode */
 
 
-/* bytecode stripping levels */
+/*
+** bytecode stripping levels
+*/
 #define BYTECODE_STRIPPING_NONE 0
 #define BYTECODE_STRIPPING_PROFILING 1
 #define BYTECODE_STRIPPING_ALL 2
@@ -91,6 +93,26 @@
 typedef struct hksc_State hksc_State;
 
 typedef int (*lua_CFunction) (hksc_State *H);
+
+#ifdef HKSC_LOGGING
+
+#define LOG_PRIORITY_DEBUG     0
+#define LOG_PRIORITY_INFO      1
+#define LOG_PRIORITY_WARN      2
+#define LOG_PRIORITY_ERROR     3
+#define LOG_PRIORITY_FATAL     4
+
+typedef int (*hksc_LogFunction) (hksc_State *H, const char *label, int priority,
+                                 const char *msg, void *ud);
+
+typedef struct hksc_LogContext {
+  hksc_LogFunction f;
+  void *ud;
+  int priority;
+} hksc_LogContext;
+
+#define DEFAULT_LOGCTX {NULL, NULL, 0}
+#endif /* HKSC_LOGGING */
 
 /* user-defined callbacks for beginning/end of cycles */
 typedef void (*hksc_CycleCallback)(hksc_State *H, const char *name);
@@ -152,14 +174,19 @@ typedef LUA_INTEGER lua_Integer;
 /*
 ** state manipulation
 */
+#ifdef HKSC_LOGGING
+LUA_API hksc_State *(lua_newstate) (lua_Alloc f, void *ud,
+                                    hksc_LogContext *logctx);
+#else /* !HKSC_LOGGING */
 LUA_API hksc_State *(lua_newstate) (lua_Alloc f, void *ud);
+#endif /* HKSC_LOGGING */
 LUA_API void       (lua_close) (hksc_State *H);
 
 LUA_API lua_CFunction (lua_atpanic) (hksc_State *H, lua_CFunction panicf);
 LUA_API hksc_CycleCallback (lua_onstartcycle) (hksc_State *H,
-                                                hksc_CycleCallback f);
+                                               hksc_CycleCallback f);
 LUA_API hksc_CycleCallback (lua_onendcycle) (hksc_State *H,
-                                              hksc_CycleCallback f);
+                                             hksc_CycleCallback f);
 
 
 /*
@@ -180,6 +207,13 @@ LUA_API void (lua_setmode) (hksc_State *H, int mode);
 LUA_API lua_Alloc (lua_getallocf) (hksc_State *H, void **ud);
 LUA_API void (lua_setallocf) (hksc_State *H, lua_Alloc f, void *ud);
 
+#ifdef HKSC_LOGGING
+LUA_API hksc_LogFunction (lua_getlogf) (hksc_State *H, void **ud);
+LUA_API void (lua_setlogf) (hksc_State *H, hksc_LogFunction f, void *ud);
+LUA_API int (lua_getlogpriority) (hksc_State *H);
+LUA_API void (lua_setlogpriority) (hksc_State *H, int priority);
+#endif /* HKSC_LOGGING */
+
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
 LUA_API const char *(lua_getDebugFile) (hksc_State *H);
 LUA_API void (lua_setDebugFile) (hksc_State *H, const char *name);
@@ -197,8 +231,10 @@ LUA_API int (lua_getBytecodeStrippingLevel) (hksc_State *H);
 LUA_API void (lua_setBytecodeStrippingLevel) (hksc_State *H, int strip);
 LUA_API int (lua_getIgnoreDebug) (hksc_State *H);
 LUA_API void (lua_setIgnoreDebug) (hksc_State *H, int ignore_debug);
+#ifdef HKSC_DECOMPILER
 LUA_API int (lua_getMatchLineInfo) (hksc_State *H);
 LUA_API void (lua_setMatchLineInfo) (hksc_State *H, int match_line_info);
+#endif /* HKSC_DECOMPILER */
 
 /*
 ** dump functions

@@ -117,6 +117,10 @@ Makefile $(SRCDIR)/Makefile test/Makefile: configure config.status
 	@echo rebuilding $@
 	@./configure --no-clean > /dev/null
 
+$(SRCDIR)/hkscconf.h: $(SRCDIR)/hkscconf.h.in
+	@echo rebuilding $@
+	@./configure > /dev/null
+
 # list targets that do not create files (but not all makes understand .PHONY)
 .PHONY: all $(SRCDIR) clean test install local echo pecho lecho newer
 

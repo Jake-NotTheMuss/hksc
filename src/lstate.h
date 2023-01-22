@@ -9,6 +9,7 @@
 
 #include "lua.h"
 
+#include "llog.h"
 #include "lobject.h"
 #include "lundump.h"
 #include "lzio.h"
@@ -49,7 +50,6 @@ typedef struct hksc_Settings
 #endif /* HKSC_DECOMPILER */
 } hksc_Settings;
 
-
 /*
 ** `global state', shared by all threads of this state
 */
@@ -72,14 +72,14 @@ typedef struct global_State {
   lu_mem gcdept;  /* how much GC is `behind schedule' */
   int gcpause;  /* size of pause between successive GCs */
   int gcstepmul;  /* GC `granularity' */
+#ifdef HKSC_LOGGING
+  hksc_LogContext logctx;
+#endif
   lua_CFunction panic;  /* to be called in unprotected errors */
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
   LoadStateCB debugLoadStateOpen; /* (COD) debug reader initializer */
   LoadStateCB debugLoadStateClose; /* (COD) debug reader finalizer */
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
-#if 0
-  hksc_LogFunction log;  /* callback for logging debug messages */
-#endif
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
 } global_State;
@@ -110,16 +110,17 @@ struct hksc_State {
 
 /* macros for setting compiler options */
 #define hksc_getEmitStruct(H) (Settings(H).emit_struct)
-#define hksc_getIntLiteralsEnabled(H) (Settings(H).enable_int_literals)
-#define hksc_getBytecodeStrippingLevel(H) (Settings(H).strip)
-#define hksc_getIgnoreDebug(H) (Settings(H).ignore_debug)
-#define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
-
 #define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
+#define hksc_getIntLiteralsEnabled(H) (Settings(H).enable_int_literals)
 #define hksc_setIntLiteralsEnabled(H,v) (Settings(H).enable_int_literals = (v))
+#define hksc_getBytecodeStrippingLevel(H) (Settings(H).strip)
 #define hksc_setBytecodeStrippingLevel(H,v) (Settings(H).strip = (v))
+#define hksc_getIgnoreDebug(H) (Settings(H).ignore_debug)
 #define hksc_setIgnoreDebug(H,v) (Settings(H).ignore_debug = (v))
+#ifdef HKSC_DECOMPILER
+#define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
 #define hksc_setMatchLineInfo(H,v) (Settings(H).match_line_info = (v))
+#endif /* HKSC_DECOMPILER */
 
 
 /*
@@ -158,9 +159,6 @@ union GCObject {
 
 /* macro to convert any Lua object into a GCObject */
 #define obj2gco(v)	(cast(GCObject *, (v)))
-
-LUAI_FUNC hksc_State *luaE_newthread (hksc_State *H);
-LUAI_FUNC void luaE_freethread (hksc_State *H, hksc_State *H1);
 
 #endif
 
