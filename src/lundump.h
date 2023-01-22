@@ -64,6 +64,19 @@ LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
 /* make header; from lundump.c */
 LUAI_FUNC void luaU_header (char *h, int swapendian);
 
+/* dump one chunk; from ldump.c */
+LUAI_FUNC int luaU_dump (hksc_State *H,
+                         const Proto *f, lua_Writer w, void *data);
+
+
+#ifdef HKSC_DECOMPILER
+/* decompile one chunk; from ldecomp.c */
+LUAI_FUNC int luaU_decompile (hksc_State *H,
+                         const Proto *f, lua_Writer w, void *data);
+#endif /* HKSC_DECOMPILER */
+
+/* print one chunk; from lprint.c */
+LUAI_FUNC void luaU_print (const Proto *f, int full);
 
 /* for header of binary files -- this is Lua 5.1 */
 #define LUAC_VERSION		0x51

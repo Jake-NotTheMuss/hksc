@@ -300,7 +300,7 @@ static void f_dump (hksc_State *H, void *ud) {
 /*
 ** dump Lua function as precompiled chunk
 */
-LUA_API int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
+int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
   DumpState D;
   int status;

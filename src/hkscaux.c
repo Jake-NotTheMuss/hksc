@@ -151,14 +151,14 @@ void luacod_endcycle(hksc_State *H, const char *name) {
   FILE *debug_file_; \
   xopenfile(debug_file_,name,mode); \
   lua_setBytecodeStrippingLevel(H,striplevel); \
-  luaU_dump(H,f,writer_2file,debug_file_); \
+  lua_dump(H,writer_2file,debug_file_); \
   if (ferror(debug_file_)) cannot("write",name); \
   if (fclose(debug_file_)) cannot("close",name); \
 } while (0)
 
 
 /* (COD) dump debug info to files */
-static int luacod_dumpdebug(hksc_State *H, const Proto *f, const char *outname){
+static int luacod_dumpdebug(hksc_State *H, const char *outname){
   if (lua_getIgnoreDebug(H)) return 0;
   /* make sure generated names are in the same directory as outname */
   if (!debugfile_arg)
@@ -175,12 +175,11 @@ static int luacod_dumpdebug(hksc_State *H, const Proto *f, const char *outname){
 #endif /* LUA_COD */
 
 /* default dump function used by standalone program (for bytecode or decomp) */
-int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
+int hksc_dump_function(hksc_State *H, const char *filename) {
   int status;
   FILE *out; /* output file */
   const char *outname; /* output file name */
   const int compiling = lua_getmode(H) == HKSC_MODE_COMPILE;
-  lua_assert(f != NULL); /* parse errors should be caught before calling */
   if (output == NULL) { /* generate an output name if needed */
     if (compiling)
       outname = lua2luac(H, filename);
@@ -191,17 +190,17 @@ int hksc_dump_function(hksc_State *H, const Proto *f, const char *filename) {
   lua_assert(outname != NULL);
 #ifdef LUA_COD
   if (compiling) { /* (COD) dump debug info to separate files */
-    status = luacod_dumpdebug(H, f, outname);
+    status = luacod_dumpdebug(H, outname);
     if (status) return status; /* error */
   }
 #endif /* LUA_COD */
   out = fopen(outname, compiling ? "wb" : "w");
   if (out == NULL) cannot("open", outname);
   if (compiling) /* dump bytecode */
-    status = luaU_dump(H, f, writer_2file, out);
+    status = lua_dump(H, writer_2file, out);
   else
 #ifdef HKSC_DECOMPILER
-    status = luaU_decompile(H, f, writer_2file, out); /* dump decomp */
+    status = lua_decompile(H, writer_2file, out); /* dump decomp */
 #else
     lua_assert(0); /* cannot happen */
 #endif /* HKSC_DECOMPILER */

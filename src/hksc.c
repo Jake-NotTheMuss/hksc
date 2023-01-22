@@ -318,22 +318,22 @@ static int doargs(int argc, char *argv[])
 static hksc_DumpFunction dumpf;
 
 /* dump function for -l */
-static int hksc_dump_l(hksc_State *H, const Proto *f, void *ud) {
+static int hksc_dump_l(hksc_State *H, void *ud) {
   (void)ud;
-  luaU_print(H, f, listing > 1);
+  lua_print(H, listing > 1);
   return 0;
 }
 
 /* dump function for -p */
-static int hksc_dump_p(hksc_State *H, const Proto *f, void *ud) {
-  (void)H; (void)f;
+static int hksc_dump_p(hksc_State *H, void *ud) {
+  (void)H;
   fprintf(stderr, "Successfully parsed `%s'\n", (const char *)ud);
   return 0;
 }
 
 /* default dump function */
-static int hksc_dump_default(hksc_State *H, const Proto *f, void *ud) {
-  return hksc_dump_function(H, f, (const char *)ud);
+static int hksc_dump_default(hksc_State *H, void *ud) {
+  return hksc_dump_function(H, (const char *)ud);
 }
 
 /*
@@ -380,8 +380,8 @@ int main(int argc, char *argv[])
   lua_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD
   if (dumping) {
-    hksc_onstartcycle(H, luacod_startcycle);
-    hksc_onendcycle(H, luacod_endcycle);
+    lua_onstartcycle(H, luacod_startcycle);
+    lua_onendcycle(H, luacod_endcycle);
   }
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
   debugfile_arg = (debugfile != NULL);

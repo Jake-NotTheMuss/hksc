@@ -98,46 +98,8 @@ hksc_default_settings(hksc_Settings *settings)
 #endif /* HKSC_DECOMPILER */
 }
 
-#define SETCALLBACK_DECL(type, field, suffix) \
-LUA_API type hksc_##suffix (hksc_State *H, type f) { \
-  type old; \
-  lua_lock(H); \
-  old = G(H)->field; \
-  G(H)->field = f; \
-  lua_unlock(H); \
-  return old; \
-}
 
-SETCALLBACK_DECL(lua_CFunction, panic, atpanic)
-SETCALLBACK_DECL(hksc_CycleCallback, startcycle, onstartcycle)
-SETCALLBACK_DECL(hksc_CycleCallback, endcycle, onendcycle)
-
-#undef SETCALLBACK_DECL
-
-#if 0
-lua_CFunction hksc_atpanic (hksc_State *H, lua_CFunction panicf) {
-  lua_CFunction old;
-  lua_lock(H);
-  old = G(H)->panic;
-  G(H)->panic = panicf;
-  lua_unlock(H);
-  return old;
-}
-#endif
-
-
-#if 0
-hksc_LogFunction hksc_logfunc (hksc_State *H, lua_LogFunction logf) {
-  lua_LogFunction old;
-  lua_lock(H);
-  old = G(H)->log;
-  G(H)->log = logf;
-  lua_unlock(H);
-  return old;
-}
-#endif
-
-LUA_API hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
+LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud) {
   int i;
   hksc_State *H;
   global_State *g;
@@ -185,7 +147,7 @@ LUA_API hksc_State *hksc_newstate (lua_Alloc f, void *ud) {
   return H;
 }
 
-LUA_API void hksc_close (hksc_State *H) {
+LUA_API void lua_close (hksc_State *H) {
   H = G(H)->mainthread;  /* only the main thread can be closed */
   luai_userstateclose(H);
   lua_lock(H);

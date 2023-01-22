@@ -2455,7 +2455,7 @@ static void f_decompiler (hksc_State *H, void *ud) {
 /*
 ** dump Lua function as decompiled chunk
 */
-LUA_API int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w,
+int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w,
                             void *data)
 {
   DecompState D;

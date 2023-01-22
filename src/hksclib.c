@@ -130,12 +130,10 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
   ZIO z;
   int status;
   lua_assert(hksc_mode(H) != HKSC_MODE_DEFAULT); /* the mode must be known */
-  lua_lock(H);
   if (!chunkname) chunkname = "?";
   luaZ_init(H, &z, reader, data);
   status = luaD_protectedparser(H, &z, chunkname);
   if (status == 0) lua_assert(H->last_result != NULL);
-  lua_unlock(H);
   return status;
 }
 
@@ -234,16 +232,22 @@ static void startcycle(hksc_State *H, const char *name) {
   lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
   luaC_newcycle(H); /* collect garbage */
   /* end of library start-cycle logic */
-  if (G(H)->startcycle) /* user-defined logic */
+  if (G(H)->startcycle) /* user-defined logic */ {
+    lua_unlock(H);
     (*G(H)->startcycle)(H, name);
+    lua_lock(H);
+  }
 }
 
 
 /* put here all logic to be run at the end of a parser cycle */
 static void endcycle(hksc_State *H, const char *name) {
   lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
-  if (G(H)->endcycle) /* user-defined logic */
+  if (G(H)->endcycle) { /* user-defined logic */
+    lua_unlock(H);
     (*G(H)->endcycle)(H, name);
+    lua_lock(H);
+  }
   /* start of library end-cycle logic */
   H->last_result = NULL; /* will be collected, remove dangling pointer */
 }
@@ -272,9 +276,9 @@ static void fparser_file(hksc_State *H, void *ud) {
   startcycle(H, p->arg1.filename);
   status = loadfile(H, p->arg1.filename); /* parse file */
   if (status) goto fail;
-  lua_lock(H);
-  status = (*p->dumpf)(H, H->last_result, p->ud);
   lua_unlock(H);
+  status = (*p->dumpf)(H, p->ud);
+  lua_lock(H);
   fail:
   endcycle(H, p->arg1.filename);
   if (status) luaD_throw(H, status);
@@ -286,34 +290,38 @@ static void fparser_buffer(hksc_State *H, void *ud) {
   startcycle(H, p->source);
   status = lua_loadbuffer(H, p->arg1.buff, p->size, p->source);
   if (status) goto fail;
-  lua_lock(H);
-  status = (*p->dumpf)(H, H->last_result, p->ud);
   lua_unlock(H);
+  status = (*p->dumpf)(H, p->ud);
+  lua_lock(H);
   fail:
   endcycle(H, p->source);
   if (status) luaD_throw(H, status);
 }
 
 
-LUALIB_API int hksI_parser_file(hksc_State *H, const char *filename,
+LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
                      hksc_DumpFunction dumpf, void *ud) {
   int status;
   struct SParser p;
+  lua_lock(H);
   p.arg1.filename = filename;
   p.dumpf = dumpf; p.ud = ud;
   status = luaD_pcall(H, &fparser_file, &p);
+  lua_unlock(H);
   return status;
 }
 
 
-LUALIB_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
+LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
                        char *source, hksc_DumpFunction dumpf, void *ud) {
   int status;
   struct SParser p;
+  lua_lock(H);
   p.arg1.buff = buff;
   p.size = size; p.source = source;
   p.dumpf = dumpf; p.ud = ud;
   status = luaD_pcall(H, &fparser_buffer, &p);
+  lua_unlock(H);
   return status;
 }
 
@@ -387,10 +395,10 @@ static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 
 LUA_API hksc_State *hksI_newstate(int mode) {
-  hksc_State *H = hksc_newstate(l_alloc, NULL);
+  hksc_State *H = lua_newstate(l_alloc, NULL);
   if (H) {
-    hksc_atpanic(H, &panic);
-    hksc_mode(H) = mode;
+    lua_atpanic(H, &panic);
+    lua_setmode(H, mode);
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
     /* Call of Duty needs a separate debug reader when loading bytecode */
     lua_lock(H);
@@ -403,6 +411,6 @@ LUA_API hksc_State *hksI_newstate(int mode) {
 }
 
 LUA_API void hksI_close(hksc_State *H) {
-  hksc_close(H);
+  lua_close(H);
 }
 

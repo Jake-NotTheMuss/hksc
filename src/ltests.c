@@ -44,7 +44,7 @@ int islocked = 0;
 
 
 hksc_State *debug_newstate(int mode) {
-  hksc_State *H = hksc_newstate(debug_realloc, &memcontrol);
+  hksc_State *H = lua_newstate(debug_realloc, &memcontrol);
   if (H) {
     lua_setmode(H, mode);
     luaB_opentests(H);

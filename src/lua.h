@@ -90,8 +90,6 @@
 
 typedef struct hksc_State hksc_State;
 
-typedef struct Proto Proto;
-
 typedef int (*lua_CFunction) (hksc_State *H);
 
 /* user-defined callbacks for beginning/end of cycles */
@@ -154,13 +152,13 @@ typedef LUA_INTEGER lua_Integer;
 /*
 ** state manipulation
 */
-LUA_API hksc_State *(hksc_newstate) (lua_Alloc f, void *ud);
-LUA_API void       (hksc_close) (hksc_State *H);
+LUA_API hksc_State *(lua_newstate) (lua_Alloc f, void *ud);
+LUA_API void       (lua_close) (hksc_State *H);
 
-LUA_API lua_CFunction (hksc_atpanic) (hksc_State *H, lua_CFunction panicf);
-LUA_API hksc_CycleCallback (hksc_onstartcycle) (hksc_State *H,
+LUA_API lua_CFunction (lua_atpanic) (hksc_State *H, lua_CFunction panicf);
+LUA_API hksc_CycleCallback (lua_onstartcycle) (hksc_State *H,
                                                 hksc_CycleCallback f);
-LUA_API hksc_CycleCallback (hksc_onendcycle) (hksc_State *H,
+LUA_API hksc_CycleCallback (lua_onendcycle) (hksc_State *H,
                                               hksc_CycleCallback f);
 
 
@@ -202,25 +200,21 @@ LUA_API void (lua_setIgnoreDebug) (hksc_State *H, int ignore_debug);
 LUA_API int (lua_getMatchLineInfo) (hksc_State *H);
 LUA_API void (lua_setMatchLineInfo) (hksc_State *H, int match_line_info);
 
-/* print a function */
-LUA_API void (luaU_print) (hksc_State *H, const Proto *f, int full);
-
 /*
 ** dump functions
 */
 
+/* print a function to stdout */
+LUA_API void (lua_print) (hksc_State *H, int full);
+
 /* dump one chunk; from ldump.c */
-LUA_API int (luaU_dump) (hksc_State *H, const Proto *f, lua_Writer w,
-                         void *data);
+LUA_API int (lua_dump) (hksc_State *H, lua_Writer w, void *data);
 
 #ifdef HKSC_DECOMPILER
 /* decompile one chunk; from ldecomp.c */
-LUA_API int (luaU_decompile) (hksc_State *H, const Proto *f, lua_Writer w,
-                              void *data);
+LUA_API int (lua_decompile) (hksc_State *H, lua_Writer w, void *data);
 #endif /* HKSC_DECOMPILER */
 
-#define lua_dump  luaU_dump
-#define lua_decompile  luaU_decompile
 /*
 ** compatibility macros and functions
 */

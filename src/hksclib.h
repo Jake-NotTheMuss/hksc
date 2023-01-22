@@ -11,7 +11,7 @@
 #include "lua.h"
 
 
-typedef int (*hksc_DumpFunction) (hksc_State *H, const Proto *f, void *ud);
+typedef int (*hksc_DumpFunction) (hksc_State *H, void *ud);
 
 /*
 ** API declarations

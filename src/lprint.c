@@ -17,6 +17,8 @@
 #include "lopcodes.h"
 #include "lundump.h"
 
+#define PrintFunction luaU_print
+
 #define Sizeof(x)	((int)sizeof(x))
 #define VOID(p)		((const void*)(p))
 
@@ -267,10 +269,4 @@ void PrintFunction(const Proto *f, int full)
     PrintUpvalues(f);
   }
   for (i=0; i<n; i++) PrintFunction(f->p[i],full);
-}
-
-LUA_API void luaU_print (hksc_State *H, const Proto *f, int full)
-{
-  UNUSED(H);
-  PrintFunction(f, full);
 }
