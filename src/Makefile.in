@@ -95,7 +95,7 @@ $(CORE_T): $(CORE_O) $(AUX_O)
 	$(AR) $@ $?
 	$(RANLIB) $@
 
-# standalone compiler/decompiler
+# standalone compiler/decompiler linked with static library
 $(LUAC_T): $(LUAC_O) $(CORE_T)
 	$(CC) -o $@ $(MYLDFLAGS) $(LUAC_O) $(CORE_T) $(LIBS)
 
@@ -108,7 +108,7 @@ libhksc.dylib: $(ALL_PIC_O) $(CORE_T)
 	$(CC) -dynamiclib -install_name @rpath/$@ -o $@ $(ALL_PIC_O) $(MYLDFLAGS) \
 	$(LIBS)
 
-# standalone compiler/decompiler
+# standalone compiler/decompiler linked with shared library
 $(LUAC_SH): $(LUAC_O) $(SHAREDLIB)
 	$(CC) -o $@ $(MYLDFLAGS) $^ $(LIBS) $(LINK_LIBHKSC)
 

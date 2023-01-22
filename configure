@@ -2,8 +2,6 @@
 # developer configure script for libhksc
 #
 
-makeclean=1
-
 logfile=config.log
 configfile=config.status
 
@@ -91,6 +89,34 @@ EOF
 	reset=0
 }
 
+configurefile()
+{
+	sed < $1.in "
+	/^CC *=/s#=.*#=$CC#
+	/^MYCFLAGS *=/s#=.*#=$CFLAGS#
+	/^MYLDFLAGS *=/s#=.*#=$LDFLAGS#
+	/^SRCDIR *=/s#=.*#=$SRCDIR#
+	/^SHAREDLIB *=/s#=.*#=$SHAREDLIB#
+	/^prefix *=/s#=.*#=$prefix#
+	" > $1
+}
+
+configureheader()
+{
+	sed < $1.in "
+	s/@LUACONFIG_EMU_UI64@/$EMU_UI64/g
+	s/@LUACONFIG_DECOMPILER@/$DECOMPILER/g
+	s/@LUACONFIG_LOGGING@/$LOGGING/g
+	s/@LUACONFIG_COD@/$LUA_COD/g
+	s/@LUACONFIG_CODT7@/$LUA_CODT7/g
+	s/@HKSC_GETGLOBAL_MEMOIZATION@/$GETGLOBAL_MEMOIZATION/g
+	s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
+	s/@HKSC_SELF@/$SELF/g
+	s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
+	s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
+	" > $1
+}
+
 LC_ALL=C
 export LC_ALL
 
@@ -107,6 +133,7 @@ Usage: $0 [options]
 
 Options:
   --help                   Print this message and exit
+  --makefile=FILE          Regenerate the makefile FILE
   --reset, --default       Reset configuration to default settings
   --prefix=PATH            Set prefix path for installed files
   --emu-ui64               Use C struct to emulate UI64 values, disabled by
@@ -128,6 +155,17 @@ EOF
 	exit 0
 }
 
+makefile=
+case "$1" in
+	--makefile=*) makefile=`echo $1 | sed 's/.*=//'` ;;
+	--makefile) shift; makefile=$1 ;;
+esac
+
+test x$makefile != x && {
+	configurefile $makefile
+	exit
+}
+
 while test $# -ge 1; do
 	case "$1" in
 		-h* | --help) show_help ;;
@@ -136,6 +174,8 @@ while test $# -ge 1; do
 			reset=1
 			updateconfigfile
 			. $configfile ;;
+		--makefile*)
+			error "--makefile cannot be specified with other arguments" ;;
 		--prefix=*) prefix=`echo $1 | sed 's/.*=//'` ;;
 		--prefix) shift; prefix=$1 ;;
 		--emu-ui64) EMU_UI64=1 ;;
@@ -148,7 +188,6 @@ while test $# -ge 1; do
 		-b | --build) shift; buildsetting=$1 ;;
 		--with-log* | --enable-log*) LOGGING=1 ;;
 		--no-log* | --disable-log*) LOGGING=0 ;;
-		--no-clean) makeclean=0 ;;
 		--)
 			shift
 			break ;;
@@ -206,36 +245,6 @@ logvar()
 	infolog $1 = $val
 }
 
-# cppdefine()
-# {
-# 	eval "val=\$$1"
-# 	test x$val != x0 && CFLAGS="-DHKSC_$1 $CFLAGS"
-# }
-
-# cppdefineval()
-# {
-# 	eval "val=\$$1"
-# 	CFLAGS="-DHKSC_$1=$val $CFLAGS"
-# }
-
-# cppdefine EMU_UI64
-# cppdefine LOGGING
-# cppdefine DECOMPILER
-
-# cppdefineval GETGLOBAL_MEMOIZATION
-# cppdefineval STRUCTURE_EXTENSION_ON
-# cppdefineval SELF
-# cppdefineval WITHNATIVEINT
-# cppdefineval WITHDOUBLES
-
-# if test x$LUA_COD = x1; then
-# 	if test x$LUA_CODT7 = x1; then
-# 		CFLAGS="-DLUA_CODT7 $CFLAGS"
-# 	fi
-# 	CFLAGS="-DLUA_COD $CFLAGS"
-# fi
-
-
 infolog "--------------------"
 logvar prefix
 logvar release
@@ -259,41 +268,10 @@ logvar WITHNATIVEINT
 logvar WITHDOUBLES
 infolog "--------------------"
 
-
-configurefile()
-{
-	sed < $1.in "
-	/^CC *=/s#=.*#=$CC#
-	/^MYCFLAGS *=/s#=.*#=$CFLAGS#
-	/^MYLDFLAGS *=/s#=.*#=$LDFLAGS#
-	/^SRCDIR *=/s#=.*#=$SRCDIR#
-	/^SHAREDLIB *=/s#=.*#=$SHAREDLIB#
-	/^prefix *=/s#=.*#=$prefix#
-	" > $1
-}
-
-configureheader()
-{
-	sed < $1.in "
-	s/@LUACONFIG_EMU_UI64@/$EMU_UI64/g
-	s/@LUACONFIG_DECOMPILER@/$DECOMPILER/g
-	s/@LUACONFIG_LOGGING@/$LOGGING/g
-	s/@LUACONFIG_COD@/$LUA_COD/g
-	s/@LUACONFIG_CODT7@/$LUA_CODT7/g
-	s/@HKSC_GETGLOBAL_MEMOIZATION@/$GETGLOBAL_MEMOIZATION/g
-	s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
-	s/@HKSC_SELF@/$SELF/g
-	s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
-	s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
-	" > $1
-}
-
 configurefile Makefile
 configurefile $SRCDIR/Makefile
 configurefile test/Makefile
 
 configureheader $SRCDIR/hkscconf.h
-
-test x$makeclean = x1 && cd $SRCDIR && make clean > /dev/null 2>&1
 
 exit 0
