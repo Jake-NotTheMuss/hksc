@@ -11,7 +11,7 @@
 
 #define hksc_c
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "hksclib.h"
 

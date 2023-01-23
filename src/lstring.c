@@ -10,7 +10,7 @@
 #define lstring_c
 #define LUA_CORE
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "lmem.h"
 #include "lobject.h"

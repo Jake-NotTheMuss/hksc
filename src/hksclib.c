@@ -14,8 +14,8 @@
 #define hksclib_c
 #define LUA_CORE
 
-#include "luaconf.h"
-#include "lua.h"
+#include "hkscluaconf.h"
+#include "hksclua.h"
 
 #include "hksclib.h"
 
@@ -144,7 +144,7 @@ static int loadfile(hksc_State *H, const char *filename) {
   const char *chunkname;
   lf.extraline = 0;
   if (filename == NULL) { /* shouldn't happen */
-    lua_seterror(H, "Hksc does not support reading from stdin");
+    hksc_seterror(H, "Hksc does not support reading from stdin");
     return LUA_ERRRUN;
   } else {
     chunkname = luaO_pushfstring(H, "@%s", filename);
@@ -160,7 +160,7 @@ static int loadfile(hksc_State *H, const char *filename) {
   if (c == LUA_SIGNATURE[0] && lf.f != stdin) {  /* binary file? */
     fclose(lf.f);
 #ifndef HKSC_DECOMPILER /* built without a decompiler */
-    lua_seterror(H, "Attempt to compile a binary Lua file, source file "
+    hksc_seterror(H, "Attempt to compile a binary Lua file, source file "
                        "expected");
     return LUA_ERRRUN;
 #else /* HKSC_DECOMPILER */

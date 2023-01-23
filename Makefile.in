@@ -49,9 +49,10 @@ SRCDIR=src
 DOCDIR=doc
 
 # What to install.
-TO_BIN= hksc
-TO_INC= lua.h luaconf.h hksclib.h hkscconf.h
-TO_LIB= libhksc.a $(SHAREDLIB)
+TO_BIN= $(SRCDIR)/hksc
+TO_INC= $(SRCDIR)/hksclua.h $(SRCDIR)/hkscluaconf.h $(SRCDIR)/hksclib.h  \
+	$(SRCDIR)/hkscconf.h
+TO_LIB= $(SRCDIR)/libhksc.a $(SRCDIR)/$(SHAREDLIB)
 # TO_MAN= lua.1 luac.1
 
 INSTALL_EXEC="cp -p"
@@ -72,17 +73,16 @@ clean depend:
 distclean: clean
 	$(RM) $(CONFIGFILES) config.status config.log
 
-install: dummy
-	cd $(SRCDIR) && $(MKDIR) -p $(INSTALL_BIN) $(INSTALL_INC) $(INSTALL_LIB) \
-	$(INSTALL_MAN)
-	cd $(SRCDIR) && $(INSTALL_EXEC) $(TO_BIN) $(INSTALL_BIN)
-	cd $(SRCDIR) && $(INSTALL_DATA) $(TO_INC) $(INSTALL_INC)
-	cd $(SRCDIR) && $(INSTALL_DATA) $(TO_LIB) $(INSTALL_LIB)
-	cd $(DOCDIR) && $(INSTALL_DATA) $(TO_MAN) $(INSTALL_MAN)
+install:
+	$(MKDIR) -p $(INSTALL_BIN) $(INSTALL_INC) $(INSTALL_LIB) $(INSTALL_MAN)
+	$(INSTALL_EXEC) $(TO_BIN) $(INSTALL_BIN)
+	$(INSTALL_DATA) $(TO_INC) $(INSTALL_INC)
+	$(INSTALL_DATA) $(TO_LIB) $(INSTALL_LIB)
+	$(INSTALL_DATA) $(TO_MAN) $(INSTALL_MAN)
 #	$(RANLIB) $(INSTALL_LIB)/$(TO_LIB)
 
 local:
-	$(MAKE) install INSTALL_TOP=.. INSTALL_EXEC="cp -p" INSTALL_DATA="cp -p"
+	$(MAKE) install INSTALL_TOP=. INSTALL_EXEC="cp -p" INSTALL_DATA="cp -p"
 
 # echo config parameters
 echo:
@@ -134,6 +134,6 @@ $(CONFIGFILES): configure config.status
 	./configure $(CONFIGUREFLAGS)
 
 # list targets that do not create files (but not all makes understand .PHONY)
-.PHONY: all $(SRCDIR) clean test install local echo pecho lecho newer
+.PHONY: all $(SRCDIR) test clean distclean install local echo pecho lecho newer
 
 # (end of Makefile)

@@ -13,7 +13,7 @@
 
 
 #include "llimits.h"
-#include "lua.h"
+#include "hksclua.h"
 
 
 /* tags for values visible from Lua */

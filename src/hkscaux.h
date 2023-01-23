@@ -7,7 +7,7 @@
 #ifndef hkscaux_h
 #define hkscaux_h
 
-#include "lua.h"
+#include "hksclua.h"
 
 #ifdef LUA_COD
 

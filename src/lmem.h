@@ -11,7 +11,7 @@
 #include <stddef.h>
 
 #include "llimits.h"
-#include "lua.h"
+#include "hksclua.h"
 
 #define MEMERRMSG  "not enough memory"
 

@@ -13,7 +13,7 @@
 #define ltests_c
 #define LUA_CORE
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "lcode.h"
 #include "lctype.h"

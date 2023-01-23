@@ -40,9 +40,8 @@ TOP=..
 
 SHAREDLIB=libhksc.so
 
-# prefix set in parent Makefile, libdir used as rpath argument to linker
-prefix=/usr/local
-libdir=$(prefix)/lib
+# libdir set in configure, libdir used as rpath argument to linker
+libdir=
 
 # linker arguments when linking standalone to the shared library
 LINK_LIBHKSC=-Wl,-rpath,"@executable_path" -Wl,-rpath,"$(libdir)"
@@ -143,136 +142,140 @@ echo:
 
 # DO NOT DELETE
 
-lanalyzer.o: lanalyzer.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h \
-  lobject.h llimits.h lgc.h lmem.h lstate.h lundump.h lzio.h ltype.def \
-  lstring.h
-lapi.o: lapi.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
-  lgc.h lstring.h ltable.h
-lcode.o: lcode.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+lanalyzer.o: lanalyzer.c hksclua.h hkscluaconf.h hkscconf.h lanalyzer.h \
+  lobject.h llimits.h lgc.h lmem.h lstate.h llog.h lundump.h lzio.h \
+  ltype.def lstring.h
+lapi.o: lapi.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lfunc.h lgc.h lstring.h ltable.h
+lcode.o: lcode.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def ldo.h lgc.h
-lctype.o: lctype.c lctype.h lua.h luaconf.h hkscconf.h ltests.h llimits.h
-ldebug.o: ldebug.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+  lparser.h ltable.h ldebug.h lstate.h llog.h lundump.h ltype.def ldo.h \
+  lgc.h
+lctype.o: lctype.c lctype.h hksclua.h hkscluaconf.h hkscconf.h llimits.h
+ldebug.o: ldebug.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def ldo.h lfunc.h \
-  lstring.h lgc.h
-ldecomp.o: ldecomp.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h \
-  lobject.h llimits.h ldebug.h lstate.h lundump.h lzio.h lmem.h \
+  lparser.h ltable.h ldebug.h lstate.h llog.h lundump.h ltype.def ldo.h \
+  lfunc.h lstring.h lgc.h
+ldecomp.o: ldecomp.c hksclua.h hkscluaconf.h hkscconf.h lanalyzer.h \
+  lobject.h llimits.h ldebug.h lstate.h llog.h lundump.h lzio.h lmem.h \
   ltype.def ldo.h lopcodes.h lopcodes.def lstring.h lgc.h
-ldo.o: ldo.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
+ldo.o: ldo.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h llog.h \
   lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
   lopcodes.h lopcodes.def lparser.h ltable.h lstring.h lgc.h
-ldump.o: ldump.c lua.h luaconf.h hkscconf.h ltests.h ldo.h lobject.h \
-  llimits.h lstate.h lundump.h lzio.h lmem.h ltype.def
-lfunc.o: lfunc.c lua.h luaconf.h hkscconf.h ltests.h lfunc.h lobject.h \
-  llimits.h lgc.h lmem.h lstate.h lundump.h lzio.h ltype.def lstring.h
-lgc.o: lgc.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h lobject.h \
-  llimits.h ldebug.h lstate.h lundump.h lzio.h lmem.h ltype.def ldo.h \
-  lfunc.h lgc.h lstring.h ltable.h
-llex.o: llex.c lua.h luaconf.h hkscconf.h ltests.h lctype.h llimits.h \
-  ldebug.h lstate.h lobject.h lundump.h lzio.h lmem.h ltype.def ldo.h \
-  llex.h ltoken.def lparser.h ltable.h lstring.h lgc.h
-lmem.o: lmem.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h
-lobject.o: lobject.c lua.h luaconf.h hkscconf.h ltests.h lctype.h \
-  llimits.h ldo.h lobject.h lstate.h lundump.h lzio.h lmem.h ltype.def \
-  lstring.h lgc.h
-lopcodes.o: lopcodes.c lopcodes.h llimits.h lua.h luaconf.h hkscconf.h \
-  ltests.h lopcodes.def
-lparser.o: lparser.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+ldump.o: ldump.c hksclua.h hkscluaconf.h hkscconf.h ldo.h lobject.h \
+  llimits.h lstate.h llog.h lundump.h lzio.h lmem.h ltype.def
+lfunc.o: lfunc.c hksclua.h hkscluaconf.h hkscconf.h lfunc.h lobject.h \
+  llimits.h lgc.h lmem.h lstate.h llog.h lundump.h lzio.h ltype.def \
+  lstring.h
+lgc.o: lgc.c hksclua.h hkscluaconf.h hkscconf.h lanalyzer.h lobject.h \
+  llimits.h ldebug.h lstate.h llog.h lundump.h lzio.h lmem.h ltype.def \
+  ldo.h lfunc.h lgc.h lstring.h ltable.h
+llex.o: llex.c hksclua.h hkscluaconf.h hkscconf.h lctype.h llimits.h \
+  ldebug.h lstate.h llog.h lobject.h lundump.h lzio.h lmem.h ltype.def \
+  ldo.h llex.h ltoken.def lparser.h ltable.h lstring.h lgc.h
+lmem.o: lmem.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h
+lobject.o: lobject.c hksclua.h hkscluaconf.h hkscconf.h lctype.h \
+  llimits.h ldo.h lobject.h lstate.h llog.h lundump.h lzio.h lmem.h \
+  ltype.def lstring.h lgc.h
+lopcodes.o: lopcodes.c lopcodes.h llimits.h hksclua.h hkscluaconf.h \
+  hkscconf.h lopcodes.def
+lparser.o: lparser.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def ldo.h lfunc.h \
-  lstring.h lgc.h
-lprint.o: lprint.c lua.h luaconf.h hkscconf.h ltests.h lctype.h llimits.h \
-  ldebug.h lstate.h lobject.h lundump.h lzio.h lmem.h ltype.def \
-  lopcodes.h lopcodes.def
-lstate.o: lstate.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
-  lgc.h llex.h ltoken.def lstring.h ltable.h
-lstring.o: lstring.c lua.h luaconf.h hkscconf.h ltests.h lmem.h llimits.h \
-  lobject.h lstate.h lundump.h lzio.h ltype.def lstring.h lgc.h
-ltable.o: ltable.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lgc.h \
-  ltable.h
-lundump.o: lundump.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h \
-  lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lparser.h ltable.h ldebug.h lstate.h llog.h lundump.h ltype.def ldo.h \
   lfunc.h lstring.h lgc.h
-lzio.o: lzio.c lua.h luaconf.h hkscconf.h ltests.h llimits.h lmem.h \
-  lstate.h lobject.h lundump.h lzio.h ltype.def
-ltests.o: ltests.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+lprint.o: lprint.c hksclua.h hkscluaconf.h hkscconf.h lctype.h llimits.h \
+  ldebug.h lstate.h llog.h lobject.h lundump.h lzio.h lmem.h ltype.def \
+  lopcodes.h lopcodes.def
+lstate.o: lstate.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lfunc.h lgc.h llex.h ltoken.def lstring.h ltable.h
+lstring.o: lstring.c hksclua.h hkscluaconf.h hkscconf.h lmem.h llimits.h \
+  lobject.h lstate.h llog.h lundump.h lzio.h ltype.def lstring.h lgc.h
+ltable.o: ltable.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lgc.h ltable.h
+lundump.o: lundump.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lfunc.h lstring.h lgc.h
+lzio.o: lzio.c hksclua.h hkscluaconf.h hkscconf.h llimits.h lmem.h \
+  lstate.h llog.h lobject.h lundump.h lzio.h ltype.def
+ltests.o: ltests.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h lctype.h ldebug.h lstate.h lundump.h ltype.def \
-  ldo.h lfunc.h lgc.h lstring.h
-hksclib.o: hksclib.c luaconf.h hkscconf.h lua.h ltests.h hksclib.h \
-  lctype.h llimits.h ldo.h lobject.h lstate.h lundump.h lzio.h lmem.h \
-  ltype.def lgc.h lparser.h ltable.h lstring.h
-hksc.o: hksc.c lua.h luaconf.h hkscconf.h ltests.h hksclib.h hkscaux.h
-hkscaux.o: hkscaux.c lua.h luaconf.h hkscconf.h ltests.h hksclib.h \
+  lparser.h ltable.h lctype.h ldebug.h lstate.h llog.h lundump.h \
+  ltype.def ldo.h lfunc.h lgc.h lstring.h
+hksclib.o: hksclib.c hkscluaconf.h hkscconf.h hksclua.h hksclib.h \
+  lctype.h llimits.h ldo.h lobject.h lstate.h llog.h lundump.h lzio.h \
+  lmem.h ltype.def lgc.h lparser.h ltable.h lstring.h
+hksc.o: hksc.c hksclua.h hkscluaconf.h hkscconf.h hksclib.h hkscaux.h
+hkscaux.o: hkscaux.c hksclua.h hkscluaconf.h hkscconf.h hksclib.h \
   hkscaux.h
-lanalyzer.lo: lanalyzer.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h \
-  lobject.h llimits.h lgc.h lmem.h lstate.h lundump.h lzio.h ltype.def \
-  lstring.h
-lapi.lo: lapi.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
-  lgc.h lstring.h ltable.h
-lcode.lo: lcode.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+lanalyzer.lo: lanalyzer.c hksclua.h hkscluaconf.h hkscconf.h lanalyzer.h \
+  lobject.h llimits.h lgc.h lmem.h lstate.h llog.h lundump.h lzio.h \
+  ltype.def lstring.h
+lapi.lo: lapi.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lfunc.h lgc.h lstring.h ltable.h
+lcode.lo: lcode.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def ldo.h lgc.h
-lctype.lo: lctype.c lctype.h lua.h luaconf.h hkscconf.h ltests.h llimits.h
-ldebug.lo: ldebug.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+  lparser.h ltable.h ldebug.h lstate.h llog.h lundump.h ltype.def ldo.h \
+  lgc.h
+lctype.lo: lctype.c lctype.h hksclua.h hkscluaconf.h hkscconf.h llimits.h
+ldebug.lo: ldebug.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def ldo.h lfunc.h \
-  lstring.h lgc.h
-ldecomp.lo: ldecomp.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h \
-  lobject.h llimits.h ldebug.h lstate.h lundump.h lzio.h lmem.h \
+  lparser.h ltable.h ldebug.h lstate.h llog.h lundump.h ltype.def ldo.h \
+  lfunc.h lstring.h lgc.h
+ldecomp.lo: ldecomp.c hksclua.h hkscluaconf.h hkscconf.h lanalyzer.h \
+  lobject.h llimits.h ldebug.h lstate.h llog.h lundump.h lzio.h lmem.h \
   ltype.def ldo.h lopcodes.h lopcodes.def lstring.h lgc.h
-ldo.lo: ldo.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
+ldo.lo: ldo.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h llog.h \
   lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
   lopcodes.h lopcodes.def lparser.h ltable.h lstring.h lgc.h
-ldump.lo: ldump.c lua.h luaconf.h hkscconf.h ltests.h ldo.h lobject.h \
-  llimits.h lstate.h lundump.h lzio.h lmem.h ltype.def
-lfunc.lo: lfunc.c lua.h luaconf.h hkscconf.h ltests.h lfunc.h lobject.h \
-  llimits.h lgc.h lmem.h lstate.h lundump.h lzio.h ltype.def lstring.h
-lgc.lo: lgc.c lua.h luaconf.h hkscconf.h ltests.h lanalyzer.h lobject.h \
-  llimits.h ldebug.h lstate.h lundump.h lzio.h lmem.h ltype.def ldo.h \
-  lfunc.h lgc.h lstring.h ltable.h
-llex.lo: llex.c lua.h luaconf.h hkscconf.h ltests.h lctype.h llimits.h \
-  ldebug.h lstate.h lobject.h lundump.h lzio.h lmem.h ltype.def ldo.h \
-  llex.h ltoken.def lparser.h ltable.h lstring.h lgc.h
-lmem.lo: lmem.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h
-lobject.lo: lobject.c lua.h luaconf.h hkscconf.h ltests.h lctype.h \
-  llimits.h ldo.h lobject.h lstate.h lundump.h lzio.h lmem.h ltype.def \
-  lstring.h lgc.h
-lopcodes.lo: lopcodes.c lopcodes.h llimits.h lua.h luaconf.h hkscconf.h \
-  ltests.h lopcodes.def
-lparser.lo: lparser.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+ldump.lo: ldump.c hksclua.h hkscluaconf.h hkscconf.h ldo.h lobject.h \
+  llimits.h lstate.h llog.h lundump.h lzio.h lmem.h ltype.def
+lfunc.lo: lfunc.c hksclua.h hkscluaconf.h hkscconf.h lfunc.h lobject.h \
+  llimits.h lgc.h lmem.h lstate.h llog.h lundump.h lzio.h ltype.def \
+  lstring.h
+lgc.lo: lgc.c hksclua.h hkscluaconf.h hkscconf.h lanalyzer.h lobject.h \
+  llimits.h ldebug.h lstate.h llog.h lundump.h lzio.h lmem.h ltype.def \
+  ldo.h lfunc.h lgc.h lstring.h ltable.h
+llex.lo: llex.c hksclua.h hkscluaconf.h hkscconf.h lctype.h llimits.h \
+  ldebug.h lstate.h llog.h lobject.h lundump.h lzio.h lmem.h ltype.def \
+  ldo.h llex.h ltoken.def lparser.h ltable.h lstring.h lgc.h
+lmem.lo: lmem.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h
+lobject.lo: lobject.c hksclua.h hkscluaconf.h hkscconf.h lctype.h \
+  llimits.h ldo.h lobject.h lstate.h llog.h lundump.h lzio.h lmem.h \
+  ltype.def lstring.h lgc.h
+lopcodes.lo: lopcodes.c lopcodes.h llimits.h hksclua.h hkscluaconf.h \
+  hkscconf.h lopcodes.def
+lparser.lo: lparser.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def ldo.h lfunc.h \
-  lstring.h lgc.h
-lprint.lo: lprint.c lua.h luaconf.h hkscconf.h ltests.h lctype.h llimits.h \
-  ldebug.h lstate.h lobject.h lundump.h lzio.h lmem.h ltype.def \
-  lopcodes.h lopcodes.def
-lstate.lo: lstate.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lfunc.h \
-  lgc.h llex.h ltoken.def lstring.h ltable.h
-lstring.lo: lstring.c lua.h luaconf.h hkscconf.h ltests.h lmem.h llimits.h \
-  lobject.h lstate.h lundump.h lzio.h ltype.def lstring.h lgc.h
-ltable.lo: ltable.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h lstate.h \
-  lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h lgc.h \
-  ltable.h
-lundump.lo: lundump.c lua.h luaconf.h hkscconf.h ltests.h ldebug.h \
-  lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lparser.h ltable.h ldebug.h lstate.h llog.h lundump.h ltype.def ldo.h \
   lfunc.h lstring.h lgc.h
-lzio.lo: lzio.c lua.h luaconf.h hkscconf.h ltests.h llimits.h lmem.h \
-  lstate.h lobject.h lundump.h lzio.h ltype.def
-ltests.lo: ltests.c lua.h luaconf.h hkscconf.h ltests.h lcode.h llex.h \
+lprint.lo: lprint.c hksclua.h hkscluaconf.h hkscconf.h lctype.h llimits.h \
+  ldebug.h lstate.h llog.h lobject.h lundump.h lzio.h lmem.h ltype.def \
+  lopcodes.h lopcodes.def
+lstate.lo: lstate.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lfunc.h lgc.h llex.h ltoken.def lstring.h ltable.h
+lstring.lo: lstring.c hksclua.h hkscluaconf.h hkscconf.h lmem.h llimits.h \
+  lobject.h lstate.h llog.h lundump.h lzio.h ltype.def lstring.h lgc.h
+ltable.lo: ltable.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lgc.h ltable.h
+lundump.lo: lundump.c hksclua.h hkscluaconf.h hkscconf.h ldebug.h lstate.h \
+  llog.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
+  lfunc.h lstring.h lgc.h
+lzio.lo: lzio.c hksclua.h hkscluaconf.h hkscconf.h llimits.h lmem.h \
+  lstate.h llog.h lobject.h lundump.h lzio.h ltype.def
+ltests.lo: ltests.c hksclua.h hkscluaconf.h hkscconf.h lcode.h llex.h \
   lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h lopcodes.def \
-  lparser.h ltable.h lctype.h ldebug.h lstate.h lundump.h ltype.def \
-  ldo.h lfunc.h lgc.h lstring.h
-hksclib.lo: hksclib.c luaconf.h hkscconf.h lua.h ltests.h hksclib.h \
-  lctype.h llimits.h ldo.h lobject.h lstate.h lundump.h lzio.h lmem.h \
-  ltype.def lgc.h lparser.h ltable.h lstring.h
+  lparser.h ltable.h lctype.h ldebug.h lstate.h llog.h lundump.h \
+  ltype.def ldo.h lfunc.h lgc.h lstring.h
+hksclib.lo: hksclib.c hkscluaconf.h hkscconf.h hksclua.h hksclib.h \
+  lctype.h llimits.h ldo.h lobject.h lstate.h llog.h lundump.h lzio.h \
+  lmem.h ltype.def lgc.h lparser.h ltable.h lstring.h
 
 # (end of Makefile)

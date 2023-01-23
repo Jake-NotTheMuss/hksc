@@ -7,7 +7,7 @@
 #ifndef lstate_h
 #define lstate_h
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "llog.h"
 #include "lobject.h"

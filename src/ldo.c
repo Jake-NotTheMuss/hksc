@@ -13,7 +13,7 @@
 #define ldo_c
 #define LUA_CORE
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "ldebug.h"
 #include "ldo.h"
@@ -65,11 +65,11 @@ void luaD_setferror (hksc_State *H, const char *fmt, ...) {
 void luaD_seterrorobj (hksc_State *H, int errcode) {
   switch (errcode) {
     case LUA_ERRMEM: {
-      lua_seterror(H, getstr(luaS_newliteral(H, MEMERRMSG)));
+      hksc_seterror(H, getstr(luaS_newliteral(H, MEMERRMSG)));
       break;
     }
     case LUA_ERRERR: {
-      lua_seterror(H,
+      hksc_seterror(H,
         getstr(luaS_newliteral(H, "error in error handling")));
       break;
     }

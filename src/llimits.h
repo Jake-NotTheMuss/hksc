@@ -12,7 +12,7 @@
 #include <stddef.h>
 
 
-#include "lua.h"
+#include "hksclua.h"
 
 
 typedef LUAI_UINT32 lu_int32;

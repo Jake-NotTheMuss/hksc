@@ -13,7 +13,7 @@
 #define ldecomp_c
 #define LUA_CORE
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "lanalyzer.h"
 #include "ldebug.h"

@@ -12,8 +12,8 @@
 
 #define hkscaux_c
 
-#include "lua.h"
-#include "luaconf.h"
+#include "hksclua.h"
+#include "hkscluaconf.h"
 
 #include "hksclib.h"
 

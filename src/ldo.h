@@ -13,7 +13,6 @@
 #include "lstate.h"
 #include "lzio.h"
 
-
 /* type of protected functions, to be ran by `runprotected' */
 typedef void (*Pfunc) (hksc_State *H, void *ud);
 

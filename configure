@@ -49,6 +49,7 @@ varstatus()
 	# $2 = default value
 	test $reset = 1 && eval "unset $1"
 	eval "val=\${$1:-$2}"
+	eval "$1=$val"
 	echo "$1=$val"
 }
 
@@ -61,6 +62,11 @@ updateconfigfile()
 
 # install paths
 `varstatus prefix /usr/local`
+`varstatus exec_prefix $prefix`
+`varstatus libdir $exec_prefix/libdir`
+`varstatus sharedlibdir $libdir`
+`varstatus includedir $prefix/include`
+`varstatus mandir $prefix/share/man`
 
 # emulate ui64 using structures with a hi/lo field for C89 with no 64-bit type
 # default value is 1 when developing for testing
@@ -98,6 +104,23 @@ configurefile()
 	/^SRCDIR *=/s#=.*#=$SRCDIR#
 	/^SHAREDLIB *=/s#=.*#=$SHAREDLIB#
 	/^prefix *=/s#=.*#=$prefix#
+	/^exec_prefix *=/s#=.*#=$exec_prefix#
+	/^libdir *=/s#=.*#=$libdir#
+	/^sharedlibdir *=/s#=.*#=$sharedlibdir#
+	/^includedir *=/s#=.*#=$includedir#
+	/^mandir *=/s#=.*#=$mandir#
+	" > $1
+}
+VERSION=0.0.0
+configurepc()
+{
+	sed < $1.in "
+	s/@prefix@/$prefix/g
+	s/@exec_prefix@/$exec_prefix/g
+	s/@libdir@/$libdir/g
+	s/@sharedlibdir@/$sharedlibdir/g
+	s/@includedir@/$includedir/g
+	s/@VERSION@/$VERSION/g
 	" > $1
 }
 
@@ -120,6 +143,9 @@ configureheader()
 LC_ALL=C
 export LC_ALL
 
+# C compiler
+test x$CC = x && CC=cc || echo CC=$CC
+
 # create the config file with default values if it doesn't exist
 test -e $configfile || updateconfigfile
 
@@ -136,6 +162,7 @@ Options:
   --makefile=FILE          Regenerate the makefile FILE
   --reset, --default       Reset configuration to default settings
   --prefix=PATH            Set prefix path for installed files
+  --eprefix=PATH           Set exec_prefix path for installed files
   --emu-ui64               Use C struct to emulate UI64 values, disabled by
                            default
   --no-emu-ui64            Check for supported 64-bit types before resorting to
@@ -165,6 +192,13 @@ test x$makefile != x && {
 	configurefile $makefile
 	exit
 }
+
+prefix=${prefix-/usr/local}
+exec_prefix=${exec_prefix-'${prefix}'}
+libdir=${libdir-'${exec_prefix}/lib'}
+sharedlibdir=${sharedlibdir-'${libdir}'}
+includedir=${includedir-'${prefix}/include'}
+mandir=${mandir-'${prefix}/share/man'}
 
 while test $# -ge 1; do
 	case "$1" in
@@ -216,13 +250,10 @@ case "$buildsetting" in
 	codt7) LUA_COD=1; LUA_CODT7=1 ;;
 esac
 
-# C compiler
-test x$CC = x && CC=cc
-
 if test $release = 0; then
-	CFLAGS="\$(TESTS)"
+	CFLAGS='$(TESTS)'
 else
-	CFLAGS="\$(RELEASE)"
+	CFLAGS='$(RELEASE)'
 fi
 
 # shared library extension
@@ -247,6 +278,11 @@ logvar()
 
 infolog "--------------------"
 logvar prefix
+logvar exec_prefix
+logvar libdir
+logvar sharedlibdir
+logvar includedir
+logvar mandir
 logvar release
 logvar buildsetting
 logvar multiplat

@@ -9,10 +9,6 @@
 
 #ifdef HKSC_LOGGING
 
-LUAI_FUNC void luaI_log(hksc_State *H, int category, int priority,
-                        const char *msg);
-
-
 #define LOG_CATEGORY_TABLE \
   DEFLOGCATEGORY(ANALYZER       , "ANALYZER CORE") \
   DEFLOGCATEGORY(API            , "LUA API") \
@@ -43,17 +39,13 @@ enum LOG_CATEGORY {
 };
 #undef DEFLOGCATEGORY
 
-#define DEFLOGCATEGORY(e,n) char buf_##e[sizeof(n)];
+/*#define DEFLOGCATEGORY(e,n) char buf_##e[sizeof(n)];
 union max_label_length {
   LOG_CATEGORY_TABLE
 };
 #undef DEFLOGCATEGORY
 
-#define MAX_LABEL_LEN (sizeof(union max_label_length)/sizeof(char))
-
-#ifdef CURRENT_LOG_CATEGORY
-#undef CURRENT_LOG_CATEGORY
-#endif
+#define MAX_LABEL_LEN (sizeof(union max_label_length)/sizeof(char))*/
 
 #if defined(lanalyzer_c)
 # define CURRENT_LOG_CATEGORY LOG_CATEGORY_ANALYZER
@@ -99,11 +91,15 @@ union max_label_length {
 # error You need to add the current translation unit to llog.h
 #endif
 
+LUAI_FUNC void luaI_log(hksc_State *H, int category, int priority,
+                        const char *msg);
+LUAI_FUNC void luaI_formatmsg(hksc_State *H, const char *fmt, ...);
+
 #define lua_log(H,p,msg)  luaI_log(H,CURRENT_LOG_CATEGORY,p,msg)
 
 #else /* !HKSC_LOGGING */
 
-#define lua_log(H,p,msg)  ((void)(H), (void)(p), (void)(msg))
+#define lua_log(H,p,msg)  ((void)0)
 
 #endif /* HKSC_LOGGING */
 

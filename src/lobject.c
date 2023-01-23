@@ -12,7 +12,7 @@
 #define lobject_c
 #define LUA_CORE
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "lctype.h"
 #include "ldo.h"
@@ -170,132 +170,159 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
 }
 
 
-/* macro helpers for luaO_pushvfstring */
-#define concatlstr(strexp, lenexp) do { \
-  newlen = len + cast(size_t, (lenexp)); \
-  luaM_reallocvector(H, str, len, newlen, char); \
-  memcpy(str+len, (strexp), newlen-len); \
-  len = newlen; \
-} while (0)
+/*
+** `stringbuilder' holds data needed by `luaO_pushvfstring'
+*/
+struct StringBuilder {
+  hksc_State *H;
+  char *str;  /* currently building string */
+  size_t l;  /* current length of string */
+  TString *result;  /* final result */
+  const char *data;
+  union {
+    va_list argp; /* extra arguments in a formatted string */
+    size_t len; /* length of data */
+  } aux;
+};
 
-#define concatchar(c) do { \
-  newlen = len+1; \
-  luaM_reallocvector(H, str, len, newlen, char); \
-  str[len] = (unsigned char)c; \
-  len = newlen; \
-} while (0)
 
-#define concatstr(strexp) concatlstr(strexp, strlen((strexp)))
+#define pushstr(sb,str) pushlstr(sb,str,strlen(str))
+#define pushchar(sb,c) do { char buff = (c); pushlstr(sb,&buff,1); } while (0)
 
-#define concatnum(n) do { \
+static void pushlstr (struct StringBuilder *sb, const char *str, size_t l) {
+  hksc_State *H = sb->H;
+  size_t ol = sb->l;
+  size_t nl = ol + l;
+  luaM_reallocvector(H, sb->str, ol, nl, char);
+  memcpy(&sb->str[ol], str, l);
+  sb->l = nl;
+}
+
+#define pushnum(sb,n) do { \
   char s[LUAI_MAXNUMBER2STR]; \
   lua_number2str(s, cast_num(n)); \
-  concatstr(s); \
+  pushstr(sb, s); \
 } while (0)
 
+
 /* return a printable version of a string constant */
-TString *luaO_kstring2print (hksc_State *H, TString *ts) {
-  TString *result; /* new printable string */
-  size_t newlen, len = 0; /* for the new string allocation */
-  const char *s = getstr(ts); /* original string */
-  size_t i, n = ts->tsv.len;
-  char *str = NULL; /* buffer for building the printable string */
-  concatchar('\"');
+static void f_kstring2print (hksc_State *H, void *ud) {
+  struct StringBuilder *sb = (struct StringBuilder *)ud;
+  int i,n=sb->aux.len;
+  const char *s = sb->data; /* original string */
+  pushchar(sb, '\"');
   for (i = 0; i < n; i++) {
     int c = s[i];
     switch (c) {
-      case '"': concatchar('\\'); concatchar('"'); break;
-      case '\\': concatchar('\\'); concatchar('\\'); break;
-      case '\a': concatchar('\\'); concatchar('a'); break;
-      case '\b': concatchar('\\'); concatchar('b'); break;
-      case '\f': concatchar('\\'); concatchar('f'); break;
-      case '\n': concatchar('\\'); concatchar('n'); break;
-      case '\r': concatchar('\\'); concatchar('r'); break;
-      case '\t': concatchar('\\'); concatchar('t'); break;
-      case '\v': concatchar('\\'); concatchar('v'); break;
+      case '"': pushchar(sb, '\\'); pushchar(sb, '"'); break;
+      case '\\': pushchar(sb, '\\'); pushchar(sb, '\\'); break;
+      case '\a': pushchar(sb, '\\'); pushchar(sb, 'a'); break;
+      case '\b': pushchar(sb, '\\'); pushchar(sb, 'b'); break;
+      case '\f': pushchar(sb, '\\'); pushchar(sb, 'f'); break;
+      case '\n': pushchar(sb, '\\'); pushchar(sb, 'n'); break;
+      case '\r': pushchar(sb, '\\'); pushchar(sb, 'r'); break;
+      case '\t': pushchar(sb, '\\'); pushchar(sb, 't'); break;
+      case '\v': pushchar(sb, '\\'); pushchar(sb, 'v'); break;
       default: {
         if (lisprint(c))
-          concatchar(c);
+          pushchar(sb, c);
         else {
           char buff[5];
           sprintf(buff, "\\%03u", (unsigned char)c);
-          concatstr(buff);
+          pushstr(sb, buff);
         }
       }
     }
   }
-  concatchar('\"');
-  result = luaS_newlstr(H, str, len);
-  luaM_freearray(H, str, len, char);
-  return result;
+  pushchar(sb, '\"');
+  sb->result = luaS_newlstr(H, sb->str, sb->l);
+}
+
+TString *luaO_kstring2print (hksc_State *H, TString *ts) {
+  int status;
+  struct StringBuilder sb;
+  sb.H=H; sb.str=NULL; sb.l=0; sb.result=NULL; sb.data=getstr(ts);
+  sb.aux.len=ts->tsv.len;
+  status = luaD_pcall(H, f_kstring2print, &sb);
+  luaM_freearray(H, sb.str, sb.l, char);
+  if (status) /* memory error */
+    luaD_throw(H, status); /* pass error to caller */
+  else /* good */
+    lua_assert(sb.result != NULL);
+  return sb.result;
 }
 
 
+
 /* this function handles only `%d', `%c', %f, %p, and `%s' formats */
-const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
-  TString *result;
-  size_t newlen, len = 0;
-  char *str = NULL;
+static void f_buildvfstring (hksc_State *H, void *ud) {
+  struct StringBuilder *sb = (struct StringBuilder *)ud;
+  const char *fmt = sb->data;
+  va_list argp = sb->aux.argp;
   for (;;) {
     const char *e = strchr(fmt, '%');
     if (e == NULL) break;
-    concatlstr(fmt, e-fmt);
+    pushlstr(sb, fmt, e-fmt);
     switch (*(e+1)) {
       case 's': {
         const char *s = va_arg(argp, char *);
         if (s == NULL) s = "(null)";
-        concatstr(s);
+        pushstr(sb, s);
         break;
       }
       case 'c': {
-        char buff[2];
-        buff[0] = cast(char, va_arg(argp, int));
-        buff[1] = '\0';
-        concatstr(buff);
+        pushchar(sb, cast(char, va_arg(argp, int)));
         break;
       }
       case 'd': {
-        concatnum(va_arg(argp, int));
+        pushnum(sb, va_arg(argp, int));
         break;
       }
       case 'u': {
-        concatnum(va_arg(argp, unsigned int));
+        pushnum(sb, va_arg(argp, unsigned int));
         break;
       }
       case 'f': {
-        concatnum(va_arg(argp, l_uacNumber));
+        pushnum(sb, va_arg(argp, l_uacNumber));
         break;
       }
       case 'p': {
         char buff[4*sizeof(void *) + 8]; /* should be enough space for a `%p' */
         sprintf(buff, "%p", va_arg(argp, void *));
-        concatstr(buff);
+        pushstr(sb, buff);
         break;
       }
       case '%': {
-        concatstr("%");
+        pushchar(sb, '%');
         break;
       }
       default: {
-        char buff[3];
+        char buff[2];
         buff[0] = '%';
         buff[1] = *(e+1);
-        buff[2] = '\0';
-        concatstr(buff);
+        pushlstr(sb, buff, sizeof(buff));
         break;
       }
     }
     fmt = e+2;
   }
-  concatstr(fmt);
-  result = luaS_newlstr(H, str, len);
-  luaM_freearray(H, str, len, char);
-  return getstr(result);
+  pushstr(sb, fmt);
+  sb->result = luaS_newlstr(H, sb->str, sb->l);
 }
 
-#undef concatlstr
-#undef concatstr
-#undef concatnum
+
+const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
+  int status;
+  struct StringBuilder sb;
+  sb.H=H; sb.str=NULL; sb.l=0; sb.result=NULL; sb.data=fmt; sb.aux.argp=argp;
+  status = luaD_pcall(H, f_buildvfstring, &sb);
+  luaM_freearray(H, sb.str, sb.l, char);
+  if (status) /* memory error */
+    luaD_throw(H, status); /* pass error to caller */
+  else /* good */
+    lua_assert(sb.result != NULL);
+  return getstr(sb.result);
+}
 
 
 const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...) {

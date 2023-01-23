@@ -8,7 +8,7 @@
 #ifndef HKSC_LIB_H
 #define HKSC_LIB_H
 
-#include "lua.h"
+#include "hksclua.h"
 
 
 typedef int (*hksc_DumpFunction) (hksc_State *H, void *ud);
@@ -36,7 +36,5 @@ LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
 
 /* extra error code for `luaL_load' */
 #define LUA_ERRFILE     (LUA_ERRERR+1)
-/*#define LUA_ERRMODE     (LUA_ERRERR+2)
-#define LUA_ERRBYTECODE (LUA_ERRERR+3)*/
 
 #endif /* HKSC_LIB_H */

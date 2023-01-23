@@ -9,7 +9,7 @@
 #define hksc_c
 #define LUA_CORE
 
-#include "lua.h"
+#include "hksclua.h"
 
 #include "lctype.h"
 #include "ldebug.h"
