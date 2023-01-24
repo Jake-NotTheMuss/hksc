@@ -61,8 +61,10 @@ INSTALL_DATA="cp -p"
 # set prefix for the child Makefile to use with `rpath'
 all: $(SRCDIR)
 
-test: test/Makefile
-	@cd test && $(MAKE) test
+test: test/Makefile $(SRCDIR)
+	@cd test && \
+	$(MAKE) test HKSC=../$(SRCDIR)/hksc && \
+	$(MAKE) test HKSC=../$(SRCDIR)/hkscsh
 
 $(SRCDIR): $(SRCDIR)/Makefile $(SRCDIR)/hkscconf.h
 	@cd $(SRCDIR) && $(MAKE) prefix=$(prefix)
