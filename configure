@@ -220,8 +220,11 @@ while test $# -ge 1; do
 			. $configfile ;;
 		--makefile*)
 			error "--makefile cannot be specified with other arguments" ;;
-		--prefix=*) prefix=`echo $1 | sed 's/.*=//'` ;;
-		--prefix) shift; prefix=$1 ;;
+	    -p*=* | --prefix=*) prefix=`echo $1 | sed 's/.*=//'`; shift ;;
+	    -e*=* | --eprefix=*) exec_prefix=`echo $1 | sed 's/.*=//'`; shift ;;
+	    -l*=* | --libdir=*) libdir=`echo $1 | sed 's/.*=//'`; shift ;;
+	    --sharedlibdir=*) sharedlibdir=`echo $1 | sed 's/.*=//'`; shift ;;
+	    -i*=* | --includedir=*) includedir=`echo $1 | sed 's/.*=//'`;shift ;;
 		--emu-ui64) EMU_UI64=1 ;;
 		--no-emu-ui64) EMU_UI64=0 ;;
 		--no-dec* | --disable-dec*) DECOMPILER=0 ;;

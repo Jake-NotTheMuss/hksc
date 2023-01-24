@@ -444,9 +444,9 @@ static void checkfinalmem (void) {
   lua_assert(memcontrol.total == 0);
 }
 
-#ifdef HKSC_LOGGING
+
 static const char *currentcheck=NULL;
-#endif /* HKSC_LOGGING */
+
 
 #define lua_checkstarted(H) \
   (lua_loginfo(H, ""), /* print empty line */ \
