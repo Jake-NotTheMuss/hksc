@@ -77,39 +77,17 @@ static void close_state (hksc_State *H) {
 }
 
 
-static void
-hksc_default_settings(hksc_Settings *settings)
-{
-  /* general settings */
-#ifdef LUA_COD
-# ifdef LUA_CODT7
-  settings->hash_step = 1;
-# else /* !LUA_CODT7 */
-  settings->hash_step = 2;
-# endif /* LUA_CODT7 */
-#endif /* LUA_COD */
-  settings->ignore_debug = 0;
-  /* compiler settings */
-  settings->emit_struct = 0;
-  settings->enable_int_literals = INT_LITERALS_NONE;
-  /*settings->strip_names = NULL;*/
-#ifdef HKSC_DECOMPILER /* decompiler settings */
-  settings->match_line_info = 1;
-#endif /* HKSC_DECOMPILER */
-}
-
-
-#ifdef HKSC_LOGGING
-LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud,
-                                  hksc_LogContext *logctx)
-#else /* !HKSC_LOGGING */
-LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud)
-#endif /* HKSC_LOGGING */
-{
+LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
+  lua_Alloc f;
+  void *ud;
   int i;
   hksc_State *H;
   global_State *g;
-  void *h = (*f)(ud, NULL, 0, state_size(LG));
+  void *h;
+  if (settings == NULL || settings->frealloc == NULL) return NULL;
+  f = settings->frealloc;
+  ud = settings->ud;
+  h = (*f)(ud, NULL, 0, state_size(LG));
   (void)i;
   if (h == NULL) return NULL;
   H = tostate(h);
@@ -126,12 +104,12 @@ LUA_API hksc_State *lua_newstate (lua_Alloc f, void *ud)
   g->strt.size = 0;
   g->strt.nuse = 0;
   g->strt.hash = NULL;
-  g->mode = HKSC_MODE_DEFAULT;
-  g->bytecode_endianness = HKSC_DEFAULT_ENDIAN;
-  hksc_default_settings(&g->settings);
+  g->mode = settings->mode;
+  g->bytecode_endianness = settings->bytecode_endianness;
+  g->settings = settings->compilersettings;
   luaZ_initbuffer(H, &g->buff);
 #ifdef HKSC_LOGGING
-  g->logctx = logctx != NULL ? *logctx : DEFAULT_LOGCTX;
+  g->logctx = settings->logctx;
 #endif /* HKSC_LOGGING */
   g->panic = NULL;
   g->gcstate = GCSpause;

@@ -21,7 +21,6 @@
 /* to avoid warnings, and to make sure value is really unused */
 #define UNUSED(x)       (x=0, (void)(x))
 
-
 /* memory allocator control variables */
 typedef struct Memcontrol {
   unsigned long numblocks;
@@ -41,10 +40,10 @@ LUAI_DATA int Trick;
 
 void *debug_realloc (void *ud, void *block, size_t osize, size_t nsize);
 
-hksc_State *debug_newstate (int mode);
+hksc_State *debug_newstate (hksc_StateSettings *settings);
 
 #ifdef hksc_c
-#define hksI_newstate(mode) debug_newstate(mode)
+# define hksI_newstate(settings) debug_newstate(settings)
 #endif
 
 

@@ -13,7 +13,7 @@
   DEFLOGCATEGORY(ANALYZER       , "ANALYZER CORE") \
   DEFLOGCATEGORY(API            , "LUA API") \
   DEFLOGCATEGORY(CODE           , "CODE GENERATOR") \
-  DEFLOGPRIORITY(DEBUG          , "DEBUG CORE") \
+  DEFLOGCATEGORY(DEBUG          , "DEBUG CORE") \
   DEFLOGCATEGORY(DECOMPILER     , "DECOMPILER") \
   DEFLOGCATEGORY(DO             , "EXCEPTION CORE") \
   DEFLOGCATEGORY(DUMP           , "BYTECODE WRITER") \
@@ -81,7 +81,7 @@ union max_label_length {
 # define CURRENT_LOG_CATEGORY LOG_CATEGORY_STRING
 #elif defined(ltable_c)
 # define CURRENT_LOG_CATEGORY LOG_CATEGORY_TABLE
-#elif defined(ltest_c)
+#elif defined(ltests_c)
 # define CURRENT_LOG_CATEGORY LOG_CATEGORY_TEST
 #elif defined(lundump_c)
 # define CURRENT_LOG_CATEGORY LOG_CATEGORY_UNDUMP
@@ -93,13 +93,29 @@ union max_label_length {
 
 LUAI_FUNC void luaI_log(hksc_State *H, int category, int priority,
                         const char *msg);
-LUAI_FUNC void luaI_formatmsg(hksc_State *H, const char *fmt, ...);
+LUAI_FUNC const char *luaI_formatmsg(hksc_State *H, const char *fmt, ...);
 
 #define lua_log(H,p,msg)  luaI_log(H,CURRENT_LOG_CATEGORY,p,msg)
 
 #else /* !HKSC_LOGGING */
 
-#define lua_log(H,p,msg)  ((void)0)
+#define lua_log(H,p,msg)  ((void)(H))
+
+/* define empty static versions to encourage optimizing out these calls and the
+   arguments; they reference each other to avoid warnings */
+/*static const char *luaI_formatmsg(hksc_State *H, const char *fmt, ...);
+
+static void luaI_log(hksc_State *H, int category, int priority, const char *msg)
+{
+  (void)H; (void)category; (void)priority; (void)msg;
+  (void)luaI_formatmsg;
+}
+
+static const char *luaI_formatmsg(hksc_State *H, const char *fmt, ...) {
+  (void)H; (void)fmt;
+  (void)luaI_log;
+  return NULL;
+}*/
 
 #endif /* HKSC_LOGGING */
 
@@ -108,5 +124,10 @@ LUAI_FUNC void luaI_formatmsg(hksc_State *H, const char *fmt, ...);
 #define lua_logwarning(H,msg)  lua_log(H,LOG_PRIORITY_WARN,msg)
 #define lua_logerror(H,msg)  lua_log(H,LOG_PRIORITY_ERROR,msg)
 #define lua_logfatalerror(H,msg)  lua_log(H,LOG_PRIORITY_FATAL,msg)
+
+#if defined(ltests_c)
+/* LOG_PRIORITY_INTERNAL is defined/used in ltests.c */
+# define lua_logtest(H,msg)  lua_log(H,LOG_PRIORITY_INTERNAL,msg)
+#endif
 
 #endif

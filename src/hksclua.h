@@ -37,59 +37,6 @@
 #define LUA_ERRERR	5
 
 
-/*
-** int literal options
-*/
-#define INT_LITERALS_NONE   0 /* disable all literals */
-#define INT_LITERALS_LUD    1 /* enable LUD literal constants */
-#define INT_LITERALS_32BIT  INT_LITERALS_LUD
-#define INT_LITERALS_UI64   2 /* enable UI64 literal constants */
-#define INT_LITERALS_64BIT  INT_LITERALS_UI64
-#define INT_LITERALS_ALL    3 /* enable all literals */
-
-
-/*
-** bytecode sharing modes
-*/
-#define HKSC_SHARING_MODE_OFF  0
-#define HKSC_SHARING_MODE_ON   1
-#define HKSC_SHARING_MODE_SECURE 2
-
-
-/*
-** bytecode sharing formats
-*/
-#define HKSC_BYTECODE_DEFAULT  0
-#define HKSC_BYTECODE_INPLACE  1
-#define HKSC_BYTECODE_REFERENCED 2
-
-/*
-** bytecode endianness
-*/
-#define HKSC_DEFAULT_ENDIAN   0
-#define HKSC_BIG_ENDIAN       1
-#define HKSC_LITTLE_ENDIAN    2
-
-/*
-** hksc modes
-*/
-#define HKSC_MODE_DEFAULT   0 /* infer from content of first file */
-#define HKSC_MODE_COMPILE   1 /* compiling source */
-#define HKSC_MODE_DECOMPILE 2 /* decompiling bytecode */
-
-
-/*
-** bytecode stripping levels
-*/
-#define BYTECODE_STRIPPING_NONE 0
-#define BYTECODE_STRIPPING_PROFILING 1
-#define BYTECODE_STRIPPING_ALL 2
-#ifdef LUA_COD /* Cod extensions */
-#define BYTECODE_STRIPPING_DEBUG_ONLY 3
-#define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
-#endif /* LUA_COD */
-
-
 typedef struct hksc_State hksc_State;
 
 typedef int (*lua_CFunction) (hksc_State *H);
@@ -101,6 +48,7 @@ typedef int (*lua_CFunction) (hksc_State *H);
 #define LOG_PRIORITY_WARN      2
 #define LOG_PRIORITY_ERROR     3
 #define LOG_PRIORITY_FATAL     4
+#define LOG_PRIORITY_MAX       5
 
 typedef int (*hksc_LogFunction) (hksc_State *H, const char *label, int priority,
                                  const char *msg, void *ud);
@@ -156,6 +104,95 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 
 
 /*
+** int literal options
+*/
+#define INT_LITERALS_NONE   0 /* disable all literals */
+#define INT_LITERALS_LUD    1 /* enable LUD literal constants */
+#define INT_LITERALS_32BIT  INT_LITERALS_LUD
+#define INT_LITERALS_UI64   2 /* enable UI64 literal constants */
+#define INT_LITERALS_64BIT  INT_LITERALS_UI64
+#define INT_LITERALS_ALL    3 /* enable all literals */
+
+
+/*
+** bytecode sharing modes
+*/
+#define HKSC_SHARING_MODE_OFF  0
+#define HKSC_SHARING_MODE_ON   1
+#define HKSC_SHARING_MODE_SECURE 2
+
+
+/*
+** bytecode sharing formats
+*/
+#define HKSC_BYTECODE_DEFAULT  0
+#define HKSC_BYTECODE_INPLACE  1
+#define HKSC_BYTECODE_REFERENCED 2
+
+/*
+** bytecode endianness
+*/
+#define HKSC_DEFAULT_ENDIAN   0
+#define HKSC_BIG_ENDIAN       1
+#define HKSC_LITTLE_ENDIAN    2
+
+/*
+** hksc modes
+*/
+#define HKSC_MODE_DEFAULT   0 /* infer from content of first file */
+#define HKSC_MODE_COMPILE   1 /* compiling source */
+#define HKSC_MODE_DECOMPILE 2 /* decompiling bytecode */
+
+
+/*
+** bytecode stripping levels
+*/
+#define BYTECODE_STRIPPING_NONE 0
+#define BYTECODE_STRIPPING_PROFILING 1
+#define BYTECODE_STRIPPING_ALL 2
+#ifdef LUA_COD /* Cod extensions */
+#define BYTECODE_STRIPPING_DEBUG_ONLY 3
+#define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
+#endif /* LUA_COD */
+
+/*
+** Lua compiler settings (to be specified by the host program)
+*/
+typedef struct {
+#ifdef LUA_COD
+  int hash_step;
+#endif
+  /* general settings */
+  int ignore_debug; /* do not try to load/dump debug info */
+  /* compiler-specific settings */
+  int emit_struct; /* whether `hstructure' and `hmake' should be emitted */
+  int enable_int_literals; /* int literal setting */
+  int strip; /* bytecode stripping level */
+  /*const char **strip_names;*/
+  /*lua_LineMap debug_map;*/
+#ifdef HKSC_DECOMPILER /* decompiler-specific settings */
+  int match_line_info; /* emit statements according to the line mapping */
+#endif /* HKSC_DECOMPILER */
+} hksc_CompilerSettings;
+
+
+/*
+** Lua state settings (to be specified by the host program)
+*/
+typedef struct {
+  lua_Alloc frealloc;  /* function to reallocate memory */
+  void *ud;         /* auxiliary data to `frealloc' */
+  lua_CFunction panic;  /* to be called in unprotected errors */
+  int mode;  /* what mode to run in (compiling/decompiling) */
+  int bytecode_endianness;
+#ifdef HKSC_LOGGING
+  hksc_LogContext logctx;  /* context for logging */
+#endif /* HKSC_LOGGING */
+  hksc_CompilerSettings compilersettings;
+} hksc_StateSettings;
+
+
+/*
 ** generic extra include file
 */
 #if defined(LUA_USER_H)
@@ -174,12 +211,7 @@ typedef LUA_INTEGER lua_Integer;
 /*
 ** state manipulation
 */
-#ifdef HKSC_LOGGING
-LUA_API hksc_State *(lua_newstate) (lua_Alloc f, void *ud,
-                                    hksc_LogContext *logctx);
-#else /* !HKSC_LOGGING */
-LUA_API hksc_State *(lua_newstate) (lua_Alloc f, void *ud);
-#endif /* HKSC_LOGGING */
+LUA_API hksc_State *(lua_newstate) (hksc_StateSettings *settings);
 LUA_API void       (lua_close) (hksc_State *H);
 
 LUA_API lua_CFunction (lua_atpanic) (hksc_State *H, lua_CFunction panicf);

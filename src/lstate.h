@@ -9,7 +9,6 @@
 
 #include "hksclua.h"
 
-#include "llog.h"
 #include "lobject.h"
 #include "lundump.h"
 #include "lzio.h"
@@ -27,36 +26,13 @@ typedef struct stringtable {
 } stringtable;
 
 
-
-
-/*
-** global settings shared by all states
-*/
-typedef struct hksc_Settings
-{
-#ifdef LUA_COD
-  int hash_step;
-#endif
-  /* general settings */
-  lu_byte ignore_debug; /* do not try to load/dump debug info */
-  /* compiler-specific settings */
-  lu_byte emit_struct; /* whether `hstructure' and `hmake' should be emitted */
-  lu_byte enable_int_literals; /* int literal setting */
-  lu_byte strip; /* bytecode stripping level */
-  /*const char **strip_names;*/
-  /*lua_LineMap debug_map;*/
-#ifdef HKSC_DECOMPILER /* decompiler-specific settings */
-  lu_byte match_line_info; /* emit statements according to the line mapping */
-#endif /* HKSC_DECOMPILER */
-} hksc_Settings;
-
 /*
 ** `global state', shared by all threads of this state
 */
 typedef struct global_State {
   int mode; /* compiling or decompiling? */
   int bytecode_endianness; /* bytecode endianness */
-  hksc_Settings settings; /* compiler/decompiler settings */
+  hksc_CompilerSettings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
   lua_Alloc frealloc;  /* function to reallocate memory */
   void *ud;         /* auxiliary data to `frealloc' */

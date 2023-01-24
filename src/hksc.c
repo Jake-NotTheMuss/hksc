@@ -359,6 +359,7 @@ static int dofiles (hksc_State *H, int argc, char *argv[]) {
 
 int main(int argc, char *argv[])
 {
+  hksc_StateSettings settings;
   hksc_State *H;
   int status;
   int i=doargs(argc,argv);
@@ -375,7 +376,8 @@ int main(int argc, char *argv[])
       error_multiple_inputs("-a");
 #endif /* LUA_COD */
   }
-  H = hksI_newstate(mode);
+  (void)settings;
+  H = hksI_newstate(NULL);
   if (H==NULL) fatal("cannot create state: not enough memory");
   lua_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD

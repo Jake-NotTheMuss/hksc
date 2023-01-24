@@ -395,40 +395,49 @@ static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
 
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
 
-
-#ifdef HKSC_LOGGING
-
-void defaultlog(hksc_State *H, const char *label, int priority, const char *msg,
-         void *ud) {
-  (void)H; (void)priority; (void)ud;
-  fprintf(stderr, "[%s] %s\n", label, msg);
+LUA_API void hksI_CompilerSettings(hksc_CompilerSettings *settings) {
+#ifdef LUA_COD
+# ifdef LUA_CODT7
+  settings->hash_step = 1;
+# else /* !LUA_CODT7 */
+  settings->hash_step = 2;
+# endif /* LUA_CODT7 */
+#endif /* LUA_COD */
+  settings->ignore_debug = 0;
+  settings->emit_struct = 0;
+  settings->enable_int_literals = INT_LITERALS_NONE;
+#ifdef HKSC_DECOMPILER
+  settings->match_line_info = 1;
+#endif /* HKSC_DECOMPILER */
 }
 
-#endif /* HKSC_LOGGING */
-
+LUA_API void hksI_StateSettings(hksc_StateSettings *settings) {
+  hksI_CompilerSettings(&settings->compilersettings);
+  settings->frealloc = &l_alloc;
+  settings->ud = NULL;
+  settings->panic = &panic;
+  settings->mode = HKSC_MODE_DEFAULT;
+  settings->bytecode_endianness = HKSC_DEFAULT_ENDIAN;
 #ifdef HKSC_LOGGING
-LUA_API hksc_State *hksI_newstate(int mode, hksc_LogContext *logctx)
-#else /* !HKSC_LOGGING */
-LUA_API hksc_State *hksI_newstate(int mode)
+  memset(&settings->logctx, 0, sizeof(settings->logctx));
 #endif /* HKSC_LOGGING */
+}
+
+
+LUA_API hksc_State *hksI_newstate(hksc_StateSettings *settings)
 {
   hksc_State *H;
-#ifdef HKSC_LOGGING
-  if (logctx != NULL && logctx->f == NULL)
-    logctx->f = &defaultlog;
-  H = lua_newstate(l_alloc, NULL, logctx);
-#else /* !HKSC_LOGGING */
-  H = lua_newstate(l_alloc, NULL);
-#endif /* HKSC_LOGGING */
+  hksc_StateSettings default_settings;
+  if (!settings) {
+    hksI_StateSettings(&default_settings);
+    settings = &default_settings;
+  }
+  H = lua_newstate(settings);
   if (H) {
-    lua_atpanic(H, &panic);
-    lua_setmode(H, mode);
 #if defined(LUA_COD) && defined(HKSC_DECOMPILER)
     /* Call of Duty needs a separate debug reader when loading bytecode */
-    lua_lock(H);
     G(H)->debugLoadStateOpen = init_debug_reader;
     G(H)->debugLoadStateClose = close_debug_reader;
-    lua_unlock(H);
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
   }
   return H;

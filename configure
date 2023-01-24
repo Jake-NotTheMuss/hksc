@@ -182,6 +182,23 @@ EOF
 	exit 0
 }
 
+prefix=${prefix-/usr/local}
+exec_prefix=${exec_prefix-'${prefix}'}
+libdir=${libdir-'${exec_prefix}/lib'}
+sharedlibdir=${sharedlibdir-'${libdir}'}
+includedir=${includedir-'${prefix}/include'}
+mandir=${mandir-'${prefix}/share/man'}
+
+# shared library extension
+test x$sharedext = x && case `(uname -s || echo unknown) 2>/dev/null` in
+	Darwin* | darwin*)
+		sharedext='.dylib' ;;
+	*)
+		sharedext='.so' ;;
+esac
+
+SHAREDLIB=libhksc$sharedext
+
 makefile=
 case "$1" in
 	--makefile=*) makefile=`echo $1 | sed 's/.*=//'` ;;
@@ -192,13 +209,6 @@ test x$makefile != x && {
 	configurefile $makefile
 	exit
 }
-
-prefix=${prefix-/usr/local}
-exec_prefix=${exec_prefix-'${prefix}'}
-libdir=${libdir-'${exec_prefix}/lib'}
-sharedlibdir=${sharedlibdir-'${libdir}'}
-includedir=${includedir-'${prefix}/include'}
-mandir=${mandir-'${prefix}/share/man'}
 
 while test $# -ge 1; do
 	case "$1" in
@@ -256,17 +266,7 @@ else
 	CFLAGS='$(RELEASE)'
 fi
 
-# shared library extension
-test x$sharedext = x && case `(uname -s || echo unknown) 2>/dev/null` in
-	Darwin* | darwin*)
-		sharedext='.dylib' ;;
-	*)
-		sharedext='.so' ;;
-esac
-
 updateconfigfile
-
-SHAREDLIB=libhksc$sharedext
 
 infolog "updated configuration settings in '$configfile'"
 

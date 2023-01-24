@@ -4,6 +4,8 @@
 ** See Copyright Notice in lua.h
 */
 
+#include <stdarg.h>
+
 #define llog_c
 #define LUA_CORE
 
@@ -20,12 +22,13 @@ static const char *const luaI_categories [] = {
   LOG_CATEGORY_TABLE
   NULL
 };
+#undef DEFLOGCATEGORY
+
 
 void luaI_log(hksc_State *H, int category, int priority, const char *msg) {
   hksc_LogContext *ctx;
   lua_assert(msg != NULL);
   lua_assert(category < LOG_CATEGORY_MAX && category >= 0);
-  lua_assert(priority < LOG_PRIOTITY_MAX && priority >= 0);
   ctx = &G(H)->logctx;
   if (ctx->f != NULL && priority >= ctx->priority) {
     lua_unlock(H);
@@ -34,8 +37,13 @@ void luaI_log(hksc_State *H, int category, int priority, const char *msg) {
   }
 }
 
-/*void luaI_formatmsg(hksc_State *H, const char *fmt, ...) {
-  ;
-}*/
+const char *luaI_formatmsg(hksc_State *H, const char *fmt, ...) {
+  const char *str;
+  va_list argp;
+  va_start(argp, fmt);
+  str = luaO_pushvfstring(H, fmt, argp);
+  va_end(argp);
+  return str;
+}
 
 #endif /* HKSC_LOGGING */

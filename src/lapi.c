@@ -31,18 +31,6 @@ const char lua_ident[] =
   "$Authors: " LUA_AUTHORS " $\n"
   "$URL: www.lua.org $\n";
 
-#ifdef HKSC_LOGGING
-
-LUA_API hksc_LogFunction lua_atlog (hksc_State *H, hksc_LogFunction logf) {
-  hksc_LogFunction old;
-  lua_lock(H);
-  old = G(H)->log;
-  G(H)->log = logf;
-  lua_unlock(H);
-  return old;
-}
-
-#endif /* HKSC_LOGGING */
 
 LUA_API lua_CFunction lua_atpanic (hksc_State *H, lua_CFunction panicf) {
   lua_CFunction old;

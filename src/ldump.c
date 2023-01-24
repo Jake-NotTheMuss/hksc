@@ -309,7 +309,7 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.writer=w;
   D.data=data;
   D.pos=0;
-  D.striplevel=lua_getBytecodeStrippingLevel(H);
+  D.striplevel=hksc_getBytecodeStrippingLevel(H);
   D.status=0;
   if (isbigendian())
     D.swapendian=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);

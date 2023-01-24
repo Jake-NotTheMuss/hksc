@@ -56,10 +56,7 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
   char buff[MAXEXT];
   size_t n;
   size_t extlen;
-  lua_assert(ext != NULL);
-  lua_assert(*ext == '.');
   extlen = strlen(ext);
-  lua_assert(extlen < MAXEXT);
   if (namelen < extlen || extlen < 2) return 0;
   for (n = 0; n < extlen; n++)
     buff[n]=tolower(name[namelen-(extlen-n)]);
@@ -99,7 +96,7 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
 }
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
-  UNUSED(H);
+  (void)H;
   return (fwrite(p,size,1,(FILE*)u)!=1) && (size!=0);
 }
 
@@ -187,7 +184,6 @@ int hksc_dump_function(hksc_State *H, const char *filename) {
       outname = luac2luadec(H, filename);
   } else
     outname = output;
-  lua_assert(outname != NULL);
 #ifdef LUA_COD
   if (compiling) { /* (COD) dump debug info to separate files */
     status = luacod_dumpdebug(H, outname);
@@ -202,7 +198,7 @@ int hksc_dump_function(hksc_State *H, const char *filename) {
 #ifdef HKSC_DECOMPILER
     status = lua_decompile(H, writer_2file, out); /* dump decomp */
 #else
-    lua_assert(0); /* cannot happen */
+    ;
 #endif /* HKSC_DECOMPILER */
   if (fclose(out)) cannot("close", outname);
   return status;
