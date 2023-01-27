@@ -129,8 +129,7 @@ $(SRCDIR)/hkscconf.h: $(SRCDIR)/hkscconf.h.in
 
 # add this option when calling configure just to update a Makefile; it prevents
 # configure from regenerating other files that would cause a complete rebuild
-$(CONFIGMAKEFILES): CONFIGUREFLAGS=--makefile=$@
-
+$(CONFIGMAKEFILES): CONFIGUREFLAGS=--configfile=$@
 $(CONFIGFILES): configure config.status
 	@echo rebuilding $@
 	./configure $(CONFIGUREFLAGS)

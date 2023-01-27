@@ -307,39 +307,6 @@ static void addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
 }
 
 
-#ifdef LUA_DEBUG
-
-static void debugbbl(Analyzer *a, BasicBlock *bbl, int indent) {
-  BasicBlock *child = bbl->firstchild;
-  BasicBlock *nextsibling = bbl->nextsibling;
-  int i;
-  for (i = 0; i < indent; i++)
-    printf("  ");
-  if (indent) printf("- ");
-  printf("(%d-%d) %s (%s sibling)\n", bbl->startpc+1, bbl->endpc+1,
-         bbltypename(bbl->type), (nextsibling != NULL)?"YES":"NO");
-  indent++;
-  while (child != NULL) {
-    debugbbl(a, child, indent);
-    child = child->nextsibling;
-  }
-}
-
-static void debugbblsummary(DFuncState *fs)
-{
-  Analyzer *a = fs->a;
-  fputs("BASIC BLOCK SUMMARY\n"
-        "-------------------\n", stdout);
-  debugbbl(a, a->bbllist.first, 0);
-  fputs("-------------------\n", stdout);
-}
-#else
-static void debugbblsummary(DFuncState *fs)
-{
-  UNUSED(fs);
-}
-#endif /* LUA_DEBUG */
-
 static void printbblmsg(const char *msg, BasicBlock *block) {
   fputs(msg, stdout);
   fputs(" ", stdout);
@@ -380,6 +347,56 @@ static void DumpStringf(DecompState *D, const char *fmt, ...)
   DumpString(s,D);
   va_end(argp);
 }
+
+
+#ifdef LUA_DEBUG
+
+static void debugbbl(DFuncState *fs, BasicBlock *bbl, int indent) {
+  BasicBlock *child = bbl->firstchild;
+  BasicBlock *nextsibling = bbl->nextsibling;
+  int i;
+  for (i = 0; i < indent; i++) {
+    printf("  ");
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+    DumpLiteral("\t",fs->D);
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+  }
+  if (indent) printf("- ");
+  printf("(%d-%d) %s (%s sibling)\n", bbl->startpc+1, bbl->endpc+1,
+         bbltypename(bbl->type), (nextsibling != NULL)?"YES":"NO");
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+  DumpStringf(fs->D, "%s\n", bbltypename(bbl->type));
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+  while (child != NULL) {
+    debugbbl(fs, child, indent+1);
+    child = child->nextsibling;
+  }
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+  if (bbl->type != BBL_IF &&
+      (bbl->nextsibling == NULL ||
+       bbl->nextsibling->type != BBL_ELSE)) {  /* if-statement has no else */
+    for (i = 0; i < indent; i++)
+      DumpLiteral("\t",fs->D);
+    DumpLiteral("END\n",fs->D);
+  }
+#endif
+}
+
+static void debugbblsummary(DFuncState *fs)
+{
+  Analyzer *a = fs->a;
+  fputs("BASIC BLOCK SUMMARY\n"
+        "-------------------\n", stdout);
+  debugbbl(fs, a->bbllist.first, 0);
+  fputs("-------------------\n", stdout);
+}
+
+#else
+
+#define debugbblsummary(fs)  ((void)(fs))
+
+#endif /* LUA_DEBUG */
+
 
 #define createvarname(type) \
   char buff[sizeof("f_" type) + (2 * INT_CHAR_MAX_DEC)]; \
@@ -2425,16 +2442,20 @@ static void DecompileFunction(DecompState *D, const Proto *f)
   else
     printf("-- Decompiling anonymous function (%d)\n", D->funcidx);
   pass1(f,&new_fs,D);
-  dumploopinfo(f, &new_fs, D);
+  (void)dumploopinfo;
   printf("new_fs.firstclob = (%d)", new_fs.firstclob+1);
   if (new_fs.firstclob != -1)
     printf(", a = (%d)",GETARG_A(f->code[new_fs.firstclob]));
   printf("\n");
-  DumpLiteral("\n\n", D);
   debugbblsummary(&new_fs);
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+  (void)pass2;
+#else
+  dumploopinfo(f, &new_fs, D);
+  DumpLiteral("\n\n", D);
   pass2(f,&new_fs,D);
   /*DecompileCode(f,&new_fs,D);*/
-  /*discharge(&new_fs, D);*/ /* todo: should the chain always be empty by this point? */
+#endif /* HSKC_DECOMP_DEBUG_PASS1 */
   close_func(D);
 }
 

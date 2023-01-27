@@ -33,12 +33,13 @@ static int literals_enabled=INT_LITERALS_NONE; /* int literal options */
 static const char *progname=HKSC_NAME;
 const char *output=NULL;
 
+static int withdebug=0;
+
 #ifdef LUA_COD
 const char *debugfile=NULL;
 const char *callstackdb=NULL;
 int debugfile_arg=0;
 int callstackdb_arg=0;
-static int withdebug=0;
 #else
 static int ignore_debug=0;
 #endif /* LUA_COD */
@@ -80,7 +81,9 @@ static void print_usage(void)
    "\nInput/Output options:\n"
    "  -o, --output=NAME       Output to file NAME\n"
    "  -p                      Parse only\n"
-#ifdef LUA_COD
+#ifndef LUA_COD
+   "  -r, --withdebug         Load/dump debug information\n"
+#else
    "  -r, --withdebug         Load/dump debug files with input/output files\n"
    "  -a, --callstackdb=FILE  Use FILE for callstack reconstruction\n"
    "  -g, --debugfile=FILE    Use FILE for debug info\n"
@@ -195,8 +198,8 @@ static int doargs(int argc, char *argv[])
     else if (IS("-c") || IS("--compile")) ++c; /* specifies compile mode */
     else if (IS("-d") || IS("--decompile")) ++d; /* specified decompile mode */
 #endif /* HKSC_DECOMPILER */
-#ifdef LUA_COD
     else if (IS("-r") || IS("--withdebug")) withdebug=1;
+#ifdef LUA_COD
     ELSE_IF_STRING("-a", "--callstackdb", callstackdb);
     ELSE_IF_STRING("-g", "--debugfile", debugfile);
 #else
@@ -379,6 +382,7 @@ int main(int argc, char *argv[])
   (void)settings;
   H = hksI_newstate(NULL);
   if (H==NULL) fatal("cannot create state: not enough memory");
+  lua_setmode(H, mode);
   lua_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD
   if (dumping) {

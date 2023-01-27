@@ -67,6 +67,10 @@
 #define HKSC_WITHDOUBLES @HKSC_WITHDOUBLES@
 #define HKSC_WITHNATIVEINT @HKSC_WITHNATIVEINT@
 
+
+/* set which decompiler pass to test */
+#define HKSC_DEBUG_PASS @HKSC_DEBUG_PASS@
+
 /* put here any errors that need to happen for unsupported configurations */
 #if HKSC_GETGLOBAL_MEMOIZATION
 #error "Global Memoization not implemented"

@@ -3,7 +3,7 @@
 #
 
 logfile=config.log
-configfile=config.status
+configstatus=config.status
 
 # the default configuration (this project is made primarily for Black Ops III)
 defaultbuildsetting=codt7
@@ -53,10 +53,10 @@ varstatus()
 	echo "$1=$val"
 }
 
-updateconfigfile()
+updateconfigstatus()
 {
-	cat <<EOF > $configfile
-# $configfile: configure settings for libhksc
+	cat <<EOF > $configstatus
+# $configstatus: configure settings for libhksc
 # $commandline
 # `date`
 
@@ -89,13 +89,16 @@ updateconfigfile()
 `varstatus SELF 0`
 `varstatus GETGLOBAL_MEMOIZATION 0`
 
+# set which decompiler pass to test (0 means none)
+`varstatus debugpass 0`
+
 # shared library extension
 `varstatus sharedext`
 EOF
 	reset=0
 }
 
-configurefile()
+configuremakefile()
 {
 	sed < $1.in "
 	/^CC *=/s#=.*#=$CC#
@@ -109,6 +112,7 @@ configurefile()
 	/^sharedlibdir *=/s#=.*#=$sharedlibdir#
 	/^includedir *=/s#=.*#=$includedir#
 	/^mandir *=/s#=.*#=$mandir#
+	/^DECOMPILER_TESTS *=/s#=.*#=$DECOMPILER_TESTS#
 	" > $1
 }
 VERSION=0.0.0
@@ -137,7 +141,19 @@ configureheader()
 	s/@HKSC_SELF@/$SELF/g
 	s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
 	s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
+	s/@HKSC_DEBUG_PASS@/$debugpass/g
 	" > $1
+}
+
+configurefile()
+{
+	for v; do
+		case "${v##*.}" in
+			*Makefile) configuremakefile $v ;;
+			pc) configurepc $v ;;
+			h) configureheader $v ;;
+		esac
+	done
 }
 
 LC_ALL=C
@@ -147,10 +163,10 @@ export LC_ALL
 test x$CC = x && CC=cc || echo CC=$CC
 
 # create the config file with default values if it doesn't exist
-test -e $configfile || updateconfigfile
+test -e $configstatus || updateconfigstatus
 
 # load existing config settings
-. $configfile
+. $configstatus
 
 show_help()
 {
@@ -159,7 +175,8 @@ Usage: $0 [options]
 
 Options:
   --help                   Print this message and exit
-  --makefile=FILE          Regenerate the makefile FILE
+  --debug-pass=NUMBER      Debug decompiler pass NUMBER
+  --configfile=FILE        Regenerate FILE
   --reset, --default       Reset configuration to default settings
   --prefix=PATH            Set prefix path for installed files
   --eprefix=PATH           Set exec_prefix path for installed files
@@ -199,32 +216,23 @@ esac
 
 SHAREDLIB=libhksc$sharedext
 
-makefile=
-case "$1" in
-	--makefile=*) makefile=`echo $1 | sed 's/.*=//'` ;;
-	--makefile) shift; makefile=$1 ;;
-esac
-
-test x$makefile != x && {
-	configurefile $makefile
-	exit
-}
+configfiles=
 
 while test $# -ge 1; do
 	case "$1" in
 		-h* | --help) show_help ;;
 		--reset | --default)
-			rm -f -- $configfile
+			rm -f -- $configstatus
 			reset=1
-			updateconfigfile
-			. $configfile ;;
-		--makefile*)
-			error "--makefile cannot be specified with other arguments" ;;
-	    -p*=* | --prefix=*) prefix=`echo $1 | sed 's/.*=//'`; shift ;;
-	    -e*=* | --eprefix=*) exec_prefix=`echo $1 | sed 's/.*=//'`; shift ;;
-	    -l*=* | --libdir=*) libdir=`echo $1 | sed 's/.*=//'`; shift ;;
-	    --sharedlibdir=*) sharedlibdir=`echo $1 | sed 's/.*=//'`; shift ;;
-	    -i*=* | --includedir=*) includedir=`echo $1 | sed 's/.*=//'`;shift ;;
+			updateconfigstatus
+			. $configstatus ;;
+		--debug-pass=*) debugpass=`echo $1 | sed 's/.*=//'` ;;
+		--configfile=*) configfiles="$configfiles $(echo $1 | sed 's/.*=//')" ;;
+	    -p*=* | --prefix=*) prefix=`echo $1 | sed 's/.*=//'` ;;
+	    -e*=* | --eprefix=*) exec_prefix=`echo $1 | sed 's/.*=//'` ;;
+	    -l*=* | --libdir=*) libdir=`echo $1 | sed 's/.*=//'` ;;
+	    --sharedlibdir=*) sharedlibdir=`echo $1 | sed 's/.*=//'` ;;
+	    -i*=* | --includedir=*) includedir=`echo $1 | sed 's/.*=//'` ;;
 		--emu-ui64) EMU_UI64=1 ;;
 		--no-emu-ui64) EMU_UI64=0 ;;
 		--no-dec* | --disable-dec*) DECOMPILER=0 ;;
@@ -246,13 +254,16 @@ while test $# -ge 1; do
 	shift
 done
 
+test $debugpass -gt 2 && error "the decompiler only does 2 passes"
+
+test $debugpass != 0 && \
+test $debugpass != 1 && \
+test $debugpass != 2 && error "invalid value for --debug-pass: $debugpass"
+
 # configure compatibility settings based on the build config type
 case "$buildsetting" in
 	cod)
 		warn "ambiguous build setting 'cod', setting build config to 'codt6'" ;;
-	codiw* | cods1)
-		buildsetting=codt6
-		warn "specified '$buildsetting', using 'codt6'" ;;
 	codt6 | codt7) ;; # cod builds disable all compatibility settings
 	# add other titles below as their compatibility features become supported
 	*) error "Unsupported build configuration '$buildsetting'" ;;
@@ -269,9 +280,24 @@ else
 	CFLAGS='$(RELEASE)'
 fi
 
-updateconfigfile
+if test $DECOMPILER = 0; then
+	# skip decompiler tests
+	DECOMPILER_TESTS=
+else
+	DECOMPILER_TESTS='$(ALL_DECOMPILER_TESTS)'
+fi
 
-infolog "updated configuration settings in '$configfile'"
+# do this before config.status is updated, the point of specifying files to
+# regenerate is that it avoids touching unrelated files that would trigger a
+# complete rebuild 
+test "x$configfiles" != "x" && {
+	configurefile $configfiles
+	exit
+}
+
+updateconfigstatus
+
+infolog "updated configuration settings in '$configstatus'"
 
 logvar()
 {
@@ -294,6 +320,7 @@ logvar LOGGING
 logvar DECOMPILER
 logvar LUA_COD
 logvar LUA_CODT7
+logvar debugpass
 infolog "--------------------"
 
 infolog ""
@@ -307,10 +334,6 @@ logvar WITHNATIVEINT
 logvar WITHDOUBLES
 infolog "--------------------"
 
-configurefile Makefile
-configurefile $SRCDIR/Makefile
-configurefile test/Makefile
-
-configureheader $SRCDIR/hkscconf.h
+configurefile Makefile $SRCDIR/Makefile test/Makefile $SRCDIR/hkscconf.h
 
 exit 0

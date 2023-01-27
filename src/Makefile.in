@@ -109,7 +109,7 @@ libhksc.dylib: $(ALL_PIC_O) $(CORE_T)
 
 # standalone compiler/decompiler linked with shared library
 $(LUAC_SH): $(LUAC_O) $(SHAREDLIB)
-	$(CC) -o $@ $(MYLDFLAGS) $^ $(LIBS) $(LINK_LIBHKSC)
+	$(CC) -o $@ $(MYLDFLAGS) $(LUAC_O) $(SHAREDLIB) $(LIBS) $(LINK_LIBHKSC)
 
 clean:
 	$(RM) -f $(ALL_T) $(ALL_O) $(ALL_PIC_O) $(SHAREDLIB)

@@ -21,6 +21,20 @@
 /* to avoid warnings, and to make sure value is really unused */
 #define UNUSED(x)       (x=0, (void)(x))
 
+
+/* set which decompiler pass to test */
+#if HKSC_DEBUG_PASS == 1
+# define HKSC_DECOMP_DEBUG_PASS1
+# undef HKSC_DECOMP_DEBUG_PASS2
+#elif HKSC_DEBUG_PASS == 2
+# define HKSC_DECOMP_DEBUG_PASS2
+# undef HKSC_DECOMP_DEBUG_PASS1
+#else
+# undef HKSC_DECOMP_DEBUG_PASS1
+# undef HKSC_DECOMP_DEBUG_PASS2
+#endif /* HKSC_DEBUG_PASS */
+
+
 /* memory allocator control variables */
 typedef struct Memcontrol {
   unsigned long numblocks;

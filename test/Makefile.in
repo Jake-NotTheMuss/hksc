@@ -3,18 +3,39 @@
 TOP=..
 SRCDIR=src
 TOPSRC=$(TOP)/$(SRCDIR)
+HKSC_VERSION=0.0
 
-# HKSC should be set to ../hksc or ../hkscsh by the parent Makefile
-HKSC=echo you need to set HKSC in the parent Makefile: $$\(HKSC\) && false
+# should be set by the parent Makefile
+HKSC=echo you need to set HKSC in the parent Makefile: $$\(HKSC\) && false \#
 
-TESTS=version
+# TESTS=version
+TESTS= $(COMPILER_TESTS) $(DECOMPILER_TESTS)
+
+TESTMAKEFLAGS=-r -s
+
+# will be empty if built without the decompiler
+# don't set this, instead add decompiler tests to $(ALL_DECOMPILER_TESTS)
+DECOMPILER_TESTS=
+COMPILER_TESTS= $(ALL_COMPILER_TESTS)
+
+ALL_COMPILER_TESTS=
+ALL_DECOMPILER_TESTS=
+
+# for when $(TESTS) is empty
+default:
 
 test:
 	@$(MAKE) --no-print-directory -s clean
-	@$(MAKE) --no-print-directory -s -r $(TESTS)
+	@$(MAKE) --no-print-directory $(TESTMAKEFLAGS) $(TESTS)
 
 version:
-	$(HKSC) --version
+	@echo checking \`$(HKSC) --version\` against $(HKSC_VERSION)
+	@HKSC_VERSION_REGEX=`echo $(HKSC_VERSION) | sed 's/\./\\./g'`; \
+	$(HKSC) --version | grep -iq ".*hksc[^0-9]*$$HKSC_VERSION_REGEX"
+
+
+# decompiler tests use compiler output as input
+$(ALL_DECOMPILER_TESTS): $(COMPILER_TESTS)
 
 clean:
 
