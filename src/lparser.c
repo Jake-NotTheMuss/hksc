@@ -70,10 +70,10 @@ static void error_expected (LexState *ls, int token) {
 
 static void errorlimit (FuncState *fs, int limit, const char *what) {
   const char *msg = (fs->f->linedefined == 0) ?
-    luaO_pushfstring(fs->H, "main function has more than %d %s", limit, what) :
-    luaO_pushfstring(fs->H, "function at line %d has more than %d %s",
+    luaO_pushfstring(fs->H, "Main function has more than %d %s", limit, what) :
+    luaO_pushfstring(fs->H, "Function at line %d has more than %d %s",
                             fs->f->linedefined, limit, what);
-  luaX_lexerror(fs->ls, msg, 0);
+  luaX_inputerror(fs->ls, msg);
 }
 
 
@@ -165,7 +165,7 @@ static int registerlocalvar (LexState *ls, TString *varname) {
 #error "typed variables not implemented (required when structures are enabled)"
 #else /* !HKSC_STRUCTURE_EXTENSION_ON */
 #define check_typed(ls,what) if ((ls)->t.token == ':') \
-  luaG_runerror((ls)->H, "Cannot use typed " what " when the virtual " \
+  luaX_inputerror(ls, "Cannot use typed " what " when the virtual " \
               "machine is built without structures")
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
@@ -500,13 +500,14 @@ static void parser_inner_func (hksc_State *H, void *ud) {
     case TK_UTF16BE_BOM:
     case TK_UTF32LE_BOM:
     case TK_UTF32BE_BOM:
-      luaG_runerror(H, "Invalid or unsupported file encoding. Only ASCII and "
-                    "UTF-8 are supported");
+      luaX_inputerror(ls, "Invalid or unsupported file encoding. Only ASCII "
+                      "and UTF-8 are supported");
       break;
   }
   chunk(ls);
   check(ls, TK_EOS);
   close_func(ls);
+  UNUSED(H);
 }
 
 
@@ -1140,7 +1141,8 @@ static void breakstat (LexState *ls) {
     bl = bl->previous;
   }
   if (!bl)
-    luaX_syntaxerror(ls, "no loop to break");
+    luaX_inputerror(ls, "Break instruction not allowed: no enclosing loop to "
+                    "break.");
   if (upval)
     luaK_codeABC(fs, OP_CLOSE, bl->nactvar, 0, 0);
   luaK_concat(fs, &bl->breaklist, luaK_jump(fs));

@@ -137,7 +137,8 @@ hksc_State *debug_newstate(hksc_StateSettings *settings)
   settings->ud = &memcontrol;
 #ifdef HKSC_LOGGING
   settings->logctx.f = &debug_log;
-  settings->logctx.ud = (void *)stderr;
+  if (settings->logctx.ud == NULL)
+    settings->logctx.ud = stderr;
   settings->logctx.priority = LOG_PRIORITY_DEBUG;
 #endif /* HKSC_LOGGING */
   H = lua_newstate(settings);

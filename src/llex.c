@@ -71,6 +71,35 @@ void luaX_init (hksc_State *H) {
 
 #define MAXSRC          80
 
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+
+/* from Lua 5.1 - the code that Havok Script uses - do not modify */
+const char *luaX_token2str (LexState *ls, int token) {
+  if (token < FIRST_RESERVED) {
+    lua_assert(token == cast(unsigned char, token));
+    return (!lisprint(token)) ? luaO_pushfstring(ls->L, "char(%u)", token) :
+                              luaO_pushfstring(ls->L, "%c", token);
+  }
+  else
+    return luaX_tokens[token-FIRST_RESERVED];
+}
+
+
+static const char *txtToken (LexState *ls, int token) {
+  switch (token) {
+    case TK_NAME:
+    case TK_STRING:
+    case TK_NUMBER:
+      save(ls, '\0');
+      return luaZ_buffer(ls->buff);
+    default:
+      return luaX_token2str(ls, token);
+  }
+}
+
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+
+/* nicer error messages from modern Lua */
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {  /* single-byte symbols? */
     if (lisprint(token))
@@ -102,6 +131,8 @@ static const char *txtToken (LexState *ls, int token) {
   }
 }
 
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+
 
 void luaX_lexerror (LexState *ls, const char *msg, int token) {
   char buff[MAXSRC];
@@ -117,6 +148,14 @@ void luaX_lexerror (LexState *ls, const char *msg, int token) {
 
 void luaX_syntaxerror (LexState *ls, const char *msg) {
   luaX_lexerror(ls, msg, ls->t.token);
+}
+
+void luaX_inputerror (LexState *ls, const char *msg) {
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+  luaX_syntaxerror(ls, msg);
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+  luaX_lexerror(ls, msg, 0);
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
 }
 
 
@@ -403,7 +442,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
     if (!zhasmore(ls->z))
       return TK_EOS;
     if ((ls->current & 0x80) != 0 && ls->textmode == UTF8) {
-      luaG_runerror(ls->H,
+      luaX_syntaxerror(ls,
         "Multi-byte characters are only supported in strings and comments");
     }
     switch (ls->current) {
@@ -511,10 +550,9 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             /* hstructure and hmake are not supported in the cod builds */
             if (token == TK_HSTRUCTURE || token == TK_HMAKE)
             {
-              luaG_runerror(ls->H,
-                "The reserved words %s and %s can only be used when "
-                "the virtual machine is built with structure support.",
-                luaX_token2str(ls,TK_HMAKE), luaX_token2str(ls,TK_HSTRUCTURE));
+              luaX_inputerror(ls, "The reserved words \"hmake\" and "
+                "\"hstructure\" can only be used when the virtual machine is "
+                "built with structure support.");
             }
             return token;
           }

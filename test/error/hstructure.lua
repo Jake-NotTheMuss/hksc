@@ -1,0 +1,3 @@
+hstructure a
+	b;
+end

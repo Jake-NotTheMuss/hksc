@@ -689,6 +689,10 @@ union luai_Cast { double l_d; long l_l; };
 #endif
 
 
+#if defined(LUA_DEBUG) && !defined(HKSC_MATCH_HAVOK_ERROR_MSG)
+# define HKSC_MATCH_HAVOK_ERROR_MSG
+#endif
+
 
 /* =================================================================== */
 

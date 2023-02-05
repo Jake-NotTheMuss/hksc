@@ -35,6 +35,11 @@ const char *output=NULL;
 
 static int withdebug=0;
 
+#ifdef HKSC_LOGGING
+static const char *logfilename=NULL;
+static FILE *logfile=NULL;
+#endif /* HKSC_LOGGING */
+
 #ifdef LUA_COD
 const char *debugfile=NULL;
 const char *callstackdb=NULL;
@@ -75,6 +80,8 @@ static void print_usage(void)
 #ifndef LUA_COD
    "  -s[=MODE]               Use bytecode stripping level MODE\n"
    "  -i, --ignoredebug       Ignore debug info when decompiling\n"
+#else
+   "  -s                      Turns off --withdebug even if set explicitly\n"
 #endif /* LUA_COD */
    , stderr);
   fputs(
@@ -88,18 +95,25 @@ static void print_usage(void)
    "  -a, --callstackdb=FILE  Use FILE for callstack reconstruction\n"
    "  -g, --debugfile=FILE    Use FILE for debug info\n"
 #endif /* LUA_COD */
+#ifdef HKSC_LOGGING
+   "      --logfile=FILE      Output logs to FILE\n"
+#endif /* HKSC_LOGGING */
    , stderr);
   fputs(
    "  --                      Stop handling options\n", stderr);
   fputs(
-   "\nInt literal options for TYPE (to use with '-L')\n"
+   "\nInt literal options for TYPE (to use with `-L')\n"
    "  32  Enable 32-bit int literals\n"
-   "  64  Enable 64-bit int literals\n", stderr);
+   "  64  Enable 64-bit int literals\n"
+   "  Not providing a value for TYPE will enable all literal types\n",
+   stderr);
 #ifndef LUA_COD /* use special arguments for cod */
   fputs(
-   "\nBytecode stripping options for MODE (to use with '-s'):\n"
+   "\nBytecode stripping options for MODE (to use with `-s'):\n"
    "  n   Include all debug information in dump\n"
    "  p   Include profiling information in dump\n"
+   "  a   Ignore all debug information in dump\n"
+   "  Not providing a value for MODE is equivalent to providing `a'\n"
    , stderr);
 #endif /* !LUA_COD */
 }
@@ -148,8 +162,8 @@ static void print_config(void)
 
 #define DOSTRINGARG(s,l,v) do { \
   char *val; \
-  int shrt = IS(s); \
-  if (shrt) val = argv[++i]; \
+  int shrt; \
+  if (s != NULL && (shrt = IS(s))) val = argv[++i]; \
   else { \
     val = argv[i] + sizeof(l)-1; \
     if (*val == '=') val++; \
@@ -157,13 +171,14 @@ static void print_config(void)
     else usage(argv[i]); \
   } \
   if (val == NULL || *val == '\0') { \
-    if (shrt) usage("'" s "' needs an argument"); \
+    if (s != NULL && shrt) usage("'"  "' needs an argument"); \
     else usage("'" l "' needs an argument"); \
   } \
   v = (const char *)val; \
 } while (0)
 
-#define ELSE_IF_STRING(s,l,v) else if (IS(s) || HAS(l)) DOSTRINGARG(s,l,v)
+#define ELSE_IF_STRING(s,l,v) \
+  else if (((s != NULL) && IS(s)) || HAS(l)) DOSTRINGARG(s,l,v)
 
 static int doargs(int argc, char *argv[])
 {
@@ -238,6 +253,9 @@ static int doargs(int argc, char *argv[])
       usage("invalid int literal type given with '-L'");
     }
     ELSE_IF_STRING("-o", "--output", output);
+#ifdef HKSC_LOGGING
+    ELSE_IF_STRING(NULL, "--logfile", logfilename);
+#endif /* HKSC_LOGGING */
     else if (IS("-p"))      /* parse only */
       dumping=0;
     else if (HAS("-s"))     /* specify stripping level */
@@ -265,12 +283,6 @@ static int doargs(int argc, char *argv[])
           striplevel=BYTECODE_STRIPPING_PROFILING; break;
         case 'A': case 'a':
           striplevel=BYTECODE_STRIPPING_ALL; break;
-#if 0
-        case 'D': case 'd':
-          striplevel=BYTECODE_STRIPPING_DEBUG_ONLY; break;
-        case 'C': case 'c':
-          striplevel=BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION; break;
-#endif
         default:
           goto badstriparg;
       }
@@ -379,8 +391,17 @@ int main(int argc, char *argv[])
       error_multiple_inputs("-a");
 #endif /* LUA_COD */
   }
-  (void)settings;
-  H = hksI_newstate(NULL);
+  hksI_StateSettings(&settings);
+#ifdef HKSC_LOGGING
+  if (logfilename != NULL) {
+    logfile = fopen(logfilename, "w");
+    if (!logfile) {
+      fatal("cannot open log file");
+    }
+    settings.logctx.ud = logfile;
+  }
+#endif /* HKSC_LOGGING */
+  H = hksI_newstate(&settings);
   if (H==NULL) fatal("cannot create state: not enough memory");
   lua_setmode(H, mode);
   lua_setIntLiteralsEnabled(H,literals_enabled);
@@ -406,5 +427,8 @@ int main(int argc, char *argv[])
     dumpf = hksc_dump_default;
   status = dofiles(H, argc, argv);
   hksI_close(H);
+#ifdef HKSC_LOGGING
+  if (logfile) fclose(logfile);
+#endif /* HKSC_LOGGING */
   return status ? EXIT_FAILURE : EXIT_SUCCESS;
 }

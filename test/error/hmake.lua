@@ -1,0 +1,1 @@
+local a = hmake b{};

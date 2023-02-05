@@ -17,11 +17,7 @@ TESTS= -g -DLUA_USER_H='"ltests.h"'
 RELEASE=-Os
 
 
-CC= cc
 CFLAGS= $(MYCFLAGS) $(CWARNS)
-AR= ar rcu
-RANLIB= ranlib
-RM= rm -f
 
 MYCFLAGS=
 MYLDFLAGS=
@@ -38,10 +34,7 @@ MYLIBS=
 
 TOP=..
 
-SHAREDLIB=libhksc.so
-
-# libdir set in configure, libdir used as rpath argument to linker
-libdir=
+include $(TOP)/config.mak
 
 # linker arguments when linking standalone to the shared library
 LINK_LIBHKSC=-Wl,-rpath,"@executable_path" -Wl,-rpath,"$(libdir)"
@@ -69,8 +62,6 @@ ALL_T= $(CORE_T) $(LUAC_T) $(LUAC_SH)
 ALL_O= $(CORE_O) $(LUAC_O) $(AUX_O)
 ALL_PIC_O= $(CORE_PIC_O) $(AUX_PIC_O)
 ALL_A= $(CORE_T)
-
-default: all
 
 all:	static shared
 
@@ -124,7 +115,7 @@ depend:
 	sed -i.bk -e "/^# DO NOT DELETE$$/,/^# (end of Makefile)$$/{ \
 		/^# DO NOT DELETE$$/{G;p;r $$TEMPFILE1" -e "r $$TEMPFILE2" -e " \
 		}; /^# (end of Makefile)$$/{H;g;p;}; d; }" Makefile.in; \
-	$(RM) -f $$TEMPFILE1 $$TEMPFILE2 Makefile.in.bk
+	$(RM) $$TEMPFILE1 $$TEMPFILE2 Makefile.in.bk
 
 echo:
 	@echo "CC = $(CC)"

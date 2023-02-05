@@ -79,7 +79,7 @@ static void fixjump (FuncState *fs, int pc, int dest) {
   int offset = dest-(pc+1);
   lua_assert(dest != NO_JUMP);
   if (abs(offset) > MAXARG_sBx)
-    luaX_syntaxerror(fs->ls, "control structure too long");
+    luaX_inputerror(fs->ls,"Control structure contains too many instructions.");
   SETARG_sBx(*jmp, offset);
 }
 
@@ -197,7 +197,8 @@ void luaK_checkstack (FuncState *fs, int n) {
   int newstack = fs->freereg + n;
   if (newstack > fs->f->maxstacksize) {
     if (newstack >= MAXSTACK)
-      luaX_syntaxerror(fs->ls, "function or expression too complex");
+      luaX_inputerror(fs->ls, "Function or expression requires too many "
+                      "registers (too complex).");
     fs->f->maxstacksize = cast_byte(newstack);
   }
 }
@@ -263,10 +264,10 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
   TValue o;
   lua_assert(type == TK_SHORT_LITERAL || type == TK_LONG_LITERAL);
   if (type == TK_SHORT_LITERAL &&
-      (lua_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
+      (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
     setpvalue(&o, lua_ui64tolud(l));
   else if (type == TK_LONG_LITERAL &&
-           (lua_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64))
+           (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64))
     setui64value(&o, l);
   else
     luaX_syntaxerror(fs->ls, "int literals not enabled in compiler options");
@@ -889,7 +890,7 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
     luaK_codeABC(fs, OP_SETLIST, base, b, c);
   else {
     if (c > MAXARG_Bx)
-      luaG_runerror(fs->H, "Attempt to initialize a table with too many "
+      luaX_inputerror(fs->ls, "Attempt to initialize a table with too many "
         "array literals. Please split into multiple statements.");
     luaK_codeABC(fs, OP_SETLIST, base, b, 0);
     luaK_codeABx(fs, OP_DATA, 0, c);

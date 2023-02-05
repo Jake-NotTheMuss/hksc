@@ -135,11 +135,6 @@ static lu_int64 LoadUI64(LoadState *S)
   LoadVar(S,x);
   correctendianness(S,x);
 #endif
-  {
-    char buf[LUAI_MAXUI642STR];
-    lua_ui642str(buf,x);
-    printf("Loaded UI64 value: 0x%s\n", buf);
-  }
   return x;
 }
 

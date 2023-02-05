@@ -87,6 +87,7 @@ LUAI_FUNC void luaX_lookahead (LexState *ls);
 LUAI_FUNC void luaX_readFirstToken (LexState *ls);
 LUAI_FUNC void luaX_lexerror (LexState *ls, const char *msg, int token);
 LUAI_FUNC void luaX_syntaxerror (LexState *ls, const char *s);
+LUAI_FUNC void luaX_inputerror (LexState *ls, const char *s);
 LUAI_FUNC const char *luaX_token2str (LexState *ls, int token);
 
 
