@@ -393,7 +393,7 @@ int main(int argc, char *argv[])
   }
   hksI_StateSettings(&settings);
 #ifdef HKSC_LOGGING
-  if (logfilename != NULL) {
+  if (logfilename != NULL && *logfilename != '\0') {
     logfile = fopen(logfilename, "w");
     if (!logfile) {
       fatal("cannot open log file");
