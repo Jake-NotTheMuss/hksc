@@ -3,35 +3,48 @@
 TOP=../..
 include $(TOP)/config.mak
 
-BOM_TESTS= utf16be_bom utf16le_bom utf32be_bom utf32le_bom utf16or32le_bom
-# OTHER_TESTS=badbreak earlybreak earlyreturn literaloverflow lud ui64 utf8_identifier
-OTHER_TESTS= literaloverflow lud ui64
-# error checks for when structures are disabled
-NOHSTRUCTURE_TESTS=hmake hstructure typedparam typedvar
+HKSC=$(SRCDIR)/$(HKSC_NAME)
+
+HKSCFLAGS=-p --compile $(HKSC_SUPPRESS_LOGGING)
+
+# files are generated for each BOM that is NOT accepted by hksc
+BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \
+utf16or32le_bom.test unknown_bom.test
+OTHER_TESTS=badbreak.test earlybreak.test earlyreturn.test  \
+literaloverflow.test lud.test ui64.test #utf8_identifier.test
+# error checks for when structures are enabled/disabled
+NOHSTRUCTURE_TESTS=hmake.test hstructure.test typedparam.test typedvar.test
+YESHSTRUCTURE_TESTS=
 
 ALL_ERROR_TESTS= $(OTHER_TESTS) $(BOM_TESTS)
 
-EXTRA_ERROR_TESTS=
+all: prepare $(ALL_ERROR_TESTS) $(HSTRUCTURE_ERROR_TESTS)
+	@printf 'All Lua error checks passed\n\n'
 
-all: $(ALL_ERROR_TESTS) $(EXTRA_ERROR_TESTS)
-	@$(RM) *.output
+prepare: clean
+	@printf '\nStarting Lua error checks...\n'
 
 nohstructure: $(NOHSTRUCTURE_TESTS)
 
-# use -s to avoid generating extra debug files in case the command succeeds
-HKSCFLAGS=--compile -s $(HKSC_SUPPRESS_LOGGING)
+yeshstructure: $(YESHSTRUCTURE_TESTS)
 
-# the error should be that a UI64 overflowed which made its low 4 bits nonzero
-# literals need to be enabled for this test
-literaloverflow: HKSCFLAGS+=-L
+.SUFFIXES: .test .expect .lua
 
-$(ALL_ERROR_TESTS) $(NOHSTRUCTURE_TESTS):
-	@HKSC_BASENAME=`basename $(HKSC) | sed 's/\./\\./g'`; \
-	$(HKSC) $(HKSCFLAGS) $@.lua -o hksc.out 2>&1 1>/dev/null | \
-	sed "s/^.*$$HKSC_BASENAME:[ \t]*//" > $@.output
-	@$(RM) hksc.out >/dev/null 2>&1
-	@if diff -Nbu $@.expect $@.output ; then echo "$@ test OK"; fi
+.lua.expect:
+	@echo You need to regenerate $@!; false
 
-.PHONY: all nohstructure
+.expect.test:
+	@echo ------------ $* ------------
+	@EXTRAFLAGS= ; test "x$*" = "xliteraloverflow" && EXTRAFLAGS=-L; \
+	$(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $*.lua >/dev/null 2>$@
+	@if diff -Nbu $^ $@ ; then echo "$* test OK"; fi
+
+$(BOM_TESTS:.test=.lua): gen-bom.sh
+	@$(SHELL) $^
+
+clean:
+	-@$(RM) *.test >/dev/null 2>&1
+
+.PHONY: all prepare clean nohstructure yeshstructure
 
 # (end of Makefile)

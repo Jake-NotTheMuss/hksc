@@ -21,6 +21,7 @@
 #define LUA_COPYRIGHT	"Copyright (C) 1994-2006 Lua.org, PUC-Rio"
 #define LUA_AUTHORS 	"R. Ierusalimschy, H. H. de Figueiredo & W. Celes"
 
+#define HKSC_VERSION "0.0.0"
 
 /* mark for precompiled code (`<esc>Lua') */
 #define	LUA_SIGNATURE	"\033Lua"

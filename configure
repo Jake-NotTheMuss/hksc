@@ -330,9 +330,9 @@ else
 fi
 
 if test $STRUCTURE_EXTENSION_ON = 1; then
-	EXTRA_ERROR_TESTS=
+	HSTRUCTURE_ERROR_TESTS=yeshstructure
 else
-	EXTRA_ERROR_TESTS=nohstructure
+	HSTRUCTURE_ERROR_TESTS=nohstructure
 fi
 
 # do this before config.status is updated, the point of specifying files to

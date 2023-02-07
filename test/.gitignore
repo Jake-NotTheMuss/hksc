@@ -1,0 +1,6 @@
+*.cexpect
+*.profileexpect
+*.debugexpect
+*.luac
+*.luaprofile
+*.luadebug
