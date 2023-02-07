@@ -4,6 +4,7 @@
 ** See Copyright Notice in lua.h
 */
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -19,7 +20,6 @@
 
 #include "hksclib.h"
 
-#include "lctype.h"
 #include "ldo.h"
 #include "lgc.h"
 #include "lobject.h"

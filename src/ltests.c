@@ -5,6 +5,7 @@
 */
 
 
+#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +18,6 @@
 #include "hksclib.h"
 
 #include "lcode.h"
-#include "lctype.h"
 #include "ldebug.h"
 #include "ldo.h"
 #include "lfunc.h"

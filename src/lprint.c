@@ -4,6 +4,7 @@
 ** See Copyright Notice in lua.h
 */
 
+#include <ctype.h>
 #include <stdio.h>
 
 #define hksc_c
@@ -11,7 +12,6 @@
 
 #include "hksclua.h"
 
-#include "lctype.h"
 #include "ldebug.h"
 #include "lobject.h"
 #include "lopcodes.h"
@@ -42,7 +42,7 @@ static void PrintString(const TString *ts)
       case '\t': printf("\\t"); break;
       case '\v': printf("\\v"); break;
       default:
-        if (lisprint((unsigned char)c))
+        if (isprint((unsigned char)c))
           putchar(c);
         else
           printf("\\%03u",(unsigned char)c);

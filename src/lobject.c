@@ -4,6 +4,7 @@
 ** See Copyright Notice in lua.h
 */
 
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +15,6 @@
 
 #include "hksclua.h"
 
-#include "lctype.h"
 #include "ldo.h"
 #include "lmem.h"
 #include "lobject.h"
@@ -100,7 +100,7 @@ int luaO_str2d (const char *s, lua_Number *result) {
   if (*endptr == 'x' || *endptr == 'X')  /* maybe an hexadecimal constant? */
     *result = cast_num(strtoul(s, &endptr, 16));
   if (*endptr == '\0') return 1;  /* most common case */
-  while (lisspace(cast(unsigned char, *endptr))) endptr++;
+  while (isspace(cast(unsigned char, *endptr))) endptr++;
   if (*endptr != '\0') return 0;  /* invalid trailing characters? */
   return 1;
 }
@@ -224,7 +224,7 @@ static void f_kstring2print (hksc_State *H, void *ud) {
       case '\t': pushchar(sb, '\\'); pushchar(sb, 't'); break;
       case '\v': pushchar(sb, '\\'); pushchar(sb, 'v'); break;
       default: {
-        if (lisprint(c))
+        if (isprint(c))
           pushchar(sb, c);
         else {
           char buff[5];

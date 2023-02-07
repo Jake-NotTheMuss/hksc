@@ -5,6 +5,7 @@
 */
 
 
+#include <ctype.h>
 #include <locale.h>
 #include <string.h>
 #include <stdlib.h> /* TODO:  */
@@ -14,7 +15,6 @@
 
 #include "hksclua.h"
 
-#include "lctype.h"
 #include "ldebug.h"
 #include "ldo.h"
 #include "llex.h"
@@ -79,7 +79,7 @@ void luaX_init (hksc_State *H) {
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {
     lua_assert(token == cast(unsigned char, token));
-    return (!lisprint(token)) ? luaO_pushfstring(ls->H, "char(%u)", token) :
+    return (iscntrl(token)) ? luaO_pushfstring(ls->H, "char(%u)", token) :
                               luaO_pushfstring(ls->H, "%c", token);
   }
   else
@@ -104,7 +104,7 @@ static const char *txtToken (LexState *ls, int token) {
 /* nicer error messages from modern Lua */
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {  /* single-byte symbols? */
-    if (lisprint(token))
+    if (isprint(token))
       return luaO_pushfstring(ls->H, "'%c'", token);
     else  /* control character */
       return luaO_pushfstring(ls->H, "'<\\%d>'", token);
@@ -261,13 +261,13 @@ static int numeral_type(LexState *ls) {
 /* LUA_NUMBER */
 static int read_numeral (LexState *ls, SemInfo *seminfo) {
   int token;
-  lua_assert(lisdigit(ls->current));
+  lua_assert(isdigit(ls->current));
   do {
     save_and_next(ls);
-  } while (lisdigit(ls->current) || ls->current == '.');
+  } while (isdigit(ls->current) || ls->current == '.');
   if (check_next(ls, "Ee"))  /* `E'? */
     check_next(ls, "+-");  /* optional exponent sign */
-  while (lislalnum(ls->current) || ls->current == '_')
+  while (isalnum(ls->current) || ls->current == '_')
     save_and_next(ls);
   save(ls, '\0');
   buffreplace(ls, '.', ls->decpoint);  /* follow locale for decimal point */
@@ -414,7 +414,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
           case '\n':  /* go through */
           case '\r': save(ls, '\n'); inclinenumber(ls); continue;
           default: {
-            if (!lisdigit(ls->current))
+            if (!isdigit(ls->current))
               save_and_next(ls);  /* handles \\, \", \', and \? */
             else {  /* \xxx */
               int i = 0;
@@ -422,7 +422,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
               do {
                 c = 10*c + (ls->current-'0');
                 next(ls);
-              } while (++i<3 && lisdigit(ls->current) && zhasmore(ls->z));
+              } while (++i<3 && isdigit(ls->current) && zhasmore(ls->z));
               if (c > UCHAR_MAX)
                 luaX_lexerror(ls, "escape sequence too large", TK_STRING);
               save(ls, c);
@@ -529,7 +529,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             return TK_DOTS;   /* ... */
           else return TK_CONCAT;   /* .. */
         }
-        else if (!lisdigit(ls->current)) return '.';
+        else if (!isdigit(ls->current)) return '.';
         else {
           int token = read_numeral(ls, seminfo);
           lua_assert(token == TK_NUMBER);
@@ -537,20 +537,20 @@ static int llex (LexState *ls, SemInfo *seminfo) {
         }
       }
       default: {
-        if (lisspace(ls->current)) {
+        if (isspace(ls->current)) {
           lua_assert(!currIsNewline(ls));
           next(ls);
           continue;
         }
-        else if (lisdigit(ls->current)) {
+        else if (isdigit(ls->current)) {
           return read_numeral(ls, seminfo);
         }
-        else if (lislalpha(ls->current)) {
+        else if (isalpha(ls->current) || ls->current == '_') {
           /* identifier or reserved word */
           TString *ts;
           do {
             save_and_next(ls);
-          } while (lislalnum(ls->current));
+          } while (isalnum(ls->current) || ls->current == '_');
           ts = luaX_newstring(ls, luaZ_buffer(ls->buff),
                                   luaZ_bufflen(ls->buff));
           if (ts->tsv.reserved > 0)  /* reserved word? */ {
