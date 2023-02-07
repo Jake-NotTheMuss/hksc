@@ -12,6 +12,8 @@ TESTS= $(COMPILER_TESTS) $(DECOMPILER_TESTS)
 
 TESTMAKEFLAGS=
 
+EXTRA_ERROR_TESTS=
+
 # set by condigure
 GAMEDIR=
 
@@ -52,7 +54,8 @@ version:
 	$(HKSC) --version | grep -iq ".*hksc[^0-9]*$$HKSC_VERSION_REGEX"
 
 error:
-	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC=../$(HKSC)
+	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC=../$(HKSC) \
+	EXTRA_ERROR_TESTS=$(EXTRA_ERROR_TESTS)
 
 .SUFFIXES: .lua .luac .cexpect .ctest .dtest
 

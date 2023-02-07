@@ -18,7 +18,7 @@ date >> $logfile
 
 # get source directory
 SRCDIR=`dirname $0`
-if test $SRCDIR = "."; then
+if test "x$SRCDIR" = x.; then
 	SRCDIR=""
 else
 	SRCDIR="$SRCDIR/"
@@ -105,6 +105,7 @@ configuremakefile()
 	/^MYLDFLAGS *=/s#=.*#=$LDFLAGS#
 	/^TESTSUFFIX *=/s#=.*#=$TESTSUFFIX#
 	/^GAMEDIR *=/s#=.*#=$buildsetting#
+	/^EXTRA_ERROR_TESTS *=/s#=.*#=$EXTRA_ERROR_TESTS#
 	" > $1
 }
 HKSC_VERSION=0.0
@@ -326,6 +327,12 @@ if test $LOGGING = 0; then
 else
 	# suppress log output
 	HKSC_SUPPRESS_LOGGING=--logfile=/dev/null
+fi
+
+if test $STRUCTURE_EXTENSION_ON = 1; then
+	EXTRA_ERROR_TESTS=
+else
+	EXTRA_ERROR_TESTS=nohstructure
 fi
 
 # do this before config.status is updated, the point of specifying files to

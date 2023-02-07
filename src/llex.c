@@ -18,6 +18,7 @@
 #include "ldebug.h"
 #include "ldo.h"
 #include "llex.h"
+#include "llog.h"
 #include "lobject.h"
 #include "lparser.h"
 #include "lstate.h"
@@ -27,6 +28,7 @@
 
 
 #define next(ls) (ls->current = zgetc(ls->z))
+#define nextiszero(ls) (next(ls) == 0 && zhasmore(ls->z))
 
 
 
@@ -77,8 +79,8 @@ void luaX_init (hksc_State *H) {
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {
     lua_assert(token == cast(unsigned char, token));
-    return (!lisprint(token)) ? luaO_pushfstring(ls->L, "char(%u)", token) :
-                              luaO_pushfstring(ls->L, "%c", token);
+    return (!lisprint(token)) ? luaO_pushfstring(ls->H, "char(%u)", token) :
+                              luaO_pushfstring(ls->H, "%c", token);
   }
   else
     return luaX_tokens[token-FIRST_RESERVED];
@@ -133,12 +135,17 @@ static const char *txtToken (LexState *ls, int token) {
 
 #endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
 
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+# define LLEX_QS LUA_QS
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+# define LLEX_QS "%s"
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
 
 void luaX_lexerror (LexState *ls, const char *msg, int token) {
   char buff[MAXSRC];
   luaO_chunkid(buff, getstr(ls->source), MAXSRC);
   if (token)
-    luaD_setferror(ls->H, "%s:%d: %s near %s", buff, ls->linenumber, msg,
+    luaD_setferror(ls->H, "%s:%d: %s near " LLEX_QS, buff, ls->linenumber, msg,
                  txtToken(ls, token));
   else
     luaD_setferror(ls->H, "%s:%d: %s", buff, ls->linenumber, msg);
@@ -176,13 +183,14 @@ static void inclinenumber (LexState *ls) {
   if (currIsNewline(ls) && ls->current != old)
     next(ls);  /* skip `\n\r' or `\r\n' */
   if (++ls->linenumber >= MAX_INT)
-    luaX_syntaxerror(ls, "chunk has too many lines");
+    luaX_inputerror(ls, "chunk has too many lines");
 }
 
 
 void luaX_setinput (hksc_State *H, LexState *ls, ZIO *z, TString *source) {
   ls->decpoint = '.';
   ls->H = H;
+  ls->t.token = TK_EOS;
   ls->lookahead.token = TK_EOS;  /* no look-ahead token */
   ls->z = z;
   ls->fs = NULL;
@@ -552,7 +560,11 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             {
               luaX_inputerror(ls, "The reserved words \"hmake\" and "
                 "\"hstructure\" can only be used when the virtual machine is "
-                "built with structure support.");
+                "built with structure support."
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+                "  See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+                );
             }
             return token;
           }
@@ -592,7 +604,6 @@ void luaX_lookahead (LexState *ls) {
 /* returns a token id corresponding to the BOM that was read */
 static int readBOM (LexState *ls) {
   int first = ls->current;
-  int nextCharacter;
   if (first == 0xEF) { /* utf8 */
     if (next(ls) == 0xBB && next(ls) == 0xBF) {
       next(ls);
@@ -607,20 +618,19 @@ static int readBOM (LexState *ls) {
   }
   else if (first == 0xFF) { /* little endian utf16 or utf32 */
     if (next(ls) == 0xFE) {
-      nextCharacter = next(ls);
-      if (nextCharacter != 0) /* utf16 */
+      if (nextiszero(ls) && nextiszero(ls)) /* little endian utf32 */
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+        /* Havok gets this wrong but the error messages need to match */
         return TK_UTF16LE_BOM;
-      else {
-        nextCharacter = next(ls);
-        if (nextCharacter == 0) { /* utf32 */
-          next(ls);
-          return TK_UTF32LE_BOM;
-        }
-      }
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+        return TK_UTF32LE_BOM;
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+      else
+        return TK_UTF16LE_BOM;
     }
   }
   else if (first == 0) { /* big endian utf32 */
-    if (next(ls) == 0 && next(ls) == 0xFE && next(ls) == 0xFF) {
+    if (nextiszero(ls) && next(ls) == 0xFE && next(ls) == 0xFF) {
       next(ls);
       return TK_UTF32BE_BOM;
     }
