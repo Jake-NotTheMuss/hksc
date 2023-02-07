@@ -7,6 +7,8 @@ include $(TOP)/config.mak
 # should be set by the parent Makefile in the invokation
 HKSC=echo you need to set HKSC in the parent Makefile; false \#
 
+HKSCFLAGS=-L --withdebug $(HKSC_SUPPRESS_LOGGING)
+
 # TESTS=version
 TESTS= $(COMPILER_TESTS) $(DECOMPILER_TESTS)
 
@@ -68,10 +70,16 @@ error:
 # compiler test
 .cexpect.ctest:
 	@echo hello $@
+	$(HKSC) $(HKSCFLAGS) $*.lua
+	@ if cmp $*.cexpect $*.luac; then echo "$*.luac OK"; fi
+	@ if cmp $*.debugexpect $*.luadebug; then echo "$*.luadebug OK"; fi
+	@ if diff -Nbu $*.callstackdbexpect $*.luacallstackdb; then \
+	echo "$*.luacallstackdb OK"; fi
+
 
 # decompiler test
 .ctest.dtest:
-	@echo hello $@
+	@: echo hello $@
 
 clean:
 	$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest

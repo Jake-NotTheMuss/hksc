@@ -204,6 +204,12 @@ static void pushlstr (struct StringBuilder *sb, const char *str, size_t l) {
   pushstr(sb, s); \
 } while (0)
 
+#define pushint(sb,n,fmt) do { \
+  char s[(CHAR_BIT * sizeof(int) - 1) / 3 + 2]; \
+  sprintf(s, fmt, n); \
+  pushstr(sb, s); \
+} while (0)
+
 
 /* return a printable version of a string constant */
 static void f_kstring2print (hksc_State *H, void *ud) {
@@ -275,11 +281,11 @@ static void f_buildvfstring (hksc_State *H, void *ud) {
         break;
       }
       case 'd': {
-        pushnum(sb, va_arg(argp, int));
+        pushint(sb, va_arg(argp, int), "%d");
         break;
       }
       case 'u': {
-        pushnum(sb, va_arg(argp, unsigned int));
+        pushint(sb, va_arg(argp, unsigned int), "%u");
         break;
       }
       case 'f': {

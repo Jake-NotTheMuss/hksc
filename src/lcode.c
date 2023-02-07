@@ -18,6 +18,7 @@
 #include "ldo.h"
 #include "lgc.h"
 #include "llex.h"
+#include "llog.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lopcodes.h"
@@ -36,9 +37,8 @@ static int isnumeral(expdesc *e) {
 
 void luaK_nil (FuncState *fs, int from, int n) {
   Instruction *previous;
-  if (fs->pc > fs->lasttarget) {  /* no jumps to current position? */
-    if (fs->pc == 0)  /* function start? */
-      return;  /* positions are already clean */
+  /* no jumps to current position? */
+  if (fs->pc > fs->lasttarget && fs->pc != 0) {
     if (GET_OPCODE(*(previous = &fs->f->code[fs->pc-1])) == OP_LOADNIL) {
       int pfrom = GETARG_A(*previous);
       int pto = GETARG_B(*previous);
@@ -972,15 +972,19 @@ static void specialize_instruction_sequence (hksc_State *H, Instruction *code,
   for (i = 1; i < sizecode; i++) {
     if (properties[i] == 0) { /* current instruction is not a leader */
       int prevIndex = i-1;
-      OpCode prev = GET_OPCODE(code[prevIndex]);
-      OpCode curr = GET_OPCODE(code[i]);
-      while (prev == OP_DATA && prevIndex > 0) /* data codes do not count */
-        prev = GET_OPCODE(code[--prevIndex]);
-      if (testMakeR1(prev)) {
-        OpCode r1Version = getR1Version(curr);
+      Instruction prev, curr;
+      OpCode prevOpCode, currOpCode;
+      prev = code[prevIndex];
+      curr = code[i];
+      while (GET_OPCODE(prev) == OP_DATA && prevIndex > 0)
+        prev = code[--prevIndex];
+      prevOpCode = GET_OPCODE(prev);
+      currOpCode = GET_OPCODE(curr);
+      if (testMakeR1(prevOpCode)) {
+        OpCode r1Version = getR1Version(currOpCode);
         if (r1Version != OP_MAX &&
           ((getR1Mode(r1Version) == R1A && GETARG_A(prev) == GETARG_A(curr)) ||
-           (getR1Mode(r1Version) == R1B && GETARG_B(prev) == GETARG_B(curr))))
+           (getR1Mode(r1Version) == R1B && GETARG_A(prev) == GETARG_B(curr))))
           SET_OPCODE(code[i], r1Version); /* set to R1 version */
       }
     }

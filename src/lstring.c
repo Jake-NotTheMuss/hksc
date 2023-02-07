@@ -12,6 +12,7 @@
 
 #include "hksclua.h"
 
+#include "llog.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
@@ -108,6 +109,7 @@ lu_int32 luaS_cod_hashstring (hksc_State *H, const char *s, size_t l) {
   lu_int32 hash = 5381;
   size_t i = 0;
   const int step = Settings(H).hash_step;
+  lua_assert(s != NULL);
   while (i < l) {
     hash = hash * 33 + s[i];
     i += step;

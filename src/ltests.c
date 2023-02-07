@@ -659,7 +659,7 @@ static int checkpushfstring(hksc_State *H) {
   char pcnt = '\0'; /* '%' read in sscanf */
   char c = 'z';
   int i = 100;
-  unsigned int u = 101;
+  unsigned int u = 1488553344;
   lua_Number f = 100.0f;
   void *p = NULL;  /* H is not NULL */
   char s[sizeof("hello")+100] = {0};
@@ -667,13 +667,13 @@ static int checkpushfstring(hksc_State *H) {
   lua_logtest(H, "invokation: `luaO_pushfstring(H, \"%c %d %u %f %p %s %%\","
                "'a', 1, 2, 3.0f, (void *)H, \"hello\");");
   str = luaO_pushfstring(H, "%c %d %u %f %p %s %%",
-                         'a', 1, 2, 3.0f, (void *)H, "hello");
+                         'a', 101, 1488553398, 3.0f, cast(void *, H), "hello");
   lua_logtest(H, luaI_formatmsg(H, "returned: \"%s\"", str));
   result = sscanf(str,"%c %d %u %f %p %[a-z] %c", &c, &i, &u, &f, &p, s, &pcnt);
   test_assert(H, result == 7);
   test_assert(H, c == 'a');
-  test_assert(H, i == 1);
-  test_assert(H, u == 2);
+  test_assert(H, i == 101);
+  test_assert(H, u == 1488553398);
   test_assert(H, f > 2.9f && f < 3.1f);
   test_assert(H, p == cast(void *, H));
   test_assert(H, strcmp(s, "hello") == 0);

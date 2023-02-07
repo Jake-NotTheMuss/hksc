@@ -120,11 +120,6 @@ static void DumpUI64(lu_int64 x, DumpState *D)
   correctendianness(D,x);
   DumpVar(x,D);
 #endif
-  {
-    char buf[LUAI_MAXUI642STR];
-    lua_ui642str(buf,x);
-    printf("Dumping UI64 value: 0x%s\n", buf);
-  }
 }
 
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D);
