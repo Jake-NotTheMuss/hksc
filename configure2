@@ -171,8 +171,8 @@ rm -f "$SRCDIR"/test/*.cexpect "$SRCDIR"/test/*.profileexpect \
 "$SRCDIR"/test/*.debugexpect
 
 # update expect files to point to the correct game directory
-ln -s "$SRCDIR/test/$game"/*.cexpect "$SRCDIR/test/$game"/*.profileexpect \
-"$SRCDIR/test/$game"/*.debugexpect "$SRCDIR/test"
+# ln -s "$SRCDIR/test/$game"/*.cexpect "$SRCDIR/test/$game"/*.profileexpect \
+# "$SRCDIR/test/$game"/*.debugexpect "$SRCDIR/test"
 
 exit
 
