@@ -1,0 +1,15 @@
+# libhksc pkg-config file
+# ./configure
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+sharedlibdir=@sharedlibdir@
+includedir=@includedir@
+
+Name: libhksc
+Description: Havok Script Lua compiler/decompiler library
+Version: @HKSC_VERSION@
+Requires:
+Conflicts:
+Libs: -L${libdir} -L${sharedlibdir} -lhksc
+Cflags: -I${includedir}

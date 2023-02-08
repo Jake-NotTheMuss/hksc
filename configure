@@ -1,158 +1,328 @@
 #!/bin/sh
-# developer configure script for libhksc
-#
+# libhksc configure script
 
-logfile=config.log
-configstatus=config.status
 
-# the default configuration (this project is made primarily for Black Ops III)
-defaultbuildsetting=codt7
-
-commandline="$0 $*"
-test $# -lt 1 && commandline="$0"
-
-# start of configure.log
-echo -------------------- > $logfile
-echo $0 $* >> $logfile
-date >> $logfile
-
-# get source directory
-SRCDIR=`dirname $0`
-if test "x$SRCDIR" = x.; then
-	SRCDIR=""
+HKSCDIR=`dirname "$0"`
+if test "x$HKSCDIR" = x.; then
+	HKSCDIR=
+	in_source=yes
 else
-	SRCDIR="$SRCDIR/"
+	HKSCDIR="$HKSCDIR/"
+	in_source=no
 fi
-SRCDIR="${SRCDIR}src"
 
-infolog()
+config_status=config.status
+
+config_h=src/hkscconf.h
+config_h_TMP=hkscconf-$$.h
+lua_h="${HKSCDIR}src/hksclua.h"
+
+VER=`sed -n -e '/HKSC_VERSION "/s/.*"\(.*\)".*/\1/p' < "$lua_h"`
+VER3=`echo $VER | cut -d. -f 1-3`
+VER2=`echo $VER | cut -d. -f 1-2`
+VER1=`echo $VER | cut -d. -f 1-1`
+
+show_help()
 {
-	echo $* | tee -a $logfile
+	cat <<EOF
+Usage: $0 [options]
+
+Standard Options:
+  --help                   Print this message and exit
+  --reset                  Reset configuration to default settings
+  --prefix=PREFIX          Install in PREFIX
+  --eprefix=EPREFIX        Install architecture-dependent files in EPREFIX
+  --bindir=DIR             Install binaries in DIR
+  --libdir=DIR             Install libraries in DIR
+  --sharedlibdir=DIR       Install shared libraries in DIR
+  --includedir=DIR         Install C headers in DIR
+  --sharedir=DIR           Root documentation DIR
+  --docdir=DIR             Install documentation in DIR
+  --mandir=DIR             Install man pages in DIR
+
+Havok Script Compatibility Options:
+  --game=GAME              Configure compability settings for GAME
+                           Supported values and their corresponding titles:
+                             codt6
+                             codt7
+
+Lua/Hksc Options:
+  --with-decompiler        Lua decompiler (enabled by default)
+  --no-decompiler          Disable Lua decompiler
+  --emu-ui64               Use C structs to emulate UI64 (disabled by default)
+  --no-emu-ui64            Disable using C structs to emulate UI64
+  --with-logging           Enable logging information and warning messages
+  --disable-logging        Disable logging (deault)
+  --                       Stop handling options
+
+Advanced Options:
+  --release                Build a release binary
+  --debug                  Build a debug binary
+
+Developer Options:
+  --debug-pass=NUMBER      Debug decompiler pass NUMBER [1-2]
+EOF
+	exit $1
 }
 
 error()
 {
-	infolog "$0: error: $*"
-	exit 1
+	echo $0: error: $*
+	exit ${1-1}
 }
 
 warn()
 {
-	infolog "warning: $*"
+	echo $0: warning: $*
 }
 
-reset=0
+emu_ui64=0
+with_decompiler=1
+with_logging=0
+debug=0
+debug_pass=
 
-varstatus()
-{
-	# $1 = variable name
-	# $2 = default value
-	test $reset = 1 && eval "unset $1"
-	eval "val=\${$1:-$2}"
-	eval "$1=$val"
-	echo "$1=$val"
-}
+test -e "$config_status" && . "$config_status"
 
-updateconfigstatus()
-{
-	cat <<EOF > $configstatus
-# $configstatus: configure settings for libhksc
-# $commandline
-# `date`
-
-# install paths
-`varstatus prefix /usr/local`
-`varstatus exec_prefix $prefix`
-`varstatus libdir $exec_prefix/libdir`
-`varstatus sharedlibdir $libdir`
-`varstatus includedir $prefix/include`
-`varstatus mandir $prefix/share/man`
-
-# emulate ui64 using structures with a hi/lo field for C89 with no 64-bit type
-# default value is 1 when developing for testing
-`varstatus EMU_UI64 1`
-# build decompiler machinery
-`varstatus DECOMPILER 1`
-# make a release build
-`varstatus release 0`
-# build configuration label (named after the games that use a particular config)
-`varstatus buildsetting $defaultbuildsetting`
-# enable loading/dumping bytecode for multiple platforms in one binary
-`varstatus multiplat 0`
-# enable logging in Lua
-`varstatus LOGGING 0`
-
-# compatibility settings
-`varstatus STRUCTURE_EXTENSION_ON 0`
-`varstatus WITHNATIVEINT 0`
-`varstatus WITHDOUBLES 0`
-`varstatus SELF 0`
-`varstatus GETGLOBAL_MEMOIZATION 0`
-
-# set which decompiler pass to test (0 means none)
-`varstatus debugpass 0`
+for opt; do
+	eval opt=\"$opt\"
+	case "$opt" in
+		-h|--help) show_help ;;
+		--prefix=*) prefix=${opt#*=} ;;
+		--exec-prefix=*|--eprefix=*) exec_prefix=${opt#*=} ;;
+		--bindir=*) bindir=${opt#*=} ;;
+		--libdir=*) libdir=${opt#*=} ;;
+		--sharedlibdir=*) sharedlibdir=${opt#*=} ;;
+		--includedir=*) includedir=${opt#*=} ;;
+		--sharedir=*) sharedir=${opt#*=} ;;
+		--docdir=*) docdir=${opt#*=} ;;
+		--mandir=*) mandir=${opt#*=} ;;
+		--game=*) game=${opt#*=} ;;
+		--with-decompiler) with_decompiler=1 ;;
+		--no-decompiler) with_decompiler=0 ;;
+		--emu-ui64) emu_ui64=1 ;;
+		--no-emu-ui64) emu_ui64=0 ;;
+		--with-logging) with_logging=1 ;;
+		--disable-logging) with_logging=0 ;;
+		--debug) debug=1 ;;
+		--release) debug=0 ;;
+		--debug-pass=*) debug_pass=${opt#*=} ;;
+		*) echo "Unrecongnized option '$opt'"
+	esac
+done
 
 # shared library extension
-`varstatus sharedext`
-EOF
-	reset=0
+case `(uname -s || echo unknown) 2>/dev/null` in
+	Darwin* | darwin*)
+		LIBSUF='.a'
+		DLLSUF='.dylib'
+		EXESUF=
+		LINK_LIBHKSC='$(LINK_LIBHKSC_DYLIB)' ;;
+	Windows_NT|MINGW*|mingw*|CYGWIN*|Cygwin*|cygwin*)
+		prefix='C:/Program Files/hksc'
+		AR='$(CC) -shared -o'
+		RANLIB='strip --strip-unneeded'
+		CC=gcc
+		CFLAGS="$CFLAGS -DLUA_BUILD_AS_DLL"
+		LIBSUF='.lib'
+		DLLSUF='.dll'
+		EXESUF='.exe'
+		LINK_LIBHKSC='$(LINK_LIBHKSC_DLL)' ;;
+	*)
+		LIBSUF='.a'
+		DLLSUF='.so'
+		EXESUF=
+		LINK_LIBHKSC='$(LINK_LIBHKSC_SO)' ;;
+esac
+
+prefix=${prefix-/usr/local}
+exec_prefix=${exec_prefix-'${prefix}'}
+bindir=${bindir-'${exec_prefix}/bin'}
+libdir=${libdir-'${exec_prefix}/lib'}
+sharedlibdir=${sharedlibdir-'${libdir}'}
+includedir=${includedir-'${prefix}/include'}
+sharedir=${sharedir-'${prefix}/share'}
+docdir=${docdir-'${sharedir}/doc/libhksc'}
+mandir=${mandir-'${sharedir}/man'}
+pkgconfigdir='${libdir}/pkgconfig'
+
+# Check all directory arguments for consistency.
+for var in prefix exec_prefix bindir libdir sharedlibdir includedir sharedir \
+docdir mandir pkgconfigdir; do
+	eval val=\$$var
+	# Remove trailing slashes.
+	case $val in
+	*/ )
+		val=`expr "X$val" : 'X\(.*[^/]\)' \| "X$val" : 'X\(.*\)'`
+		eval $var=\$val;;
+	esac
+	# Be sure to have absolute directory names.
+	case $val in
+	[\\/$]* | ?:[\\/]* )  continue;;
+	'' ) case $var in *prefix ) continue;; esac;;
+	esac
+	error "expected an absolute directory name for --$var: $val"
+done
+
+case "$debug_pass" in
+	"") debug_pass=0 ;;
+	[0-2]) ;;
+	*) error "Invalid value for --debug-pass '$debug_pass'" ;;
+esac
+
+case "$game" in
+	"")
+		echo "Configuring compatibility settings for 'codt7' by default"
+		game=codt7; lua_cod=1; lua_codt7=1 ;;
+	codt6) lua_cod=1; lua_codt7=0 ;;
+	codt7) lua_cod=1; lua_codt7=1 ;;
+	cod*)
+		warn "changing supplied game value '$game' to 'codt6'"
+		game=codt6; lua_cod=1; lua_codt7=0 ;;
+	*) lua_cod=0; lua_codt7=0 ;;
+esac
+
+# configure compatibility settings based on the build config type
+case "$game" in
+	codt6|codt7)
+		STRUCTURE_EXTENSION_ON=0
+		WITHNATIVEINT=0
+		WITHDOUBLES=0
+		SELF=0
+		GETGLOBAL_MEMOIZATION=0
+		;;
+	*) error "Unsupported game '$game'" ;;
+esac
+
+# set a Makefile variable based on the value of a configure variable
+# set10 [confvarname] [makevarname] [valiftrue] [valiffalse]
+set10()
+{
+	eval val=\$$1
+	if test "x$val" = x0; then
+		eval "$2='$4'"
+	else
+		eval "$2='$3'"
+	fi
 }
 
-configuremakefile()
+# set which flag is needed to suppress log output
+set10 with_logging HKSC_SUPPRESS_LOGGING --logfile=/dev/null
+# set build compiler flags for debug or release builds
+set10 debug BUILDCONFIGFLAGS '$(TESTS)' '$(RELEASE)'
+# set which tests to include based on whether the decompiler is enabled
+set10 with_decompiler TESTSUFFIX .dtest .ctest
+# set which error tests to do for compatibility features
+set10 STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_TESTS yeshstructure nohstructure
+# flags for generating Lua profiling info
+set10 lua_cod GEN_PROFILE \
+"-o /dev/null --debugfile /dev/null --callstackdb" "-s=p -o"
+# flags for generating Lua debug info
+set10 lua_cod GEN_DEBUG \
+"-o /dev/null --callstackdb /dev/null --debugfile" "-s=n -o"
+# command for comparing profiling info
+set10 lua_cod CMP_PROFILE "diff -u" "cmp -b"
+CMP_CODE="cmp -bl"
+CMP_DEBUG="cmp -bl"
+
+
+# get the path to a directory relative to another location
+# pathfromhere [here] [there] [varname]
+pathfromhere()
 {
-	sed < $1.in "
-	/^MYCFLAGS *=/s#=.*#=$CFLAGS#
-	/^MYLDFLAGS *=/s#=.*#=$LDFLAGS#
-	/^TESTSUFFIX *=/s#=.*#=$TESTSUFFIX#
-	/^GAMEDIR *=/s#=.*#=$buildsetting#
-	/^EXTRA_ERROR_TESTS *=/s#=.*#=$EXTRA_ERROR_TESTS#
-	" > $1
-}
-HKSC_VERSION=0.0
-configurepc()
-{
-	sed < $1.in "
-	s/@prefix@/$prefix/g
-	s/@exec_prefix@/$exec_prefix/g
-	s/@libdir@/$libdir/g
-	s/@sharedlibdir@/$sharedlibdir/g
-	s/@includedir@/$includedir/g
-	s/@HKSC_VERSION@/$HKSC_VERSION/g
-	" > $1
+	here="$1"
+	there="$2"
+	var=$3
+	case $there in
+		/*) ;; # absolute path
+		*) # fix relative symlink path
+			while test "$here" ; do
+				there="../$there"
+				here="${here#${here%%/*}}"; here="${here#/}"
+			done ;;
+	esac
+	eval "$var=\"$there\""
 }
 
-configureheader()
+if test "x$in_source" = xno; then
+	pathfromhere src "${HKSCDIR}src" hksc_include_path
+	CFLAGS="$CFLAGS -I'$hksc_include_path'"
+	hksc_include_path=
+fi
+
+# Update config.status
+echo '# Automatically generated by configure' > "$config_status"
+
+printvar()
 {
-	sed < $1.in "
-	s/@LUACONFIG_EMU_UI64@/$EMU_UI64/g
-	s/@LUACONFIG_DECOMPILER@/$DECOMPILER/g
-	s/@LUACONFIG_LOGGING@/$LOGGING/g
-	s/@LUACONFIG_COD@/$LUA_COD/g
-	s/@LUACONFIG_CODT7@/$LUA_CODT7/g
-	s/@HKSC_GETGLOBAL_MEMOIZATION@/$GETGLOBAL_MEMOIZATION/g
-	s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
-	s/@HKSC_SELF@/$SELF/g
-	s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
-	s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
-	s/@HKSC_DEBUG_PASS@/$debugpass/g
-	" > $1
+	eval echo $1=\$$1
 }
 
-genconfigmak()
+logvar()
 {
-	cat <<EOF > $1
-# Generated by configure
-prefix=$prefix
-exec_prefix=$exec_prefix
-bindir=$bindir
-libdir=$libdir
-sharedlibdir=$sharedlibdir
-includedir=$includedir
-docdir=$docdir
-mandir=$mandir
-pkgconfigdir=$pkgconfigdir
-SRCDIR=$SRCDIR
-TOPSRC=\$(TOP:..=../)\$(SRCDIR)
+	eval echo $1=\$$1 | tee -a "$config_status"
+}
+
+# install paths
+logvar prefix
+logvar exec_prefix
+logvar bindir
+logvar libdir
+logvar sharedlibdir
+logvar includedir
+logvar sharedir
+logvar docdir
+logvar mandir
+logvar pkgconfigdir
+
+# preprocessor defs
+logvar emu_ui64
+logvar with_decompiler
+logvar with_logging
+logvar debug
+logvar debug_pass
+
+# Havok Script configuration
+logvar game
+logvar lua_cod
+logvar lua_codt7
+logvar GETGLOBAL_MEMOIZATION
+logvar STRUCTURE_EXTENSION_ON
+logvar SELF
+logvar WITHNATIVEINT
+logvar WITHDOUBLES
+
+printvar CC
+printvar CFLAGS
+printvar LDFLAGS
+
+# generate files
+if test "x$in_source" = xno; then
+	for d in src test test/error; do
+		test -d $d || mkdir $d
+	done
+fi
+
+# generate config.mak
+cat >config.mak <<EOF
+# Automatically generated by configure
+prefix=\$(DESTDIR)$prefix
+exec_prefix=\$(DESTDIR)$exec_prefix
+bindir=\$(DESTDIR)$bindir
+libdir=\$(DESTDIR)$libdir
+sharedlibdir=\$(DESTDIR)$sharedlibdir
+includedir=\$(DESTDIR)$includedir
+sharedir=\$(DESTDIR)$sharedir
+docdir=\$(DESTDIR)$docdir
+mandir=\$(DESTDIR)$mandir
+pkgconfigdir=\$(DESTDIR)$pkgconfigdir
+HKSCDIR=$HKSCDIR
+TOPHKSCDIR=\$(TOP)/\$(HKSCDIR)
+SRCDIR=\$(HKSCDIR)src
+TESTDIR=\$(HKSCDIR)test
+ETCDIR=\$(HKSCDIR)etc
+DOCDIR=\$(HKSCDIR)doc
+TOPSRC=\$(TOP)/src
 CC=${CC-cc}
 AR=${AR-ar rcu}
 RANLIB=${RANLIB-ranlib}
@@ -161,232 +331,123 @@ RM=${RM-rm -f}
 FIND=${FIND-find}
 INSTALL=${INSTALL-install}
 MKDIR=${MKDIR-mkdir}
-SHAREDLIB=$SHAREDLIB
-HKSC_VERSION=$HKSC_VERSION
+CFLAGS=$CFLAGS \$(BUILDCONFIGFLAGS)
+LDFLAGS=$LDFLAGS
+LIBSUF=$LIBSUF
+DLLSUF=$DLLSUF
+EXESUF=$EXESUF
+STATICLIB=libhksc\$(LIBSUF)
+SHAREDLIB=libhksc\$(DLLSUF)
+LINK_LIBHKSC=$LINK_LIBHKSC
+HKSC_T=hksc\$(EXESUF)
+HKSC_SH=hkscsh\$(EXESUF)
+HKSC_VERSION=$VER
+BUILDCONFIGFLAGS=$BUILDCONFIGFLAGS
+EOF
+
+if test "x$in_source" = xno; then
+	pathfromhere test "${HKSCDIR}test/$game" game_vpath
+	pathfromhere src "${HKSCDIR}src" src_vpath
+	pathfromhere test/error "${HKSCDIR}test/error" test_error_vpath
+	echo Using VPATH=$src_vpath for building Lua
+	echo Using VPATH=$game_vpath for testing compiler output
+	echo Using VPATH=$test_error_vpath for Lua error checks
+else
+	game_vpath="$game"
+	src_vpath=
+	test_error_vpath=
+fi
+
+cat >src/vpath.mak <<EOF
+# Automatically generated by configure
+VPATH=$src_vpath
+EOF
+
+cat >test/config.mak <<EOF
+# Automatically generated by configure
+GAMEDIR=$game
+VPATH=$game_vpath
 HKSC_SUPPRESS_LOGGING=$HKSC_SUPPRESS_LOGGING
+HSTRUCTURE_ERROR_TESTS=$HSTRUCTURE_ERROR_TESTS
+GEN_PROFILE=$GEN_PROFILE
+GEN_DEBUG=$GEN_DEBUG
+CMP_CODE=$CMP_CODE
+CMP_PROFILE=$CMP_PROFILE
+CMP_DEBUG=$CMP_DEBUG
+TESTSUFFIX=$TESTSUFFIX
 EOF
-}
 
-configurefile()
-{
-	for v; do
-		case "${v##*.}" in
-			*Makefile) configuremakefile $v ;;
-			mak) genconfigmak $v ;;
-			pc) configurepc $v ;;
-			h) configureheader $v ;;
-		esac
-	done
-}
-
-LC_ALL=C
-export LC_ALL
-
-# C compiler
-test x$CC = x && CC=cc || echo CC=$CC
-
-# create the config file with default values if it doesn't exist
-test -e $configstatus || updateconfigstatus
-
-# load existing config settings
-. $configstatus
-
-show_help()
-{
-	cat <<EOF
-Usage: $0 [options]
-
-Options:
-  --help                   Print this message and exit
-  --debug-pass=NUMBER      Debug decompiler pass NUMBER
-  --configfile=FILE        Regenerate FILE
-  --reset, --default       Reset configuration to default settings
-  --prefix=PATH            Set prefix path for installed files
-  --eprefix=PATH           Set exec_prefix path for installed files
-  --bindir=PATH            Set path for installed binaries
-  --libdir=PATH            Set path for installed libraries
-  --sharedlibdir=PATH      Set path for installed shared libraries
-  --includedir=PATH        Set path for installed headers
-  --docdir=PATH            Set path for installed documentation
-  --mandir=PATH            Set path for installed man pages
-  --emu-ui64               Use C struct to emulate UI64 values, disabled by
-                           default
-  --no-emu-ui64            Check for supported 64-bit types before resorting to
-                           emulation using C struct
-  --with-decompiler        Enable Lua decompiler, enabled by default
-  --no-decompiler          Disable building Lua decompiler
-  --release                Build a release binary
-  --debug                  Build a debug binary
-  --game=GAME              Configure compatibility settings for GAME
-                           Supported values:
-                             codt6
-                             codt7
-  --with-logging           Enable logging information and warning mesages
-  --disable-logging        Disable logging, disabled by default
-  --                       Stop handling options
+cat >test/error/vpath.mak <<EOF
+# Automatically generated by configure
+VPATH=$test_error_vpath
 EOF
-	exit 0
-}
 
-prefix=${prefix-/usr/local}
-exec_prefix=${exec_prefix-'${prefix}'}
-bindir=${bindir-'${exec_prefix}/bin'}
-libdir=${libdir-'${exec_prefix}/lib'}
-sharedlibdir=${sharedlibdir-'${libdir}'}
-includedir=${includedir-'${prefix}/include'}
-docdir=${docdir-'${prefix}/share/doc/libhksc'}
-mandir=${mandir-'${prefix}/share/man'}
-pkgconfigdir='${libdir}/pkgconfig'
+# configure pc
+sed < "${HKSCDIR}libhksc.pc.in" "
+s#@prefix@#$prefix#g
+s#@exec_prefix@#$exec_prefix#g
+s#@libdir@#$libdir#g
+s#@sharedlibdir@#$sharedlibdir#g
+s#@includedir@#$includedir#g
+s#@HKSC_VERSION@#$VER#g
+" > libhksc.pc
 
-# shared library extension
-test x$sharedext = x && case `(uname -s || echo unknown) 2>/dev/null` in
-	Darwin* | darwin*)
-		sharedext='.dylib' ;;
-	*)
-		sharedext='.so' ;;
-esac
+# configure header
+sed < "${HKSCDIR}$config_h.in" "
+s/@LUACONFIG_EMU_UI64@/$emu_ui64/g
+s/@LUACONFIG_DECOMPILER@/$with_decompiler/g
+s/@LUACONFIG_LOGGING@/$with_logging/g
+s/@LUACONFIG_COD@/$lua_cod/g
+s/@LUACONFIG_CODT7@/$lua_codt7/g
+s/@HKSC_GETGLOBAL_MEMOIZATION@/$GETGLOBAL_MEMOIZATION/g
+s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
+s/@HKSC_SELF@/$SELF/g
+s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
+s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
+s/@HKSC_DEBUG_PASS@/$debug_pass/g
+" > "$config_h_TMP"
 
-SHAREDLIB=libhksc$sharedext
+if diff "$config_h_TMP" "$config_h" >/dev/null 2>&1; then
+	echo "$config_h is unchanged"
+else
+	mv -f "$config_h_TMP" "$config_h"
+fi
 
-configfiles=
+rm -f "$config_h_TMP"
 
-while test $# -ge 1; do
-	case "$1" in
-		-h* | --help) show_help ;;
-		--reset | --default)
-			rm -f -- $configstatus
-			reset=1
-			updateconfigstatus
-			. $configstatus ;;
-		--debug-pass=*) debugpass=`echo $1 | sed 's/.*=//'` ;;
-		--configfile=*) configfiles="$configfiles $(echo $1 | sed 's/.*=//')" ;;
-	    -p*=* | --prefix=*) prefix=`echo $1 | sed 's/.*=//'` ;;
-	    -e*=* | --eprefix=*) exec_prefix=`echo $1 | sed 's/.*=//'` ;;
-		-b*=* | --bindir=*) bindir=`echo $1 | sed 's/.*=//'` ;;
-	    -l*=* | --libdir=*) libdir=`echo $1 | sed 's/.*=//'` ;;
-	    --sharedlibdir=*) sharedlibdir=`echo $1 | sed 's/.*=//'` ;;
-	    -i*=* | --includedir=*) includedir=`echo $1 | sed 's/.*=//'` ;;
-		-d*=* | --docdir=*) docdir=`echo $1 | sed 's/.*=//'` ;;
-		-m*=* | --mandir=*) mandir=`echo $1 | sed 's/.*=//'` ;;
-		--emu-ui64) EMU_UI64=1 ;;
-		--no-emu-ui64) EMU_UI64=0 ;;
-		--no-dec* | --disable-dec*) DECOMPILER=0 ;;
-		--with-dec* | --enable-dec*) DECOMPILER=1 ;;
-		--release | --no-debug) release=1 ;;
-		--debug | --no-rel*) release=0 ;;
-		--game=*) buildsetting=`echo $1 | sed 's/.*=//'` ;;
-		--with-log* | --enable-log*) LOGGING=1 ;;
-		--no-log* | --disable-log*) LOGGING=0 ;;
-		--)
-			shift
-			break ;;
-		*)
-			echo "unknown option: $1" | tee -a $logfile
-			echo "$0 --help for help" | tee -a $logfile
-			exit 1 ;;
+# ---------------------------------------------------------------------------
+# build tree in object directory if source path is different from current one
+
+fn_makelink()
+{
+	tgt="$1/$2"
+	case $2 in
+	*/*)
+		dn=${2%/*}
+		test -d $dn || mkdir -p $dn
+		pathfromhere "$dn" "$tgt" tgt
 	esac
-	shift
-done
 
-test $debugpass -gt 2 && error "the decompiler only does 2 passes"
-
-test $debugpass != 0 && \
-test $debugpass != 1 && \
-test $debugpass != 2 && error "invalid value for --debug-pass: $debugpass"
-
-# configure compatibility settings based on the build config type
-case "$buildsetting" in
-	cod)
-		warn "ambiguous build setting 'cod', setting build config to 'codt6'" ;;
-	codt6 | codt7) ;; # cod builds disable all compatibility settings
-	# add other titles below as their compatibility features become supported
-	*) error "Unsupported build configuration '$buildsetting'" ;;
-esac
-
-case "$buildsetting" in
-	codt6) LUA_COD=1 ;;
-	codt7) LUA_COD=1; LUA_CODT7=1 ;;
-esac
-
-if test $release = 0; then
-	CFLAGS='$(TESTS)'
-else
-	CFLAGS='$(RELEASE)'
-fi
-
-if test $DECOMPILER = 0; then
-	# skip decompiler tests
-	TESTSUFFIX=.ctest
-else
-	TESTSUFFIX=.dtest
-fi
-
-if test $LOGGING = 0; then
-	# logging already disabled
-	HKSC_SUPPRESS_LOGGING=
-else
-	# suppress log output
-	HKSC_SUPPRESS_LOGGING=--logfile=/dev/null
-fi
-
-if test $STRUCTURE_EXTENSION_ON = 1; then
-	HSTRUCTURE_ERROR_TESTS=yeshstructure
-else
-	HSTRUCTURE_ERROR_TESTS=nohstructure
-fi
-
-# do this before config.status is updated, the point of specifying files to
-# regenerate is that it avoids touching unrelated files that would trigger a
-# complete rebuild 
-test "x$configfiles" != "x" && {
-	configurefile $configfiles
-	test -e config.mak || configurefile config.mak
-	exit
+	ln -sfn $tgt $2 || ( echo "ln failed. Using cp instead."; cp -f $1/$2 $2 )
 }
 
-updateconfigstatus
+if test "x$in_source" = xno; then
+	FILES="Makefile src/Makefile test/Makefile test/error/Makefile"
+	for f in $FILES; do
+		fn_makelink "${HKSCDIR%/}" "$f"
+	done
+	# need to create links for all test sourcees because they need to exist in
+	# the current dircetory when compiling them so that the source name matches
+	# with the expected output (possible TODO is to add an option to omit a
+	# prefix in the filenames provided to hksc when generating the source name)
+	for f in "${HKSCDIR}test"/[0-9][0-9]*.lua; do
+		fn_makelink "${HKSCDIR%/}" "test/${f##*/}"
+	done
+	# the error test sources do need to be linked because the error messages
+	# use the source name in the chunk ID
+	for f in "${HKSCDIR}test/error"/*.lua; do
+		fn_makelink "${HKSCDIR%/}" "test/error/${f##*/}"
+	done
+fi
 
-infolog "updated configuration settings in '$configstatus'"
-
-logvar()
-{
-	eval "val=\$$1"
-	infolog $1 = $val
-}
-
-infolog "--------------------"
-logvar prefix
-logvar exec_prefix
-logvar bindir
-logvar libdir
-logvar sharedlibdir
-logvar includedir
-logvar docdir
-logvar mandir
-logvar pkgconfigdir
-logvar release
-logvar buildsetting
-logvar multiplat
-logvar EMU_UI64
-logvar LOGGING
-logvar DECOMPILER
-logvar LUA_COD
-logvar LUA_CODT7
-logvar debugpass
-infolog "--------------------"
-
-infolog ""
-
-infolog "Compatibility settings for '$buildsetting'"
-infolog "--------------------"
-logvar GETGLOBAL_MEMOIZATION
-logvar STRUCTURE_EXTENSION_ON
-logvar SELF
-logvar WITHNATIVEINT
-logvar WITHDOUBLES
-infolog "--------------------"
-
-configurefile config.mak Makefile $SRCDIR/Makefile test/Makefile  \
-$SRCDIR/hkscconf.h
-
-exit 0
+# ---------------------------------------------------------------------------

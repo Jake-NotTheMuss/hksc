@@ -1,10 +1,12 @@
 # makefile for checking hksc error messages
 
 TOP=../..
-include $(TOP)/config.mak
+include ../../config.mak
+include vpath.mak
 
-HKSC=$(SRCDIR)/$(HKSC_NAME)
+HKSC=$(TOPSRC)/$(HKSC_NAME)
 
+# -p so that no binaries get generated accidentally
 HKSCFLAGS=-p --compile $(HKSC_SUPPRESS_LOGGING)
 
 # files are generated for each BOM that is NOT accepted by hksc
@@ -35,12 +37,9 @@ yeshstructure: $(YESHSTRUCTURE_TESTS)
 
 .expect.test:
 	@echo ------------ $* ------------
-	@EXTRAFLAGS= ; test "x$*" = "xliteraloverflow" && EXTRAFLAGS=-L; \
+	@EXTRAFLAGS= ; test "x$@" = "xliteraloverflow.test" && EXTRAFLAGS=-L; \
 	$(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $*.lua >/dev/null 2>$@
 	@if diff -Nbu $^ $@ ; then echo "$* test OK"; fi
-
-$(BOM_TESTS:.test=.lua): gen-bom.sh
-	@$(SHELL) $^
 
 clean:
 	-@$(RM) *.test >/dev/null 2>&1

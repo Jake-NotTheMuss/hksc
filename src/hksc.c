@@ -20,7 +20,6 @@
 
 #define HKSC_NAME "hksc" /* default program name */
 
-#define HKSC_VERSION "0.0"
 
 static int listing=0;     /* list bytecodes? */
 static int dumping=1;     /* dump bytecodes? */
