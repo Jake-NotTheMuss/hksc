@@ -1,0 +1,69 @@
+#!/bin/sh
+
+CC=${CC-cc}
+
+file=a.txt
+TMP=tmp_1
+alias sed=/usr/bin/sed
+
+{
+# .o dependencies
+"$CC" $CFLAGS -MM *.c
+# .lo dependencies
+"$CC" $CFLAGS -MM hksclib.c l*.c | sed 's/^\([^. \t]*\)\.o:/\1.lo:/'
+} | \
+sed '
+	s/\([ 	]\)\([^\\ 	][^\\ 	]*\)/\1$(SRC2SRCDIR)\2/g;
+	s/^[ 	]*//;
+' | sed '
+	:x
+	/\\$/{
+		N; s/\\\n//g ; bx
+	}
+' > $TMP
+while IFS= read -r line; do
+	# fold the current input line
+	fold=`fold -bs -w78 <<< "$line"`
+	# how many lines does it expand to?
+	cnt=`wc -l <<< "$fold"`
+	cntm1=$(($cnt-1))
+	# echo "$fold" > /dev/stderr
+	i=0
+	lastlen=
+	currlen=
+	while IFS= read -r fold; do
+		fold="${fold% }"
+		i=$(($i+1))
+		# current line length
+		currlen=${#fold}
+		# add a line feed if this is not the first line
+		if test $i != 1; then
+			if test $lastlen -lt 78; then
+				roomleft=$((78-$lastlen))
+				newfold=`fold -bs -w$roomleft <<< "$fold" | head -n 1`
+				case "$newfold" in
+					*" ")
+						printf ' %s' "${newfold% }"
+						fold="${fold#$newfold}"
+					;;
+				esac
+			fi
+			printf ' \\\n  '
+			lastlen=$((${#fold}+2))
+		else
+			lastlen=$currlen
+		fi
+		# add this line
+		printf '%s' "$fold"
+	done <<< "$fold"
+	printf '\n'
+done < $TMP > $file
+
+
+sed "
+	/^# DO NOT DELETE.*$/,/^# (end of Makefile)$/{
+	/^# DO NOT DELETE.*$/{G;p;r $file
+	}; /^# (end of Makefile)$/{H;g;p;}; d;
+}" Makefile > Makefile2
+
+rm -f $TMP #$file

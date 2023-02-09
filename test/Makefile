@@ -36,8 +36,11 @@ all: dummy version error $(ALL_TESTS)
 # for when $(TESTS) is empty
 # also checks that HKSC was set properly
 dummy:
-	@$(HKSC) --version >/dev/null 2>&1 || \
-	echo You need to set HKSC_NAME in the parent Makefile && false
+	@ if $(HKSC) --version >/dev/null 2>&1; then \
+		echo "using HKSC=$(HKSC)"; \
+	else \
+		echo "Invalid program name HKSC=$(HKSC)"; exit 1; \
+	fi
 
 # check version of $(HKSC) against expected version
 version:
@@ -84,7 +87,7 @@ error:
 	@: echo hello $@
 
 clean:
-	$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest
+	@$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest
 	@cd error && $(MAKE) $@
 
 .PHONY: test all dummy clean version error

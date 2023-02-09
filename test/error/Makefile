@@ -20,7 +20,7 @@ YESHSTRUCTURE_TESTS=
 
 ALL_ERROR_TESTS= $(OTHER_TESTS) $(BOM_TESTS)
 
-all: prepare $(ALL_ERROR_TESTS) $(HSTRUCTURE_ERROR_TESTS)
+all: prepare $(ALL_ERROR_TESTS) $(HSTRUCTURE_ERROR_CHECK)
 	@printf 'All Lua error checks passed\n\n'
 
 prepare: clean
@@ -38,8 +38,14 @@ yeshstructure: $(YESHSTRUCTURE_TESTS)
 .expect.test:
 	@echo ------------ $* ------------
 	@EXTRAFLAGS= ; test "x$@" = "xliteraloverflow.test" && EXTRAFLAGS=-L; \
-	$(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $*.lua >/dev/null 2>$@
-	@if diff -Nbu $^ $@ ; then echo "$* test OK"; fi
+	if $(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $*.lua >/dev/null 2>$@; then \
+		echo "$*.lua error check failed (no error was raised)"; exit 1; \
+	else \
+		if diff -u $< $@; then echo "$*.lua error check OK"; \
+		else echo "$*.lua error check failed (output differs from expected)"; \
+			exit 1; \
+		fi; \
+	fi
 
 clean:
 	-@$(RM) *.test >/dev/null 2>&1

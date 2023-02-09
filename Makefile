@@ -47,7 +47,7 @@ test: src
 	$(MAKE) test HKSC_NAME=$(HKSC_T) && \
 	$(MAKE) test HKSC_NAME=$(HKSC_SH)
 
-src: $(CONFIG_H)
+src:
 	@cd src && $(MAKE)
 
 clean:
@@ -55,15 +55,7 @@ clean:
 	@cd test && $(MAKE) $@
 
 depend:
-	-@cd $(SRCDIR) && { \
-	TMP=tmp_$$; \
-	$(CC) $(CFLAGS) -MM *.c > $$TMP; \
-	$(CC) $(CFLAGS) -MM hksclib.c l*.c | \
-	sed 's/^\([^. \t]*\)\.o:/\1.lo:/' >> $$TMP; \
-	sed -i.bk -e "/^# DO NOT DELETE$$/,/^# (end of Makefile)$$/{ \
-		/^# DO NOT DELETE$$/{G;p;r $$TMP" -e " \
-	}; /^# (end of Makefile)$$/{H;g;p;}; d;" Makefile; \
-	$(RM) $$TMP Makefile.bk >/dev/null 2>&1 }
+	@cd src && $(MAKE) $@
 
 distclean: clean
 	$(RM) config.mak test/config.mak $(CONFIG_H) libhksc.pc
@@ -130,14 +122,8 @@ pecho:
 newer:
 	@$(FIND) . -newer MANIFEST -type f
 
-$(CONFIG_H): $(HKSCDIR)$(CONFIG_H).in
 libhksc.pc: $(HKSCDIR)libhksc.pc.in
-
-$(CONFIG_H) libhksc.pc:
-	@echo "$@ is out-of-date. Please rerun ./configure"
-
-config.mak:
-	@test -e $@ || echo "Please run ./configure." && exit 1
+	@echo "$@ is out-of-date. Please rerun ./configure" && exit 1
 
 # list targets that do not create files (but not all makes understand .PHONY)
 .PHONY: all src test clean distclean install local echo pecho lecho newer
