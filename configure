@@ -2,12 +2,12 @@
 # libhksc configure script
 
 
-HKSCDIR=`dirname "$0"`
-if test "x$HKSCDIR" = x.; then
-	HKSCDIR=
+SRCDIR=`dirname "$0"`
+if test "x$SRCDIR" = x.; then
+	SRCDIR=
 	in_source=yes
 else
-	HKSCDIR="$HKSCDIR/"
+	SRCDIR="$SRCDIR/"
 	in_source=no
 fi
 
@@ -15,12 +15,7 @@ config_status=config.status
 
 config_h=src/hkscconf.h
 config_h_TMP=hkscconf-$$.h
-lua_h="${HKSCDIR}src/hksclua.h"
-
-VER=`sed -n -e '/HKSC_VERSION "/s/.*"\(.*\)".*/\1/p' < "$lua_h"`
-VER3=`echo $VER | cut -d. -f 1-3`
-VER2=`echo $VER | cut -d. -f 1-2`
-VER1=`echo $VER | cut -d. -f 1-1`
+lua_h="${SRCDIR}src/hksclua.h"
 
 show_help()
 {
@@ -76,6 +71,28 @@ warn()
 	echo $0: warning: $*
 }
 
+nl='
+'
+case $SRCDIR in
+	*[\\\"\#\$\&\'\`$nl\ \	]*)
+	error "unsafe SRCDIR value: '$SRCDIR'" ;;
+esac
+
+
+if test "x$in_source" = xno; then
+  # test to see if SRCDIR already configured
+  if test -f ${SRCDIR}src/hkscconf.h; then
+    error \
+    "source directory already configured; run \"make distclean\" there first"
+  fi
+fi
+
+
+VER=`sed -n -e '/HKSC_VERSION "/s/.*"\(.*\)".*/\1/p' < $lua_h`
+VER3=`echo $VER | cut -d. -f 1-3`
+VER2=`echo $VER | cut -d. -f 1-2`
+VER1=`echo $VER | cut -d. -f 1-1`
+
 emu_ui64=0
 with_decompiler=1
 with_logging=0
@@ -86,7 +103,7 @@ test -e "$config_status" && . "$config_status"
 
 for opt; do
 	eval opt=\"$opt\"
-	case "$opt" in
+	case $opt in
 		-h|--help) show_help ;;
 		--prefix=*) prefix=${opt#*=} ;;
 		--exec-prefix=*|--eprefix=*) exec_prefix=${opt#*=} ;;
@@ -117,7 +134,7 @@ case `(uname -s || echo unknown) 2>/dev/null` in
 		LIBSUF='.a'
 		DLLSUF='.dylib'
 		EXESUF=
-		LINK_LIBHKSC='$(LINK_LIBHKSC_DYLIB)' ;;
+		LINK_LIBHKSC_TYPE=DYLIB ;;
 	Windows_NT|MINGW*|mingw*|CYGWIN*|Cygwin*|cygwin*)
 		prefix=${prefix-'C:/Program Files/hksc'}
 		AR=${AR-'$(CC) -shared -o'}
@@ -127,24 +144,24 @@ case `(uname -s || echo unknown) 2>/dev/null` in
 		LIBSUF='.lib'
 		DLLSUF='.dll'
 		EXESUF='.exe'
-		LINK_LIBHKSC='$(LINK_LIBHKSC_DLL)' ;;
+		LINK_LIBHKSC_TYPE=DLL ;;
 	*)
 		LIBSUF='.a'
 		DLLSUF='.so'
 		EXESUF=
-		LINK_LIBHKSC='$(LINK_LIBHKSC_SO)' ;;
+		LINK_LIBHKSC_TYPE=SO ;;
 esac
 
 prefix=${prefix-/usr/local}
-exec_prefix=${exec_prefix-'${prefix}'}
-bindir=${bindir-'${exec_prefix}/bin'}
-libdir=${libdir-'${exec_prefix}/lib'}
-sharedlibdir=${sharedlibdir-'${libdir}'}
-includedir=${includedir-'${prefix}/include'}
-sharedir=${sharedir-'${prefix}/share'}
-docdir=${docdir-'${sharedir}/doc/libhksc'}
-mandir=${mandir-'${sharedir}/man'}
-pkgconfigdir='${libdir}/pkgconfig'
+exec_prefix=${exec_prefix-$prefix}
+bindir=${bindir-$exec_prefix/bin}
+libdir=${libdir-$exec_prefix/lib}
+sharedlibdir=${sharedlibdir-$libdir}
+includedir=${includedir-$prefix/include}
+sharedir=${sharedir-$prefix/share}
+docdir=${docdir-$sharedir/doc/libhksc}
+mandir=${mandir-$sharedir/man}
+pkgconfigdir=$libdir/pkgconfig
 
 CC=${CC-cc}
 AR=${AR-ar rcu}
@@ -154,6 +171,7 @@ RM=${RM-rm -f}
 FIND=${FIND-find}
 INSTALL=${INSTALL-install}
 MKDIR=${MKDIR-mkdir}
+LIBS=
 
 # Check all directory arguments for consistency.
 for var in prefix exec_prefix bindir libdir sharedlibdir includedir sharedir \
@@ -173,13 +191,13 @@ docdir mandir pkgconfigdir; do
 	error "expected an absolute directory name for --$var: $val"
 done
 
-case "$debug_pass" in
+case $debug_pass in
 	"") debug_pass=0 ;;
 	[0-2]) ;;
 	*) error "Invalid value for --debug-pass '$debug_pass'" ;;
 esac
 
-case "$game" in
+case $game in
 	"")
 		echo "Configuring compatibility settings for 'codt7' by default"
 		game=codt7; lua_cod=1; lua_codt7=1 ;;
@@ -192,7 +210,7 @@ case "$game" in
 esac
 
 # configure compatibility settings based on the build config type
-case "$game" in
+case $game in
 	codt6|codt7)
 		STRUCTURE_EXTENSION_ON=0
 		WITHNATIVEINT=0
@@ -232,46 +250,28 @@ set10()
 # set which flag is needed to suppress log output
 set10 with_logging HKSC_SUPPRESS_LOGGING --logfile=/dev/null
 # set build compiler flags for debug or release builds
-set10 debug BUILDCONFIGFLAGS '$(TESTS)' '$(RELEASE)'
+set10 debug BUILDCONFIGTYPE TESTS RELEASE
 # set which tests to include based on whether the decompiler is enabled
 set10 with_decompiler TESTSUFFIX .dtest .ctest
 # set which error tests to do for compatibility features
 set10 STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
 # flags for generating Lua profiling info
-set10 lua_cod GEN_PROFILE \
+# for the COD build, suppress bytecode output and only generate a callstackdb
+# for non-COD, use profile stripping mode
+set10 lua_cod HKSC_GEN_PROFILE \
 "-o /dev/null --debugfile /dev/null --callstackdb" "-s=p -o"
 # flags for generating Lua debug info
-set10 lua_cod GEN_DEBUG \
+# for the COD build, suppress bytecode output and only generate a debug file
+# for non-COD, use debug stripping mode
+set10 lua_cod HKSC_GEN_DEBUG \
 "-o /dev/null --callstackdb /dev/null --debugfile" "-s=n -o"
 # command for comparing profiling info
-set10 lua_cod CMP_PROFILE "diff -u" "cmp -b"
-CMP_CODE="cmp -bl"
-CMP_DEBUG="cmp -bl"
+# use diff for COD profile info because it is printed as text
+# otherwise use cmp to compare binary files
+set10 lua_cod HKSC_CMP_PROFILE "diff -u" "cmp -bl"
+HKSC_CMP_CODE="cmp -bl"
+HKSC_CMP_DEBUG="cmp -bl"
 
-
-# get the path to a directory relative to another location
-# pathfromhere [here] [there] [varname]
-pathfromhere()
-{
-	here="$1"
-	there="$2"
-	var=$3
-	case $there in
-		/*) ;; # absolute path
-		*) # fix relative symlink path
-			while test "$here" ; do
-				there="../$there"
-				here="${here#${here%%/*}}"; here="${here#/}"
-			done ;;
-	esac
-	eval "$var=\"$there\""
-}
-
-if test "x$in_source" = xno; then
-	pathfromhere src "${HKSCDIR}src" hksc_include_path
-	CFLAGS="$CFLAGS -I'$hksc_include_path'"
-	hksc_include_path=
-fi
 
 # Update config.status
 echo '# Automatically generated by configure' > "$config_status"
@@ -283,8 +283,7 @@ printvar()
 
 logvar()
 {
-	eval echo "$1=\"'\$$1'\"" >> "$config_status"
-	eval echo $1=\$$1
+	eval echo $1=\$$1 | tee -a "$config_status"
 }
 
 # install paths
@@ -327,98 +326,140 @@ if test "x$in_source" = xno; then
 	done
 fi
 
-# generate config.mak
-cat >config.mak <<EOF
-# Automatically generated by configure
-prefix=\$(DESTDIR)$prefix
-exec_prefix=\$(DESTDIR)$exec_prefix
-bindir=\$(DESTDIR)$bindir
-libdir=\$(DESTDIR)$libdir
-sharedlibdir=\$(DESTDIR)$sharedlibdir
-includedir=\$(DESTDIR)$includedir
-sharedir=\$(DESTDIR)$sharedir
-docdir=\$(DESTDIR)$docdir
-mandir=\$(DESTDIR)$mandir
-pkgconfigdir=\$(DESTDIR)$pkgconfigdir
-HKSCDIR=$HKSCDIR
-TOPHKSCDIR=\$(TOP)/\$(HKSCDIR)
-SRCDIR=\$(HKSCDIR)src
-TESTDIR=\$(HKSCDIR)test
-ETCDIR=\$(HKSCDIR)etc
-DOCDIR=\$(HKSCDIR)doc
-TOPSRC=\$(TOP)/src
-CC=$CC
-AR=$AR
-RANLIB=$RANLIB
-CP=$CP
-RM=$RM
-FIND=$FIND
-INSTALL=$INSTALL
-MKDIR=$MKDIR
-CFLAGS=$CFLAGS \$(BUILDCONFIGFLAGS)
-LDFLAGS=$LDFLAGS
-LIBSUF=$LIBSUF
-DLLSUF=$DLLSUF
-EXESUF=$EXESUF
-STATICLIB=libhksc\$(LIBSUF)
-SHAREDLIB=libhksc\$(DLLSUF)
-LINK_LIBHKSC=$LINK_LIBHKSC
-HKSC_T=hksc\$(EXESUF)
-HKSC_SH=hkscsh\$(EXESUF)
-HKSC_VERSION=$VER
-HKSC_VERSION3=$VER3
-HKSC_VERSION2=$VER2
-HKSC_VERSION1=$VER1
-BUILDCONFIGFLAGS=$BUILDCONFIGFLAGS
-HKSC_SUPPRESS_LOGGING=$HKSC_SUPPRESS_LOGGING
-EOF
+# sets the following variables
+# $top_builddir_sub  - the path to the build tree root from $dir_suffix
+# $top_build_prefix  - path to the build tree root
+# $srcdir  - the path to the source tree subdirectory $dir_suffix
+# $top_srcdir  - the path to the source tree root
+srcdirfromdir()
+{
+	# set dir_suffix
+	dir_suffix=$1
+	# set top_builddir_sub
+	# ../ for each directory in dir_suffix
+	top_builddir_sub=`printf "%s\n" "/$1" | sed 's|/[^\\/]*|/..|g;s|/||'`
+	case $top_builddir_sub in
+		"") top_build_prefix= ;;
+		*) top_build_prefix=$top_builddir_sub/ ;;
+	esac
+	top_builddir=$top_build_prefix
+	case $SRCDIR in
+		"") # in-source build
+			srcdir=
+			top_srcdir=$top_builddir_sub ;;
+		[\\/]* | ?:[\\/]* )  # Absolute name.
+			srcdir=$SRCDIR$dir_suffix
+			top_srcdir=$SRCDIR ;;
+		*) # Relative name.
+			srcdir=$top_build_prefix$SRCDIR$dir_suffix
+			top_srcdir=$top_build_prefix$SRCDIR ;;
+	esac
+}
+
+fn_set_vpath()
+{
+	VPATH_SET="VPATH=$srcdir"
+}
+
+fn_clear_vpath()
+{
+	VPATH_SET=
+}
 
 if test "x$in_source" = xno; then
-	pathfromhere test "${HKSCDIR}test/$game" game_vpath
-	pathfromhere src "${HKSCDIR}src" src_vpath
-	pathfromhere test/error "${HKSCDIR}test/error" test_error_vpath
-	echo Using VPATH=$src_vpath for building Lua
-	echo Using VPATH=$game_vpath for testing compiler output
-	echo Using VPATH=$test_error_vpath for Lua error checks
+	set_vpath=fn_set_vpath
+	doing_what_src='building'
+	doing_what_test='testing'
+	doing_what_test_error='error-checking'
+	CFLAGS="$CFLAGS -I\$(top_builddir)src"
 else
-	game_vpath="$game"
-	src_vpath=
-	test_error_vpath=
+	# omit an empty VPATH assignment
+	set_vpath=fn_clear_vpath
+	doing_what_src=
+	doing_what_test=
+	doing_what_test_error=
 fi
 
-HKSCDIR="${HKSCDIR}" CC="${CC}" CFLAGS="${CFLAGS}" \
-sh "${HKSCDIR}src/gen-depend.sh" depend.mak
+config_makefile()
+{
+	for f; do
+		case $f in
+			*/*)
+				dir_suffix=${f%/*}
+				dir_varstem=`printf "%s\n" "$dir_suffix" | tr / _`
+				eval doing_what=\${doing_what_$dir_varstem} ;;
+			*)
+				dir_suffix=
+				doing_what= ;;
+		esac
+		srcdirfromdir "$dir_suffix"
+		$set_vpath
+		test "x$doing_what" != x && echo Using VPATH=$srcdir for $doing_what Lua
+		# note the absence of ;t t at the end of each line - it is not needed
+		sed < "${SRCDIR}$f.in" -e "
+			s&@prefix@&$prefix&
+			s&@exec_prefix@&$exec_prefix&
+			s&@bindir@&$bindir&
+			s&@libdir@&$libdir&
+			s&@sharedlibdir@&$sharedlibdir&
+			s&@includedir@&$includedir&
+			s&@sharedir@&$sharedir&
+			s&@docdir@&$docdir&
+			s&@mandir@&$mandir&
+			s&@pkgconfigdir@&$pkgconfigdir&
+			s&@CC@&$CC&
+			s&@AR@&$AR&
+			s&@RANLIB@&$RANLIB&
+			s&@CP@&$CP&
+			s&@RM@&$RM&
+			s&@FIND@&$FIND&
+			s&@INSTALL@&$INSTALL&
+			s&@MKDIR@&$MKDIR&
+			s&@CFLAGS@&$CFLAGS&
+			s&@LDFLAGS@&$LDFLAGS&
+			s&@LIBS@&$LIBS&
+			s&@LIBSUF@&$LIBSUF&
+			s&@DLLSUF@&$DLLSUF&
+			s&@EXESUF@&$EXESUF&
+			s&@STATICLIB@&libhksc\$(LIBSUF)&
+			s&@SHAREDLIB@&libhksc\$(DLLSUF)&
+			s&@HKSC_T@&hksc\$(EXESUF)&
+			s&@HKSC_SH@&hkscsh\$(EXESUF)&
+			s&@HKSC_VERSION@&$VER&
+			s&@HKSC_VERSION3@&$VER3&
+			s&@HKSC_VERSION2@&$VER2&
+			s&@HKSC_VERSION1@&$VER1&
+			s&@VPATH_SET@&$VPATH_SET&
+			s&@GAMETESTDIR@&$GAMETESTDIR&
+			s&@HSTRUCTURE_ERROR_CHECK@&$HSTRUCTURE_ERROR_CHECK&
+			s&@HKSC_HKSC_GEN_PROFILE@&$HKSC_HKSC_GEN_PROFILE&
+			s&@HKSC_HKSC_GEN_DEBUG@&$HKSC_HKSC_GEN_DEBUG&
+			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&
+			s&@TESTSUFFIX@&$TESTSUFFIX&
+			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&
+			s&@srcdir@&$srcdir&
+			s&@top_srcdir@&$top_srcdir&
+			s&@top_builddir@&$top_builddir&
+			s&@LINK_LIBHKSC_TYPE@&$LINK_LIBHKSC_TYPE&
+			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&
+		" > $f
+	done
+}
 
-cat >test/config.mak <<EOF
-# Automatically generated by configure
-GAMEDIR=$game
-VPATH=$game_vpath
-HSTRUCTURE_ERROR_CHECK=$HSTRUCTURE_ERROR_CHECK
-GEN_PROFILE=$GEN_PROFILE
-GEN_DEBUG=$GEN_DEBUG
-CMP_CODE=$CMP_CODE
-CMP_PROFILE=$CMP_PROFILE
-CMP_DEBUG=$CMP_DEBUG
-TESTSUFFIX=$TESTSUFFIX
-EOF
-
-cat >test/error/vpath.mak <<EOF
-# Automatically generated by configure
-VPATH=$test_error_vpath
-EOF
+config_makefile Makefile src/Makefile test/Makefile test/error/Makefile
 
 # configure pc
-sed < "${HKSCDIR}libhksc.pc.in" "
-s#@prefix@#$prefix#g
-s#@exec_prefix@#$exec_prefix#g
-s#@libdir@#$libdir#g
-s#@sharedlibdir@#$sharedlibdir#g
-s#@includedir@#$includedir#g
-s#@HKSC_VERSION@#$VER#g
+sed < "${SRCDIR}libhksc.pc.in" "
+s&@prefix@&$prefix&g
+s&@exec_prefix@&$exec_prefix&g
+s&@libdir@&$libdir&g
+s&@sharedlibdir@&$sharedlibdir&g
+s&@includedir@&$includedir&g
+s&@HKSC_VERSION@&$VER&g
 " > libhksc.pc
 
 # configure header
-sed < "${HKSCDIR}$config_h.in" "
+sed < "${SRCDIR}$config_h.in" "
 s/@LUACONFIG_EMU_UI64@/$emu_ui64/g
 s/@LUACONFIG_DECOMPILER@/$with_decompiler/g
 s/@LUACONFIG_LOGGING@/$with_logging/g
@@ -439,40 +480,5 @@ else
 fi
 
 rm -f "$config_h_TMP"
-
-# ---------------------------------------------------------------------------
-# build tree in object directory if source path is different from current one
-
-fn_makelink()
-{
-	tgt="$1/$2"
-	case $2 in
-	*/*)
-		dn=${2%/*}
-		test -d $dn || mkdir -p $dn
-		pathfromhere "$dn" "$tgt" tgt
-	esac
-
-	ln -sfn $tgt $2 || ( echo "ln failed. Using cp instead."; cp -f $1/$2 $2 )
-}
-
-if test "x$in_source" = xno; then
-	FILES="Makefile src/Makefile test/Makefile test/error/Makefile"
-	for f in $FILES; do
-		fn_makelink "${HKSCDIR%/}" "$f"
-	done
-	# need to create links for all test sourcees because they need to exist in
-	# the current dircetory when compiling them so that the source name matches
-	# with the expected output (possible TODO is to add an option to omit a
-	# prefix in the filenames provided to hksc when generating the source name)
-	for f in "${HKSCDIR}test"/[0-9][0-9]*.lua; do
-		fn_makelink "${HKSCDIR%/}" "test/${f##*/}"
-	done
-	# the error test sources do need to be linked because the error messages
-	# use the source name in the chunk ID
-	for f in "${HKSCDIR}test/error"/*.lua; do
-		fn_makelink "${HKSCDIR%/}" "test/error/${f##*/}"
-	done
-fi
 
 # ---------------------------------------------------------------------------

@@ -1,23 +1,31 @@
 # makefile for testing Lua
 
-TOP=..
+srcdir=@srcdir@
+top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
 
-include $(TOP)/config.mak
+HKSC_SUPPRESS_LOGGING=@HKSC_SUPPRESS_LOGGING@
+HKSC_GEN_PROFILE=@HKSC_GEN_PROFILE@
+HKSC_GEN_DEBUG=@HKSC_GEN_DEBUG@
+HKSC_CMP_CODE=@HKSC_CMP_CODE@
+HKSC_CMP_PROFILE=@HKSC_CMP_PROFILE@
+HKSC_CMP_DEBUG=@HKSC_CMP_DEBUG@
+
+TESTSUFFIX=@TESTSUFFIX@
+
+@VPATH_SET@
 
 # should be set by the parent Makefile in the invokation
-HKSC=echo you need to set HKSC in the parent Makefile; false \#
+HKSC_NAME=
 
-HKSCFLAGS=-L --withdebug $(HKSC_SUPPRESS_LOGGING)
+HKSC=$(top_builddir)src/$(HKSC_NAME)
+
+HKSCFLAGS=-L $(HKSC_SUPPRESS_LOGGING)
 
 # TESTS=version
 TESTS= $(COMPILER_TESTS) $(DECOMPILER_TESTS)
 
 TESTMAKEFLAGS=
-
-EXTRA_ERROR_TESTS=
-
-# set by condigure
-GAMEDIR=
 
 # no need to list 2 games that have the same compatibility settings, i.e., if
 # game X and game Y both have the same compatilbility settings, only use game X
@@ -31,23 +39,18 @@ ALL_GAMEDIRS=codt6 codt7
 # if the decompiler is enabled, the decompiler tests will be run
 TESTSUFFIX=.ctest
 
-# set to all test targets when self-recursing
-ALL_TESTS=
-
-test:
-	@$(MAKE) -s clean
-	@tests= ; \
-	for f in [0-9][0-9]_*.lua; do \
-	tests="$$tests $${f%.lua}$(TESTSUFFIX)"; \
-	done; \
-	$(MAKE) $(TESTMAKEFLAGS) all ALL_TESTS="$$tests"
+test: clean all
 
 all: dummy version error $(ALL_TESTS)
 
 # for when $(TESTS) is empty
 # also checks that HKSC was set properly
 dummy:
-	@$(HKSC) --version >/dev/null 2>&1
+	@ if $(HKSC) --version >/dev/null 2>&1; then \
+		echo "using HKSC=$(HKSC)"; \
+	else \
+		echo "Invalid program name HKSC=$(HKSC)"; exit 1; \
+	fi
 
 # check version of $(HKSC) against expected version
 version:
@@ -56,24 +59,37 @@ version:
 	$(HKSC) --version | grep -iq ".*hksc[^0-9]*$$HKSC_VERSION_REGEX"
 
 error:
-	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC=../$(HKSC) \
-	EXTRA_ERROR_TESTS=$(EXTRA_ERROR_TESTS)
+	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC_NAME=$(HKSC_NAME)
 
-.SUFFIXES: .lua .luac .cexpect .ctest .dtest
+.SUFFIXES:
+.SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest
 
 # .lua.luac:
 # 	$(HKSC) --compile -s $< -o $@
 
 .lua.cexpect:
 	@echo You need to regenerate $@!; false
+.lua.profileexpect:
+	@echo You need to regenerate $@!; false
+.lua.debugexpect:
+	@echo You need to regenerate $@!; false
+
+.profileexpect.ctest:
+	@:
+.debugexpect.ctest:
+	@:
 
 # compiler test
 .cexpect.ctest:
-	@echo hello $@
-	$(HKSC) $(HKSCFLAGS) $*.lua
-	@ if cmp $*.cexpect $*.luac; then echo "$*.luac OK"; fi
-	@ if cmp $*.debugexpect $*.luadebug; then echo "$*.luadebug OK"; fi
-	@ if diff -Nbu $*.callstackdbexpect $*.luacallstackdb; then \
+	@echo ------------ $* ------------
+# 	generate stripped bytecode
+	$(HKSC) $(HKSCFLAGS) -s $*.lua
+	$(HKSC) $(HKSCFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile $*.lua
+	$(HKSC) $(HKSCFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug $*.lua
+	@ if $(HKSC_CMP_CODE) $*.cexpect $*.luac; then echo "$*.luac OK"; fi
+	@ if $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug; \
+	then echo "$*.luadebug OK"; fi
+	@ if $(HKSC_CMP_PROFILE) -u $*.profileexpect $*.luaprofile; then \
 	echo "$*.luacallstackdb OK"; fi
 
 
@@ -82,11 +98,9 @@ error:
 	@: echo hello $@
 
 clean:
-	$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest
+	@$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest
+	@cd error && $(MAKE) $@
 
 .PHONY: test all dummy clean version error
-
-05_bigtable.lua: gen-bigtable.sh
-	$(SHELL) $< $@
 
 # (end of Makefile)
