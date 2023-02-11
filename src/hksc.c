@@ -48,6 +48,8 @@ int callstackdb_arg=0;
 static int ignore_debug=0;
 #endif /* LUA_COD */
 
+static const char *file_prefix_map_arg=NULL;
+
 static void fatal(const char *message)
 {
   fprintf(stderr,"%s: %s\n",progname,message);
@@ -88,9 +90,9 @@ static void print_usage(void)
    "  -o, --output=NAME       Output to file NAME\n"
    "  -p                      Parse only\n"
 #ifndef LUA_COD
-   "  -r, --withdebug         Load/dump debug information\n"
+   "  -g, --withdebug         Load/dump debug information\n"
 #else
-   "  -r, --withdebug         Load/dump debug files with input/output files\n"
+   "  -g, --withdebug         Load/dump debug files with input/output files\n"
    "  -a, --callstackdb=FILE  Use FILE for callstack reconstruction\n"
    "  -g, --debugfile=FILE    Use FILE for debug info\n"
 #endif /* LUA_COD */
@@ -99,7 +101,10 @@ static void print_usage(void)
 #endif /* HKSC_LOGGING */
    , stderr);
   fputs(
-   "  --                      Stop handling options\n", stderr);
+   "\nOther Options:\n"
+   "      --file-prefix-map=[OLD=NEW]\n"
+   "                          Remap file source paths in debug info\n"
+   "      --                  Stop handling options\n", stderr);
   fputs(
    "\nInt literal options for TYPE (to use with `-L')\n"
    "  32  Enable 32-bit int literals\n"
@@ -251,6 +256,7 @@ static int doargs(int argc, char *argv[])
       badliteralarg:
       usage("invalid int literal type given with '-L'");
     }
+    ELSE_IF_STRING("-v", "--file-prefix-map", file_prefix_map_arg);
     ELSE_IF_STRING("-o", "--output", output);
 #ifdef HKSC_LOGGING
     ELSE_IF_STRING(NULL, "--logfile", logfilename);
@@ -373,6 +379,7 @@ static int dofiles (hksc_State *H, int argc, char *argv[]) {
 
 int main(int argc, char *argv[])
 {
+  const char *old_prefix, *new_prefix;
   hksc_StateSettings settings;
   hksc_State *H;
   int status;
@@ -400,8 +407,19 @@ int main(int argc, char *argv[])
     settings.logctx.ud = logfile;
   }
 #endif /* HKSC_LOGGING */
+  if (file_prefix_map_arg) {
+    old_prefix = file_prefix_map_arg;
+    new_prefix = strrchr(file_prefix_map_arg, '=');
+    if (!new_prefix)
+      usage("invalid value for --file-prefix-map");
+    *((char *)new_prefix) = '\0';
+    new_prefix++;
+  }
+  else
+    new_prefix = old_prefix = NULL;
   H = hksI_newstate(&settings);
   if (H==NULL) fatal("cannot create state: not enough memory");
+  lua_setprefixmap(H, old_prefix, new_prefix);
   lua_setmode(H, mode);
   lua_setIntLiteralsEnabled(H,literals_enabled);
 #ifdef LUA_COD

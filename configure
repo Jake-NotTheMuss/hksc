@@ -320,23 +320,29 @@ printvar CFLAGS
 printvar LDFLAGS
 
 
-# generate files
 if test "x$in_source" = xno; then
 	for d in src test test/error; do
 		test -d $d || mkdir $d
 	done
-	sed_vpath='s&@VPATH_SET@&VPATH=@srcdir@&'
+	VPATH='@srcdir@'
 	doing_what_src='building'
 	doing_what_test='testing'
 	doing_what_test_error='error-checking'
 	CFLAGS="$CFLAGS -I\$(top_builddir)/src"
+	# when testing, make sure chunk names do not include directory components
+	HKSC_PREFIX_MAP='--file-prefix-map=$(srcdir)/='
 else
-	# omit an empty VPATH assignment
-	sed_vpath='/@VPATH_SET@/d'
+	VPATH=
 	doing_what_src=
 	doing_what_test=
 	doing_what_test_error=
+	HKSC_PREFIX_MAP=
 fi
+
+# extra paths to add to VPATH per-subdirectory
+VPATH_src=
+VPATH_test='@GAMETESTDIR@'
+VPATH_test_error=
 
 config_makefile()
 {
@@ -368,19 +374,27 @@ config_makefile()
 				top_srcdir=$top_build_prefix$top_srcdir ;;
 		esac
 		case $dir_suffix in
-			"") doing_what= ;;
+			"") doing_what= VPATH_dir= ;;
 			*)
-				dir_varstem=`printf "%s\n" "$dir_suffix" | sed 's|[/\\]|_|g'`
-				eval doing_what=\${doing_what_$dir_varstem} ;;
+				dir_varstem=`printf "%s\n" "${dir_suffix#/}" | sed 's|/|_|g'`
+				eval doing_what=\${doing_what_$dir_varstem}
+				eval VPATH_dir=\${VPATH_$dir_varstem}
 		esac
-		test "x$doing_what" != x && echo Using VPATH=$srcdir for $doing_what Lua
-		# note the absence of ;t t at the end of each line - it is not needed
-		# echo "-- $f"
-		# echo "   top_srcdir=$top_srcdir"
-		# echo "   srcdir=$srcdir"
-		# echo "   top_builddir=$top_builddir"
-		# echo "   top_builddir_sub=$top_builddir_sub"
-		# echo "   top_build_prefix=$top_build_prefix"
+		if test "x$VPATH_dir" != x; then
+			if test "x$VPATH" != x; then
+				VPATH_dir=$VPATH:$VPATH_dir
+			fi
+		elif test "x$VPATH" != x; then
+			VPATH_dir=$VPATH
+		fi
+		if test "x$VPATH_dir" != x; then
+			sed_vpath="s&@VPATH_SET@&VPATH=$VPATH_dir&"
+		else
+			# omit an empty VPATH assignment
+			sed_vpath="/@VPATH_SET@/d"
+		fi
+		# test "x$doing_what" != x && \
+		# echo Using VPATH=$VPATH_dir for $doing_what Lua
 		sed < "${SRCDIR}$f.in" -e "
 			:t
 			s&@prefix@&$prefix&;t t
@@ -416,11 +430,14 @@ config_makefile()
 			s&@HKSC_VERSION2@&$VER2&;t t
 			s&@HKSC_VERSION1@&$VER1&;t t
 			$sed_vpath;t t
-			s&@GAMETESTDIR@&$GAMETESTDIR&;t t
+			s&@GAMETESTDIR@&$game&;t t
 			s&@HSTRUCTURE_ERROR_CHECK@&$HSTRUCTURE_ERROR_CHECK&;t t
-			s&@HKSC_HKSC_GEN_PROFILE@&$HKSC_HKSC_GEN_PROFILE&;t t
-			s&@HKSC_HKSC_GEN_DEBUG@&$HKSC_HKSC_GEN_DEBUG&;t t
+			s&@HKSC_GEN_PROFILE@&$HKSC_GEN_PROFILE&;t t
+			s&@HKSC_GEN_DEBUG@&$HKSC_GEN_DEBUG&;t t
 			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&;t t
+			s&@HKSC_CMP_PROFILE@&$HKSC_CMP_PROFILE&;t t
+			s&@HKSC_CMP_DEBUG@&$HKSC_CMP_DEBUG&;t t
+			s&@HKSC_CMP_CODE@&$HKSC_CMP_CODE&;t t
 			s&@TESTSUFFIX@&$TESTSUFFIX&;t t
 			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&;t t
 			s&@srcdir@&$srcdir&;t t
@@ -428,6 +445,7 @@ config_makefile()
 			s&@top_builddir@&$top_builddir&;t t
 			s&@LINK_LIBHKSC_TYPE@&$LINK_LIBHKSC_TYPE&;t t
 			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&;t t
+			s&@HKSC_PREFIX_MAP@&$HKSC_PREFIX_MAP&;t t
 			s&@CONFIGURE@&$me&;t t
 		" > $f
 	done

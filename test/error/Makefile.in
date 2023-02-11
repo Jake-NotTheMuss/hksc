@@ -6,12 +6,15 @@ top_builddir=@top_builddir@
 
 @VPATH_SET@
 
+RM=@RM@
+
 HKSC_SUPPRESS_LOGGING=@HKSC_SUPPRESS_LOGGING@
+HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
 
 HKSC=$(top_builddir)/src/$(HKSC_NAME)
 
 # -p so that no binaries get generated accidentally
-HKSCFLAGS=-p --compile $(HKSC_SUPPRESS_LOGGING) --file-prefix-map=$(srcdir)=
+HKSCFLAGS=-p --compile $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
 
 # files are generated for each BOM that is NOT accepted by hksc
 BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \
@@ -22,31 +25,32 @@ literaloverflow.test lud.test ui64.test #utf8_identifier.test
 NOHSTRUCTURE_TESTS=hmake.test hstructure.test typedparam.test typedvar.test
 YESHSTRUCTURE_TESTS=
 
-ALL_ERROR_TESTS= $(OTHER_TESTS) $(BOM_TESTS)
+STANDARD_TESTS= $(OTHER_TESTS) $(BOM_TESTS)
 
-HSTRUCTURE_ERROR_CHECK=@HSTRUCTURE_ERROR_CHECK@
+ALL_ERROR_TESTS=$(STANDARD_TESTS) $(YESHSTRUCTURE_TESTS) $(NOHSTRUCTURE_TESTS)
 
-all: Makefile prepare $(ALL_ERROR_TESTS) $(HSTRUCTURE_ERROR_CHECK)
-	@printf 'All Lua error checks passed\n\n'
+# HSTRUCTURE_ERROR_CHECK=@HSTRUCTURE_ERROR_CHECK@
 
-prepare: clean
-	@printf '\nStarting Lua error checks...\n'
+all: Makefile prepare $(STANDARD_TESTS) $(HSTRUCTURE_ERROR_CHECK)
+	@printf -- '----------------------------\nAll Lua error checks passed\n\n'
+
+prepare: clean checkexpect
+	@printf '\nStarting Lua error checks...\n----------------------------\n'
+
+checkexpect:
+	@cd $(srcdir) && ./sum-expect --check
 
 nohstructure: $(NOHSTRUCTURE_TESTS)
 
 yeshstructure: $(YESHSTRUCTURE_TESTS)
 
 .SUFFIXES:
-.SUFFIXES: .test .expect .lua
-
-.lua.expect:
-	@echo You need to regenerate $@!; false
+.SUFFIXES: .expect .test
 
 .expect.test:
-	@echo ------------ $* ------------
-	EXTRAFLAGS= ; test "x$@" = "xliteraloverflow.test" && EXTRAFLAGS=-L; \
-	if $(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $(srcdir)/$*.lua >/dev/null 2>$@; then \
-		echo "$*.lua error check failed (no error was raised)"; exit 1; \
+	@EXTRAFLAGS= ; test "x$@" = "xliteraloverflow.test" && EXTRAFLAGS=-L; \
+	if $(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $(srcdir)/$*.lua >/dev/null 2>$@; \
+	then echo "$*.lua error check failed (no error was raised)"; exit 1; \
 	else \
 		if diff -u $< $@; then echo "$*.lua error check OK"; \
 		else echo "$*.lua error check failed (output differs from expected)"; \
@@ -59,8 +63,8 @@ Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@cd $(top_builddir) && @CONFIGURE@ > /dev/null
 
 clean:
-	-@$(RM) *.test >/dev/null 2>&1
+	-@$(RM) *.test
 
-.PHONY: all prepare clean nohstructure yeshstructure
+.PHONY: all prepare clean checkexpect nohstructure yeshstructure
 
 # (end of Makefile)
