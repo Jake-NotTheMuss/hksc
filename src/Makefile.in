@@ -90,7 +90,7 @@ ALL_O= $(CORE_O) $(HKSC_O) $(AUX_O)
 ALL_PIC_O= $(CORE_PIC_O) $(AUX_PIC_O)
 ALL_A= $(CORE_T)
 
-all:	$(HKSC_T) $(HKSC_SH)
+all:	Makefile $(HKSC_T) $(HKSC_SH)
 
 o:	$(ALL_O)
 
@@ -99,7 +99,7 @@ a:	$(ALL_A)
 .SUFFIXES: .lo
 
 .c.lo:
-	$(CC) -fPIC $(MYCFLAGS) -c -o $@ $<
+	$(CC) -fPIC $(CFLAGS) -c -o $@ $<
 
 # static library
 $(CORE_T): $(CORE_O) $(AUX_O)
@@ -126,10 +126,10 @@ $(HKSC_T): $(HKSC_O) $(STATICLIB)
 $(HKSC_SH): $(HKSC_O) $(SHAREDLIB)
 	$(CC) -o $@ $(MYLDFLAGS) $(HKSC_O) $(STATICLIB) $(LIBS) $(LINK_LIBHKSC)
 
-clean:
-	$(RM) $(ALL_T) $(ALL_O) $(ALL_PIC_O) $(SHAREDLIB)
+clean: Makefile
+	-$(RM) $(ALL_T) $(ALL_O) $(ALL_PIC_O) $(SHAREDLIB)
 
-echo:
+echo: Makefile
 	@echo "CC = $(CC)"
 	@echo "CFLAGS = $(CFLAGS)"
 	@echo "AR = $(AR)"
@@ -140,13 +140,9 @@ echo:
 	@echo "MYLIBS = $(MYLIBS)"
 	@echo "DL = $(DL)"
 
-hkscconf.h: $(srcdir)/hkscconf.h.in $(top_srcdir)/configure
-	@echo regenerating $@
-	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null && touch $@
-
 Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@echo regenerating src/$@
-	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null
+	@cd $(top_builddir) && @CONFIGURE@ > /dev/null
 
 # DO NOT DELETE
 

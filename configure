@@ -1,7 +1,7 @@
 #!/bin/sh
 # libhksc configure script
 
-
+me=$0
 SRCDIR=`dirname "$0"`
 if test "x$SRCDIR" = x.; then
 	SRCDIR=
@@ -319,6 +319,7 @@ printvar CC
 printvar CFLAGS
 printvar LDFLAGS
 
+
 # generate files
 if test "x$in_source" = xno; then
 	for d in src test test/error; do
@@ -328,7 +329,7 @@ if test "x$in_source" = xno; then
 	doing_what_src='building'
 	doing_what_test='testing'
 	doing_what_test_error='error-checking'
-	CFLAGS="$CFLAGS -I\$(top_builddir)src"
+	CFLAGS="$CFLAGS -I\$(top_builddir)/src"
 else
 	# omit an empty VPATH assignment
 	sed_vpath='/@VPATH_SET@/d'
@@ -427,6 +428,7 @@ config_makefile()
 			s&@top_builddir@&$top_builddir&;t t
 			s&@LINK_LIBHKSC_TYPE@&$LINK_LIBHKSC_TYPE&;t t
 			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&;t t
+			s&@CONFIGURE@&$me&;t t
 		" > $f
 	done
 }
@@ -462,6 +464,7 @@ if diff "$config_h_TMP" "$config_h" >/dev/null 2>&1; then
 	echo "$config_h is unchanged"
 else
 	mv -f "$config_h_TMP" "$config_h"
+	make clean >/dev/null 2>&1
 fi
 
 rm -f "$config_h_TMP"
