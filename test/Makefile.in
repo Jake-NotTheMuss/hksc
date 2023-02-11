@@ -11,6 +11,9 @@ HKSC_CMP_CODE=@HKSC_CMP_CODE@
 HKSC_CMP_PROFILE=@HKSC_CMP_PROFILE@
 HKSC_CMP_DEBUG=@HKSC_CMP_DEBUG@
 
+# will be set to .dtest by configure if the decompiler is enabled
+# *.dtest will depend on *.ctest, so compiler tests will always be run, and then
+# if the decompiler is enabled, the decompiler tests will be run
 TESTSUFFIX=@TESTSUFFIX@
 
 @VPATH_SET@
@@ -18,7 +21,7 @@ TESTSUFFIX=@TESTSUFFIX@
 # should be set by the parent Makefile in the invokation
 HKSC_NAME=
 
-HKSC=$(top_builddir)src/$(HKSC_NAME)
+HKSC=$(top_builddir)/src/$(HKSC_NAME)
 
 HKSCFLAGS=-L $(HKSC_SUPPRESS_LOGGING)
 
@@ -34,12 +37,13 @@ TESTMAKEFLAGS=
 # additional opcodes for bitwise operations
 ALL_GAMEDIRS=codt6 codt7
 
-# will be set to .dtest by configure if the decompiler is enabled
-# *.dtest will depend on *.ctest, so compiler tests will always be run, and then
-# if the decompiler is enabled, the decompiler tests will be run
-TESTSUFFIX=.ctest
-
-test: clean all
+test:
+	@$(MAKE) -s clean
+	@tests= ; \
+	for f in [0-9][0-9]_?*.lua; do \
+	tests="$$tests $${f%.lua}$(TESTSUFFIX)"; \
+	done; \
+	$(MAKE) $(TESTMAKEFLAGS) all ALL_TESTS="$$tests"
 
 all: dummy version error $(ALL_TESTS)
 
@@ -96,6 +100,10 @@ error:
 # decompiler test
 .ctest.dtest:
 	@: echo hello $@
+
+Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
+	@echo regenerating test/$@
+	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null
 
 clean:
 	@$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest

@@ -324,57 +324,14 @@ if test "x$in_source" = xno; then
 	for d in src test test/error; do
 		test -d $d || mkdir $d
 	done
-fi
-
-# sets the following variables
-# $top_builddir_sub  - the path to the build tree root from $dir_suffix
-# $top_build_prefix  - path to the build tree root
-# $srcdir  - the path to the source tree subdirectory $dir_suffix
-# $top_srcdir  - the path to the source tree root
-srcdirfromdir()
-{
-	# set dir_suffix
-	dir_suffix=$1
-	# set top_builddir_sub
-	# ../ for each directory in dir_suffix
-	top_builddir_sub=`printf "%s\n" "/$1" | sed 's|/[^\\/]*|/..|g;s|/||'`
-	case $top_builddir_sub in
-		"") top_build_prefix= ;;
-		*) top_build_prefix=$top_builddir_sub/ ;;
-	esac
-	top_builddir=$top_build_prefix
-	case $SRCDIR in
-		"") # in-source build
-			srcdir=
-			top_srcdir=$top_builddir_sub ;;
-		[\\/]* | ?:[\\/]* )  # Absolute name.
-			srcdir=$SRCDIR$dir_suffix
-			top_srcdir=$SRCDIR ;;
-		*) # Relative name.
-			srcdir=$top_build_prefix$SRCDIR$dir_suffix
-			top_srcdir=$top_build_prefix$SRCDIR ;;
-	esac
-}
-
-fn_set_vpath()
-{
-	VPATH_SET="VPATH=$srcdir"
-}
-
-fn_clear_vpath()
-{
-	VPATH_SET=
-}
-
-if test "x$in_source" = xno; then
-	set_vpath=fn_set_vpath
+	sed_vpath='s&@VPATH_SET@&VPATH=@srcdir@&'
 	doing_what_src='building'
 	doing_what_test='testing'
 	doing_what_test_error='error-checking'
 	CFLAGS="$CFLAGS -I\$(top_builddir)src"
 else
 	# omit an empty VPATH assignment
-	set_vpath=fn_clear_vpath
+	sed_vpath='/@VPATH_SET@/d'
 	doing_what_src=
 	doing_what_test=
 	doing_what_test_error=
@@ -383,65 +340,93 @@ fi
 config_makefile()
 {
 	for f; do
-		case $f in
-			*/*)
-				dir_suffix=${f%/*}
-				dir_varstem=`printf "%s\n" "$dir_suffix" | tr / _`
-				eval doing_what=\${doing_what_$dir_varstem} ;;
+		dir=${f%/*}
+		test "x$dir" = "x$f" && dir=.
+		case $dir in
+			.) dir_suffix= top_builddir_sub=. top_build_prefix= ;;
 			*)
-				dir_suffix=
-				doing_what= ;;
+				dir_suffix=/`printf "%s\n" "$dir" | sed 's|^\.[\\/]||'`
+				# ../ for each directory in dir_suffix
+				top_builddir_sub=`printf "%s\n" "$dir_suffix" | \
+				sed 's|/[^\\/]*|/..|g;s|/||'`
+				case $top_builddir_sub in
+					"") top_builddir_sub=. top_build_prefix= ;;
+					*) top_build_prefix=$top_builddir_sub/ ;;
+				esac ;;
 		esac
-		srcdirfromdir "$dir_suffix"
-		$set_vpath
+		top_builddir=$top_builddir_sub
+		top_srcdir=${SRCDIR%/}
+		case $top_srcdir in
+			"") # in-source build
+				srcdir=.
+				top_srcdir=$top_builddir_sub ;;
+			[\\/]* | ?:[\\/]* )  # Absolute name.
+				srcdir=$top_srcdir$dir_suffix ;;
+			*) # Relative name.
+				srcdir=$top_build_prefix$top_srcdir$dir_suffix
+				top_srcdir=$top_build_prefix$top_srcdir ;;
+		esac
+		case $dir_suffix in
+			"") doing_what= ;;
+			*)
+				dir_varstem=`printf "%s\n" "$dir_suffix" | sed 's|[/\\]|_|g'`
+				eval doing_what=\${doing_what_$dir_varstem} ;;
+		esac
 		test "x$doing_what" != x && echo Using VPATH=$srcdir for $doing_what Lua
 		# note the absence of ;t t at the end of each line - it is not needed
+		# echo "-- $f"
+		# echo "   top_srcdir=$top_srcdir"
+		# echo "   srcdir=$srcdir"
+		# echo "   top_builddir=$top_builddir"
+		# echo "   top_builddir_sub=$top_builddir_sub"
+		# echo "   top_build_prefix=$top_build_prefix"
 		sed < "${SRCDIR}$f.in" -e "
-			s&@prefix@&$prefix&
-			s&@exec_prefix@&$exec_prefix&
-			s&@bindir@&$bindir&
-			s&@libdir@&$libdir&
-			s&@sharedlibdir@&$sharedlibdir&
-			s&@includedir@&$includedir&
-			s&@sharedir@&$sharedir&
-			s&@docdir@&$docdir&
-			s&@mandir@&$mandir&
-			s&@pkgconfigdir@&$pkgconfigdir&
-			s&@CC@&$CC&
-			s&@AR@&$AR&
-			s&@RANLIB@&$RANLIB&
-			s&@CP@&$CP&
-			s&@RM@&$RM&
-			s&@FIND@&$FIND&
-			s&@INSTALL@&$INSTALL&
-			s&@MKDIR@&$MKDIR&
-			s&@CFLAGS@&$CFLAGS&
-			s&@LDFLAGS@&$LDFLAGS&
-			s&@LIBS@&$LIBS&
-			s&@LIBSUF@&$LIBSUF&
-			s&@DLLSUF@&$DLLSUF&
-			s&@EXESUF@&$EXESUF&
-			s&@STATICLIB@&libhksc\$(LIBSUF)&
-			s&@SHAREDLIB@&libhksc\$(DLLSUF)&
-			s&@HKSC_T@&hksc\$(EXESUF)&
-			s&@HKSC_SH@&hkscsh\$(EXESUF)&
-			s&@HKSC_VERSION@&$VER&
-			s&@HKSC_VERSION3@&$VER3&
-			s&@HKSC_VERSION2@&$VER2&
-			s&@HKSC_VERSION1@&$VER1&
-			s&@VPATH_SET@&$VPATH_SET&
-			s&@GAMETESTDIR@&$GAMETESTDIR&
-			s&@HSTRUCTURE_ERROR_CHECK@&$HSTRUCTURE_ERROR_CHECK&
-			s&@HKSC_HKSC_GEN_PROFILE@&$HKSC_HKSC_GEN_PROFILE&
-			s&@HKSC_HKSC_GEN_DEBUG@&$HKSC_HKSC_GEN_DEBUG&
-			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&
-			s&@TESTSUFFIX@&$TESTSUFFIX&
-			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&
-			s&@srcdir@&$srcdir&
-			s&@top_srcdir@&$top_srcdir&
-			s&@top_builddir@&$top_builddir&
-			s&@LINK_LIBHKSC_TYPE@&$LINK_LIBHKSC_TYPE&
-			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&
+			:t
+			s&@prefix@&$prefix&;t t
+			s&@exec_prefix@&$exec_prefix&;t t
+			s&@bindir@&$bindir&;t t
+			s&@libdir@&$libdir&;t t
+			s&@sharedlibdir@&$sharedlibdir&;t t
+			s&@includedir@&$includedir&;t t
+			s&@sharedir@&$sharedir&;t t
+			s&@docdir@&$docdir&;t t
+			s&@mandir@&$mandir&;t t
+			s&@pkgconfigdir@&$pkgconfigdir&;t t
+			s&@CC@&$CC&;t t
+			s&@AR@&$AR&;t t
+			s&@RANLIB@&$RANLIB&;t t
+			s&@CP@&$CP&;t t
+			s&@RM@&$RM&;t t
+			s&@FIND@&$FIND&;t t
+			s&@INSTALL@&$INSTALL&;t t
+			s&@MKDIR@&$MKDIR&;t t
+			s&@CFLAGS@&$CFLAGS&;t t
+			s&@LDFLAGS@&$LDFLAGS&;t t
+			s&@LIBS@&$LIBS&;t t
+			s&@LIBSUF@&$LIBSUF&;t t
+			s&@DLLSUF@&$DLLSUF&;t t
+			s&@EXESUF@&$EXESUF&;t t
+			s&@STATICLIB@&libhksc\$(LIBSUF)&;t t
+			s&@SHAREDLIB@&libhksc\$(DLLSUF)&;t t
+			s&@HKSC_T@&hksc\$(EXESUF)&;t t
+			s&@HKSC_SH@&hkscsh\$(EXESUF)&;t t
+			s&@HKSC_VERSION@&$VER&;t t
+			s&@HKSC_VERSION3@&$VER3&;t t
+			s&@HKSC_VERSION2@&$VER2&;t t
+			s&@HKSC_VERSION1@&$VER1&;t t
+			$sed_vpath;t t
+			s&@GAMETESTDIR@&$GAMETESTDIR&;t t
+			s&@HSTRUCTURE_ERROR_CHECK@&$HSTRUCTURE_ERROR_CHECK&;t t
+			s&@HKSC_HKSC_GEN_PROFILE@&$HKSC_HKSC_GEN_PROFILE&;t t
+			s&@HKSC_HKSC_GEN_DEBUG@&$HKSC_HKSC_GEN_DEBUG&;t t
+			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&;t t
+			s&@TESTSUFFIX@&$TESTSUFFIX&;t t
+			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&;t t
+			s&@srcdir@&$srcdir&;t t
+			s&@top_srcdir@&$top_srcdir&;t t
+			s&@top_builddir@&$top_builddir&;t t
+			s&@LINK_LIBHKSC_TYPE@&$LINK_LIBHKSC_TYPE&;t t
+			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&;t t
 		" > $f
 	done
 }

@@ -147,10 +147,15 @@ pecho:
 
 # show what has changed since we unpacked
 newer:
-	@$(FIND) . -newer MANIFEST -type f
+	@$(FIND) $(srcdir) -newer MANIFEST -type f
 
-libhksc.pc: $(HKSCDIR)libhksc.pc.in
-	@echo "$@ is out-of-date. Please rerun ./configure" && exit 1
+libhksc.pc: $(srcdir)/libhksc.pc.in $(top_srcdir)/configure
+	@echo regenerating $@
+	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null
+
+Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
+	@echo regenerating $@
+	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null
 
 # list targets that do not create files (but not all makes understand .PHONY)
 .PHONY: all src test clean depend distclean install local echo pecho lecho newer

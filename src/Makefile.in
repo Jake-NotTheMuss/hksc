@@ -5,7 +5,7 @@
 # == CHANGE THE SETTINGS BELOW TO SUIT YOUR ENVIRONMENT =======================
 
 srcdir=@srcdir@
-top_srcdir=@srcdir@
+top_srcdir=@top_srcdir@
 top_builddir=@top_builddir@
 
 @VPATH_SET@
@@ -140,8 +140,13 @@ echo:
 	@echo "MYLIBS = $(MYLIBS)"
 	@echo "DL = $(DL)"
 
-hkscconf.h: $(BUILD2SRCDIR)hkscconf.h.in
-	@echo "$@ is out-of-date. Please rerun ./configure" && exit 1
+hkscconf.h: $(srcdir)/hkscconf.h.in $(top_srcdir)/configure
+	@echo regenerating $@
+	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null && touch $@
+
+Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
+	@echo regenerating src/$@
+	@cd $(top_builddir) && $(top_srcdir)/configure > /dev/null
 
 # DO NOT DELETE
 

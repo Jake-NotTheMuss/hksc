@@ -1,22 +1,25 @@
 root = true
 
+# C
 [*.{c,h,def}]
 indent_size = 2
 indent_style = space
 
+# Lua
 [*.lua]
 indent_size = 4
 indent_style = tab
-
-[{CMakeLists.txt,*.cmake}]
-indent_size = 2
-indent_style = space
 
 [*.{markdown,md}]
 indent_size = 4
 indent_style = space
 # Markdown syntax treats tabs as 4 spaces
 tab_width = 4
+
+# Makefile
+[Makefile.in]
+indent_size = 4
+indent_style = tab
 
 [{*.bat,*.rc}]
 end_of_line = crlf
