@@ -108,6 +108,8 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->bytecode_endianness = settings->bytecode_endianness;
   g->settings = settings->compilersettings;
   luaZ_initbuffer(H, &g->buff);
+  g->prefix_map_from = NULL;
+  g->prefix_map_to = NULL;
 #ifdef HKSC_LOGGING
   g->logctx = settings->logctx;
 #endif /* HKSC_LOGGING */

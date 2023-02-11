@@ -48,6 +48,8 @@ typedef struct global_State {
   lu_mem gcdept;  /* how much GC is `behind schedule' */
   int gcpause;  /* size of pause between successive GCs */
   int gcstepmul;  /* GC `granularity' */
+  const char *prefix_map_from;
+  const char *prefix_map_to;
 #ifdef HKSC_LOGGING
   hksc_LogContext logctx;
 #endif

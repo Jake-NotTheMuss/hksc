@@ -71,7 +71,7 @@ static int checkmode_(hksc_State *H, int mode, const char *filename) {
   return 0;
 }
 
-static void cleanFileName(char *instr, char *outstr) {
+static void cleanFileName(const char *instr, char *outstr) {
   int numdots = 0;
   int length = 0;
   while (*instr != '\0' && length < (PATH_MAX-1)) {
@@ -138,6 +138,7 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
 }
 
 static int loadfile(hksc_State *H, const char *filename) {
+  char cleanedFileName[PATH_MAX];
   LoadF lf;
   int status, readstatus;
   int c;
@@ -147,7 +148,8 @@ static int loadfile(hksc_State *H, const char *filename) {
     hksc_seterror(H, "Hksc does not support reading from stdin");
     return LUA_ERRRUN;
   } else {
-    chunkname = luaO_pushfstring(H, "@%s", filename);
+    cleanFileName(filename, cleanedFileName);
+    chunkname = luaO_generatechunkname(H, cleanedFileName);
     lf.f = fopen(filename, "r");
     if (lf.f == NULL) return errfile(H, "open", filename);
   }
@@ -202,7 +204,7 @@ static const char *getS (hksc_State *H, void *ud, size_t *size) {
 }
 
 static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
-                           char *name) {
+                           const char *name) {
   LoadS ls;
   char cleanedFileName[PATH_MAX];
   if (name != buff && name != NULL) {
@@ -266,7 +268,7 @@ struct SParser {
     const char *buff;
   } arg1;
   size_t size;
-  char *source;
+  const char *source;
   hksc_DumpFunction dumpf;
   void *ud;
 };
@@ -314,7 +316,7 @@ LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
 
 
 LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
-                       char *source, hksc_DumpFunction dumpf, void *ud) {
+                       const char *source, hksc_DumpFunction dumpf, void *ud) {
   int status;
   struct SParser p;
   lua_lock(H);

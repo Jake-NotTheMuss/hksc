@@ -29,7 +29,7 @@ LUA_API void hksI_close(hksc_State *H);
 LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
                              hksc_DumpFunction dumpf, void *ud);
 LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
-                               char *source, hksc_DumpFunction dumpf, void *ud);
+                        const char *source, hksc_DumpFunction dumpf, void *ud);
 
 
 /* extra error code for `luaL_load' */

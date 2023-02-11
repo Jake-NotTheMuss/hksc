@@ -427,5 +427,8 @@ LUAI_FUNC const char *luaO_pushvfstring (hksc_State *H, const char *fmt,
 LUAI_FUNC const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...);
 LUAI_FUNC void luaO_chunkid (char *out, const char *source, size_t len);
 
+LUAI_FUNC const char *luaO_generatechunkname(hksc_State *H,
+                                             const char *filename);
+
 #endif
 

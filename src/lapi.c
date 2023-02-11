@@ -169,6 +169,15 @@ LUA_API void lua_setallocf (hksc_State *H, lua_Alloc f, void *ud) {
 }
 
 
+LUA_API void lua_setprefixmap (hksc_State *H, const char *from, const char *to)
+{
+  lua_lock(H);
+  G(H)->prefix_map_from = from;
+  G(H)->prefix_map_to = to;
+  lua_unlock(H);
+}
+
+
 #ifdef HKSC_LOGGING
 
 LUA_API hksc_LogFunction lua_getlogf (hksc_State *H, void **ud) {

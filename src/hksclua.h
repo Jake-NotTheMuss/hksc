@@ -240,6 +240,9 @@ LUA_API void (lua_setmode) (hksc_State *H, int mode);
 LUA_API lua_Alloc (lua_getallocf) (hksc_State *H, void **ud);
 LUA_API void (lua_setallocf) (hksc_State *H, lua_Alloc f, void *ud);
 
+LUA_API void (lua_setprefixmap) (hksc_State *H, const char *from,
+                                 const char *to);
+
 #ifdef HKSC_LOGGING
 LUA_API hksc_LogFunction (lua_getlogf) (hksc_State *H, void **ud);
 LUA_API void (lua_setlogf) (hksc_State *H, hksc_LogFunction f, void *ud);

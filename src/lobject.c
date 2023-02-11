@@ -374,3 +374,28 @@ void luaO_chunkid (char *out, const char *source, size_t bufflen) {
     }
   }
 }
+
+
+const char *luaO_generatechunkname(hksc_State *H, const char *filename) {
+  const char *name; /* the part to keep in filename */
+  const char *from = G(H)->prefix_map_from;
+  const char *to = G(H)->prefix_map_to;
+  size_t from_len;
+  size_t to_len;
+  if (from == NULL && to == NULL)
+    return luaO_pushfstring(H, "@%s", filename);
+  from_len = strlen(from);
+  to_len = strlen(to);
+  if (from != NULL) {
+    if (strncmp(filename, from, from_len) == 0)
+      name = filename + from_len;
+    else
+      return luaO_pushfstring(H, "@%s", filename);
+  }
+  else { /* to != NULL */
+    name = filename;
+  }
+  lua_assert(name != NULL);
+  if (to == NULL) to = "";
+  return luaO_pushfstring(H, "@%s%s", to, name);
+}
