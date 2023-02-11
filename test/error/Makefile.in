@@ -8,10 +8,10 @@ top_builddir=@top_builddir@
 
 HKSC_SUPPRESS_LOGGING=@HKSC_SUPPRESS_LOGGING@
 
-HKSC=$(top_builddir)src/$(HKSC_NAME)
+HKSC=$(top_builddir)/src/$(HKSC_NAME)
 
 # -p so that no binaries get generated accidentally
-HKSCFLAGS=-p --compile $(HKSC_SUPPRESS_LOGGING)
+HKSCFLAGS=-p --compile $(HKSC_SUPPRESS_LOGGING) --file-prefix-map=$(srcdir)=
 
 # files are generated for each BOM that is NOT accepted by hksc
 BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \
@@ -44,8 +44,8 @@ yeshstructure: $(YESHSTRUCTURE_TESTS)
 
 .expect.test:
 	@echo ------------ $* ------------
-	@EXTRAFLAGS= ; test "x$@" = "xliteraloverflow.test" && EXTRAFLAGS=-L; \
-	if $(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $*.lua >/dev/null 2>$@; then \
+	EXTRAFLAGS= ; test "x$@" = "xliteraloverflow.test" && EXTRAFLAGS=-L; \
+	if $(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $(srcdir)/$*.lua >/dev/null 2>$@; then \
 		echo "$*.lua error check failed (no error was raised)"; exit 1; \
 	else \
 		if diff -u $< $@; then echo "$*.lua error check OK"; \
