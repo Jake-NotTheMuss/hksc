@@ -32,12 +32,9 @@ HKSC=$(top_builddir)/src/$(HKSC_NAME)
 
 HKSCFLAGS=-L $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
 
-# TESTS=version
-TESTS= $(COMPILER_TESTS) $(DECOMPILER_TESTS)
-
 TESTMAKEFLAGS=
 
-MAKELOG=./tests.log
+MAKELOG=./tests.$(HKSC_NAME).log
 
 # no need to list 2 games that have the same compatibility settings, i.e., if
 # game X and game Y both have the same compatilbility settings, only use game X
@@ -46,17 +43,58 @@ MAKELOG=./tests.log
 # additional opcodes for bitwise operations
 ALL_GAMEDIRS=codt6 codt7
 
-test: Makefile
-	@$(MAKE) -s clean
-	@echo Starting tests > $(MAKELOG)
-	@tests= ; \
-	for f in "$(srcdir)"/[0-9][0-9]_?*.lua; do \
-	f=`basename "$$f"`; \
-	tests="$$tests $${f%.lua}$(TESTSUFFIX)"; \
-	done; \
-	$(MAKE) $(TESTMAKEFLAGS) all ALL_TESTS="$$tests"
+ALL_SRC=	00_comment.lua \
+	01_k.lua \
+	02_constfold.lua \
+	03_float.lua \
+	04_intliteral.lua \
+	05_table.lua \
+	06_bigtable.lua \
+	07_utf8_bom.lua \
+	08_fornum.lua \
+	09_forlist.lua \
+	10_function.lua \
+	11_repeat.lua \
+	12_while.lua \
+	13_do.lua \
+	14_bool.lua \
+	15_precedence.lua \
+	16_numeric_literals.lua \
+	17_recursion.lua \
+	18_testset.lua \
+	19_multiple_table_index.lua \
+	20_break.lua \
+	21_nested_break.lua
 
-all: dummy version error $(ALL_TESTS)
+ALL_TESTS=$(ALL_SRC:.lua=@TESTSUFFIX@)
+
+all: prepare dummy version error $(ALL_TESTS)
+	@echo ----------------------------
+	@echo ---------------------------- >> $(MAKELOG)
+	@echo All Lua tests passed
+	@echo All Lua tests passed >> $(MAKELOG)
+	@echo
+
+prepare: clean checkexpect
+	@echo
+	@echo Starting Lua tests...
+	@echo Starting Lua tests... > $(MAKELOG)
+	@echo ----------------------------
+	@echo ---------------------------- >> $(MAKELOG)
+
+checkexpect:
+	@if test ! -e expect.sum; then \
+		echo You need to generate expect.sum; \
+		exit 1; \
+	fi
+	@shasum -c expect.sum >/dev/null
+
+expectsum:
+	@files= ; \
+	for f in *.cexpect; do \
+		files="$$files $(srcdir)/$${f%.cexpect}.lua"; \
+	done; \
+	shasum -U $$files > expect.sum
 
 # for when $(TESTS) is empty
 # also checks that HKSC was set properly
@@ -64,7 +102,7 @@ dummy:
 	@ if $(HKSC) --version >/dev/null 2>&1; then \
 		echo "using HKSC=$(HKSC)"; \
 	else \
-		echo "Invalid program name HKSC=$(HKSC)"; exit 1; \
+		echo "Invalid program name HKSC_NAME=$(HKSC_NAME)"; exit 1; \
 	fi
 
 # check version of $(HKSC) against expected version
@@ -75,6 +113,7 @@ version:
 
 error:
 	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC_NAME=$(HKSC_NAME)
+
 
 .SUFFIXES:
 .SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest
@@ -109,18 +148,16 @@ error:
 	$(srcdir)/$*.lua >> $(MAKELOG)
 	@$(HKSC) $(HKSCFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug $(srcdir)/$*.lua
 # 	compare code with expected
-	@echo $(HKSC_CMP_CODE) $(GAMETESTDIR)/$*.cexpect $*.luac >> $(MAKELOG)
-	@ if $(HKSC_CMP_CODE) $(GAMETESTDIR)/$*.cexpect $*.luac; then \
+	@echo $(HKSC_CMP_CODE) $*.cexpect $*.luac >> $(MAKELOG)
+	@ if $(HKSC_CMP_CODE) $*.cexpect $*.luac; then \
 	echo "$*.luac OK"; fi
 # 	compare profile info with expected
-	@echo $(HKSC_CMP_PROFILE) -u $(GAMETESTDIR)/$*.profileexpect $*.luaprofile \
-	>> $(MAKELOG)
-	@ if $(HKSC_CMP_PROFILE) -u $(GAMETESTDIR)/$*.profileexpect $*.luaprofile; \
-	then echo "$*.luacallstackdb OK"; fi
+	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile >> $(MAKELOG)
+	@ if $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile; \
+	then echo "$*.luaprofile OK"; fi
 # 	compare debug info with expected
-	@echo $(HKSC_CMP_DEBUG) $(GAMETESTDIR)/$*.debugexpect $*.luadebug \
-	>> $(MAKELOG)
-	@ if $(HKSC_CMP_DEBUG) $(GAMETESTDIR)/$*.debugexpect $*.luadebug; \
+	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
+	@ if $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug; \
 	then echo "$*.luadebug OK"; fi
 
 # decompiler test
@@ -131,10 +168,10 @@ Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@echo regenerating test/$@
 	@cd $(top_builddir) && @CONFIGURE@ > /dev/null
 
-clean: Makefile
-	-@$(RM) *.luac *.luadebug *.luacallstackdb *.ctest *.dtest
+clean:
+	-@$(RM) *.luac *.luadebug *.luaprofile *.luacallstackdb *.ctest *.dtest
 	@cd error && $(MAKE) $@
 
-.PHONY: test all dummy clean version error
+.PHONY: test all checkexpect expectsum dummy clean version error
 
 # (end of Makefile)

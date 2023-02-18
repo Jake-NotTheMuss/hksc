@@ -1,1 +1,0 @@
-typedvar.lua:1: Cannot use typed local variables when the virtual machine is built without structures See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h. near ''

@@ -466,6 +466,7 @@ static const char *currentcheck=NULL;
     lua_logerror(H, luaI_formatmsg(H, \
       "%s:%d: assertion failed: (%s), (in function %s)", __FILE__, __LINE__, \
       #c, currentcheck)); \
+    lua_assert(c); \
     return 1; \
   } \
 } while (0)
@@ -478,6 +479,7 @@ static const char *currentcheck=NULL;
       "%s:%d: assertion failed: (%s), (in function %s)", __FILE__, __LINE__, \
       #c, currentcheck)); \
     lua_unlock(H); \
+    lua_assert(c); \
     return 1; \
   } \
 } while (0)

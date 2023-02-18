@@ -28,7 +28,6 @@
 
 
 #define next(ls) (ls->current = zgetc(ls->z))
-#define nextiszero(ls) (next(ls) == 0 && zhasmore(ls->z))
 
 
 
@@ -73,6 +72,7 @@ void luaX_init (hksc_State *H) {
 
 #define MAXSRC          80
 
+
 #ifdef HKSC_MATCH_HAVOK_ERROR_MSG
 
 /* from Lua 5.1 - the code that Havok Script uses - do not modify */
@@ -84,19 +84,6 @@ const char *luaX_token2str (LexState *ls, int token) {
   }
   else
     return luaX_tokens[token-FIRST_RESERVED];
-}
-
-
-static const char *txtToken (LexState *ls, int token) {
-  switch (token) {
-    case TK_NAME:
-    case TK_STRING:
-    case TK_NUMBER:
-      save(ls, '\0');
-      return luaZ_buffer(ls->buff);
-    default:
-      return luaX_token2str(ls, token);
-  }
 }
 
 #else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
@@ -119,33 +106,51 @@ const char *luaX_token2str (LexState *ls, int token) {
 }
 
 
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+
+
 static const char *txtToken (LexState *ls, int token) {
   switch (token) {
     case TK_NAME:
     case TK_STRING:
     case TK_NUMBER:
+#ifndef HKSC_MATCH_HAVOK_ERROR_MSG
     case TK_SHORT_LITERAL:
     case TK_LONG_LITERAL:
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
       save(ls, '\0');
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+      /* Havok generates messages with unbalanced quotes when quoting the input
+         buffer if (token == TK_NUMBER). Why? Because they save a null byte
+         after reading the number, which increments the length of the buffer.
+         When converting the token to a string, they call hksi_lua_pushlstring,
+         which creates a string that is long enough to include the null byte.
+         Then they call hksi_lua_concat for the first 4 strings on the stack.
+         The 3rd string is the input buffer string, and the 4th string is "'".
+         Because the 3rd string embeds a null byte, the string is terminated
+         early and the final quote is not printed. But Hksc does not have a Lua
+         stack and does not have a concat function, so this approximates the bug
+         and matches the error messages */
+      if (token == TK_NUMBER)
+        return luaO_pushfstring(ls->H, "'%s", luaZ_buffer(ls->buff));
+      else
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
       return luaO_pushfstring(ls->H, "'%s'", luaZ_buffer(ls->buff));
     default:
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+      return luaO_pushfstring(ls->H, "'%s'", luaX_token2str(ls, token));
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
       return luaX_token2str(ls, token);
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
   }
 }
 
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
-
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
-# define LLEX_QS LUA_QS
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
-# define LLEX_QS "%s"
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
 
 void luaX_lexerror (LexState *ls, const char *msg, int token) {
   char buff[MAXSRC];
   luaO_chunkid(buff, getstr(ls->source), MAXSRC);
   if (token)
-    luaD_setferror(ls->H, "%s:%d: %s near " LLEX_QS, buff, ls->linenumber, msg,
+    luaD_setferror(ls->H, "%s:%d: %s near %s", buff, ls->linenumber, msg,
                  txtToken(ls, token));
   else
     luaD_setferror(ls->H, "%s:%d: %s", buff, ls->linenumber, msg);
@@ -600,6 +605,17 @@ void luaX_lookahead (LexState *ls) {
   ls->lookahead.token = llex(ls, &ls->lookahead.seminfo);
 }
 
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+/*
+** This definition allows for the bugs which produce incorrect error messages,
+** but it is safer than Havok as it does not dereference pointers past the end
+** of the input buffer.
+*/
+#define nextiszero(ls)  (next(ls) == 0 && zhasmore(ls->z))
+#else
+#define nextiszero(ls)  (next(ls) == 0 && zhasmore(ls->z))
+#endif
+
 
 /* returns a token id corresponding to the BOM that was read */
 static int readBOM (LexState *ls) {
@@ -612,21 +628,32 @@ static int readBOM (LexState *ls) {
   }
   else if (first == 0xFE) { /* big endian utf16 */
     if (next(ls) == 0xFF) {
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+      if (!nextiszero(ls))
+        return TK_UTF16BE_BOM;
+      if (nextiszero(ls))
+        return TK_UTF32LE_BOM;
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
       next(ls);
       return TK_UTF16BE_BOM;
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
     }
   }
   else if (first == 0xFF) { /* little endian utf16 or utf32 */
     if (next(ls) == 0xFE) {
-      if (nextiszero(ls) && nextiszero(ls)) /* little endian utf32 */
 #ifdef HKSC_MATCH_HAVOK_ERROR_MSG
-        /* Havok gets this wrong but the error messages need to match */
-        return TK_UTF16LE_BOM;
+      next(ls);
+      return TK_UTF16LE_BOM;
 #else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
-        return TK_UTF32LE_BOM;
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
-      else
+      int nextCharacter = next(ls);
+      if (!zhasmore(ls->z) || nextCharacter != '\0')
         return TK_UTF16LE_BOM;
+      nextCharacter = next(ls);
+      if (zhasmore(ls) && nextCharacter == '\0') {
+        next(ls);
+        return TK_UTF32LE_BOM;
+      }
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
     }
   }
   else if (first == 0) { /* big endian utf32 */

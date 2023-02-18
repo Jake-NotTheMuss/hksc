@@ -66,28 +66,28 @@ all: src
 
 test: src
 	@cd test && \
-	$(MAKE) test HKSC_NAME=$(HKSC_T) && \
-	$(MAKE) test HKSC_NAME=$(HKSC_SH)
+	$(MAKE) HKSC_NAME=$(HKSC_T) && \
+	$(MAKE) HKSC_NAME=$(HKSC_SH)
 
-src: Makefile
+src:
 	@cd src && $(MAKE)
 
-clean: Makefile
+clean:
 	@cd src && $(MAKE) $@
 	@cd test && $(MAKE) -s $@
 
-depend: Makefile
-	@cd src && { \
-	if test -f gen-depend && test -x gen-depend; then \
-		CC="$(CC)" CFLAGS="$(CFLAGS)" ./gen-depend; \
-	fi; \
-	}
+depend:
+	@cd src && $(MAKE) $@
+
+expectsum:
+	@cd test && $(MAKE) $@
+	@cd test/error && $(MAKE) $@
 
 distclean: clean
 	$(RM) $(CONFIG_H) libhksc.pc Makefile src/Makefile test/Makefile \
-	test/error/Makefile config.status
+	test/error/Makefile config
 
-install: Makefile
+install:
 	$(MKDIR) -p $(INSTALL_BIN) $(INSTALL_INC) $(INSTALL_LIB) $(INSTALL_MAN)
 	$(INSTALL_EXEC) $(TO_BIN) $(INSTALL_BIN)
 	$(INSTALL_DATA) $(TO_INC) $(INSTALL_INC)
@@ -95,11 +95,11 @@ install: Makefile
 	$(INSTALL_DATA) $(TO_MAN) $(INSTALL_MAN)
 #	$(RANLIB) $(INSTALL_LIB)/$(TO_LIB)
 
-local: Makefile
+local:
 	$(MAKE) install INSTALL_TOP=. INSTALL_EXEC="cp -p" INSTALL_DATA="cp -p"
 
 # echo config parameters
-echo: Makefile
+echo:
 	@echo ""
 	@echo "These are the parameters currently set in src/Makefile to build Lua:"
 	@echo ""
@@ -139,21 +139,21 @@ echo: Makefile
 	@echo ""
 
 # echo private config parameters
-pecho: Makefile
+pecho:
 	@echo "TO_BIN = $(TO_BIN)"
 	@echo "TO_INC = $(TO_INC)"
 	@echo "TO_LIB = $(TO_LIB)"
 	@echo "TO_MAN = $(TO_MAN)"
 
 # show what has changed since we unpacked
-newer: Makefile
+newer:
 	@$(FIND) $(top_srcdir) -newer MANIFEST -type f
 
-src/hkscconf.h: Makefile $(top_srcdir)/src/hkscconf.h.in $(top_srcdir)/configure
+src/hkscconf.h: $(top_srcdir)/src/hkscconf.h.in $(top_srcdir)/configure
 	@echo regenerating $@
 	@cd $(top_builddir) && @CONFIGURE@ > /dev/null && touch $@
 
-libhksc.pc: Makefile $(srcdir)/libhksc.pc.in $(top_srcdir)/configure
+libhksc.pc: $(srcdir)/libhksc.pc.in $(top_srcdir)/configure
 	@echo regenerating $@
 	@cd $(top_builddir) && @CONFIGURE@ > /dev/null
 
@@ -163,5 +163,6 @@ Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 
 # list targets that do not create files (but not all makes understand .PHONY)
 .PHONY: all src test clean depend distclean install local echo pecho lecho newer
+.PHONY: expectsum
 
 # (end of Makefile)

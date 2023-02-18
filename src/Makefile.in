@@ -90,7 +90,7 @@ ALL_O= $(CORE_O) $(HKSC_O) $(AUX_O)
 ALL_PIC_O= $(CORE_PIC_O) $(AUX_PIC_O)
 ALL_A= $(CORE_T)
 
-all:	Makefile $(HKSC_T) $(HKSC_SH)
+all:	$(HKSC_T) $(HKSC_SH)
 
 o:	$(ALL_O)
 
@@ -126,10 +126,15 @@ $(HKSC_T): $(HKSC_O) $(STATICLIB)
 $(HKSC_SH): $(HKSC_O) $(SHAREDLIB)
 	$(CC) -o $@ $(MYLDFLAGS) $(HKSC_O) $(STATICLIB) $(LIBS) $(LINK_LIBHKSC)
 
-clean: Makefile
+clean:
 	-$(RM) $(ALL_T) $(ALL_O) $(ALL_PIC_O) $(SHAREDLIB)
 
-echo: Makefile
+depend:
+	@if test -f ./gen-depend && test -x ./gen-depend; then \
+		CC="$(CC)" CFLAGS="$(CFLAGS)" ./gen-depend; \
+	fi
+
+echo:
 	@echo "CC = $(CC)"
 	@echo "CFLAGS = $(CFLAGS)"
 	@echo "AR = $(AR)"
