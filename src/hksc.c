@@ -102,7 +102,7 @@ static void print_usage(void)
    , stderr);
   fputs(
    "\nOther Options:\n"
-   "      --file-prefix-map=[OLD=NEW]\n"
+   "      --file-prefix-map=<OLD=NEW>\n"
    "                          Remap file source paths in debug info\n"
    "      --                  Stop handling options\n", stderr);
   fputs(
