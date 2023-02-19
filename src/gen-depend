@@ -13,6 +13,7 @@ TMP=tmp_$$
 
 {
 "$CC" $CFLAGS -MM *.c
+# generate .lo targets for library sources
 for f in hksclib.c l*.c; do
 	"$CC" $CFLAGS -MM -MT ${f%.c}.lo $f
 done

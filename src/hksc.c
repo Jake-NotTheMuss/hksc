@@ -69,7 +69,7 @@ static void print_usage(void)
    "\nOperation modes:\n"
    "      --help              Print this message and exit\n"
    "      --version           Show version information\n"
-   "      --printconfig       Print Hksc configuration\n"
+   "      --print-config      Print Hksc configuration\n"
 #ifdef HKSC_DECOMPILER
    "  -c, --compile           Run Hksc in compile mode\n"
    "  -d, --decompile         Run Hksc in decompile mode\n"
@@ -135,16 +135,9 @@ static void usage(const char *message)
 
 static void print_version(void)
 {
-  printf(HKSC_NAME " " HKSC_VERSION "\n" /* Hksc version */
-#ifdef LUA_COD
-    "Call of Duty "
-#endif
-    "Havok Script compiler"
-#ifdef HKSC_DECOMPILER
-    "/decompiler"
-#endif
-    "\n" LUA_VERSION " " LUA_COPYRIGHT "\n" /* Lua version */
-  );
+  fputs(HKSC_NAME " " HKSC_VERSION "\n" /* Hksc version */
+  LUA_VERSION " " LUA_COPYRIGHT "\n" /* Lua version */
+  , stdout);
 }
 
 
@@ -159,6 +152,30 @@ static void print_config(void)
   PRINT_YESNO("SELF       ", SELF);
   PRINT_YESNO("DOUBLES    ", WITHDOUBLES);
   PRINT_YESNO("NATIVE INT ", WITHNATIVEINT);
+  fputc('\n', stdout);
+  fputs("Library features:\n", stdout);
+#ifdef HKSC_DECOMPILER
+  fputs("  Decompiler             Enabled\n", stdout);
+#else /* !HKSC_DECOMPILER */
+  fputs("  Decompiler             Disabled\n", stdout);
+#endif /* HKSC_DECOMPILER */
+#ifdef HKSC_LOGGING
+  fputs("  Logging                Enabled\n", stdout);
+#else /* !HKSC_LOGGING */
+  fputs("  Logging                Disabled\n", stdout);
+#endif /* HKSC_LOGGING */
+  fputc('\n', stdout);
+  fputs("Call of Duty settings:\n", stdout);
+#ifdef LUA_COD
+  fputs("  T6 extensions          Enabled\n", stdout);
+#else /* !LUA_COD */
+  fputs("  T6 extensions          Disabled\n", stdout);
+#endif /* LUA_COD */
+#ifdef LUA_CODT7
+  fputs("  T7 extensions          Enabled\n", stdout);
+#else /* !LUA_CODT7 */
+  fputs("  T7 extensions          Disabled\n", stdout);
+#endif /* LUA_CODT7 */
 }
 
 #define IS(s) (strcmp(argv[i],s)==0)
@@ -224,7 +241,7 @@ static int doargs(int argc, char *argv[])
 #else
     else if (IS("-i") || IS("--ignoredebug")) ignore_debug=1;
 #endif /* LUA_COD */
-    else if (IS("--printconfig")) ++info;
+    else if (IS("--print-config")) ++info;
     else if (IS("--help")) { /* print help message and exit */
       print_usage();
       exit(EXIT_SUCCESS);

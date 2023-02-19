@@ -74,7 +74,6 @@ void luaX_init (hksc_State *H) {
 
 
 #ifdef HKSC_MATCH_HAVOK_ERROR_MSG
-
 /* from Lua 5.1 - the code that Havok Script uses - do not modify */
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {
@@ -292,26 +291,17 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
         luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
                       token);
       }
-      if (token == TK_SHORT_LITERAL && sizeof(void *) < sizeof(lu_int64)) {
-        const size_t voidpbits = (sizeof(void *) * CHAR_BIT);
-        int overflow;
+      if (token == TK_SHORT_LITERAL) {
+        if (sizeof(void *) < 8) {
 #ifdef LUA_UI64_S
-        const size_t int32bits = sizeof(lu_int32)*CHAR_BIT;
-        if (int32bits < voidpbits) { /* test high bits */
-          const lu_int32 mask =((lu_int32)1 << (voidpbits - int32bits)) - 1;
-          overflow=((literal.hi & mask) != literal.hi);
-        } else if (int32bits > voidpbits) {
-          const lu_int32 mask = ((lu_int32)1 << voidpbits) - 1;
-          overflow=(literal.hi != 0) || ((literal.lo & mask) != literal.lo);
-        } else /* int32bits == voidpbits */
-          overflow=(literal.hi != 0);
-#else
-        const lu_int64 mask = ((lu_int64)1 << voidpbits) - 1;
-        overflow = ((literal & mask) != literal);
-#endif
-        if (overflow) { /* literal does not fit in a lightuserdata */
-          ls->buff->n--; /* don't include the null character in messages */
-          luaX_lexerror(ls, "int literal too large for lightuserdata", token);
+          if (literal.hi != 0)
+#else /* !LUA_UI64_S */
+          if ((literal & 0xFFFFFFFFlu) != literal)
+#endif /* LUA_UI64_S */
+          {
+            ls->buff->n--; /* don't include the null character in messages */
+            luaX_lexerror(ls, "int literal too large for lightuserdata", token);
+          }
         }
       }
       seminfo->l = literal;
@@ -605,16 +595,8 @@ void luaX_lookahead (LexState *ls) {
   ls->lookahead.token = llex(ls, &ls->lookahead.seminfo);
 }
 
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
-/*
-** This definition allows for the bugs which produce incorrect error messages,
-** but it is safer than Havok as it does not dereference pointers past the end
-** of the input buffer.
-*/
+
 #define nextiszero(ls)  (next(ls) == 0 && zhasmore(ls->z))
-#else
-#define nextiszero(ls)  (next(ls) == 0 && zhasmore(ls->z))
-#endif
 
 
 /* returns a token id corresponding to the BOM that was read */
@@ -649,7 +631,7 @@ static int readBOM (LexState *ls) {
       if (!zhasmore(ls->z) || nextCharacter != '\0')
         return TK_UTF16LE_BOM;
       nextCharacter = next(ls);
-      if (zhasmore(ls) && nextCharacter == '\0') {
+      if (zhasmore(ls->z) && nextCharacter == '\0') {
         next(ls);
         return TK_UTF32LE_BOM;
       }

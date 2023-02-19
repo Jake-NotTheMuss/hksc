@@ -66,8 +66,8 @@ all: src
 
 test: src
 	@cd test && \
-	$(MAKE) HKSC_NAME=$(HKSC_T) && \
-	$(MAKE) HKSC_NAME=$(HKSC_SH)
+	$(MAKE) HKSC_NAME=hksc && \
+	$(MAKE) HKSC_NAME=hkscsh
 
 src:
 	@cd src && $(MAKE)
