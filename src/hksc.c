@@ -23,6 +23,9 @@
 
 static int listing=0;     /* list bytecodes? */
 static int dumping=1;     /* dump bytecodes? */
+#ifdef HKSC_DECOMPILER
+static int decompiling=0;
+#endif /* HKSC_DECOMPILER */
 
 static int mode=HKSC_MODE_DEFAULT; /* compiling or decompiling? */
 
@@ -70,10 +73,8 @@ static void print_usage(void)
    "      --help              Print this message and exit\n"
    "      --version           Show version information\n"
    "      --print-config      Print Hksc configuration\n"
-#ifdef HKSC_DECOMPILER
-   "  -c, --compile           Run Hksc in compile mode\n"
-   "  -d, --decompile         Run Hksc in decompile mode\n"
-#endif /* HKSC_DECOMPILER */
+   "  -a, --source            Expect source files as input\n"
+   "  -b, --binary            Expect binary files as input\n"
   , stderr);
   fputs(
    "\nCompiler options:\n"
@@ -88,6 +89,10 @@ static void print_usage(void)
   fputs(
    "\nInput/Output options:\n"
    "  -o, --output=NAME       Output to file NAME\n"
+#ifdef HKSC_DECOMPILER
+   "  -d                      Decompile\n"
+#endif
+   "  -l                      List (use -l -l for full listing)\n"
    "  -p                      Parse only\n"
 #ifndef LUA_COD
    "  -g, --withdebug         Load/dump debug information\n"
@@ -208,9 +213,7 @@ static int doargs(int argc, char *argv[])
   int striparg=0;
   int version=0;
   int info=0;
-#ifdef HKSC_DECOMPILER
-  int c=0,d=0; /* uses of `-c' and `-d' */
-#endif /* HKSC_DECOMPILER */
+  int a=0,b=0; /* uses of `-a' and `-b' */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
   {
@@ -230,10 +233,8 @@ static int doargs(int argc, char *argv[])
     else if (IS("-"))     /* end of options; use stdin */
       break;
 #endif
-#ifdef HKSC_DECOMPILER
-    else if (IS("-c") || IS("--compile")) ++c; /* specifies compile mode */
-    else if (IS("-d") || IS("--decompile")) ++d; /* specified decompile mode */
-#endif /* HKSC_DECOMPILER */
+    else if (IS("-a") || IS("--source")) ++a; /* specifies compile mode */
+    else if (IS("-b") || IS("--binary")) ++b; /* specified decompile mode */
     else if (IS("-r") || IS("--withdebug")) withdebug=1;
 #ifdef LUA_COD
     ELSE_IF_STRING("-a", "--callstackdb", callstackdb);
@@ -248,6 +249,12 @@ static int doargs(int argc, char *argv[])
     }
     else if (IS("-l"))      /* list */
       ++listing;
+#ifdef HKSC_DECOMPILER
+    else if (IS("-d") || IS("--decompile")) {
+      decompiling=1;
+      dumping=1;
+    }
+#endif /* HKSC_DECOMPILER */
     else if (HAS("-L"))   /* specify int literal options */
     {
       char *mode;
@@ -328,24 +335,18 @@ static int doargs(int argc, char *argv[])
     }
     exit(EXIT_SUCCESS);
   }
-#ifdef HKSC_DECOMPILER
-  if (c && d) /* both compile and decompile mode specified? */
-    usage("both '-c' and '-d' used; Hksc can only be run in one mode");
-  else if (c) {
+  if (a && b) /* both compile and decompile mode specified? */
+    usage("both '-a' and '-b' used; Hksc can only be run in one mode");
+  else if (a) {
 #ifndef LUA_COD
     if (ignore_debug)
       warn_unused("--ignoredebug", "compiling");
 #endif /* !LUA_COD */
-    mode=HKSC_MODE_COMPILE;
+    mode=HKSC_MODE_SOURCE;
   }
-  else if (d)
-    mode=HKSC_MODE_DECOMPILE;
-#endif /* HKSC_DECOMPILER */
-  if (striparg && (dumping
-#ifdef HKSC_DECOMPILER
-      || d
-#endif
-      ))
+  else if (b)
+    mode=HKSC_MODE_BINARY;
+  if (striparg && (dumping))
     warn_unused("-s", "not dumping bytecode");
   return nfiles;
 }
@@ -370,7 +371,12 @@ static int hksc_dump_p(hksc_State *H, void *ud) {
 
 /* default dump function */
 static int hksc_dump_default(hksc_State *H, void *ud) {
-  return hksc_dump_function(H, (const char *)ud);
+  const char *filename = (const char *)ud;
+#ifdef HKSC_DECOMPILER
+  if (decompiling)
+    return hksc_dump_decomp(H, filename);
+#endif /* HKSC_DECOMPILER */
+  return hksc_dump_bytecode(H, filename);
 }
 
 /*

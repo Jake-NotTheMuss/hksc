@@ -30,7 +30,7 @@ typedef struct stringtable {
 ** `global state', shared by all threads of this state
 */
 typedef struct global_State {
-  int mode; /* compiling or decompiling? */
+  int mode; /* input file mode, source of binary */
   int bytecode_endianness; /* bytecode endianness */
   hksc_CompilerSettings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
@@ -48,16 +48,16 @@ typedef struct global_State {
   lu_mem gcdept;  /* how much GC is `behind schedule' */
   int gcpause;  /* size of pause between successive GCs */
   int gcstepmul;  /* GC `granularity' */
-  const char *prefix_map_from;
-  const char *prefix_map_to;
+  const char *prefix_map_from;  /* OLD value in file prefix map */
+  const char *prefix_map_to;  /* NEW value in file prefix map */
 #ifdef HKSC_LOGGING
   hksc_LogContext logctx;
 #endif
   lua_CFunction panic;  /* to be called in unprotected errors */
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
   LoadStateCB debugLoadStateOpen; /* (COD) debug reader initializer */
   LoadStateCB debugLoadStateClose; /* (COD) debug reader finalizer */
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* LUA_COD */
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
 } global_State;
@@ -73,9 +73,9 @@ struct hksc_State {
   unsigned short nCcalls;  /* number of nested C calls */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
   const char *currdebugfile;
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* LUA_COD */
 };
 
 

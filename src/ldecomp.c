@@ -24,6 +24,8 @@
 #include "lstring.h"
 #include "lundump.h"
 
+#ifdef HKSC_DECOMPILER
+
 /*
 ** Check whether an op loads a constant into register A. Helps determine if a
 ** tested expression starts evaluating at an instruction. Ops that load
@@ -2517,3 +2519,5 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w,
   (void)previsjump;
   return D.status;
 }
+
+#endif /* HKSC_DECOMPILER */

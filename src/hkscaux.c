@@ -29,7 +29,6 @@ extern int callstackdb_arg;
 /*extern const char *debugext;*/
 #endif /* LUA_COD */
 
-
 /* default extension of pre-compiled Lua files */
 #define LUAC_EXT ".luac"
 /* default extension of source Lua files */
@@ -119,16 +118,14 @@ void luacod_startcycle(hksc_State *H, const char *name) {
      needed from the start; if dumping, the names will be regenerated to go to
      the output directory; this doesn't apply when the names are provided
      explicitly in the command line  */
-  if (lua_getmode(H) == HKSC_MODE_COMPILE && output != NULL)
+  if (lua_getmode(H) == HKSC_MODE_SOURCE && output != NULL)
     name = output;/* the debug files go the directory with the output file */
   if (!lua_getIgnoreDebug(H)) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
     if (callstackdb == NULL)
       callstackdb = lua2luacallstackdb(H, name);
-# ifdef HKSC_DECOMPILER
     lua_setDebugFile(H, debugfile);
-# endif /* HKSC_DECOMPILER */
   }
 }
 
@@ -139,9 +136,7 @@ void luacod_endcycle(hksc_State *H, const char *name) {
      run in that case */
   debugfile = NULL;
   callstackdb = NULL;
-# ifdef HKSC_DECOMPILER
   lua_setDebugFile(H, NULL);
-# endif /* HKSC_DECOMPILER */
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
@@ -171,35 +166,47 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
 }
 #endif /* LUA_COD */
 
-/* default dump function used by standalone program (for bytecode or decomp) */
-int hksc_dump_function(hksc_State *H, const char *filename) {
+
+int hksc_dump_bytecode(hksc_State *H, const char *filename) {
   int status;
   FILE *out; /* output file */
   const char *outname; /* output file name */
-  const int compiling = lua_getmode(H) == HKSC_MODE_COMPILE;
-  if (output == NULL) { /* generate an output name if needed */
-    if (compiling)
-      outname = lua2luac(H, filename);
-    else
-      outname = luac2luadec(H, filename);
-  } else
+  if (output == NULL) /* generate an output name if needed */
+    outname = lua2luac(H, filename);
+  else
     outname = output;
 #ifdef LUA_COD
-  if (compiling) { /* (COD) dump debug info to separate files */
-    status = luacod_dumpdebug(H, outname);
-    if (status) return status; /* error */
-  }
+  status = luacod_dumpdebug(H, outname); /* dump debug info to separate files */
+  if (status)
+    return status;
 #endif /* LUA_COD */
-  out = fopen(outname, compiling ? "wb" : "w");
-  if (out == NULL) cannot("open", outname);
-  if (compiling) /* dump bytecode */
-    status = lua_dump(H, writer_2file, out);
-  else
-#ifdef HKSC_DECOMPILER
-    status = lua_decompile(H, writer_2file, out); /* dump decomp */
-#else
-    ;
-#endif /* HKSC_DECOMPILER */
-  if (fclose(out)) cannot("close", outname);
+  out = fopen(outname, "wb");
+  if (out == NULL)
+    cannot("open", outname);
+  status = lua_dump(H, writer_2file, out);
+  if (fclose(out))
+    cannot("close", outname);
   return status;
 }
+
+
+#ifdef HKSC_DECOMPILER
+
+int hksc_dump_decomp(hksc_State *H, const char *filename) {
+  int status;
+  FILE *out; /* output file */
+  const char *outname; /* output file name */
+  if (output == NULL) /* generate an output name if needed */
+    outname = luac2luadec(H, filename);
+  else
+    outname = output;
+  out = fopen(outname, "w");
+  if (out == NULL)
+    cannot("open", outname);
+  status = lua_decompile(H, writer_2file, out);
+  if (fclose(out))
+    cannot("close", outname);
+  return status;
+}
+
+#endif /* HKSC_DECOMPILER */

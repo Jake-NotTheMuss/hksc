@@ -134,16 +134,10 @@ static void f_parser (hksc_State *H, void *ud) {
   struct SParser *p = cast(struct SParser *, ud);
   int c = luaZ_lookahead(p->z);
   if (c == LUA_SIGNATURE[0]) { /* binary file */
-#ifdef HKSC_DECOMPILER
-    lua_assert(hksc_mode(H) == HKSC_MODE_DECOMPILE);
+    lua_assert(hksc_mode(H) == HKSC_MODE_BINARY);
     tf = luaU_undump(H, p->z, &p->buff, p->name);
-#else /* !HKSC_DECOMPILER */
-    lua_assert(0); /* cannot happen */
-    luaD_throw(H, LUA_ERRRUN);
-    tf = NULL; /* avoid warnings */
-#endif /* HKSC_DECOMPILER */
   } else {
-    lua_assert(hksc_mode(H) == HKSC_MODE_COMPILE);
+    lua_assert(hksc_mode(H) == HKSC_MODE_SOURCE);
     tf = luaY_parser(H, p->z, &p->buff, p->name);
   }
   /*tf = luaY_parser(H, p->z, &p->buff, p->name);*/

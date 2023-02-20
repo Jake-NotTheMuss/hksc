@@ -12,7 +12,7 @@
 
 
 /* define static functions needed for both dumping and loading */
-#if defined(ldump_c) || (defined(lundump_c) && defined(HKSC_DECOMPILER))
+#if defined(ldump_c) || defined(lundump_c)
 
 /* swap endianness of a sequence of bytes if needed */
 #define correctendianness(S,x) \
@@ -37,9 +37,9 @@ static int isbigendian() {
   return ((char)*(char *)&x == 0);
 }
 
-#endif /* lundump_c || ldump_c */
+#endif /* ldump_c || lundump_c */
 
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
 
 /*
 ** Callback function signature for constructing/destructing a debug load state.
@@ -55,11 +55,9 @@ typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
 
 #endif /* LUA_COD */
 
-#ifdef HKSC_DECOMPILER
 /* load one chunk; from lundump.c */
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
                               const char *name);
-#endif /* HKSC_DECOMPILER */
 
 /* make header; from lundump.c */
 LUAI_FUNC void luaU_header (char *h, int swapendian);

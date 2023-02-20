@@ -592,7 +592,7 @@ static int apichecks(hksc_State *H) {
   /* lua_setmode */
   lua_checking(lua_setmode);
   /* change whatever value it was */
-  mode = (mode == HKSC_MODE_DEFAULT) ? HKSC_MODE_COMPILE : HKSC_MODE_DEFAULT;
+  mode = (mode == HKSC_MODE_DEFAULT) ? HKSC_MODE_SOURCE : HKSC_MODE_DEFAULT;
   lua_setmode(H, mode);
   test_api_assert(H, lua_getmode(H) == mode);
 #ifdef HKSC_LOGGING

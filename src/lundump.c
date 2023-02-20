@@ -23,8 +23,6 @@
 #include "lundump.h"
 #include "lzio.h"
 
-#ifdef HKSC_DECOMPILER /* bytecode loading stuff */
-
 typedef struct {
  hksc_State *H;
  ZIO *Z;
@@ -412,7 +410,6 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   return u.f;
 }
 
-#endif /* HKSC_DECOMPILER */
 
 #define compatbits \
   ((HKSC_GETGLOBAL_MEMOIZATION   << HKSC_COMPATIBILITY_BIT_MEMOIZATION) | \

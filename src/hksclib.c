@@ -37,22 +37,14 @@
   if (checkmode_(H,m,f)) return LUA_ERRRUN; \
 } while (0)
 
-#ifdef HKSC_DECOMPILER
+
 #define checkmodematches(H,c,f) do { \
   if ((c) == LUA_SIGNATURE[0]) \
-    checkmode(H,HKSC_MODE_DECOMPILE,f); \
+    checkmode(H,HKSC_MODE_BINARY,f); \
   else \
-    checkmode(H,HKSC_MODE_COMPILE,f); \
+    checkmode(H,HKSC_MODE_SOURCE,f); \
 } while (0)
-#else /* !HKSC_DECOMPILER */
-#define checkmodematches(H,c,f) do { \
-  if ((c) == LUA_SIGNATURE[0]) { \
-    luaD_setferror((H), "`%s' is already a pre-compiled Lua file", (f)); \
-    return LUA_ERRRUN; \
-  } \
-  checkmode((H),HKSC_MODE_COMPILE,(f)); \
-} while (0)
-#endif /* HKSC_DECOMPILER */
+
 
 static int checkmode_(hksc_State *H, int mode, const char *filename) {
   int oldmode = hksc_mode(H);
@@ -60,7 +52,7 @@ static int checkmode_(hksc_State *H, int mode, const char *filename) {
   if (oldmode == HKSC_MODE_DEFAULT)
     hksc_mode(H) = mode; /* set the mode if it wasn't set */
   else if (oldmode != mode) {
-    if (oldmode == HKSC_MODE_COMPILE)
+    if (oldmode == HKSC_MODE_SOURCE)
       luaD_setferror(H, "cannot process `%s' in compile-mode, it is already a "
         "pre-compiled Lua file", filename);
     else
@@ -161,22 +153,16 @@ static int loadfile(hksc_State *H, const char *filename) {
   }
   if (c == LUA_SIGNATURE[0] && lf.f != stdin) {  /* binary file? */
     fclose(lf.f);
-#ifndef HKSC_DECOMPILER /* built without a decompiler */
-    hksc_seterror(H, "Attempt to compile a binary Lua file, source file "
-                       "expected");
-    return LUA_ERRRUN;
-#else /* HKSC_DECOMPILER */
     /* make sure this state is in decompile-mode */
-    checkmode(H, HKSC_MODE_DECOMPILE, filename);
+    checkmode(H, HKSC_MODE_BINARY, filename);
     lf.f = fopen(filename, "rb");  /* reopen in binary mode */
     if (lf.f == NULL) return errfile(H, "reopen", filename);
     /* skip eventual `#!...' */
     while ((c = getc(lf.f)) != EOF && c != LUA_SIGNATURE[0]) ;
     lf.extraline = 0;
-#endif /* !HKSC_DECOMPILER */
   } else { /* source file */
     /* make sure this state is in compile-mode */
-    checkmode(H, HKSC_MODE_COMPILE, filename);
+    checkmode(H, HKSC_MODE_SOURCE, filename);
   }
   ungetc(c, lf.f);
   status = load(H, getF, &lf, chunkname);
@@ -347,7 +333,7 @@ static int panic (hksc_State *H) {
   return 0;
 }
 
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD) /*&& defined(HKSC_DECOMPILER)*/
 
 typedef struct LoadDebug
 {
@@ -436,11 +422,11 @@ LUA_API hksc_State *hksI_newstate(hksc_StateSettings *settings)
   }
   H = lua_newstate(settings);
   if (H) {
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
     /* Call of Duty needs a separate debug reader when loading bytecode */
     G(H)->debugLoadStateOpen = init_debug_reader;
     G(H)->debugLoadStateClose = close_debug_reader;
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* LUA_COD */
   }
   return H;
 }

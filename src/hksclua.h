@@ -141,8 +141,8 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 ** hksc modes
 */
 #define HKSC_MODE_DEFAULT   0 /* infer from content of first file */
-#define HKSC_MODE_COMPILE   1 /* compiling source */
-#define HKSC_MODE_DECOMPILE 2 /* decompiling bytecode */
+#define HKSC_MODE_SOURCE   1 /* compiling source */
+#define HKSC_MODE_BINARY 2 /* decompiling bytecode */
 
 
 /*
@@ -250,10 +250,10 @@ LUA_API int (lua_getlogpriority) (hksc_State *H);
 LUA_API void (lua_setlogpriority) (hksc_State *H, int priority);
 #endif /* HKSC_LOGGING */
 
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
 LUA_API const char *(lua_getDebugFile) (hksc_State *H);
 LUA_API void (lua_setDebugFile) (hksc_State *H, const char *name);
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* LUA_COD */
 
 /*
 ** Lua compiler/decompiler settings

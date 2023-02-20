@@ -17,6 +17,9 @@ extern void luacod_endcycle(hksc_State *H, const char *name);
 #endif /* LUA_COD */
 
 /* dumps or decompiles bytecode */
-extern int hksc_dump_function(hksc_State *H, const char *filename);
+extern int hksc_dump_bytecode(hksc_State *H, const char *filename);
+#ifdef HKSC_DECOMPILER
+extern int hksc_dump_decomp(hksc_State *H, const char *filename);
+#endif /* HKSC_DECOMPILER */
 
 #endif /* hkscaux_h */

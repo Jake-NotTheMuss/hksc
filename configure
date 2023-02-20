@@ -34,6 +34,8 @@ Standard Options:
   --sharedir=DIR           Root documentation DIR
   --docdir=DIR             Install documentation in DIR
   --mandir=DIR             Install man pages in DIR
+  --program-prefix=PREFIX  Prepend PREFIX to installed program names
+  --program-suffix=SUFFIX  Append SUFFIX to installed program names
 
 Havok Script Compatibility Options:
   --game=GAME              Configure compability settings for GAME
@@ -93,6 +95,8 @@ VER3=`echo $VER | cut -d. -f 1-3`
 VER2=`echo $VER | cut -d. -f 1-2`
 VER1=`echo $VER | cut -d. -f 1-1`
 
+program_prefix=
+program_suffix=
 emu_ui64=0
 with_decompiler=1
 with_logging=0
@@ -116,6 +120,8 @@ for opt; do
 		--sharedir=*) sharedir=${opt#*=} ;;
 		--docdir=*) docdir=${opt#*=} ;;
 		--mandir=*) mandir=${opt#*=} ;;
+		--program-prefix=*) program_prefix=${opt#*=} ;;
+		--program-suffix=*) program_suffix=${opt#*=} ;;
 		--game=*) game=${opt#*=} ;;
 		--with-decompiler) with_decompiler=1 ;;
 		--no-decompiler) with_decompiler=0 ;;
@@ -174,6 +180,8 @@ FIND=${FIND-find}
 INSTALL=${INSTALL-install}
 MKDIR=${MKDIR-mkdir}
 LIBS=
+
+HKSC_INSTALL_NAME=${program_prefix}hksc${program_suffix}
 
 # Check all directory arguments for consistency.
 for var in prefix exec_prefix bindir libdir sharedlibdir includedir sharedir \
@@ -299,6 +307,8 @@ logvar sharedir
 logvar docdir
 logvar mandir
 logvar pkgconfigdir
+logvar program_prefix
+logvar program_suffix
 
 # preprocessor defs
 logvar emu_ui64
@@ -427,6 +437,7 @@ config_makefile()
 			s&@SHAREDLIB@&libhksc\$(DLLSUF)&;t t
 			s&@HKSC_T@&hksc\$(EXESUF)&;t t
 			s&@HKSC_SH@&hkscsh\$(EXESUF)&;t t
+			s&@HKSC_INSTALL_NAME@&$HKSC_INSTALL_NAME&;t t
 			s&@HKSC_VERSION@&$VER&;t t
 			s&@HKSC_VERSION3@&$VER3&;t t
 			s&@HKSC_VERSION2@&$VER2&;t t

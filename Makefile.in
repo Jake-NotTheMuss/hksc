@@ -27,6 +27,7 @@ STATICLIB=@STATICLIB@
 SHAREDLIB=@SHAREDLIB@
 HKSC_T=@HKSC_T@
 HKSC_SH=@HKSC_SH@
+HKSC_INSTALL_NAME=@HKSC_INSTALL_NAME@
 
 srcdir=@srcdir@
 top_srcdir=@top_srcdir@
@@ -56,8 +57,9 @@ CONFIG_H=src/hkscconf.h
 
 # What to install.
 TO_BIN= src/$(HKSC_T)
-TO_INC= $(top_srcdir)src/hksclua.h $(top_srcdir)src/hkscluaconf.h  \
-	$(top_srcdir)src/hksclib.h src/hkscconf.h $(top_srcdir)etc/hksclua.hpp
+TO_INC= $(top_srcdir)/src/hksclua.h $(top_srcdir)/src/hkscluaconf.h  \
+	$(top_srcdir)/src/hksclib.h $(top_builddir)/src/hkscconf.h  \
+	$(top_srcdir)/etc/hksclua.hpp
 TO_LIB= src/$(STATICLIB) src/$(SHAREDLIB)
 # TO_MAN= lua.1 luac.1
 
