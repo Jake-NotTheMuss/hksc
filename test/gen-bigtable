@@ -1,0 +1,86 @@
+#!/bin/sh
+
+me=$0
+size=
+default_size=200
+
+usage()
+{
+	cat <<EOF
+Usage: $me [options]
+
+Options:
+  --size=SIZE      Generate tables with SIZE array elements and SIZE records
+EOF
+	exit 1
+}
+
+error()
+{
+	echo $me: $*
+	exit 1
+}
+
+luacomment()
+{
+	printf '%c%c' '-' '-'
+	printf ' %s\n' "$*"
+}
+
+while test "x$1" != x; do
+	case $1 in
+		--size) shift; size=$1;;
+		--size=*) size=${1#--size=};;
+		*) usage;;
+	esac
+	shift
+done
+
+case $size in
+	*[^0-9]*) error "bad argument for '--size'";;
+	"") size=$default_size;;
+esac
+
+
+{
+	luacomment table with $size array elements
+	printf "local t = {\n"
+
+	count=0
+	while test x$count != x$size; do
+		printf "\t100,\n"
+		count=$((count+1))
+	done
+
+	printf "};\n"
+	luacomment table with $size records
+	printf "t = {\n"
+
+	count=0
+	while test x$count != x$size; do
+		printf "\ta$count = 100,\n"
+		count=$((count+1))
+	done
+
+	printf "};\n"
+	luacomment table with a leading array element, and $size array and records
+	printf "t = {\n"
+
+	count=0
+	while test x$count != x$size; do
+		printf "\t100,\n\ta$count = 100,\n"
+		count=$((count+1))
+	done
+
+	printf "\t100,\n};\n"
+	luacomment table with a leading record, and $size array and array elements
+	printf "t = {\n"
+
+	count=0
+	while test x$count != x$size; do
+		printf "\ta$count = 100,\n\t100,\n"
+		count=$((count+1))
+	done
+
+	printf "\ta$count = 100,\n};\n"
+} #> "$file"

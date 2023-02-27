@@ -59,9 +59,9 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->status = 0;
   H->errormsg = NULL;
   H->last_result = NULL;
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
   H->currdebugfile = NULL;
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* defined(LUA_COD) */
 }
 
 

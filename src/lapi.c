@@ -64,22 +64,57 @@ LUA_API hksc_CycleCallback lua_onendcycle (hksc_State *H,
 }
 
 
+LUA_API const char *lua_newfixedstring (hksc_State *H, const char *str) {
+  TString *ts;
+  const char *retstr;
+  lua_lock(H);
+  ts = luaS_new(H, str);
+  luaS_fix(ts);
+  retstr = getstr(ts);
+  lua_unlock(H);
+  return retstr;
+}
+
+
+LUA_API const char *lua_newfixedlstring (hksc_State *H, const char *str,
+                                         size_t l) {
+  TString *ts;
+  const char *retstr;
+  lua_lock(H);
+  ts = luaS_newlstr(H, str, l);
+  luaS_fix(ts);
+  retstr = getstr(ts);
+  lua_unlock(H);
+  return retstr;
+}
+
+
 LUA_API const char *lua_newstring (hksc_State *H, const char *str) {
-  return getstr(luaS_new(H, str));
+  const char *retstr;
+  lua_lock(H);
+  retstr = getstr(luaS_new(H, str));
+  lua_unlock(H);
+  return retstr;
 }
 
 
 LUA_API const char *lua_newlstring (hksc_State *H, const char *str, size_t l) {
-  return getstr(luaS_newlstr(H, str, l));
+  const char *retstr;
+  lua_lock(H);
+  retstr = getstr(luaS_newlstr(H, str, l));
+  lua_unlock(H);
+  return retstr;
 }
 
 
 LUA_API const char *lua_newfstring (hksc_State *H, const char *fmt, ...) {
   const char *str;
   va_list argp;
+  lua_lock(H);
   va_start(argp, fmt);
   str = luaO_pushvfstring(H, fmt, argp);
   va_end(argp);
+  lua_unlock(H);
   return str;
 }
 

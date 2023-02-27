@@ -21,16 +21,14 @@
 
 extern const char *output;
 
-#ifdef LUA_COD
 extern const char *debugfile;
-extern const char *callstackdb;
+extern const char *profilefile;
 extern int debugfile_arg;
-extern int callstackdb_arg;
+extern int profilefile_arg;
 /*extern const char *debugext;*/
-#endif /* LUA_COD */
 
 /* default extension of pre-compiled Lua files */
-#define LUAC_EXT ".luac"
+#define LUAC_EXT  ".luac"
 /* default extension of source Lua files */
 #define LUA_EXT  ".lua"
 /* default extension of decompiled Lua files */
@@ -38,9 +36,12 @@ extern int callstackdb_arg;
 
 #ifdef LUA_COD
 /* default extension of callstack reconstruction files */
-# define LUACALLSTACK_EXT ".luacallstackdb"
+# define LUACALLSTACK_EXT  ".luacallstackdb"
 /* defalt extension of debug info files */
-# define LUADEBUG_EXT ".luadebug"
+# define LUADEBUG_EXT  ".luadebug"
+#else /* !LUA_COD */
+# define LUACALLSTACK_EXT  ".luacprofile"
+# define LUADEBUG_EXT  ".luacdebug"
 #endif /* LUA_COD */
 
 
@@ -65,10 +66,8 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
 
 #define lua2luac(H,name) lua2ext(H,name,LUAC_EXT)
 #define luac2luadec(H,name) lua2ext(H,name,LUADEC_EXT)
-#ifdef LUA_COD
-#define lua2luacallstackdb(H,name) lua2ext(H,name,LUACALLSTACK_EXT)
+#define lua2luaprofile(H,name) lua2ext(H,name,LUACALLSTACK_EXT)
 #define lua2luadebug(H,name) lua2ext(H,name,LUADEBUG_EXT)
-#endif /* LUA_COD */
 
 #define MAXLUACNAME PATH_MAX
 
@@ -123,8 +122,8 @@ void luacod_startcycle(hksc_State *H, const char *name) {
   if (!lua_getIgnoreDebug(H)) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
-    if (callstackdb == NULL)
-      callstackdb = lua2luacallstackdb(H, name);
+    if (profilefile == NULL)
+      profilefile = lua2luaprofile(H, name);
     lua_setDebugFile(H, debugfile);
   }
 }
@@ -135,7 +134,7 @@ void luacod_endcycle(hksc_State *H, const char *name) {
      even if output names were explicitly provided, since only 1 cycle should
      run in that case */
   debugfile = NULL;
-  callstackdb = NULL;
+  profilefile = NULL;
   lua_setDebugFile(H, NULL);
 }
 
@@ -155,12 +154,19 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
   /* make sure generated names are in the same directory as outname */
   if (!debugfile_arg)
     debugfile = lua2luadebug(H, outname);
-  if (!callstackdb_arg)
-    callstackdb = lua2luacallstackdb(H, outname);
+  if (!profilefile_arg)
+    profilefile = lua2luaprofile(H, outname);
+#ifdef LUA_COD
   /* debug information */
   dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
   /* callstack reconstruction */
-  dumpdebugfile(callstackdb,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
+  dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
+#else /* !LUA_COD */
+  /* bytecode and debug info */
+  dumpdebugfile(debugfile,BYTECODE_STRIPPING_NONE,"wb");
+  /* bytecode and profile info */
+  dumpdebugfile(profilefile,BYTECODE_STRIPPING_PROFILING,"wb");
+#endif /* LUA_COD */
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }

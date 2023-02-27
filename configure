@@ -42,6 +42,7 @@ Havok Script Compatibility Options:
                            Supported values and their corresponding titles:
                              t6
                              t7
+                             none (disable all features)
 
 Lua/Hksc Options:
   --with-decompiler        Lua decompiler (enabled by default)
@@ -221,7 +222,7 @@ esac
 
 # configure compatibility settings based on the build config type
 case $game in
-	t6|t7)
+	t6|t7|none)
 		STRUCTURE_EXTENSION_ON=0
 		WITHNATIVEINT=0
 		WITHDOUBLES=0

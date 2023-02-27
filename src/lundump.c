@@ -71,6 +71,7 @@ static int LoadInt(LoadState *S)
   return x;
 }
 
+#ifdef LUA_COD
 static int LoadHash(LoadState *S)
 {
   int x;
@@ -78,6 +79,7 @@ static int LoadHash(LoadState *S)
   correctendianness(S,x);
   return x;
 }
+#endif /* LUA_COD */
 
 static size_t LoadSize(LoadState *S)
 {

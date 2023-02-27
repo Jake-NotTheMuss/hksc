@@ -149,10 +149,12 @@ error:
 	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
 	@ if $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug; \
 	then echo "$*.luadebug OK"; fi
+# 	check bytecode loader by loading $*.luac and dumping it again
+# 	@echo $(HKSC) $(HKSCFLAGS) --withdebug --binary $*.luac -o $*.luac
 
 # decompiler test
 .ctest.dtest:
-	@: echo hello $@
+	@ echo hello $@
 
 Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@echo regenerating test/$@

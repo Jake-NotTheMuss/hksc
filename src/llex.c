@@ -550,6 +550,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
                                   luaZ_bufflen(ls->buff));
           if (ts->tsv.reserved > 0)  /* reserved word? */ {
             int token = ts->tsv.reserved - 1 + FIRST_RESERVED;
+#if !HKSC_STRUCTURE_EXTENSION_ON
             /* hstructure and hmake are not supported in the cod builds */
             if (token == TK_HSTRUCTURE || token == TK_HMAKE)
             {
@@ -558,9 +559,10 @@ static int llex (LexState *ls, SemInfo *seminfo) {
                 "built with structure support."
 #ifdef HKSC_MATCH_HAVOK_ERROR_MSG
                 "  See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif
                 );
             }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
             return token;
           }
           else {

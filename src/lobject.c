@@ -180,8 +180,8 @@ struct StringBuilder {
   TString *result;  /* final result */
   const char *data;
   union {
-    va_list argp; /* extra arguments in a formatted string */
-    size_t len; /* length of data */
+    va_list argp;  /* extra arguments in a formatted string */
+    size_t len;  /* length of data */
   } aux;
 };
 
@@ -214,7 +214,7 @@ static void pushlstr (struct StringBuilder *sb, const char *str, size_t l) {
 /* return a printable version of a string constant */
 static void f_kstring2print (hksc_State *H, void *ud) {
   struct StringBuilder *sb = (struct StringBuilder *)ud;
-  int i,n=sb->aux.len;
+  size_t i,n=sb->aux.len;
   const char *s = sb->data; /* original string */
   pushchar(sb, '\"');
   for (i = 0; i < n; i++) {
@@ -243,6 +243,7 @@ static void f_kstring2print (hksc_State *H, void *ud) {
   pushchar(sb, '\"');
   sb->result = luaS_newlstr(H, sb->str, sb->l);
 }
+
 
 TString *luaO_kstring2print (hksc_State *H, TString *ts) {
   int status;

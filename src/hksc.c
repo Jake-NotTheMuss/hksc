@@ -20,7 +20,6 @@
 
 #define HKSC_NAME "hksc" /* default program name */
 
-
 static int listing=0;     /* list bytecodes? */
 static int dumping=1;     /* dump bytecodes? */
 #ifdef HKSC_DECOMPILER
@@ -42,12 +41,11 @@ static const char *logfilename=NULL;
 static FILE *logfile=NULL;
 #endif /* HKSC_LOGGING */
 
-#ifdef LUA_COD
 const char *debugfile=NULL;
-const char *callstackdb=NULL;
+const char *profilefile=NULL;
 int debugfile_arg=0;
-int callstackdb_arg=0;
-#else
+int profilefile_arg=0;
+#ifndef LUA_COD
 static int ignore_debug=0;
 #endif /* LUA_COD */
 
@@ -81,26 +79,22 @@ static void print_usage(void)
    "  -L[=TYPE]               Enable int literals of the given TYPE\n"
 #ifndef LUA_COD
    "  -s[=MODE]               Use bytecode stripping level MODE\n"
-   "  -i, --ignoredebug       Ignore debug info when decompiling\n"
+   "  -i, --ignore-debug      Ignore debug info when decompiling\n"
 #else
-   "  -s                      Turns off --withdebug even if set explicitly\n"
+   "  -s                      Do not dump debug information\n"
 #endif /* LUA_COD */
    , stderr);
   fputs(
    "\nInput/Output options:\n"
-   "  -o, --output=NAME       Output to file NAME\n"
+   "  -o, --output=FILE       Output to file FILE\n"
 #ifdef HKSC_DECOMPILER
-   "  -d                      Decompile\n"
+   "  -d, --decompile         Decompile\n"
 #endif
-   "  -l                      List (use -l -l for full listing)\n"
-   "  -p                      Parse only\n"
-#ifndef LUA_COD
-   "  -g, --withdebug         Load/dump debug information\n"
-#else
-   "  -g, --withdebug         Load/dump debug files with input/output files\n"
-   "  -a, --callstackdb=FILE  Use FILE for callstack reconstruction\n"
-   "  -g, --debugfile=FILE    Use FILE for debug info\n"
-#endif /* LUA_COD */
+   "  -l, --list              List (use -l -l for full listing)\n"
+   "  -p, --parse             Parse only\n"
+   "  -g, --with-debug        Load/dump debug information to separate files\n"
+   "      --profilefile=FILE  Use FILE for profile information\n"
+   "      --debugfile=FILE    Use FILE for debug information\n"
 #ifdef HKSC_LOGGING
    "      --logfile=FILE      Output logs to FILE\n"
 #endif /* HKSC_LOGGING */
@@ -127,14 +121,21 @@ static void print_usage(void)
 #endif /* !LUA_COD */
 }
 
-static void usage(const char *message)
+
+static void usage(const char *fmt, ...)
 {
-  if (*message == '-') {
-    fprintf(stderr,"%s: unrecognized option '%s'\n",progname,message);
-    print_usage();
+  if (*fmt == '-') {
+    fprintf(stderr,"%s: unrecognized option '%s'\n",progname,fmt);
+    fprintf(stderr,"Try '%s --help' for more information.\n",progname);
   }
-  else
-    fprintf(stderr,"%s: %s\n",progname,message);
+  else {
+    va_list argp;
+    fprintf(stderr,"%s: ",progname);
+    va_start(argp, fmt);
+    vfprintf(stderr,fmt,argp);
+    va_end(argp);
+    fputc('\n',stderr);
+  }
   exit(EXIT_FAILURE);
 }
 
@@ -188,23 +189,36 @@ static void print_config(void)
 
 #define DOSTRINGARG(s,l,v) do { \
   char *val; \
-  int shrt; \
-  if (s != NULL && (shrt = IS(s))) val = argv[++i]; \
-  else { \
-    val = argv[i] + sizeof(l)-1; \
-    if (*val == '=') val++; \
-    else if (*val == '\0') val = argv[++i]; \
-    else usage(argv[i]); \
-  } \
+  int shrt = IS(s); \
+  const size_t optlen = (shrt ? sizeof(s) : sizeof(l)) - 1; \
+  val = argv[i] + optlen; \
+  if (*val == '=') val++; \
+  else if (*val == '\0') val = argv[++i]; \
+  else usage(argv[i]); \
   if (val == NULL || *val == '\0') { \
-    if (s != NULL && shrt) usage("'"  "' needs an argument"); \
+    if (shrt) usage("'" s "' needs an argument"); \
     else usage("'" l "' needs an argument"); \
   } \
   v = (const char *)val; \
 } while (0)
 
-#define ELSE_IF_STRING(s,l,v) \
-  else if (((s != NULL) && IS(s)) || HAS(l)) DOSTRINGARG(s,l,v)
+#define DO_ARG(opt,v) do { \
+  char *val = argv[i] + sizeof(opt)-1; \
+  if (*val == '=') val++; \
+  else if (*val == '\0') val = argv[++i]; \
+  else usage(argv[i]); \
+  if (val == NULL || *val == '\0') \
+    usage("'" opt "' needs an argument"); \
+  v = (const char *)val; \
+} while (0)
+
+#define CHECK_OPT(s,l,v) \
+  else if (HAS(s)) DO_ARG(s,v); \
+  else if (HAS(l)) DO_ARG(l,v)
+
+#define CHECK_LONG_OPT(l,v)  else if (HAS(l)) DO_ARG(l,v)
+
+#define CHECK_SHORT_OPT(s,v)  else if (HAS(s)) DO_ARG(s,v)
 
 static int doargs(int argc, char *argv[])
 {
@@ -214,6 +228,7 @@ static int doargs(int argc, char *argv[])
   int version=0;
   int info=0;
   int a=0,b=0; /* uses of `-a' and `-b' */
+  const char *opt_a, *opt_b, *opt_withdebug;
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
   {
@@ -233,21 +248,29 @@ static int doargs(int argc, char *argv[])
     else if (IS("-"))     /* end of options; use stdin */
       break;
 #endif
-    else if (IS("-a") || IS("--source")) ++a; /* specifies compile mode */
-    else if (IS("-b") || IS("--binary")) ++b; /* specified decompile mode */
-    else if (IS("-r") || IS("--withdebug")) withdebug=1;
-#ifdef LUA_COD
-    ELSE_IF_STRING("-a", "--callstackdb", callstackdb);
-    ELSE_IF_STRING("-g", "--debugfile", debugfile);
-#else
-    else if (IS("-i") || IS("--ignoredebug")) ignore_debug=1;
+    else if (IS("-a") || IS("--source")) {
+      ++a;
+      opt_a = (const char *)argv[i];
+    }
+    else if (IS("-b") || IS("--binary")) {
+      ++b;
+      opt_b = (const char *)argv[i];
+    }
+    else if (IS("-g") || IS("--with-debug")) {
+      withdebug=1;
+      opt_withdebug = (const char *)argv[i];
+    }
+    CHECK_LONG_OPT("--profilefile", profilefile);
+    CHECK_LONG_OPT("--debugfile", debugfile);
+#ifndef LUA_COD
+    else if (IS("-i") || IS("--ignore-debug")) ignore_debug=1;
 #endif /* LUA_COD */
     else if (IS("--print-config")) ++info;
     else if (IS("--help")) { /* print help message and exit */
       print_usage();
       exit(EXIT_SUCCESS);
     }
-    else if (IS("-l"))      /* list */
+    else if (IS("-l") || IS("--list"))      /* list */
       ++listing;
 #ifdef HKSC_DECOMPILER
     else if (IS("-d") || IS("--decompile")) {
@@ -280,23 +303,25 @@ static int doargs(int argc, char *argv[])
       badliteralarg:
       usage("invalid int literal type given with '-L'");
     }
-    ELSE_IF_STRING("-v", "--file-prefix-map", file_prefix_map_arg);
-    ELSE_IF_STRING("-o", "--output", output);
+    CHECK_LONG_OPT("--file-prefix-map", file_prefix_map_arg);
+    CHECK_OPT("-o", "--output", output);
 #ifdef HKSC_LOGGING
-    ELSE_IF_STRING(NULL, "--logfile", logfilename);
+    CHECK_LONG_OPT("--logfile", logfilename);
 #endif /* HKSC_LOGGING */
-    else if (IS("-p"))      /* parse only */
+    else if (IS("-p") || IS("--parse"))      /* parse only */
       dumping=0;
     else if (HAS("-s"))     /* specify stripping level */
     {
 #ifdef LUA_COD
       /* do nothing */
       (void)striplevel;
+      if (argv[i][2] != '\0')
+        usage(argv[i]);
 #else /* !LUA_COD */
       char *mode;
       if (striparg)
         usage("'-s' used multiple times");
-      if (argv[i][2] == 0) {
+      if (argv[i][2] == '\0') {
         striplevel=BYTECODE_STRIPPING_ALL; /* default */
         striparg=1;
         continue;
@@ -336,11 +361,12 @@ static int doargs(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   if (a && b) /* both compile and decompile mode specified? */
-    usage("both '-a' and '-b' used; Hksc can only be run in one mode");
+    usage("both '%s' and '%s' used; Hksc can only be run in one mode",
+          opt_a, opt_b);
   else if (a) {
 #ifndef LUA_COD
     if (ignore_debug)
-      warn_unused("--ignoredebug", "compiling");
+      warn_unused("--ignore-debug", "compiling");
 #endif /* !LUA_COD */
     mode=HKSC_MODE_SOURCE;
   }
@@ -348,6 +374,15 @@ static int doargs(int argc, char *argv[])
     mode=HKSC_MODE_BINARY;
   if (striparg && (dumping))
     warn_unused("-s", "not dumping bytecode");
+  debugfile_arg = (debugfile != NULL);
+  profilefile_arg = (profilefile != NULL);
+  if ((debugfile_arg || profilefile_arg) && !withdebug)
+    usage("'-with-debug' must be provided with '--debugfile' and "
+          "'--profilefile'");
+#ifndef LUA_COD
+  if (striparg && withdebug)
+    usage("'-s' cannot be used when '%s' is provided", opt_withdebug);
+#endif /* LUA_COD */
   return nfiles;
 }
 
@@ -412,13 +447,11 @@ int main(int argc, char *argv[])
   /* warn about using -o with multiple input files */
   else if (argc > 1) {
     if (output != NULL)
-      error_multiple_inputs("-o");
-#ifdef LUA_COD
+      error_multiple_inputs("--output");
     if (debugfile != NULL)
-      error_multiple_inputs("-g");
-    if (callstackdb != NULL)
-      error_multiple_inputs("-a");
-#endif /* LUA_COD */
+      error_multiple_inputs("--debugfile");
+    if (profilefile != NULL)
+      error_multiple_inputs("--profilefile");
   }
   hksI_StateSettings(&settings);
 #ifdef HKSC_LOGGING
@@ -451,9 +484,7 @@ int main(int argc, char *argv[])
     lua_onendcycle(H, luacod_endcycle);
   }
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
-  debugfile_arg = (debugfile != NULL);
-  callstackdb_arg = (callstackdb != NULL);
-  withdebug = (withdebug || debugfile_arg || callstackdb_arg);
+  withdebug = (withdebug || debugfile_arg || profilefile_arg);
   lua_setIgnoreDebug(H, !withdebug);
 #else /* !LUA_COD */
   lua_setBytecodeStrippingLevel(H,striplevel);

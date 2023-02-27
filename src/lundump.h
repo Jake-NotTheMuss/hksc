@@ -81,13 +81,14 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 
 /* for header of binary files -- this is the official format */
 #if defined(LUA_CODT7)
-#define LUAC_FORMAT   14 /* T7 format version */
+#define LUAC_FORMAT  14 /* T7 format version */
 #elif defined(LUA_COD)
-#define LUAC_FORMAT   13 /* T6 format version */
+#define LUAC_FORMAT  13 /* T6 format version */
 #elif defined(HKSC_FORMAT_VERSION)
-#define LUAC_FORMAT   HKSC_FORMAT_VERSION
+#define LUAC_FORMAT  HKSC_FORMAT_VERSION
 #else
-#error "You need to define HKSC_FORMAT_VERSION"
+#define LUAC_FORMAT  14
+/*#error "You need to define HKSC_FORMAT_VERSION"*/
 #endif
 
 /* size of header of binary files */
@@ -96,16 +97,16 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 
 typedef struct HkscHeader {
   char signature[sizeof(LUA_SIGNATURE)-1]; /* Lua binary signature */
-  char version;     /* Lua version */
-  char formatversion; /* Lua format version */
+  char version;  /* Lua version */
+  char formatversion;  /* Lua format version */
   char swapendian;  /* true if need to swap endianness when loading/dumping */
-  char sizeint;     /* size of int */
-  char sizesize;    /* size of size_t */
-  char sizeinstr;   /* size of Instruction */
+  char sizeint;  /* size of int */
+  char sizesize;  /* size of size_t */
+  char sizeinstr;  /* size of Instruction */
   char sizenumber;  /* size of lua_Number */
-  char numberisint; /* true if lua_Number is integral */
+  char numberisint;  /* true if lua_Number is integral */
   char compatbits;  /* compatibility bits */
-  char shared;      /* true if compiled in a shared state */
+  char shared;  /* true if compiled in a shared state */
 } HkscHeader;
 
 /* number of types in header of binary files */
