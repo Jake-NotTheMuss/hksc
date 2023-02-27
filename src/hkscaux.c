@@ -156,17 +156,10 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
     debugfile = lua2luadebug(H, outname);
   if (!profilefile_arg)
     profilefile = lua2luaprofile(H, outname);
-#ifdef LUA_COD
   /* debug information */
   dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
   /* callstack reconstruction */
   dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
-#else /* !LUA_COD */
-  /* bytecode and debug info */
-  dumpdebugfile(debugfile,BYTECODE_STRIPPING_NONE,"wb");
-  /* bytecode and profile info */
-  dumpdebugfile(profilefile,BYTECODE_STRIPPING_PROFILING,"wb");
-#endif /* LUA_COD */
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }

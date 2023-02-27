@@ -81,6 +81,10 @@ clean:
 depend:
 	@cd src && $(MAKE) $@
 
+expect:
+	@cd test && $(MAKE) $@ GEN_EXPECT=./gen-expect
+	@cd test/error && $(MAKE) $@ GEN_EXPECT=../gen-expect
+
 expectsum:
 	@cd test && $(MAKE) $@
 	@cd test/error && $(MAKE) $@

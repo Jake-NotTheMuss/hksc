@@ -372,7 +372,7 @@ static int doargs(int argc, char *argv[])
   }
   else if (b)
     mode=HKSC_MODE_BINARY;
-  if (striparg && (dumping))
+  if (striparg && !dumping)
     warn_unused("-s", "not dumping bytecode");
   debugfile_arg = (debugfile != NULL);
   profilefile_arg = (profilefile != NULL);

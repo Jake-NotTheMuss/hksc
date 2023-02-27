@@ -11,16 +11,19 @@ RM=@RM@
 HKSC_SUPPRESS_LOGGING=@HKSC_SUPPRESS_LOGGING@
 HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
 
-HKSC=$(top_builddir)/src/$(HKSC_NAME)
+HKSC_NAME=hksc
+EXESUF=@EXESUF@
+
+HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
 
 # -p so that no binaries get generated accidentally
 HKSCFLAGS=-p -a $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
 
 # files are generated for each BOM that is NOT accepted by hksc
 BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \
-utf16or32le_bom.test unknown_bom.test
+	utf16or32le_bom.test unknown_bom.test
 OTHER_TESTS=badassign.test badbreak.test earlybreak.test earlyreturn.test  \
-literaloverflow.test lud.test ui64.test #utf8_identifier.test
+	literaloverflow.test lud.test ui64.test #utf8_identifier.test
 # error checks for when structures are enabled/disabled
 NOHSTRUCTURE_TESTS=hmake.test hstructure.test typedparam.test typedvar.test
 YESHSTRUCTURE_TESTS=
@@ -31,7 +34,7 @@ ALL_ERROR_TESTS=$(STANDARD_TESTS) $(YESHSTRUCTURE_TESTS) $(NOHSTRUCTURE_TESTS)
 
 # HSTRUCTURE_ERROR_CHECK=@HSTRUCTURE_ERROR_CHECK@
 
-all:prepare $(STANDARD_TESTS) $(HSTRUCTURE_ERROR_CHECK)
+all: prepare $(STANDARD_TESTS) $(HSTRUCTURE_ERROR_CHECK)
 	@printf -- '----------------------------\nAll Lua error checks passed\n\n'
 
 prepare: clean checkexpect
@@ -42,14 +45,22 @@ checkexpect:
 		echo You need to generate expect.sum; \
 		exit 1; \
 	fi
-	@shasum -c expect.sum >/dev/null
+	@shasum -a1 -c expect.sum >/dev/null
+
+expect:
+	@if test ! -e $(GEN_EXPECT) || test ! -x $(GEN_EXPECT); then \
+		echo "Nothing to do: $(GEN_EXPECT) not found"; \
+		exit 1; \
+	fi
+	HKSCFLAGS='$(HKSCFLAGS)' $(GEN_EXPECT) --srcdir='$(srcdir)' \
+	--hksc='$(HKSC)' --expect-error --literaloverflowtest-flags=-L
 
 expectsum:
 	@files= ; \
 	for f in *.expect; do \
 		files="$$files $(srcdir)/$${f%.expect}.lua"; \
 	done; \
-	shasum -U $$files > expect.sum
+	shasum -a1 -U $$files > expect.sum
 
 nohstructure: $(NOHSTRUCTURE_TESTS)
 

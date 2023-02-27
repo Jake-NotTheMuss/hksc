@@ -80,14 +80,21 @@ checkexpect:
 		echo You need to generate expect.sum; \
 		exit 1; \
 	fi
-	@shasum -c expect.sum >/dev/null
+	@shasum -a1 -c expect.sum >/dev/null
+
+expect:
+	@if test ! -e $(GEN_EXPECT) || test ! -x $(GEN_EXPECT); then \
+		echo "Nothing to do: $(GEN_EXPECT) not found"; \
+		exit 1; \
+	fi
+	HKSCFLAGS='$(HKSCFLAGS)' $(GEN_EXPECT) --srcdir='$(srcdir)' --hksc='$(HKSC)'
 
 expectsum:
 	@files= ; \
-	for f in *.cexpect; do \
-		files="$$files $(srcdir)/$${f%.cexpect}.lua"; \
+	for f in *.cexpect *.debugexpect *.profileexpect; do \
+		files="$$files $(srcdir)/$${f%.*}.lua"; \
 	done; \
-	shasum -U $$files > expect.sum
+	shasum -a1 -U $$files > expect.sum
 
 # for when $(TESTS) is empty
 # also checks that HKSC was set properly
