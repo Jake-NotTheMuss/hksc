@@ -23,8 +23,7 @@ error()
 
 luacomment()
 {
-	printf '%c%c' '-' '-'
-	printf ' %s\n' "$*"
+	printf '%s\n' "-- $*"
 }
 
 while test "x$1" != x; do
@@ -43,7 +42,7 @@ esac
 
 
 {
-	luacomment table with $size array elements
+	luacomment "table with $size array elements"
 	printf "local t = {\n"
 
 	count=0
@@ -53,7 +52,7 @@ esac
 	done
 
 	printf "};\n"
-	luacomment table with $size records
+	luacomment "table with $size records"
 	printf "t = {\n"
 
 	count=0
@@ -63,7 +62,7 @@ esac
 	done
 
 	printf "};\n"
-	luacomment table with a leading array element, and $size array and records
+	luacomment "table with a leading array element, and $size array and records"
 	printf "t = {\n"
 
 	count=0
@@ -73,7 +72,7 @@ esac
 	done
 
 	printf "\t100,\n};\n"
-	luacomment table with a leading record, and $size array and array elements
+	luacomment "table with a leading record, and $size array and array elements"
 	printf "t = {\n"
 
 	count=0
