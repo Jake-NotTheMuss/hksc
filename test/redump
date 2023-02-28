@@ -64,7 +64,7 @@ if test "x$cod" = xyes; then
 	# redump bytecode
 	"$hksc" $flags -s "$luac.bk" -o "$luac"
 	status=$?
-	if test $status = 0 && "x$luadebug" != x; then
+	if test $status = 0 && test "x$luadebug" != x; then
 		# redump callstackdb and debug info
 		"$hksc" $flags --with-debug --debugfile="$luadebug" "$luac.bk" \
 		--callstackdb="$luaprofile" -o /dev/null
