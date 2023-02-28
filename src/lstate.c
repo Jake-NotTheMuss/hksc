@@ -122,7 +122,7 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->gcpause = LUAI_GCPAUSE;
   g->gcstepmul = LUAI_GCMUL;
   g->startcycle = g->endcycle = NULL;
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
   g->debugLoadStateOpen = NULL;
   g->debugLoadStateClose = NULL;
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */

@@ -258,6 +258,7 @@ set10()
 	fi
 }
 
+set10 lua_cod LUA_COD_YESNO yes no
 # set which flag is needed to suppress log output
 set10 with_logging HKSC_SUPPRESS_LOGGING --logfile=/dev/null
 # set build compiler flags for debug or release builds
@@ -461,6 +462,7 @@ config_makefile()
 			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&;t t
 			s&@HKSC_PREFIX_MAP@&$HKSC_PREFIX_MAP&;t t
 			s&@CONFIGURE@&$me&;t t
+			s&@WITH_COD_EXT@&$LUA_COD_YESNO&;t t
 		" > $f
 	done
 }

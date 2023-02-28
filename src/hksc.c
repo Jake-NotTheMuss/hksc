@@ -494,10 +494,11 @@ int main(int argc, char *argv[])
     lua_onendcycle(H, luacod_endcycle);
   }
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
+  lua_setIgnoreDebug(H, !withdebug);
 #else /* !LUA_COD */
   lua_setBytecodeStrippingLevel(H,striplevel);
-#endif /* LUA_COD */
   lua_setIgnoreDebug(H, ignore_debug);
+#endif /* LUA_COD */
 /*  if (listing)
     dumpf = hksc_dump_l;
   else if (!dumping)

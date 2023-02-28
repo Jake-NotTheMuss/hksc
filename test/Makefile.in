@@ -10,9 +10,14 @@ HKSC_SUPPRESS_LOGGING=@HKSC_SUPPRESS_LOGGING@
 HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
 HKSC_GEN_PROFILE=@HKSC_GEN_PROFILE@
 HKSC_GEN_DEBUG=@HKSC_GEN_DEBUG@
+HKSC_LOAD_PROFILE=@HKSC_LOAD_PROFILE@
+HKSC_LOAD_DEBUG=@HKSC_LOAD_DEBUG@
+HKSC_LOAD_MAIN_BYTECODE=@HKSC_LOAD_MAIN_BYTECODE@
 HKSC_CMP_CODE=@HKSC_CMP_CODE@
 HKSC_CMP_PROFILE=@HKSC_CMP_PROFILE@
 HKSC_CMP_DEBUG=@HKSC_CMP_DEBUG@
+# WITH_COD_EXT=@WITH_COD_EXT@
+WITH_COD_EXT=maybe
 
 RM=@RM@
 
@@ -30,7 +35,10 @@ HKSC_NAME=hksc
 
 HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
 
-HKSCFLAGS=-L $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
+# flags for loading source files
+HKSCAFLAGS=-L $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
+# flags for loading binary files
+HKSCBFLAGS=$(HKSC_SUPPRESS_LOGGING)
 
 TESTMAKEFLAGS=
 
@@ -87,7 +95,7 @@ expect:
 		echo "Nothing to do: $(GEN_EXPECT) not found"; \
 		exit 1; \
 	fi
-	HKSCFLAGS='$(HKSCFLAGS)' $(GEN_EXPECT) --srcdir='$(srcdir)' --hksc='$(HKSC)'
+	HKSCAFLAGS='$(HKSCAFLAGS)' $(GEN_EXPECT) --srcdir='$(srcdir)' --hksc='$(HKSC)'
 
 expectsum:
 	@files= ; \
@@ -134,30 +142,46 @@ error:
 	@echo ------------ $* ------------
 	@echo ------------ $* ------------ >> $(MAKELOG)
 # 	generate stripped bytecode
-	@echo $(HKSC) $(HKSCFLAGS) -s $(srcdir)/$*.lua -o $*.luac >> $(MAKELOG)
-	@$(HKSC) $(HKSCFLAGS) -s $(srcdir)/$*.lua -o $*.luac
+	@echo $(HKSC) $(HKSCAFLAGS) -s $(srcdir)/$*.lua -o $*.luac >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) -s $(srcdir)/$*.lua -o $*.luac
 # 	generate profile info
-	@echo $(HKSC) $(HKSCFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile \
+	@echo $(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile \
 	$(srcdir)/$*.lua >> $(MAKELOG)
-	@$(HKSC) $(HKSCFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile $(srcdir)/$*.lua
+	@$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile $(srcdir)/$*.lua
 # 	generate debug info
-	@echo $(HKSC) $(HKSCFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug \
+	@echo $(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug \
 	$(srcdir)/$*.lua >> $(MAKELOG)
-	@$(HKSC) $(HKSCFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug $(srcdir)/$*.lua
+	@$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug $(srcdir)/$*.lua
 # 	compare code with expected
 	@echo $(HKSC_CMP_CODE) $*.cexpect $*.luac >> $(MAKELOG)
-	@ if $(HKSC_CMP_CODE) $*.cexpect $*.luac; then \
-	echo "$*.luac OK"; fi
+	@ $(HKSC_CMP_CODE) $*.cexpect $*.luac; \
+	if test $$? = 0; then echo "$*.luac OK"; fi
 # 	compare profile info with expected
 	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile >> $(MAKELOG)
-	@ if $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile; \
-	then echo "$*.luaprofile OK"; fi
+	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile; \
+	if test $$? = 0; then echo "$*.luaprofile OK"; fi
 # 	compare debug info with expected
 	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
-	@ if $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug; \
-	then echo "$*.luadebug OK"; fi
+	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug; \
+	if test $$? = 0; then echo "$*.luadebug OK"; fi
 # 	check bytecode loader by loading $*.luac and dumping it again
-# 	@echo $(HKSC) $(HKSCFLAGS) --withdebug --binary $*.luac -o $*.luac
+# 	echo the command for logs
+	@echo HKSC='$(HKSC)' HKSCFLAGS='$(HKSCBFLAGS)' $(srcdir)/redump \
+	--cod=$(WITH_COD_EXT) --bytecode-file=$*.luac --profile-file=$*.luaprofile \
+	--debug-file=$*.luadebug >> $(MAKELOG)
+# 	redump everything to check that the bytecode loader works
+	@HKSC='$(HKSC)' HKSCFLAGS='$(HKSCBFLAGS)' $(srcdir)/redump \
+	--cod=$(WITH_COD_EXT) --bytecode-file=$*.luac --profile-file=$*.luaprofile \
+	--debug-file=$*.luadebug
+# 	compare redumped code with expected
+	@echo $(HKSC_CMP_CODE) $*.cexpect $*.luac >> $(MAKELOG)
+	@ $(HKSC_CMP_CODE) $*.cexpect $*.luac
+# 	compare redumped profile info with expected
+	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile >> $(MAKELOG)
+	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile
+# 	compare redumped debug info with expected
+	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
+	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug
 
 # decompiler test
 .ctest.dtest:

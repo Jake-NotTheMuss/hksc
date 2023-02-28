@@ -141,7 +141,8 @@ hksc_State *debug_newstate(hksc_StateSettings *settings)
     settings->logctx.ud = stderr;
   settings->logctx.priority = LOG_PRIORITY_DEBUG;
 #endif /* HKSC_LOGGING */
-  H = lua_newstate(settings);
+  H = hksI_newstate(settings);
+  /*H = lua_newstate(settings);*/
   if (H) {
 #ifdef HKSC_LOGGING
     use_color = lua_is_tty(settings->logctx.ud);

@@ -28,11 +28,9 @@ typedef struct {
   ZIO *Z;
   Mbuffer *b;
   const char *name;
+  const char *desc;  /* what is being loaded? */
   size_t pos;
   int swapendian;
-#ifdef LUA_COD
-  int isdebug;
-#endif
 } LoadState;
 
 #define BADHEADERMSG "Header mismatch when loading bytecode."
@@ -42,11 +40,7 @@ typedef struct {
 
 static void error(LoadState *S, const char *why)
 {
-  luaD_setferror(S->H,"%s: %s in %s",S->name,why,
-#ifdef LUA_COD
-                 S->isdebug ? "debug info" :
-#endif /* LUA_COD */
-                 "precompiled chunk");
+  luaD_setferror(S->H,"%s: %s in %s",S->name,why,S->desc);
   luaD_throw(S->H,LUA_ERRSYNTAX);
 }
 
@@ -274,7 +268,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
     if (debugS != NULL) {
 #ifdef LUA_COD
       if (LoadInt(debugS) != 1)
-         error(debugS, "bad debug info");
+         error(debugS, "bad data");
 #endif /* LUA_COD */
       LoadDebug(debugS,f,p);
     }
@@ -354,9 +348,9 @@ badheader:
 ** Execute a protected undump.
 */
 struct SUndump {  /* data to `f_undump' */
-  Proto *f; /* result */
-  LoadState *S; /* reader */
-  LoadState *debugS; /* debug reader */
+  Proto *f;  /* result */
+  LoadState *S;  /* reader */
+  LoadState *debugS;  /* debug reader */
 };
 
 static void f_undump (hksc_State *H, void *ud) {
@@ -390,9 +384,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.Z=Z;
   S.b=buff;
   S.pos=0;
-#ifdef LUA_COD
-  S.isdebug=0;
-#endif /* LUA_COD */
+  S.desc="precompiled chunk";
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
 #ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
@@ -405,7 +397,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.swapendian = S.swapendian;
       SD.name = H->currdebugfile;
       SD.pos = 0;
-      SD.isdebug = 1;
+      SD.desc="debug info";
     }
     else {
       luaD_throw(S.H,openstatus);
