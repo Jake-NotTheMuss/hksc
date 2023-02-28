@@ -1,4 +1,5 @@
 #!/bin/sh
+# ./gen-bigtable: Generate arbitrarily large Lua tables
 
 me=$0
 size=
@@ -12,7 +13,7 @@ Usage: $me [options]
 Options:
   --size=SIZE      Generate tables with SIZE array elements and SIZE records
 EOF
-	exit 1
+	exit $1
 }
 
 error()
@@ -28,9 +29,10 @@ luacomment()
 
 while test "x$1" != x; do
 	case $1 in
+		--help) usage 0;;
 		--size) shift; size=$1;;
 		--size=*) size=${1#--size=};;
-		*) usage;;
+		*) usage 1;;
 	esac
 	shift
 done
