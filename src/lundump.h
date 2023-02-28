@@ -53,6 +53,17 @@ static int isbigendian() {
 */
 typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
 
+#if defined(lundump_c) || defined(lcallstackdb_c)
+typedef struct CallstackDBLexState {
+  lu_int32 lookahead_hash;
+  int lastline;
+  int laststate;
+} CallstackDBLexState;
+
+LUAI_FUNC void luaU_parsecallstackdb (hksc_State *H, ZIO *z, Mbuffer *buff,
+                   Proto *f, const char *name, CallstackDBLexState *savestate);
+#endif
+
 #endif /* LUA_COD */
 
 /* load one chunk; from lundump.c */

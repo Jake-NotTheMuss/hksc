@@ -534,8 +534,9 @@ static int apichecks(hksc_State *H) {
   void *dummyud = NULL;
   int logpriority;
 #endif /* HKSC_LOGGING */
-#if defined(LUA_COD) && defined(HKSC_DECOMPILER)
+#if defined(LUA_COD)
   const char *debugfile = NULL;
+  int debugfiletype = LUA_COD_DEBUG_NONE;
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
   const char *string = NULL;
   /* lua_atpanic */
@@ -626,12 +627,16 @@ static int apichecks(hksc_State *H) {
   lua_checking(lua_getDebugFile);
   debugfile = H->currdebugfile;
   H->currdebugfile = "TESTDEBUGFILE";
-  test_api_assert(H, lua_getDebugFile(H) == H->currdebugfile &&
-                     strcmp(lua_getDebugFile(H), "TESTDEBUGFILE") == 0);
+  debugfiletype = H->currdebugfiletype;
+  H->currdebugfiletype = debugfiletype + 1;
+  test_api_assert(H, lua_getDebugFile(H, &debugfiletype) == H->currdebugfile &&
+                     strcmp(lua_getDebugFile(H, NULL), "TESTDEBUGFILE") == 0 &&
+                     debugfiletype == H->currdebugfiletype);
   /* lua_setDebugFile */
   lua_checking(lua_setDebugFile);
-  lua_setDebugFile(H, debugfile);
-  test_api_assert(H, lua_getDebugFile(H) == debugfile);
+  lua_setDebugFile(H, debugfile, debugfiletype);
+  test_api_assert(H, lua_getDebugFile(H, &debugfiletype) == debugfile &&
+                     H->currdebugfiletype == debugfiletype);
 #endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
   return 0;
 }

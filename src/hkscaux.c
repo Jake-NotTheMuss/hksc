@@ -21,10 +21,14 @@
 
 extern const char *output;
 
+#ifdef LUA_COD
+extern int withdebug;
+extern int withprofile;
 extern const char *debugfile;
 extern const char *profilefile;
 extern int debugfile_arg;
 extern int profilefile_arg;
+#endif /* LUA_COD */
 /*extern const char *debugext;*/
 
 /* default extension of pre-compiled Lua files */
@@ -119,12 +123,16 @@ void luacod_startcycle(hksc_State *H, const char *name) {
      explicitly in the command line  */
   if (lua_getmode(H) == HKSC_MODE_SOURCE && output != NULL)
     name = output;/* the debug files go the directory with the output file */
-  if (!lua_getIgnoreDebug(H)) {
+  if (withdebug) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
+    lua_setDebugFile(H, debugfile, LUA_COD_DEBUG_BINARY);
+  }
+  if (withprofile) {
     if (profilefile == NULL)
       profilefile = lua2luaprofile(H, name);
-    lua_setDebugFile(H, debugfile);
+    if (!withdebug)
+      lua_setDebugFile(H, profilefile, LUA_COD_DEBUG_CSV);
   }
 }
 
@@ -135,7 +143,7 @@ void luacod_endcycle(hksc_State *H, const char *name) {
      run in that case */
   debugfile = NULL;
   profilefile = NULL;
-  lua_setDebugFile(H, NULL);
+  lua_setDebugFile(H, NULL, LUA_COD_DEBUG_NONE);
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
@@ -150,16 +158,17 @@ void luacod_endcycle(hksc_State *H, const char *name) {
 
 /* (COD) dump debug info to files */
 static int luacod_dumpdebug(hksc_State *H, const char *outname){
-  if (lua_getIgnoreDebug(H)) return 0;
   /* make sure generated names are in the same directory as outname */
-  if (!debugfile_arg)
-    debugfile = lua2luadebug(H, outname);
-  if (!profilefile_arg)
-    profilefile = lua2luaprofile(H, outname);
-  /* debug information */
-  dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
-  /* callstack reconstruction */
-  dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
+  if (withdebug) {
+    if (!debugfile_arg)
+      debugfile = lua2luadebug(H, outname);
+    dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
+  }
+  if (withprofile) {
+    if (!profilefile_arg)
+      profilefile = lua2luaprofile(H, outname);
+    dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
+  }
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }

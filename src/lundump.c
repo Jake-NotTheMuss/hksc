@@ -24,12 +24,16 @@
 #include "lzio.h"
 
 typedef struct {
- hksc_State *H;
- ZIO *Z;
- Mbuffer *b;
- const char *name;
- size_t pos;
- int swapendian;
+  hksc_State *H;
+  ZIO *Z;
+  Mbuffer *b;
+  const char *name;
+  size_t pos;
+  int swapendian;
+#ifdef LUA_COD
+  int isdebug;
+  CallstackDBLexState callstackdblexstate;
+#endif
 } LoadState;
 
 #define BADHEADERMSG "Header mismatch when loading bytecode."
@@ -39,7 +43,11 @@ typedef struct {
 
 static void error(LoadState *S, const char *why)
 {
-  luaD_setferror(S->H,"%s: %s in precompiled chunk",S->name,why);
+  luaD_setferror(S->H,"%s: %s in %s",S->name,why,
+#ifdef LUA_COD
+                 S->isdebug ? "debug info" :
+#endif /* LUA_COD */
+                 "precompiled chunk");
   luaD_throw(S->H,LUA_ERRSYNTAX);
 }
 
@@ -207,6 +215,11 @@ static void LoadConstants(LoadState *S, Proto *f)
 static void LoadDebug(LoadState *S, Proto *f, TString *p)
 {
   int i,n;
+#ifndef LUA_COD
+  Proto dummy;
+  /* the debug info still needs to be read and advanced over in non-CoD */
+  if (hksc_getIgnoreDebug(S->H)) f = &dummy;
+#endif /* LUA_COD */
   f->sizelineinfo=LoadInt(S);
   f->sizelocvars=LoadInt(S);
   f->sizeupvalues=LoadInt(S);
@@ -233,6 +246,14 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   for (i=0; i<n; i++) f->upvalues[i]=LoadString(S);
 }
 
+#ifdef LUA_COD
+static void LoadProfileCSV(LoadState *S, Proto *f, TString *p)
+{
+  luaU_parsecallstackdb(S->H, S->Z, S->b, f, S->name, &S->callstackdblexstate);
+  if (f->source == NULL) f->source = p;
+}
+#endif /* LUA_COD */
+
 static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
 {
   int i,n;
@@ -255,13 +276,19 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   {
     if (debugS != NULL) {
 #ifdef LUA_COD
-      if (LoadInt(debugS) != 1) {
-        luaD_setferror(S->H, "%s: bad debug info in file `%s'", S->name,
-                     S->H->currdebugfile);
-        luaD_throw(S->H,LUA_ERRSYNTAX);
+      if (S->H->currdebugfiletype == LUA_COD_DEBUG_CSV) /* callstackdb */
+        LoadProfileCSV(debugS,f,p);
+      else {
+        if (LoadInt(debugS) != 1) {
+          luaD_setferror(S->H, "%s: bad debug info in file `%s'", S->name,
+                         S->H->currdebugfile);
+          luaD_throw(S->H,LUA_ERRSYNTAX);
+        }
+        LoadDebug(debugS,f,p);
       }
-#endif /* LUA_COD */
+#else /* !LUA_COD */
       LoadDebug(debugS,f,p);
+#endif /* LUA_COD */
     }
   }
   n=LoadInt(S); /* number of child functions */
@@ -375,6 +402,9 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.Z=Z;
   S.b=buff;
   S.pos=0;
+#ifdef LUA_COD
+  S.isdebug=0;
+#endif /* LUA_COD */
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
 #ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
@@ -385,8 +415,12 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.Z = &ZD;
       SD.b = &buffD;
       SD.swapendian = S.swapendian;
-      SD.name = name;
+      SD.name = H->currdebugfile;
       SD.pos = 0;
+      SD.callstackdblexstate.lookahead_hash = 0;
+      SD.callstackdblexstate.lastline = 0;
+      SD.callstackdblexstate.laststate = 0;
+      SD.isdebug = 1;
     }
     else {
       luaD_throw(S.H,openstatus);

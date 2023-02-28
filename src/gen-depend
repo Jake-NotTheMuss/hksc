@@ -11,6 +11,10 @@ CC=${CC-cc}
 TMP=tmp_$$
 # alias sed=/usr/bin/sed
 
+echo "$*"
+
+exit 0
+
 {
 "$CC" $CFLAGS -MM *.c
 # generate .lo targets for library sources

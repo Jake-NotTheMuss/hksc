@@ -34,20 +34,24 @@ static int literals_enabled=INT_LITERALS_NONE; /* int literal options */
 static const char *progname=HKSC_NAME;
 const char *output=NULL;
 
-static int withdebug=0;
+#ifdef LUA_COD
+int withdebug=0;
+int withprofile=0;
+#endif /* LUA_COD */
 
 #ifdef HKSC_LOGGING
 static const char *logfilename=NULL;
 static FILE *logfile=NULL;
 #endif /* HKSC_LOGGING */
 
+#ifdef LUA_COD
 const char *debugfile=NULL;
 const char *profilefile=NULL;
 int debugfile_arg=0;
 int profilefile_arg=0;
-#ifndef LUA_COD
-static int ignore_debug=0;
 #endif /* LUA_COD */
+
+static int ignore_debug=0;
 
 static const char *file_prefix_map_arg=NULL;
 
@@ -69,10 +73,15 @@ static void print_usage(void)
   fputs(
    "\nOperation modes:\n"
    "      --help              Print this message and exit\n"
-   "      --version           Show version information\n"
-   "      --print-config      Print Hksc configuration\n"
+   "      --version           Show version information and exit\n"
+   "      --print-config      Show build configuration and exit\n"
    "  -a, --source            Expect source files as input\n"
    "  -b, --binary            Expect binary files as input\n"
+#ifdef HKSC_DECOMPILER
+   "  -d, --decompile         Decompile\n"
+#endif
+   "  -l, --list              List (use -l -l for full listing)\n"
+   "  -p, --parse             Parse only\n"
   , stderr);
   fputs(
    "\nCompiler options:\n"
@@ -82,22 +91,20 @@ static void print_usage(void)
    "  -i, --ignore-debug      Ignore debug info when decompiling\n"
 #else
    "  -s                      Do not dump debug information\n"
-#endif /* LUA_COD */
+   "  -g, --with-debug        Load/dump debug information to separate files\n"
+   "  -i, --ignore-debug      Ignore debug info when loading bytecode\n"
+#endif
    , stderr);
   fputs(
    "\nInput/Output options:\n"
    "  -o, --output=FILE       Output to file FILE\n"
-#ifdef HKSC_DECOMPILER
-   "  -d, --decompile         Decompile\n"
-#endif
-   "  -l, --list              List (use -l -l for full listing)\n"
-   "  -p, --parse             Parse only\n"
-   "  -g, --with-debug        Load/dump debug information to separate files\n"
+#ifdef LUA_COD
    "      --profilefile=FILE  Use FILE for profile information\n"
    "      --debugfile=FILE    Use FILE for debug information\n"
+#endif
 #ifdef HKSC_LOGGING
    "      --logfile=FILE      Output logs to FILE\n"
-#endif /* HKSC_LOGGING */
+#endif
    , stderr);
   fputs(
    "\nOther Options:\n"
@@ -105,18 +112,18 @@ static void print_usage(void)
    "                          Remap file source paths in debug info\n"
    "      --                  Stop handling options\n", stderr);
   fputs(
-   "\nInt literal options for TYPE (to use with `-L')\n"
+   "\nInt literal options for TYPE (to use with '-L')\n"
    "  32  Enable 32-bit int literals\n"
    "  64  Enable 64-bit int literals\n"
    "  Not providing a value for TYPE will enable all literal types\n",
    stderr);
 #ifndef LUA_COD /* use special arguments for cod */
   fputs(
-   "\nBytecode stripping options for MODE (to use with `-s'):\n"
+   "\nBytecode stripping options for MODE (to use with '-s'):\n"
    "  n   Include all debug information in dump\n"
    "  p   Include profiling information in dump\n"
    "  a   Ignore all debug information in dump\n"
-   "  Not providing a value for MODE is equivalent to providing `a'\n"
+   "  Not providing a value for MODE is equivalent to providing 'a'\n"
    , stderr);
 #endif /* !LUA_COD */
 }
@@ -228,7 +235,10 @@ static int doargs(int argc, char *argv[])
   int version=0;
   int info=0;
   int a=0,b=0; /* uses of `-a' and `-b' */
-  const char *opt_a, *opt_b, *opt_withdebug;
+  const char *opt_a, *opt_b;
+#ifdef LUA_COD
+  const char *opt_withdebug;
+#endif /* LUA_COD */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
   {
@@ -256,15 +266,16 @@ static int doargs(int argc, char *argv[])
       ++b;
       opt_b = (const char *)argv[i];
     }
+#ifdef LUA_COD
     else if (IS("-g") || IS("--with-debug")) {
       withdebug=1;
+      withprofile=1;
       opt_withdebug = (const char *)argv[i];
     }
     CHECK_LONG_OPT("--profilefile", profilefile);
     CHECK_LONG_OPT("--debugfile", debugfile);
-#ifndef LUA_COD
-    else if (IS("-i") || IS("--ignore-debug")) ignore_debug=1;
 #endif /* LUA_COD */
+    else if (IS("-i") || IS("--ignore-debug")) ignore_debug=1;
     else if (IS("--print-config")) ++info;
     else if (IS("--help")) { /* print help message and exit */
       print_usage();
@@ -361,25 +372,24 @@ static int doargs(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   if (a && b) /* both compile and decompile mode specified? */
-    usage("both '%s' and '%s' used; Hksc can only be run in one mode",
+    usage("both '%s' and '%s' used; only one may be used per invokation",
           opt_a, opt_b);
   else if (a) {
-#ifndef LUA_COD
     if (ignore_debug)
       warn_unused("--ignore-debug", "compiling");
-#endif /* !LUA_COD */
     mode=HKSC_MODE_SOURCE;
   }
   else if (b)
     mode=HKSC_MODE_BINARY;
   if (striparg && !dumping)
     warn_unused("-s", "not dumping bytecode");
+#ifdef LUA_COD
   debugfile_arg = (debugfile != NULL);
   profilefile_arg = (profilefile != NULL);
-  if ((debugfile_arg || profilefile_arg) && !withdebug)
-    usage("'-with-debug' must be provided with '--debugfile' and "
-          "'--profilefile'");
-#ifndef LUA_COD
+  if (debugfile_arg && !withdebug)
+    withdebug=1;
+  if (profilefile_arg && !withprofile)
+    withprofile=1;
   if (striparg && withdebug)
     usage("'-s' cannot be used when '%s' is provided", opt_withdebug);
 #endif /* LUA_COD */
@@ -388,8 +398,23 @@ static int doargs(int argc, char *argv[])
 
 #define FUNCTION "(function()end)();"
 
-static hksc_DumpFunction dumpf;
+/*static hksc_DumpFunction dumpf;*/
 
+static int hksc_dump_f(hksc_State *H, void *ud) {
+  const char *filename = (const char *)ud;
+  if (!listing && !dumping) {
+    fprintf(stderr, "Successfully parsed `%s'\n", filename);
+    return 0;
+  }
+  if (listing)
+    lua_print(H, listing > 1);
+#ifdef HKSC_DECOMPILER
+  if (decompiling)
+    return hksc_dump_decomp(H, filename);
+#endif /* HKSC_DECOMPILER */
+  return hksc_dump_bytecode(H, filename);
+}
+#if 0
 /* dump function for -l */
 static int hksc_dump_l(hksc_State *H, void *ud) {
   (void)ud;
@@ -413,18 +438,18 @@ static int hksc_dump_default(hksc_State *H, void *ud) {
 #endif /* HKSC_DECOMPILER */
   return hksc_dump_bytecode(H, filename);
 }
-
+#endif
 /*
 ** parser loop function
 */
 static int dofiles (hksc_State *H, int argc, char *argv[]) {
   int i, status, error = 0;
   for (i = 0; i < argc; i++) {
-    error |= (status = hksI_parser_file(H, argv[i], dumpf, argv[i]));
+    error |= (status = hksI_parser_file(H, argv[i], hksc_dump_f, argv[i]));
     if (status) {
       if (status == LUA_ERRSYNTAX) {
         fprintf(stderr, "%s\n", lua_geterror(H));
-        lua_clearerror(H); /* discharge the error message */
+        lua_clearerror(H); /* discharge the error message and keep going */
       } else {
         fprintf(stderr, "%s: %s\n", progname, lua_geterror(H));
         break; /* fatal */
@@ -448,10 +473,12 @@ int main(int argc, char *argv[])
   else if (argc > 1) {
     if (output != NULL)
       error_multiple_inputs("--output");
-    if (debugfile != NULL)
+#ifdef LUA_COD
+    if (debugfile_arg)
       error_multiple_inputs("--debugfile");
-    if (profilefile != NULL)
+    if (profilefile_arg)
       error_multiple_inputs("--profilefile");
+#endif /* LUA_COD */
   }
   hksI_StateSettings(&settings);
 #ifdef HKSC_LOGGING
@@ -484,18 +511,16 @@ int main(int argc, char *argv[])
     lua_onendcycle(H, luacod_endcycle);
   }
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
-  withdebug = (withdebug || debugfile_arg || profilefile_arg);
-  lua_setIgnoreDebug(H, !withdebug);
 #else /* !LUA_COD */
   lua_setBytecodeStrippingLevel(H,striplevel);
-  lua_setIgnoreDebug(H, ignore_debug);
 #endif /* LUA_COD */
-  if (listing)
+  lua_setIgnoreDebug(H, ignore_debug);
+/*  if (listing)
     dumpf = hksc_dump_l;
   else if (!dumping)
     dumpf = hksc_dump_p;
   else
-    dumpf = hksc_dump_default;
+    dumpf = hksc_dump_default;*/
   status = dofiles(H, argc, argv);
   hksI_close(H);
 #ifdef HKSC_LOGGING
