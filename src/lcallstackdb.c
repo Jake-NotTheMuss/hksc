@@ -1,6 +1,6 @@
 /*
 ** $Id: lcallstackdb.c $
-** Call of Duty Lua callstackdb CSV Parser
+** Call of Duty callstackdb parser
 ** See Copyright Notice in lua.h
 */
 
@@ -154,7 +154,7 @@ static TString *parse_string(CallstackDBLexer *ls) {
 static lu_int32 parse_profile(CallstackDBLexer *ls, lu_int32 hash) {
   int expected_index = 0;
   int index = 0;
-  if (ls->linenumber == 0) {
+  if (ls->linenumber == 1) {
     next(ls);
     ls->state = CALLSTACKDB_HASH;
     hash = parse_hash(ls);
@@ -226,7 +226,7 @@ void luaU_parsecallstackdb (hksc_State *H, ZIO *z, Mbuffer *buff, Proto *f,
   ls.f = f;
   ls.name = name;
   ls.current = 0;
-  ls.state = (savestate->lastline == 0)?CALLSTACKDB_NONE : savestate->laststate;
+  ls.state = (savestate->lastline == 1)?CALLSTACKDB_NONE : savestate->laststate;
   ls.linenumber = savestate->lastline;
   savestate->lookahead_hash = parse_profile(&ls, savestate->lookahead_hash);
   savestate->lastline = ls.linenumber;

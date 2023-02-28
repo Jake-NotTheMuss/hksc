@@ -418,7 +418,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.name = H->currdebugfile;
       SD.pos = 0;
       SD.callstackdblexstate.lookahead_hash = 0;
-      SD.callstackdblexstate.lastline = 0;
+      SD.callstackdblexstate.lastline = 1;
       SD.callstackdblexstate.laststate = 0;
       SD.isdebug = 1;
     }
