@@ -214,11 +214,6 @@ static void LoadConstants(LoadState *S, Proto *f)
 static void LoadDebug(LoadState *S, Proto *f, TString *p)
 {
   int i,n;
-#ifndef LUA_COD
-  Proto dummy;
-  /* the debug info still needs to be read and advanced over in non-CoD */
-  if (hksc_getIgnoreDebug(S->H)) f = &dummy;
-#endif /* LUA_COD */
   f->sizelineinfo=LoadInt(S);
   f->sizelocvars=LoadInt(S);
   f->sizeupvalues=LoadInt(S);
@@ -243,6 +238,16 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   f->upvalues=luaM_newvector(S->H,n,TString *);
   for (i=0; i<n; i++) f->upvalues[i]=NULL;
   for (i=0; i<n; i++) f->upvalues[i]=LoadString(S);
+#ifndef LUA_COD
+  /* all the arrays above needed to be allocated in any case to read and
+  advance over the data, but now it needs to be freed if ignoring debug info */
+  if (hksc_getIgnoreDebug(S->H)) {
+    luaM_freearray(S->H, f->lineinfo, f->sizelineinfo, int);
+    luaM_freearray(S->H, f->locvars, f->sizelocvars, LocVar);
+    luaM_freearray(S->H, f->upvalues, f->sizeupvalues, TString *);
+    memset(f, 0, sizeof(Proto));
+  }
+#endif /* LUA_COD */
 }
 
 
