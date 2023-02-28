@@ -23,7 +23,6 @@ extern const char *output;
 
 #ifdef LUA_COD
 extern int withdebug;
-extern int withprofile;
 extern const char *debugfile;
 extern const char *profilefile;
 extern int debugfile_arg;
@@ -126,10 +125,9 @@ void luacod_startcycle(hksc_State *H, const char *name) {
   if (withdebug) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
+    if (profilefile == NULL)
+      profilefile = lua2luaprofile(H, name);
     lua_setDebugFile(H, debugfile);
-  }
-  if (withprofile && profilefile == NULL) {
-    profilefile = lua2luaprofile(H, name);
   }
 }
 
@@ -160,8 +158,6 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
     if (!debugfile_arg)
       debugfile = lua2luadebug(H, outname);
     dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
-  }
-  if (withprofile) {
     if (!profilefile_arg)
       profilefile = lua2luaprofile(H, outname);
     dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");

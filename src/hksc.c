@@ -36,7 +36,6 @@ const char *output=NULL;
 
 #ifdef LUA_COD
 int withdebug=0;
-int withprofile=0;
 #endif /* LUA_COD */
 
 #ifdef HKSC_LOGGING
@@ -88,19 +87,19 @@ static void print_usage(void)
    "  -L[=TYPE]               Enable int literals of the given TYPE\n"
 #ifndef LUA_COD
    "  -s[=MODE]               Use bytecode stripping level MODE\n"
-   "  -i, --ignore-debug      Ignore debug info when decompiling\n"
 #else
    "  -s                      Do not dump debug information\n"
-   "  -g, --with-debug        Load/dump debug information to separate files\n"
-   "  -i, --ignore-debug      Ignore debug info when loading bytecode\n"
+   "  -g, --with-debug        Load/dump debug information with input/output "
+   "files\n"
 #endif
+   "  -i, --ignore-debug      Ignore debug info when loading bytecode\n"
    , stderr);
   fputs(
    "\nInput/Output options:\n"
    "  -o, --output=FILE       Output to file FILE\n"
 #ifdef LUA_COD
-   "      --profilefile=FILE  Use FILE for profile information\n"
-   "      --debugfile=FILE    Use FILE for debug information\n"
+   "      --callstackdb=FILE  Dump callstack reconstruction to FILE\n"
+   "      --debugfile=FILE    Use FILE for loading/dumping debug information\n"
 #endif
 #ifdef HKSC_LOGGING
    "      --logfile=FILE      Output logs to FILE\n"
@@ -194,21 +193,6 @@ static void print_config(void)
 #define IS(s) (strcmp(argv[i],s)==0)
 #define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
 
-#define DOSTRINGARG(s,l,v) do { \
-  char *val; \
-  int shrt = IS(s); \
-  const size_t optlen = (shrt ? sizeof(s) : sizeof(l)) - 1; \
-  val = argv[i] + optlen; \
-  if (*val == '=') val++; \
-  else if (*val == '\0') val = argv[++i]; \
-  else usage(argv[i]); \
-  if (val == NULL || *val == '\0') { \
-    if (shrt) usage("'" s "' needs an argument"); \
-    else usage("'" l "' needs an argument"); \
-  } \
-  v = (const char *)val; \
-} while (0)
-
 #define DO_ARG(opt,v) do { \
   char *val = argv[i] + sizeof(opt)-1; \
   if (*val == '=') val++; \
@@ -269,10 +253,9 @@ static int doargs(int argc, char *argv[])
 #ifdef LUA_COD
     else if (IS("-g") || IS("--with-debug")) {
       withdebug=1;
-      withprofile=1;
       opt_withdebug = (const char *)argv[i];
     }
-    CHECK_LONG_OPT("--profilefile", profilefile);
+    CHECK_LONG_OPT("--callstackdb", profilefile);
     CHECK_LONG_OPT("--debugfile", debugfile);
 #endif /* LUA_COD */
     else if (IS("-i") || IS("--ignore-debug")) ignore_debug=1;
@@ -386,10 +369,10 @@ static int doargs(int argc, char *argv[])
 #ifdef LUA_COD
   debugfile_arg = (debugfile != NULL);
   profilefile_arg = (profilefile != NULL);
-  if (debugfile_arg && !withdebug)
-    withdebug=1;
-  if (profilefile_arg && !withprofile)
-    withprofile=1;
+  if ((debugfile_arg || profilefile_arg) && !withdebug) {
+    usage("'--with-debug' must be provided with '--debugfile' or "
+          "'--callstackdb'");
+  }
   if (striparg && withdebug)
     usage("'-s' cannot be used when '%s' is provided", opt_withdebug);
 #endif /* LUA_COD */

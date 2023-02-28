@@ -270,12 +270,12 @@ set10 STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
 # for the COD build, suppress bytecode output and only generate a callstackdb
 # for non-COD, use profile stripping mode
 set10 lua_cod HKSC_GEN_PROFILE \
-"--with-debug -o /dev/null --debugfile /dev/null --profilefile" "-s=p -o"
+"--with-debug -o /dev/null --debugfile /dev/null --callstackdb" "-s=p -o"
 # flags for generating Lua debug info
 # for the COD build, suppress bytecode output and only generate a debug file
 # for non-COD, use debug stripping mode
 set10 lua_cod HKSC_GEN_DEBUG \
-"--with-debug -o /dev/null --profilefile /dev/null --debugfile" "-s=n -o"
+"--with-debug -o /dev/null --callstackdb /dev/null --debugfile" "-s=n -o"
 # command for comparing profiling info
 # use diff for COD profile info because it is printed as text
 # otherwise use cmp to compare binary files
