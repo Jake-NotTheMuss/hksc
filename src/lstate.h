@@ -75,7 +75,6 @@ struct hksc_State {
   const char *errormsg; /* the last error message */
 #if defined(LUA_COD)
   const char *currdebugfile;
-  int currdebugfiletype;
 #endif /* LUA_COD */
 };
 

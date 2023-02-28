@@ -335,7 +335,6 @@ static int panic (hksc_State *H) {
 
 #if defined(LUA_COD) /*&& defined(HKSC_DECOMPILER)*/
 
-
 typedef struct LoadDebug
 {
   FILE *f;
@@ -353,33 +352,13 @@ static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
 
 static int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
                              const char *name) {
-  int isbinary;
   LoadDebug *ld = luaM_new(H, LoadDebug);
   lua_assert(hksc_getIgnoreDebug(H) == 0);
   if (H->currdebugfile == NULL) {
     luaD_setferror(H, "debug file name not set for input `%s'", name);
     return LUA_ERRRUN;
   }
-  if (H->currdebugfiletype == LUA_COD_DEBUG_ANY ||
-      H->currdebugfiletype == LUA_COD_DEBUG_NONE) {
-    int c;
-    ld->f = fopen(H->currdebugfile, "r");
-    if (ld->f == NULL) return errfile(H, "open", H->currdebugfile);
-    c = fgetc(ld->f);
-    if (c == 0 || c == 1) { /* luadebug */
-      H->currdebugfiletype = LUA_COD_DEBUG_BINARY;
-      isbinary = 1;
-    }
-    else { /* luacallstackdb */
-      H->currdebugfiletype = LUA_COD_DEBUG_CSV;
-      isbinary = 0;
-    }
-    ungetc(c, ld->f);
-    fclose(ld->f);
-  }
-  else
-    isbinary = (H->currdebugfiletype == LUA_COD_DEBUG_BINARY);
-  ld->f = fopen(H->currdebugfile, isbinary ? "rb" : "r");
+  ld->f = fopen(H->currdebugfile, "rb");
   if (ld->f == NULL) return errfile(H, "open", H->currdebugfile);
   luaZ_init(H, z, debug_reader, ld);
   luaZ_initbuffer(H, buff);

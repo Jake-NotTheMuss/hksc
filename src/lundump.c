@@ -32,7 +32,6 @@ typedef struct {
   int swapendian;
 #ifdef LUA_COD
   int isdebug;
-  CallstackDBLexState callstackdblexstate;
 #endif
 } LoadState;
 
@@ -246,13 +245,6 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   for (i=0; i<n; i++) f->upvalues[i]=LoadString(S);
 }
 
-#ifdef LUA_COD
-static void LoadProfileCSV(LoadState *S, Proto *f, TString *p)
-{
-  luaU_parsecallstackdb(S->H, S->Z, S->b, f, S->name, &S->callstackdblexstate);
-  if (f->source == NULL) f->source = p;
-}
-#endif /* LUA_COD */
 
 static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
 {
@@ -276,19 +268,10 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   {
     if (debugS != NULL) {
 #ifdef LUA_COD
-      if (S->H->currdebugfiletype == LUA_COD_DEBUG_CSV) /* callstackdb */
-        LoadProfileCSV(debugS,f,p);
-      else {
-        if (LoadInt(debugS) != 1) {
-          luaD_setferror(S->H, "%s: bad debug info in file `%s'", S->name,
-                         S->H->currdebugfile);
-          luaD_throw(S->H,LUA_ERRSYNTAX);
-        }
-        LoadDebug(debugS,f,p);
-      }
-#else /* !LUA_COD */
-      LoadDebug(debugS,f,p);
+      if (LoadInt(debugS) != 1)
+         error(debugS, "bad debug info");
 #endif /* LUA_COD */
+      LoadDebug(debugS,f,p);
     }
   }
   n=LoadInt(S); /* number of child functions */
@@ -417,9 +400,6 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.swapendian = S.swapendian;
       SD.name = H->currdebugfile;
       SD.pos = 0;
-      SD.callstackdblexstate.lookahead_hash = 0;
-      SD.callstackdblexstate.lastline = 1;
-      SD.callstackdblexstate.laststate = 0;
       SD.isdebug = 1;
     }
     else {

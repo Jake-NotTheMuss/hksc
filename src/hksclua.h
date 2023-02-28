@@ -254,17 +254,8 @@ LUA_API void (lua_setlogpriority) (hksc_State *H, int priority);
 #endif /* HKSC_LOGGING */
 
 #if defined(LUA_COD)
-LUA_API const char *(lua_getDebugFile) (hksc_State *H, int *type);
-LUA_API void (lua_setDebugFile) (hksc_State *H, const char *name, int type);
-
-/* Call of Duty debug file types */
-#define LUA_COD_DEBUG_NONE  (-1)
-#define LUA_COD_DEBUG_ANY  0
-#define LUA_COD_DEBUG_BINARY  1
-#define LUA_COD_DEBUG_FULL  LUA_COD_DEBUG_BINARY
-#define LUA_COD_DEBUG_CSV  2
-#define LUA_COD_DEBUG_CALLSTACKDB  LUA_COD_DEBUG_CSV
-#define LUA_COD_DEBUG_PROFILE  LUA_COD_DEBUG_CALLSTACKDB
+LUA_API const char *(lua_getDebugFile) (hksc_State *H);
+LUA_API void (lua_setDebugFile) (hksc_State *H, const char *name);
 #endif /* LUA_COD */
 
 /*

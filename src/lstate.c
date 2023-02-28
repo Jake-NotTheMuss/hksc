@@ -61,7 +61,6 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->last_result = NULL;
 #if defined(LUA_COD)
   H->currdebugfile = NULL;
-  H->currdebugfiletype = LUA_COD_DEBUG_NONE;
 #endif /* defined(LUA_COD) */
 }
 

@@ -70,9 +70,9 @@ STATICLIB=@STATICLIB@
 SHAREDLIB=@SHAREDLIB@
 
 CORE_T=	$(STATICLIB)
-CORE_O=	lanalyzer.o lapi.o lcallstackdb.o lcode.o ldebug.o ldecomp.o ldo.o  \
-	ldump.o lfunc.o lgc.o llex.o llog.o lmem.o lobject.o lopcodes.o lparser.o  \
-	lprint.o lstate.o lstring.o ltable.o lundump.o lzio.o ltests.o
+CORE_O=	lanalyzer.o lapi.o lcode.o ldebug.o ldecomp.o ldo.o ldump.o lfunc.o  \
+	lgc.o llex.o llog.o lmem.o lobject.o lopcodes.o lparser.o lprint.o  \
+	lstate.o lstring.o ltable.o lundump.o lzio.o ltests.o
 AUX_O=	hksclib.o
 
 # PIC objects for linking the shared library
@@ -175,9 +175,6 @@ lanalyzer.o: lanalyzer.c hksclua.h hkscluaconf.h hkscconf.h ltests.h \
 lapi.o: lapi.c hksclua.h hkscluaconf.h hkscconf.h ltests.h ldebug.h \
   lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
   lfunc.h lgc.h lstring.h ltable.h
-lcallstackdb.o: lcallstackdb.c hksclua.h hkscluaconf.h hkscconf.h \
-  ltests.h ldebug.h lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h \
-  ltype.def ldo.h lfunc.h lstring.h lgc.h
 lcode.o: lcode.c hksclua.h hkscluaconf.h hkscconf.h ltests.h lcode.h \
   llex.h lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h \
   lopcodes.def lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def \
@@ -246,9 +243,6 @@ lanalyzer.o: lanalyzer.c hksclua.h hkscluaconf.h hkscconf.h ltests.h \
 lapi.o: lapi.c hksclua.h hkscluaconf.h hkscconf.h ltests.h ldebug.h \
   lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
   lfunc.h lgc.h lstring.h ltable.h
-lcallstackdb.o: lcallstackdb.c hksclua.h hkscluaconf.h hkscconf.h \
-  ltests.h ldebug.h lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h \
-  ltype.def ldo.h lfunc.h lstring.h lgc.h
 lcode.o: lcode.c hksclua.h hkscluaconf.h hkscconf.h ltests.h lcode.h \
   llex.h lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h \
   lopcodes.def lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def \
@@ -321,9 +315,6 @@ lanalyzer.lo: lanalyzer.c hksclua.h hkscluaconf.h hkscconf.h ltests.h \
 lapi.lo: lapi.c hksclua.h hkscluaconf.h hkscconf.h ltests.h ldebug.h \
   lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h ltype.def ldo.h \
   lfunc.h lgc.h lstring.h ltable.h
-lcallstackdb.lo: lcallstackdb.c hksclua.h hkscluaconf.h hkscconf.h \
-  ltests.h ldebug.h lstate.h lobject.h llimits.h lundump.h lzio.h lmem.h \
-  ltype.def ldo.h lfunc.h lstring.h lgc.h
 lcode.lo: lcode.c hksclua.h hkscluaconf.h hkscconf.h ltests.h lcode.h \
   llex.h lobject.h llimits.h lzio.h lmem.h ltoken.def lopcodes.h \
   lopcodes.def lparser.h ltable.h ldebug.h lstate.h lundump.h ltype.def \

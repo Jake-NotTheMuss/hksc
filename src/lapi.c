@@ -254,19 +254,17 @@ LUA_API void lua_setlogpriority (hksc_State *H, int priority) {
 
 #if defined(LUA_COD)
 
-LUA_API const char *lua_getDebugFile (hksc_State *H, int *type) {
+LUA_API const char *lua_getDebugFile (hksc_State *H) {
   const char *currdebugfile;
   lua_lock(H);
   currdebugfile = H->currdebugfile;
-  if (type) *type = H->currdebugfiletype;
   lua_unlock(H);
   return currdebugfile;
 }
 
-LUA_API void lua_setDebugFile (hksc_State *H, const char *name, int type) {
+LUA_API void lua_setDebugFile (hksc_State *H, const char *name) {
   lua_lock(H);
   H->currdebugfile = name;
-  H->currdebugfiletype = type;
   lua_unlock(H);
 }
 

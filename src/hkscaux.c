@@ -126,13 +126,10 @@ void luacod_startcycle(hksc_State *H, const char *name) {
   if (withdebug) {
     if (debugfile == NULL) /* may be provided in command line */
       debugfile = lua2luadebug(H, name);
-    lua_setDebugFile(H, debugfile, LUA_COD_DEBUG_BINARY);
+    lua_setDebugFile(H, debugfile);
   }
-  if (withprofile) {
-    if (profilefile == NULL)
-      profilefile = lua2luaprofile(H, name);
-    if (!withdebug)
-      lua_setDebugFile(H, profilefile, LUA_COD_DEBUG_CSV);
+  if (withprofile && profilefile == NULL) {
+    profilefile = lua2luaprofile(H, name);
   }
 }
 
@@ -143,7 +140,7 @@ void luacod_endcycle(hksc_State *H, const char *name) {
      run in that case */
   debugfile = NULL;
   profilefile = NULL;
-  lua_setDebugFile(H, NULL, LUA_COD_DEBUG_NONE);
+  lua_setDebugFile(H, NULL);
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
