@@ -136,7 +136,7 @@ error:
 # .debugexpect.ctest:
 # 	@:
 
-# compiler test
+# compiler test + bytecode loader test
 .cexpect.ctest:
 	@echo ------------ $* ------------
 	@echo ------------ $* ------------ >> $(MAKELOG)
@@ -182,7 +182,7 @@ error:
 	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
 	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug
 
-# decompiler test
+# decompiler test, run after compiler and bytecode loader tests
 .ctest.dtest:
 	@ echo hello $@
 

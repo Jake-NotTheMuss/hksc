@@ -20,12 +20,12 @@
   DEFBBLTYPE(FUNCTION)   /* a Lua function */      \
   DEFBBLTYPE(WHILE)      /* a while-loop */        \
   DEFBBLTYPE(REPEAT)     /* a repeat-loop */       \
-  DEFBBLTYPE(FORNUM)     /* a for-number-loop */   \
+  DEFBBLTYPE(FORNUM)     /* a for-numeric-loop */  \
   DEFBBLTYPE(FORLIST)    /* a for-list-loop */     \
-  DEFBBLTYPE(DO)         /* a do-block */          \
+  DEFBBLTYPE(DO)         /* a block */             \
   DEFBBLTYPE(IF)         /* an if-block */         \
-  DEFBBLTYPE(ELSEIF)     /* an elseif-block */     \
-  DEFBBLTYPE(ELSE)       /* an else-block */
+  DEFBBLTYPE(ELSE)       /* an else-block */       \
+  DEFBBLTYPE(ELSEIF)     /* an elseif-block */
 
 #define DEFBBLTYPE(e)  BBL_##e,
 enum BBLTYPE {

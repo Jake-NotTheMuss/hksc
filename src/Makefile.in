@@ -90,13 +90,17 @@ ALL_O= $(CORE_O) $(HKSC_O) $(AUX_O)
 ALL_PIC_O= $(CORE_PIC_O) $(AUX_PIC_O)
 ALL_A= $(CORE_T)
 
+.SUFFIXES:
+.SUFFIXES: .c .o .lo
+
 all:	$(HKSC_T) $(HKSC_SH)
 
 o:	$(ALL_O)
 
 a:	$(ALL_A)
 
-.SUFFIXES: .lo
+.c.o:
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 .c.lo:
 	$(CC) -fPIC $(CFLAGS) -c -o $@ $<
