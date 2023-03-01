@@ -370,8 +370,9 @@
 #define LUA_UI64_FMT "%llx"
 #define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n))
 #define lua_str2ui64(s,p,n) strtoull((s), (p), 16)
-#elif ((ULONG_MAX >> 62) >= 3) && !defined(HKSC_EMU_UI64)
-/* use unsigned long type */
+#elif ULONG_MAX > 0xFFFFFFFFUL && ULONG_MAX == 0xFFFFFFFFFFFFFFFFUL && \
+  !defined(HKSC_EMU_UI64)
+/* long is 64-bits */
 #define LUAI_UINT64 unsigned long
 #define LUA_UI64_FMT "%lx"
 #define lua_ui642str(s,n) sprintf((s), LUA_UI64_FMT, (n))
@@ -391,7 +392,7 @@
   (cast(size_t, (x).hi) << 32)))
 #else
 #define lua_ui64_testlow4bits(x) (((x) & 0xf) != 0)
-#define lua_ui64tolud(x) (cast(void *, (x)))
+#define lua_ui64tolud(x) (cast(void *, cast(size_t, (x))))
 #endif /* LUA_UI64_S */
 
 #define LUAI_MAXUI642STR 17 /* 16 hex digits and \0 */

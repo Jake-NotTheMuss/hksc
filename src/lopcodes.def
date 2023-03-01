@@ -259,7 +259,7 @@ DEFCODE1(SETSLOTMT, ABC, 0, 1, U, RK, 0)
 
 /* OP_CHECKTYPE  A Bx  check type of R(A) is Bx */
 DEFCODE1(CHECKTYPE, ABx, 0, 1, U, N, 0)
-/* OP_CHECKTYPES  A Bx  check type of R(A) is a structure of type Bx  */
+/* OP_CHECKTYPES  A Bx  check type of R(A) is a structure with id Bx  */
 DEFCODE1(CHECKTYPES, ABx, 0, 1, U, N, 0)
 
 DEFCODE1(GETSLOT, ABC, 0, 1, R, U, 0)

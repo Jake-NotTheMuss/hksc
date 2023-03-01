@@ -63,10 +63,13 @@ static int checkmode_(hksc_State *H, int mode, const char *filename) {
   return 0;
 }
 
+
+#define MAX_CLEANED_FILENAME_SIZE 260
+
 static void cleanFileName(const char *instr, char *outstr) {
   int numdots = 0;
   int length = 0;
-  while (*instr != '\0' && length < (PATH_MAX-1)) {
+  while (*instr != '\0' && length < (MAX_CLEANED_FILENAME_SIZE-1)) {
     if (*instr == '.')
       numdots++;
     else if (numdots == 1 && (*instr == '/' || *instr == '\\')) /* omit `./' */
@@ -130,7 +133,7 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
 }
 
 static int loadfile(hksc_State *H, const char *filename) {
-  char cleanedFileName[PATH_MAX];
+  char cleanedFileName[MAX_CLEANED_FILENAME_SIZE];
   LoadF lf;
   int status, readstatus;
   int c;
@@ -192,16 +195,16 @@ static const char *getS (hksc_State *H, void *ud, size_t *size) {
 static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
                            const char *name) {
   LoadS ls;
-  char cleanedFileName[PATH_MAX];
+  char cleanedFileName[MAX_CLEANED_FILENAME_SIZE];
   if (name != buff && name != NULL) {
-    if (strlen(name) < (PATH_MAX-1)) {
-      char *outstr;
+    if (strlen(name) < (MAX_CLEANED_FILENAME_SIZE-1)) {
+      char *cleanedFileNamePtr;
       if (*name != '=' && *name != '@') {
         cleanedFileName[0] = '@';
-        outstr = &cleanedFileName[1];
+        cleanedFileNamePtr = &cleanedFileName[1];
       } else
-        outstr = &cleanedFileName[0];
-      cleanFileName(name, outstr);
+        cleanedFileNamePtr = &cleanedFileName[0];
+      cleanFileName(name, cleanedFileNamePtr);
     }
   }
   checkmodematches(H, *buff, name);
@@ -359,9 +362,12 @@ static int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
     luaD_setferror(H, "debug file name not set for input `%s'", name);
     return LUA_ERRRUN;
   }
-  f = fopen(H->currdebugfile, "rb");
-  if (f == NULL) return errfile(H, "open", H->currdebugfile);
   ld = luaM_new(H, LoadDebug);
+  f = fopen(H->currdebugfile, "rb");
+  if (f == NULL) {
+    luaM_free(H, ld);
+    return errfile(H, "open", H->currdebugfile);
+  }
   ld->f = f;
   luaZ_init(H, z, debug_reader, ld);
   luaZ_initbuffer(H, buff);
