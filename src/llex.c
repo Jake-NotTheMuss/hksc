@@ -70,7 +70,7 @@ void luaX_init (hksc_State *H) {
 }
 
 
-#define MAXSRC          80
+#define MAXSRC          512
 
 
 #ifdef HKSC_MATCH_HAVOK_ERROR_MSG
