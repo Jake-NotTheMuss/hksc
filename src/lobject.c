@@ -343,7 +343,13 @@ const char *luaO_pushfstring (hksc_State *H, const char *fmt, ...) {
 
 
 void luaO_chunkid (char *out, const char *source, size_t bufflen) {
-  if (*source == '=') {
+  if (source == NULL) {
+    if (sizeof("[string \"?\"]") < bufflen)
+      bufflen = sizeof("[string \"?\"]");
+    strncpy(out, "[string \"?\"]", bufflen);
+    out[bufflen-1] = '\0';
+  }
+  else if (*source == '=') {
     strncpy(out, source+1, bufflen);  /* remove first char */
     out[bufflen-1] = '\0';  /* ensures null termination */
   }
