@@ -72,7 +72,7 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
 #define lua2luaprofile(H,name) lua2ext(H,name,LUACALLSTACK_EXT)
 #define lua2luadebug(H,name) lua2ext(H,name,LUADEBUG_EXT)
 
-#define MAXLUACNAME PATH_MAX
+#define MAXLUACNAME 1024
 
 
 #if (defined(_WIN32) && !defined(__CYGWIN__)) || defined(__MSDOS__) || \
