@@ -22,8 +22,9 @@ HKSCFLAGS=-p -a $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
 # files are generated for each BOM that is NOT accepted by hksc
 BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \
 	utf16or32le_bom.test unknown_bom.test
-OTHER_TESTS=badassign.test badbreak.test earlybreak.test earlyreturn.test  \
-	literaloverflow.test lud.test ui64.test #utf8_identifier.test
+OTHER_TESTS=badassign.test badbreak.test badlhs.lua earlybreak.test  \
+	earlyreturn.test literaloverflow.test lud.test ui64.test  \
+	utf8_identifier.test
 # error checks for when structures are enabled/disabled
 NOHSTRUCTURE_TESTS=hmake.test hstructure.test typedparam.test typedvar.test
 YESHSTRUCTURE_TESTS=

@@ -1107,10 +1107,19 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
 }
 
 
+#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+# define NONVARIABLE_LHS_MESSAGE  \
+  "non-variable on the right hand side of an assignment"
+#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+# define NONVARIABLE_LHS_MESSAGE  \
+  "non-variable on the left hand side of an assignment"
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+
+
 static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {
   expdesc e;
   check_condition(ls, VLOCAL <= lh->v.k && lh->v.k <= VINDEXED,
-                      "syntax error");
+                      "syntax error (" NONVARIABLE_LHS_MESSAGE ")");
   if (testnext(ls, ',')) {  /* assignment -> `,' primaryexp assignment */
     struct LHS_assign nv;
     nv.prev = lh;
