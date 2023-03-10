@@ -59,6 +59,7 @@ Advanced Options:
   --release                Build a release binary
   --debug                  Build a debug binary
   --testing                Configure Hksc for testing
+  --no-testing             Configure Hksc for not testing
 
 Developer Options:
   --debug-pass=NUMBER      Debug decompiler pass NUMBER [1-2]
@@ -140,6 +141,7 @@ for opt; do
 		--debug) debug=1 ;;
 		--release) debug=0 ;;
 		--testing) testing=1 ;;
+		--no-testing | --not-testing) testing=0 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
 		*) echo "Unrecongnized option '$opt'"
 	esac
