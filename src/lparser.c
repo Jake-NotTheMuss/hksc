@@ -410,25 +410,40 @@ static TString *buildFunctionName (LexState *ls) {
   char buff[MAX_FUNCNAME];
   int i;
   size_t len = 0;
+  size_t namelen;
   struct FunctionNameStack *stk = ls->functionNameStack;
   lua_assert(stk != NULL);
   for (i = 0; i < stk->used; i++) {
     size_t l;
     TString *name = stk->names[i].name;
     int type = stk->names[i].type;
+    lua_assert(name != NULL);
     if (type == NAMEPART_FIELD)
       buff[len++] = '.';
     else if (type == NAMEPART_SELF)
       buff[len++] = ':';
     l = name->tsv.len;
-    if (l >= MAX_FUNCNAME - len)
+    if (l > MAX_FUNCNAME - len)
       l = MAX_FUNCNAME - len;
     memcpy(buff+len,getstr(name),l);
     len+=l;
   }
   if (len >= MAX_FUNCNAME)
-    len = MAX_FUNCNAME - 1;
-  buff[len] = '\0';
+    namelen = MAX_FUNCNAME - 1;
+  else
+    namelen = len;
+  buff[namelen] = '\0';
+#ifndef HKSC_MATCH_HAVOK_ERROR_MSG
+  len = namelen;
+#else /* HKSC_MATCH_HAVOK_ERROR_MSG */
+  /* instead of setting len to namelen, which guarantees that the null byte will
+     not be included in the generated string, len is allowed to be exactly
+     MAX_FUNCNAME to match the bug in Havok Script where the null byte gets
+     embedded in the function name if it is as long as or longer than the
+     maxumum allowed length */
+  if (len > MAX_FUNCNAME)
+    len = MAX_FUNCNAME;
+#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
   stk->used = 0; /* discharge name parts */
   if (len != 0)
     return luaS_newlstr(ls->H, buff, len);
