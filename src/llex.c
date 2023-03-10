@@ -73,7 +73,7 @@ void luaX_init (hksc_State *H) {
 #define MAXSRC          512
 
 
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
 /* from Lua 5.1 - the code that Havok Script uses - do not modify */
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {
@@ -85,7 +85,7 @@ const char *luaX_token2str (LexState *ls, int token) {
     return luaX_tokens[token-FIRST_RESERVED];
 }
 
-#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 
 /* nicer error messages from modern Lua */
 const char *luaX_token2str (LexState *ls, int token) {
@@ -105,7 +105,7 @@ const char *luaX_token2str (LexState *ls, int token) {
 }
 
 
-#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 
 
 static const char *txtToken (LexState *ls, int token) {
@@ -113,12 +113,13 @@ static const char *txtToken (LexState *ls, int token) {
     case TK_NAME:
     case TK_STRING:
     case TK_NUMBER:
-#ifndef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifndef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
     case TK_SHORT_LITERAL:
     case TK_LONG_LITERAL:
-#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
       save(ls, '\0');
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#if defined (HKSC_PRESERVE_HAVOKSCRIPT_BUGS) || \
+  defined(HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG)
       /* Havok generates messages with unbalanced quotes when quoting the input
          buffer if (token == TK_NUMBER). Why? Because they save a null byte
          after reading the number, which increments the length of the buffer.
@@ -135,11 +136,11 @@ static const char *txtToken (LexState *ls, int token) {
 #endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       return luaO_pushfstring(ls->H, "'%s'", luaZ_buffer(ls->buff));
     default:
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
       return luaO_pushfstring(ls->H, "'%s'", luaX_token2str(ls, token));
-#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
       return luaX_token2str(ls, token);
-#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
   }
 }
 
@@ -161,11 +162,11 @@ void luaX_syntaxerror (LexState *ls, const char *msg) {
 }
 
 void luaX_inputerror (LexState *ls, const char *msg) {
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
   luaX_syntaxerror(ls, msg);
-#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
   luaX_lexerror(ls, msg, 0);
-#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 }
 
 
@@ -556,7 +557,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
               luaX_inputerror(ls, "The reserved words \"hmake\" and "
                 "\"hstructure\" can only be used when the virtual machine is "
                 "built with structure support."
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
                 "  See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
 #endif
                 );

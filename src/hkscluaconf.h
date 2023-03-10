@@ -690,6 +690,23 @@ union luai_Cast { double l_d; long l_l; };
 #endif
 
 
+/*
+@@ HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG causes error messages to match exactly
+@* with Havok Script
+@@ HKSC_PRESERVE_HAVOKSCRIPT_BUGS disables code that fixes Havok Script bugs
+@* (only needed when running tests)
+** CHANGE them if you really want error mesages to match exactly with Havok
+** Script
+*/
+
+#ifdef HKSC_TESTING
+#define HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
+#define HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#else
+#undef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
+#undef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#endif
+
 
 /* =================================================================== */
 

@@ -162,18 +162,18 @@ static int registerlocalvar (LexState *ls, TString *varname) {
 }
 
 
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
 #define TYPEDVARMSG "Cannot use typed local variables when the virtual " \
     "machine is built without structures See HKS_STRUCTURE_EXTENSION_ON in " \
     "HksSettings.h."
 #define TYPEDPARMSG "Cannot use typed parameters when the virtual machine is " \
   "built without structures. See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
-#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 #define TYPEDVARMSG "Cannot use typed local variables when the virtual " \
     "machine is built without structures"
 #define TYPEDPARMSG "Cannot use typed parameters when the virtual machine is " \
   "built without structures"
-#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 
 
 #if HKSC_STRUCTURE_EXTENSION_ON
@@ -440,7 +440,7 @@ static TString *buildFunctionName (LexState *ls) {
      not be included in the generated string, len is allowed to be exactly
      MAX_FUNCNAME to match the bug in Havok Script where the null byte gets
      embedded in the function name if it is as long as or longer than the
-     maxumum allowed length */
+     maximum allowed length */
   if (len > MAX_FUNCNAME)
     len = MAX_FUNCNAME;
 #endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
@@ -1122,13 +1122,13 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
 }
 
 
-#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
 # define NONVARIABLE_LHS_MESSAGE  \
   "non-variable on the right hand side of an assignment"
-#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 # define NONVARIABLE_LHS_MESSAGE  \
   "non-variable on the left hand side of an assignment"
-#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 
 
 static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {

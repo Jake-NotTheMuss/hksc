@@ -24,6 +24,13 @@
 ** macro `LUA_COD' if you are not developing for a Call of Duty game.
 */
 
+/* UI64 type */
+#if @LUACONFIG_WITH_UI64@
+#define HKSC_UI64API
+#else
+#undef HKSC_UI64API
+#endif
+
 /* UI64 emulation */
 #if @LUACONFIG_EMU_UI64@
 #define HKSC_EMU_UI64
@@ -67,6 +74,12 @@
 #define HKSC_WITHDOUBLES @HKSC_WITHDOUBLES@
 #define HKSC_WITHNATIVEINT @HKSC_WITHNATIVEINT@
 
+/* whether this build is being used for tests */
+#if @HKSC_TESTING@
+#define HKSC_TESTING
+#else
+#undef HKSC_TESTING
+#endif
 
 /* set which decompiler pass to test */
 #define HKSC_DEBUG_PASS @HKSC_DEBUG_PASS@

@@ -47,6 +47,8 @@ Havok Script Compatibility Options:
 Lua/Hksc Options:
   --with-decompiler        Lua decompiler (enabled by default)
   --no-decompiler          Disable Lua decompiler
+  --with-ui64              Enable UI64 type
+  --no-ui64                Disable UI64 type
   --emu-ui64               Use C structs to emulate UI64 (disabled by default)
   --no-emu-ui64            Disable using C structs to emulate UI64
   --with-logging           Enable logging information and warning messages
@@ -56,6 +58,7 @@ Lua/Hksc Options:
 Advanced Options:
   --release                Build a release binary
   --debug                  Build a debug binary
+  --testing                Configure Hksc for testing
 
 Developer Options:
   --debug-pass=NUMBER      Debug decompiler pass NUMBER [1-2]
@@ -98,10 +101,12 @@ VER1=`echo $VER | cut -d. -f 1-1`
 
 program_prefix=
 program_suffix=
+with_ui64=1
 emu_ui64=0
 with_decompiler=1
 with_logging=0
 debug=0
+testing=0
 debug_pass=
 
 test -e "$config_file" && . "$config_file"
@@ -126,12 +131,15 @@ for opt; do
 		--game=*) game=${opt#*=} ;;
 		--with-decompiler) with_decompiler=1 ;;
 		--no-decompiler) with_decompiler=0 ;;
+		--with-ui64 | --enable-ui64) with_ui64=1 ;;
+		--no-ui64 | --disable-ui64) with_ui64=0 ;;
 		--emu-ui64) emu_ui64=1 ;;
 		--no-emu-ui64) emu_ui64=0 ;;
 		--with-logging) with_logging=1 ;;
 		--disable-logging) with_logging=0 ;;
 		--debug) debug=1 ;;
 		--release) debug=0 ;;
+		--testing) testing=1 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
 		*) echo "Unrecongnized option '$opt'"
 	esac
@@ -201,6 +209,10 @@ docdir mandir pkgconfigdir; do
 	esac
 	error "expected an absolute directory name for --$var: $val"
 done
+
+if test "x$with_ui64" = x0 && test "x$emu_ui64" != x0; then
+	emu_ui64=0
+fi
 
 case $debug_pass in
 	"") debug_pass=0 ;;
@@ -313,10 +325,12 @@ logvar program_prefix
 logvar program_suffix
 
 # preprocessor defs
+logvar with_ui64
 logvar emu_ui64
 logvar with_decompiler
 logvar with_logging
 logvar debug
+logvar testing
 logvar debug_pass
 
 # Havok Script configuration
@@ -481,6 +495,7 @@ s&@HKSC_VERSION@&$VER&g
 
 # configure header
 sed < "${SRCDIR}$config_h.in" "
+s/@LUACONFIG_WITH_UI64@/$with_ui64/g
 s/@LUACONFIG_EMU_UI64@/$emu_ui64/g
 s/@LUACONFIG_DECOMPILER@/$with_decompiler/g
 s/@LUACONFIG_LOGGING@/$with_logging/g
@@ -491,6 +506,7 @@ s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
 s/@HKSC_SELF@/$SELF/g
 s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
 s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
+s/@HKSC_TESTING@/$testing/g
 s/@HKSC_DEBUG_PASS@/$debug_pass/g
 " > "$config_h_TMP"
 

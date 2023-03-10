@@ -10,10 +10,6 @@
 #include "lobject.h"
 #include "lzio.h"
 
-#if defined(LUA_DEBUG) && !defined(HKSC_PRESERVE_HAVOKSCRIPT_BUGS)
-# define HKSC_PRESERVE_HAVOKSCRIPT_BUGS
-#endif
-
 enum TextModes {
   ASCII,
   UTF8
