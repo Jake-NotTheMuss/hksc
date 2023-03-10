@@ -294,7 +294,7 @@ typedef struct Analyzer {
   CommonHeader;
   InstructionFlags *insproperties;  /* instruction flags */
   RegisterFlags *regproperties;  /* register flags */
-  int *lineinfo;  /* map from opcodes to decompiltion lines */
+  int *lineinfo;  /* map from opcodes to source lines */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
   int sizeinsproperties;

@@ -128,11 +128,10 @@ static const char *txtToken (LexState *ls, int token) {
          The 3rd string is the input buffer string, and the 4th string is "'".
          Because the 3rd string embeds a null byte, the string is terminated
          early and the final quote is not printed. But Hksc does not have a Lua
-         stack and does not have a concat function, so this approximates the bug
-         and matches the error messages */
+         stack and does not have a concat function, so this forces the bug and
+         matches the error messages */
       if (token == TK_NUMBER)
         return luaO_pushfstring(ls->H, "'%s", luaZ_buffer(ls->buff));
-      else
 #endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
       return luaO_pushfstring(ls->H, "'%s'", luaZ_buffer(ls->buff));
     default:
