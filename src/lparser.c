@@ -162,18 +162,18 @@ static int registerlocalvar (LexState *ls, TString *varname) {
 }
 
 
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
 #define TYPEDVARMSG "Cannot use typed local variables when the virtual " \
     "machine is built without structures See HKS_STRUCTURE_EXTENSION_ON in " \
     "HksSettings.h."
 #define TYPEDPARMSG "Cannot use typed parameters when the virtual machine is " \
   "built without structures. See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 #define TYPEDVARMSG "Cannot use typed local variables when the virtual " \
     "machine is built without structures"
 #define TYPEDPARMSG "Cannot use typed parameters when the virtual machine is " \
   "built without structures"
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 
 
 #if HKSC_STRUCTURE_EXTENSION_ON
@@ -433,9 +433,9 @@ static TString *buildFunctionName (LexState *ls) {
   else
     namelen = len;
   buff[namelen] = '\0';
-#ifndef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifndef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
   len = namelen;
-#else /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
   /* instead of setting len to namelen, which guarantees that the null byte will
      not be included in the generated string, len is allowed to be exactly
      MAX_FUNCNAME to match the bug in Havok Script where the null byte gets
@@ -443,7 +443,7 @@ static TString *buildFunctionName (LexState *ls) {
      maxumum allowed length */
   if (len > MAX_FUNCNAME)
     len = MAX_FUNCNAME;
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
   stk->used = 0; /* discharge name parts */
   if (len != 0)
     return luaS_newlstr(ls->H, buff, len);
@@ -1122,13 +1122,13 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
 }
 
 
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
 # define NONVARIABLE_LHS_MESSAGE  \
   "non-variable on the right hand side of an assignment"
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 # define NONVARIABLE_LHS_MESSAGE  \
   "non-variable on the left hand side of an assignment"
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 
 
 static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {

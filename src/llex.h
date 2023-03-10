@@ -10,8 +10,8 @@
 #include "lobject.h"
 #include "lzio.h"
 
-#if defined(LUA_DEBUG) && !defined(HKSC_MATCH_HAVOK_ERROR_MSG)
-# define HKSC_MATCH_HAVOK_ERROR_MSG
+#if defined(LUA_DEBUG) && !defined(HKSC_PRESERVE_HAVOKSCRIPT_BUGS)
+# define HKSC_PRESERVE_HAVOKSCRIPT_BUGS
 #endif
 
 enum TextModes {

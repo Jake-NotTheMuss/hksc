@@ -73,7 +73,7 @@ void luaX_init (hksc_State *H) {
 #define MAXSRC          512
 
 
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
 /* from Lua 5.1 - the code that Havok Script uses - do not modify */
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {
@@ -85,7 +85,7 @@ const char *luaX_token2str (LexState *ls, int token) {
     return luaX_tokens[token-FIRST_RESERVED];
 }
 
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 
 /* nicer error messages from modern Lua */
 const char *luaX_token2str (LexState *ls, int token) {
@@ -105,7 +105,7 @@ const char *luaX_token2str (LexState *ls, int token) {
 }
 
 
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 
 
 static const char *txtToken (LexState *ls, int token) {
@@ -113,12 +113,12 @@ static const char *txtToken (LexState *ls, int token) {
     case TK_NAME:
     case TK_STRING:
     case TK_NUMBER:
-#ifndef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifndef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
     case TK_SHORT_LITERAL:
     case TK_LONG_LITERAL:
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       save(ls, '\0');
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
       /* Havok generates messages with unbalanced quotes when quoting the input
          buffer if (token == TK_NUMBER). Why? Because they save a null byte
          after reading the number, which increments the length of the buffer.
@@ -132,14 +132,14 @@ static const char *txtToken (LexState *ls, int token) {
          matches the error messages */
       if (token == TK_NUMBER)
         return luaO_pushfstring(ls->H, "'%s", luaZ_buffer(ls->buff));
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       return luaO_pushfstring(ls->H, "'%s'", luaZ_buffer(ls->buff));
     default:
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
       return luaO_pushfstring(ls->H, "'%s'", luaX_token2str(ls, token));
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       return luaX_token2str(ls, token);
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
   }
 }
 
@@ -161,11 +161,11 @@ void luaX_syntaxerror (LexState *ls, const char *msg) {
 }
 
 void luaX_inputerror (LexState *ls, const char *msg) {
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
   luaX_syntaxerror(ls, msg);
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
   luaX_lexerror(ls, msg, 0);
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
 }
 
 
@@ -556,7 +556,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
               luaX_inputerror(ls, "The reserved words \"hmake\" and "
                 "\"hstructure\" can only be used when the virtual machine is "
                 "built with structure support."
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
                 "  See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
 #endif
                 );
@@ -611,23 +611,23 @@ static int readBOM (LexState *ls) {
   }
   else if (first == 0xFE) { /* big endian utf16 */
     if (next(ls) == 0xFF) {
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
       if (!nextiszero(ls))
         return TK_UTF16BE_BOM;
       if (nextiszero(ls))
         return TK_UTF32LE_BOM;
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       next(ls);
       return TK_UTF16BE_BOM;
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
     }
   }
   else if (first == 0xFF) { /* little endian utf16 or utf32 */
     if (next(ls) == 0xFE) {
-#ifdef HKSC_MATCH_HAVOK_ERROR_MSG
+#ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
       next(ls);
       return TK_UTF16LE_BOM;
-#else /* !HKSC_MATCH_HAVOK_ERROR_MSG */
+#else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       int nextCharacter = next(ls);
       if (!zhasmore(ls->z) || nextCharacter != '\0')
         return TK_UTF16LE_BOM;
@@ -636,7 +636,7 @@ static int readBOM (LexState *ls) {
         next(ls);
         return TK_UTF32LE_BOM;
       }
-#endif /* HKSC_MATCH_HAVOK_ERROR_MSG */
+#endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
     }
   }
   else if (first == 0) { /* big endian utf32 */
