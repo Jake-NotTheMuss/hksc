@@ -266,11 +266,24 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
   if (type == TK_SHORT_LITERAL &&
       (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
     setpvalue(&o, lua_ui64tolud(l));
-  else if (type == TK_LONG_LITERAL &&
-           (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64))
-    setui64value(&o, l);
-  else
+  else if (type == TK_LONG_LITERAL) {
+    if ((hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64) == 0)
+      goto literals_not_enabled;
+#ifdef HKSC_UI64API
+    else
+      setui64value(&o, l);
+#else /* !HKSC_UI64API */
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
+    luaX_inputerror("60-bit literal not supported without HKS_UI64API");
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
+    luaX_inputerror("60-bit literal not supported without HKSC_UI64API");
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
+#endif /* HKSC_UI64API */
+  }
+  else {
+    literals_not_enabled:
     luaX_syntaxerror(fs->ls, "int literals not enabled in compiler options");
+  }
   return addk(fs, &o, &o);
 }
 
