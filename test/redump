@@ -79,7 +79,7 @@ case $cod in
 	YES|NO|Yes|No|yes|no|maybe) ;;
 	1) cod=yes;;
 	0) cod=no;;
-	*) echo "invalid use of '--cod'" >&2; exit 1;;
+	*) error "invalid use of '--cod'";;
 esac
 
 if test ! -e "$hksc" || test ! -x "$hksc"; then
@@ -99,20 +99,21 @@ fi
 if test "x$cod" = xyes; then
 	checknotempty luac --bytecode-file
 	test -e "$luac" || error "$luac does not exist"
-	cp -f -- "$luac" "$luac.bk" || exit $?
+	tmp="$luac.$$"
+	cp -f -- "$luac" "$tmp" || exit $?
 	if test "$xluadebug" != x; then
 		checknotempty luaprofile --profile-file
 	fi
 	# redump bytecode
-	"$hksc" $flags -s "$luac.bk" -o "$luac"
+	"$hksc" $flags -s "$tmp" -o "$luac"
 	status=$?
 	if test $status = 0 && test "x$luadebug" != x; then
 		# redump callstackdb and debug info
-		"$hksc" $flags --with-debug --debugfile="$luadebug" "$luac.bk" \
+		"$hksc" $flags --with-debug --debugfile="$luadebug" "$tmp" \
 		--callstackdb="$luaprofile" -o /dev/null
 		status=$?
 	fi
-	rm -f "$luac.bk"
+	rm -f "$tmp"
 	exit $status
 else
 	if test "x$luac" != x; then
