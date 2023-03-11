@@ -42,17 +42,11 @@ DEFTOK(TK_THEN,           "then")
 DEFTOK(TK_TRUE,           "true")
 DEFTOK(TK_UNTIL,          "until")
 DEFTOK(TK_WHILE,          "while")
-DEFTOK(TK_HSTRUCTURE,     "hstructure")
-DEFTOK(TK_HMAKE,          "hmake")
+DEFTOK(TK_STRUCT,         "hstructure")
+DEFTOK(TK_MAKE,           "hmake")
 
 /* end of reserved words */
-
-#ifndef LAST_RESERVED
-# define LAST_RESERVED TK_HMAKE
-#endif /* LAST_RESERVED */
-
-/* invalid token */
-DEFTOK(TK_INVALID,        "INVALID")
+DEFTOK(TK_RESERVED_LAST,  "INVALID")
 
 /* other terminal symbols */
 #ifdef LUA_CODT7 /* T7 extensions */
@@ -73,19 +67,21 @@ DEFTOK(TK_NE,             "~=")
 #endif /* LAST_FIXED_FORMAT_TOKEN */
 
 DEFTOK(TK_NUMBER,         "<number>")
-DEFTOK(TK_SHORT_LITERAL,  "<short literal>")
-DEFTOK(TK_LONG_LITERAL,   "<long literal>")
+DEFTOK(TK_LITERALLUD,     "<short literal>")
+DEFTOK(TK_LITERALUI64,    "<long literal>")
 DEFTOK(TK_NAME,           "<name>")
 DEFTOK(TK_STRING,         "<string>")
 DEFTOK(TK_EOS,            "<eof>")
 
 /* byte order marks */
-DEFTOK(TK_INVALID_BOM,    "<Invalid BOM>")
-DEFTOK(TK_UTF8_BOM,       "<UTF8 BOM>")
-DEFTOK(TK_UTF16LE_BOM,    "<UTF16LE BOM>")
-DEFTOK(TK_UTF16BE_BOM,    "<UTF16BE BOM>")
-DEFTOK(TK_UTF32LE_BOM,    "<UTF32LE BOM>")
-DEFTOK(TK_UTF32BE_BOM,    "<UTF32BE BOM>")
+DEFTOK(TK_BOM_INVALID,    "<Invalid BOM>")
+DEFTOK(TK_BOM_UTF8,       "<UTF8 BOM>")
+DEFTOK(TK_BOM_UTF16LE,    "<UTF16LE BOM>")
+DEFTOK(TK_BOM_UTF16BE,    "<UTF16BE BOM>")
+DEFTOK(TK_BOM_UTF32LE,    "<UTF32LE BOM>")
+DEFTOK(TK_BOM_UTF32BE,    "<UTF32BE BOM>")
+
+DEFTOK(TK_LAST,           "")
 
 /* end of reserved tokens */
 

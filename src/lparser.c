@@ -134,7 +134,7 @@ static void init_typed_exp (expdesc *e, expkind k, int i, int type) {
 
 
 static void codeliteral (LexState *ls, expdesc *e, lu_int64 l, int token) {
-  int type = (token == TK_SHORT_LITERAL) ? LUA_TLIGHTUSERDATA : LUA_TUI64;
+  int type = (token == TK_LITERALLUD) ? LUA_TLIGHTUSERDATA : LUA_TUI64;
   init_typed_exp(e, VK, luaK_literalK(ls->fs, l, token), type);
 }
 
@@ -525,15 +525,15 @@ static void parser_inner_func (hksc_State *H, void *ud) {
   fs->f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
   luaX_readFirstToken(ls);  /* read first token */
   switch (ls->t.token) {
-    case TK_UTF8_BOM:
+    case TK_BOM_UTF8:
       ls->textmode = UTF8;
       luaX_next(ls);
       break;
-    case TK_INVALID_BOM:
-    case TK_UTF16LE_BOM:
-    case TK_UTF16BE_BOM:
-    case TK_UTF32LE_BOM:
-    case TK_UTF32BE_BOM:
+    case TK_BOM_INVALID:
+    case TK_BOM_UTF16LE:
+    case TK_BOM_UTF16BE:
+    case TK_BOM_UTF32LE:
+    case TK_BOM_UTF32BE:
       luaX_inputerror(ls, "Invalid or unsupported file encoding. Only ASCII "
                       "and UTF-8 are supported");
       break;
@@ -917,8 +917,8 @@ static void simpleexp (LexState *ls, expdesc *v) {
       v->u.nval = ls->t.seminfo.r;
       break;
     }
-    case TK_SHORT_LITERAL:
-    case TK_LONG_LITERAL: {
+    case TK_LITERALLUD:
+    case TK_LITERALUI64: {
       codeliteral(ls, v, ls->t.seminfo.l, ls->t.token);
       break;
     }

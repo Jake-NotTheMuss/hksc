@@ -114,8 +114,8 @@ static const char *txtToken (LexState *ls, int token) {
     case TK_STRING:
     case TK_NUMBER:
 #ifndef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
-    case TK_SHORT_LITERAL:
-    case TK_LONG_LITERAL:
+    case TK_LITERALLUD:
+    case TK_LITERALUI64:
 #endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
       save(ls, '\0');
 #if defined (HKSC_PRESERVE_HAVOKSCRIPT_BUGS) || \
@@ -253,8 +253,8 @@ static int numeral_type(LexState *ls) {
       s[0] == '0' && (s[1] == 'X' || s[1] == 'x') &&
       (s[n-3] == 'H' || s[n-3] == 'h')) {
     switch (s[n-2]) {
-      case 'I': case 'i': return TK_SHORT_LITERAL;
-      case 'L': case 'l': return TK_LONG_LITERAL;
+      case 'I': case 'i': return TK_LITERALLUD;
+      case 'L': case 'l': return TK_LITERALUI64;
       default: break;
     }
   }
@@ -277,8 +277,8 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
   buffreplace(ls, '.', ls->decpoint);  /* follow locale for decimal point */
   token = numeral_type(ls);
   switch (token) {
-    case TK_SHORT_LITERAL:
-    case TK_LONG_LITERAL: {
+    case TK_LITERALLUD:
+    case TK_LITERALUI64: {
       lu_int64 literal;
       char *s = luaZ_buffer(ls->buff) + 2; /* skip `0x' */
       char *suffix = s + luaZ_bufflen(ls->buff) - 5; /* start of `hl\0' */
@@ -286,12 +286,12 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
         ls->buff->n--; /* don't include the null character in messages */
         luaX_lexerror(ls, "malformed int literal", token);
       }
-      if (token == TK_LONG_LITERAL && lua_ui64_testlow4bits(literal)) {
+      if (token == TK_LITERALUI64 && lua_ui64_testlow4bits(literal)) {
         ls->buff->n--; /* don't include the null character in messages */
         luaX_lexerror(ls, "60-bit literal must have lowest 4 bits zero",
                       token);
       }
-      if (token == TK_SHORT_LITERAL) {
+      if (token == TK_LITERALLUD) {
         if (sizeof(void *) < 8) {
 #ifdef LUA_UI64_S
           if (literal.hi != 0)
@@ -552,7 +552,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
             int token = ts->tsv.reserved - 1 + FIRST_RESERVED;
 #if !HKSC_STRUCTURE_EXTENSION_ON
             /* hstructure and hmake are not supported in the cod builds */
-            if (token == TK_HSTRUCTURE || token == TK_HMAKE)
+            if (token == TK_STRUCT || token == TK_MAKE)
             {
               luaX_inputerror(ls, "The reserved words \"hmake\" and "
                 "\"hstructure\" can only be used when the virtual machine is "
@@ -607,19 +607,19 @@ static int readBOM (LexState *ls) {
   if (first == 0xEF) { /* utf8 */
     if (next(ls) == 0xBB && next(ls) == 0xBF) {
       next(ls);
-      return TK_UTF8_BOM;
+      return TK_BOM_UTF8;
     }
   }
   else if (first == 0xFE) { /* big endian utf16 */
     if (next(ls) == 0xFF) {
 #ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
       if (!nextiszero(ls))
-        return TK_UTF16BE_BOM;
+        return TK_BOM_UTF16BE;
       if (nextiszero(ls))
-        return TK_UTF32LE_BOM;
+        return TK_BOM_UTF32LE;
 #else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       next(ls);
-      return TK_UTF16BE_BOM;
+      return TK_BOM_UTF16BE;
 #endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
     }
   }
@@ -627,15 +627,15 @@ static int readBOM (LexState *ls) {
     if (next(ls) == 0xFE) {
 #ifdef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
       next(ls);
-      return TK_UTF16LE_BOM;
+      return TK_BOM_UTF16LE;
 #else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
       int nextCharacter = next(ls);
       if (!zhasmore(ls->z) || nextCharacter != '\0')
-        return TK_UTF16LE_BOM;
+        return TK_BOM_UTF16LE;
       nextCharacter = next(ls);
       if (zhasmore(ls->z) && nextCharacter == '\0') {
         next(ls);
-        return TK_UTF32LE_BOM;
+        return TK_BOM_UTF32LE;
       }
 #endif /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
     }
@@ -643,10 +643,10 @@ static int readBOM (LexState *ls) {
   else if (first == 0) { /* big endian utf32 */
     if (nextiszero(ls) && next(ls) == 0xFE && next(ls) == 0xFF) {
       next(ls);
-      return TK_UTF32BE_BOM;
+      return TK_BOM_UTF32BE;
     }
   }
-  return TK_INVALID_BOM;
+  return TK_BOM_INVALID;
 }
 
 

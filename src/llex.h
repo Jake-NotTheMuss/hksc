@@ -38,7 +38,7 @@ union max_token_length {
 #define TOKEN_LEN (sizeof(union max_token_length)/sizeof(char))
 
 /* number of reserved words */
-#define NUM_RESERVED  (cast(int, LAST_RESERVED-FIRST_RESERVED+1))
+#define NUM_RESERVED  (cast(int, TK_RESERVED_LAST-FIRST_RESERVED))
 
 /* array with token `names' */
 LUAI_DATA const char *const luaX_tokens [];
