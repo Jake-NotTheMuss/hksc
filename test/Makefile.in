@@ -68,7 +68,12 @@ ALL_SRC=	00_comment.lua \
 	22_bracket_evaluation.lua \
 	23_dead_code.lua \
 	24_dead_closure.lua \
-	29_long_func_name.lua
+	25_nested_closure.lua \
+	26_nested_call.lua \
+	27_vararg.lua \
+	28_func_name.lua \
+	29_long_func_name.lua \
+	30_long_string.lua
 
 ALL_TESTS=$(ALL_SRC:.lua=@TESTSUFFIX@)
 
