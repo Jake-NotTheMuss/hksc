@@ -427,6 +427,10 @@ static TString *buildFunctionName (LexState *ls) {
       l = MAX_FUNCNAME - len;
     memcpy(buff+len,getstr(name),l);
     len+=l;
+    /* I added this to prevent buffer overrun. This check is not done in
+       Havok Script. */
+    if (len >= MAX_FUNCNAME)
+      break;
   }
   if (len >= MAX_FUNCNAME)
     namelen = MAX_FUNCNAME - 1;
