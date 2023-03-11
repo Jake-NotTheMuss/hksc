@@ -274,9 +274,9 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
       setui64value(&o, l);
 #else /* !HKSC_UI64API */
 #ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
-    luaX_inputerror("60-bit literal not supported without HKS_UI64API");
+    luaX_inputerror(fs->ls,"60-bit literal not supported without HKS_UI64API");
 #else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
-    luaX_inputerror("60-bit literal not supported without HKSC_UI64API");
+    luaX_inputerror(fs->ls,"60-bit literal not supported without HKSC_UI64API");
 #endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 #endif /* HKSC_UI64API */
   }
