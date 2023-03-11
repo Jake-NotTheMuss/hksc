@@ -138,21 +138,6 @@ error:
 .SUFFIXES:
 .SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest
 
-# .lua.luac:
-# 	$(HKSC) --compile -s $< -o $@
-
-# .lua.cexpect:
-# 	@echo You need to regenerate $@!; false
-# .lua.profileexpect:
-# 	@echo You need to regenerate $@!; false
-# .lua.debugexpect:
-# 	@echo You need to regenerate $@!; false
-
-# .profileexpect.ctest:
-# 	@:
-# .debugexpect.ctest:
-# 	@:
-
 # compiler test + bytecode loader test
 .cexpect.ctest:
 	@echo ------------ $* ------------
