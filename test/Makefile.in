@@ -47,7 +47,7 @@ ALL_SRC=	00_comment.lua \
 	01_k.lua \
 	02_constfold.lua \
 	03_float.lua \
-	04_intliteral.lua \
+	04_intliterallud.lua \
 	05_table.lua \
 	06_bigtable.lua \
 	07_utf8_bom.lua \
