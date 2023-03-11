@@ -81,8 +81,6 @@ DEFTOK(TK_BOM_UTF16BE,    "<UTF16BE BOM>")
 DEFTOK(TK_BOM_UTF32LE,    "<UTF32LE BOM>")
 DEFTOK(TK_BOM_UTF32BE,    "<UTF32BE BOM>")
 
-DEFTOK(TK_LAST,           "")
-
 /* end of reserved tokens */
 
 #ifdef NO_DEFTOKFIRST

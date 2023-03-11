@@ -22,7 +22,7 @@ enum TextModes {
 #define DEFTOK(name, text) name,
 enum RESERVED {
 #include "ltoken.def"
-  MAX_RESERVED /* to avoid compiler warnings when last enum has a comma */
+  TK_LAST
 };
 #undef DEFTOKFIRST
 #undef DEFTOK
