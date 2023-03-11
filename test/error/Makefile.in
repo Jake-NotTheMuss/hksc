@@ -23,19 +23,22 @@ HKSCFLAGS=-p -a $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
 BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \
 	utf16or32le_bom.test unknown_bom.test
 OTHER_TESTS=badassign.test badbreak.test badlhs.test earlybreak.test  \
-	earlyreturn.test literaloverflow.test lud.test ui64.test  \
-	utf8_identifier.test
+	earlyreturn.test literaloverflow.test lud.test utf8_identifier.test
 # error checks for when structures are enabled/disabled
 NOHSTRUCTURE_TESTS=hmake.test hstructure.test typedparam.test typedvar.test
 YESHSTRUCTURE_TESTS=
 
+NOUI64_TESTS=
+YESUI64_TESTS=ui64.test
+
 STANDARD_TESTS= $(OTHER_TESTS) $(BOM_TESTS)
 
-ALL_ERROR_TESTS=$(STANDARD_TESTS) $(YESHSTRUCTURE_TESTS) $(NOHSTRUCTURE_TESTS)
+ALL_ERROR_TESTS=$(STANDARD_TESTS) $(YESHSTRUCTURE_TESTS)  \
+	$(NOHSTRUCTURE_TESTS) $(YESUI64_TESTS) $(NOUI64_TESTS)
 
 # HSTRUCTURE_ERROR_CHECK=@HSTRUCTURE_ERROR_CHECK@
 
-all: prepare $(STANDARD_TESTS) $(HSTRUCTURE_ERROR_CHECK)
+all: prepare $(STANDARD_TESTS) @UI64_ERROR_CHECK@ @HSTRUCTURE_ERROR_CHECK@
 	@printf -- '----------------------------\nAll Lua error checks passed\n\n'
 
 prepare: clean checkexpect
@@ -66,6 +69,10 @@ expectsum:
 nohstructure: $(NOHSTRUCTURE_TESTS)
 
 yeshstructure: $(YESHSTRUCTURE_TESTS)
+
+noui64: $(NOUI64_TESTS)
+
+yesui64: $(YESUI64_TESTS)
 
 .SUFFIXES:
 .SUFFIXES: .expect .test

@@ -143,7 +143,7 @@ for opt; do
 		--testing) testing=1 ;;
 		--no-testing | --not-testing) testing=0 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
-		*) echo "Unrecongnized option '$opt'"
+		*) echo "Unrecongnized option '$opt'"; exit 1;;
 	esac
 done
 
@@ -281,6 +281,7 @@ set10 debug BUILDCONFIGTYPE TESTS RELEASE
 set10 with_decompiler TESTSUFFIX .dtest .ctest
 # set which error tests to do for compatibility features
 set10 STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
+set10 with_ui64 UI64_ERROR_CHECK yesui64 noui64
 # flags for generating Lua profiling info
 # for the COD build, suppress bytecode output and only generate a callstackdb
 # for non-COD, use profile stripping mode
@@ -297,6 +298,8 @@ set10 lua_cod HKSC_GEN_DEBUG \
 set10 lua_cod HKSC_CMP_PROFILE "diff -u" "cmp -bl"
 HKSC_CMP_CODE="cmp -bl"
 HKSC_CMP_DEBUG="cmp -bl"
+set10 with_ui64 WITH_UI64_YESNO YES NO
+set10 STRUCTURE_EXTENSION_ON WITH_STRUCTURES_YESNO YES NO
 
 
 # Update config.status
@@ -463,6 +466,7 @@ config_makefile()
 			$sed_vpath;t t
 			s&@GAMETESTDIR@&$game&;t t
 			s&@HSTRUCTURE_ERROR_CHECK@&$HSTRUCTURE_ERROR_CHECK&;t t
+			s&@UI64_ERROR_CHECK@&$UI64_ERROR_CHECK&;t t
 			s&@HKSC_GEN_PROFILE@&$HKSC_GEN_PROFILE&;t t
 			s&@HKSC_GEN_DEBUG@&$HKSC_GEN_DEBUG&;t t
 			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&;t t
@@ -479,6 +483,8 @@ config_makefile()
 			s&@HKSC_PREFIX_MAP@&$HKSC_PREFIX_MAP&;t t
 			s&@CONFIGURE@&$me&;t t
 			s&@WITH_COD_EXT@&$LUA_COD_YESNO&;t t
+			s&@WITH_STRUCTURES@&$WITH_STRUCTURES_YESNO&;t t
+			s&@WITH_UI64@&$WITH_UI64_YESNO&;t t
 		" > $f
 	done
 }
