@@ -83,6 +83,9 @@
 
 /* set which decompiler pass to test */
 #define HKSC_DEBUG_PASS @HKSC_DEBUG_PASS@
+#if HKSC_DEBUG_PASS == 0 || !defined(HKSC_DECOMPILER)
+#undef HKSC_DEBUG_PASS
+#endif
 
 /* put here any errors that need to happen for unsupported configurations */
 #if HKSC_GETGLOBAL_MEMOIZATION
@@ -94,7 +97,7 @@
 #endif
 
 #if HKSC_SELF
-#error "Self extension not implemented"
+#error "Self not implemented"
 #endif
 
 #if HKSC_WITHNATIVEINT

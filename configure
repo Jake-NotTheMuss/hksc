@@ -39,10 +39,20 @@ Standard Options:
 
 Havok Script Compatibility Options:
   --game=GAME              Configure compability settings for GAME
-                           Supported values and their corresponding titles:
-                             t6
-                             t7
+                           Supported values:
+                             t6 (Also enables T6 extensions)
+                             t7 (Same as t6 but also enables T7 extensions)
                              none (disable all features)
+  --with-structures        Enable structure extension
+  --no-structures          Disable structure extension
+  --with-doubles           Use C type 'double' as 'lua_Number'
+  --no-doubles             Use C type 'float' as 'lua_Number'
+  --with-global-memo       Enable global memoization
+  --no-global-memo         Disable global memoization
+
+Mixing '--game' and individual compatibility options is not supported. In that
+case, the script will succeed, but the configuration will be set for the last
+'--game' argument provided.
 
 Lua/Hksc Options:
   --with-decompiler        Lua decompiler (enabled by default)
@@ -130,6 +140,14 @@ for opt; do
 		--program-prefix=*) program_prefix=${opt#*=} ;;
 		--program-suffix=*) program_suffix=${opt#*=} ;;
 		--game=*) game=${opt#*=} ;;
+# compatibility features
+		--with-structures) STRUCTURE_EXTENSION_ON=1;;
+		--no-structures) STRUCTURE_EXTENSION_ON=0;;
+		--with-double) WITHDOUBLES=1;;
+		--no-double) WITHDOUBLES=0;;
+		--with-global-memo*) GETGLOBAL_MEMOIZATION=1;;
+		--no-global-memo*) GETGLOBAL_MEMOIZATION=0;;
+# end of compatibility features
 		--with-decompiler) with_decompiler=1 ;;
 		--no-decompiler) with_decompiler=0 ;;
 		--with-ui64 | --enable-ui64) with_ui64=1 ;;
