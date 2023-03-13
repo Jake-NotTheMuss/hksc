@@ -405,7 +405,12 @@ static void freeFunctionNameStack (LexState *ls) {
 }
 
 
-/* build a function name from the current name part stack */
+/*
+** build a function name from the current name part stack
+** This function in Havok Script has 2 bugs. One of them is fatal, a buffer
+** overrun vulnerability, and cannot be preserved. The other is a benign one
+** which causes too-long function names to contain an embedded null terminator
+*/
 static TString *buildFunctionName (LexState *ls) {
   char buff[MAX_FUNCNAME];
   int i;
