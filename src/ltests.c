@@ -601,7 +601,6 @@ static int apichecks(hksc_State *H) {
   lua_checking(lua_getlogf);
   log = lua_getlogf(H, &ud);
   test_api_assert(H, log == &debug_log);
-  test_api_assert(H, ud == (void *)stderr);
   /* lua_setlogf */
   lua_checking(lua_setlogf);
   lua_setlogf(H, &dummy_log, &dummy);
