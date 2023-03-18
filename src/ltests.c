@@ -535,9 +535,9 @@ static int apichecks(hksc_State *H) {
   void *dummyud = NULL;
   int logpriority;
 #endif /* HKSC_LOGGING */
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
   const char *debugfile = NULL;
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
   const char *string = NULL;
   /* lua_atpanic */
   lua_checking(lua_atpanic);
@@ -621,7 +621,7 @@ static int apichecks(hksc_State *H) {
   lua_setlogpriority(H, logpriority);
   test_api_assert(H, logpriority == lua_getlogpriority(H));
 #endif /* HKSC_LOGGING */
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
   /* lua_getDebugFile */
   lua_checking(lua_getDebugFile);
   debugfile = H->currdebugfile;
@@ -632,7 +632,7 @@ static int apichecks(hksc_State *H) {
   lua_checking(lua_setDebugFile);
   lua_setDebugFile(H, debugfile);
   test_api_assert(H, lua_getDebugFile(H) == debugfile);
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
   return 0;
 }
 

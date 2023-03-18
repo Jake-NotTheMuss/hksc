@@ -32,6 +32,9 @@ typedef struct stringtable {
 typedef struct global_State {
   int mode; /* input file mode, source of binary */
   int bytecode_endianness; /* bytecode endianness */
+#ifdef HKSC_MULTIPLAT
+  int bytecode_target_id;
+#endif /* HKSC_MULTIPLAT */
   hksc_CompilerSettings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
   lua_Alloc frealloc;  /* function to reallocate memory */
@@ -54,10 +57,10 @@ typedef struct global_State {
   hksc_LogContext logctx;
 #endif
   lua_CFunction panic;  /* to be called in unprotected errors */
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
   LoadStateCB debugLoadStateOpen; /* (COD) debug reader initializer */
   LoadStateCB debugLoadStateClose; /* (COD) debug reader finalizer */
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
 } global_State;
@@ -73,9 +76,9 @@ struct hksc_State {
   unsigned short nCcalls;  /* number of nested C calls */
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
   const char *currdebugfile;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 };
 
 

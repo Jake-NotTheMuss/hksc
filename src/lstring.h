@@ -28,11 +28,11 @@
 LUAI_FUNC void luaS_resize (hksc_State *H, int newsize);
 LUAI_FUNC TString *luaS_newlstr (hksc_State *H, const char *str, size_t l);
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 #define luaS_cod_hash(H, s)  (luaS_cod_hashstring(H, s, strlen(s)))
 #define luaS_cod_hashliteral(H, s)  (luaS_cod_hashstring(H, "" s, \
                                       (sizeof(s)/sizeof(char))-1))
 LUAI_FUNC lu_int32 luaS_cod_hashstring (hksc_State *H, const char *s, size_t l);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 #endif

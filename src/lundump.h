@@ -39,7 +39,7 @@ static int isbigendian() {
 
 #endif /* ldump_c || lundump_c */
 
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
 
 /*
 ** Callback function signature for constructing/destructing a debug load state.
@@ -53,7 +53,7 @@ static int isbigendian() {
 */
 typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
 
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 /* load one chunk; from lundump.c */
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
@@ -82,7 +82,7 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 /* for header of binary files -- this is the official format */
 #if defined(LUA_CODT7)
 #define LUAC_FORMAT  14 /* T7 format version */
-#elif defined(LUA_COD)
+#elif defined(LUA_CODT6)
 #define LUAC_FORMAT  13 /* T6 format version */
 #elif defined(HKSC_FORMAT_VERSION)
 #define LUAC_FORMAT  HKSC_FORMAT_VERSION

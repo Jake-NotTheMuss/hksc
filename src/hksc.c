@@ -34,21 +34,21 @@ static int literals_enabled=INT_LITERALS_NONE; /* int literal options */
 static const char *progname=HKSC_NAME;
 const char *output=NULL;
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 int withdebug=0;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 #ifdef HKSC_LOGGING
 static const char *logfilename=NULL;
 static FILE *logfile=NULL;
 #endif /* HKSC_LOGGING */
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 const char *debugfile=NULL;
 const char *profilefile=NULL;
 int debugfile_arg=0;
 int profilefile_arg=0;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 static int ignore_debug=0;
 
@@ -85,7 +85,7 @@ static void print_usage(void)
   fputs(
    "\nCompiler options:\n"
    "  -L[=TYPE]               Enable int literals of the given TYPE\n"
-#ifndef LUA_COD
+#ifndef LUA_CODT6
    "  -s[=MODE]               Use bytecode stripping level MODE\n"
 #else
    "  -s                      Do not dump debug information\n"
@@ -97,7 +97,7 @@ static void print_usage(void)
   fputs(
    "\nInput/Output options:\n"
    "  -o, --output=FILE       Output to file FILE\n"
-#ifdef LUA_COD
+#ifdef LUA_CODT6
    "      --callstackdb=FILE  Dump callstack reconstruction to FILE\n"
    "      --debugfile=FILE    Use FILE for loading/dumping debug information\n"
 #endif
@@ -109,6 +109,9 @@ static void print_usage(void)
    "\nOther Options:\n"
    "      --file-prefix-map=<OLD=NEW>\n"
    "                          Remap file source paths in debug info\n"
+#ifdef HKSC_MULTIPLAT
+   "  -m, --machine=PLATFORM  Load/dump bytecode for the given PLATFORM\n"
+#endif
    "      --                  Stop handling options\n", stderr);
   fputs(
    "\nInt literal options for TYPE (to use with '-L')\n"
@@ -116,15 +119,37 @@ static void print_usage(void)
    "  64  Enable 64-bit int literals\n"
    "  Not providing a value for TYPE will enable all literal types\n",
    stderr);
-#ifndef LUA_COD /* use special arguments for cod */
+#ifndef LUA_CODT6 /* use special arguments for cod */
   fputs(
-   "\nBytecode stripping options for MODE (to use with '-s'):\n"
+   "\nBytecode stripping options for MODE (to use with '-s')\n"
    "  n   Include all debug information in dump\n"
    "  p   Include profiling information in dump\n"
    "  a   Ignore all debug information in dump\n"
    "  Not providing a value for MODE is equivalent to providing 'a'\n"
    , stderr);
-#endif /* !LUA_COD */
+#endif /* !LUA_CODT6 */
+#ifdef HKSC_MULTIPLAT
+  fputs(
+   "\nPLATFORM names (to use with '-m')\n"
+   "  gamecube\n"
+   "  wii\n"
+   "  wiiu\n"
+   "  switch\n"
+   "  ps1\n"
+   "  ps2\n"
+   "  ps3\n"
+   "  orbis\n"
+   "  xbox\n"
+   "  xbox360\n"
+   "  durango\n"
+   "  windows\n"
+   "  gnu\n"
+   "'-m' options to use the default platform with specified word-sizes\n"
+   "  16   Use 16-bit word size (16-bit integers, 16-bit addresses)\n"
+   "  32   Use 32-bit word size (32-bit integers, 32-bit addresses)\n"
+   "  64   Use 64-bit word size (32-bit integers, 64-bit addresses)\n"
+   , stderr);
+#endif /* HKSC_MULTIPLAT */
 }
 
 
@@ -167,27 +192,37 @@ static void print_config(void)
   fputc('\n', stdout);
   fputs("Library features:\n", stdout);
 #ifdef HKSC_DECOMPILER
-  fputs("  Decompiler             Enabled\n", stdout);
+  fputs("  Decompiler                 Enabled\n", stdout);
 #else /* !HKSC_DECOMPILER */
-  fputs("  Decompiler             Disabled\n", stdout);
+  fputs("  Decompiler                 Disabled\n", stdout);
 #endif /* HKSC_DECOMPILER */
 #ifdef HKSC_LOGGING
-  fputs("  Logging                Enabled\n", stdout);
+  fputs("  Logging                    Enabled\n", stdout);
 #else /* !HKSC_LOGGING */
-  fputs("  Logging                Disabled\n", stdout);
+  fputs("  Logging                    Disabled\n", stdout);
 #endif /* HKSC_LOGGING */
+#ifdef HKSC_MULTIPLAT
+  fputs("  Multiplatform targeting    Enabled\n", stdout);
+#else /* !HKSC_MULTIPLAT */
+  fputs("  Multiplatform targeting    Disabled\n", stdout);
+#endif /* HKSC_MULTIPLAT */
   fputc('\n', stdout);
   fputs("Call of Duty settings:\n", stdout);
-#ifdef LUA_COD
-  fputs("  T6 extensions          Enabled\n", stdout);
-#else /* !LUA_COD */
-  fputs("  T6 extensions          Disabled\n", stdout);
-#endif /* LUA_COD */
+#ifdef LUA_CODT6
+  fputs("  T6 extensions              Enabled\n", stdout);
+#else /* !LUA_CODT6 */
+  fputs("  T6 extensions              Disabled\n", stdout);
+#endif /* LUA_CODT6 */
 #ifdef LUA_CODT7
-  fputs("  T7 extensions          Enabled\n", stdout);
+  fputs("  T7 extensions              Enabled\n", stdout);
 #else /* !LUA_CODT7 */
-  fputs("  T7 extensions          Disabled\n", stdout);
+  fputs("  T7 extensions              Disabled\n", stdout);
 #endif /* LUA_CODT7 */
+#ifdef LUA_CODIW6
+  fputs("  IW6 extensions             Enabled\n", stdout);
+#else /* !LUA_CODIW6 */
+  fputs("  IW6 extensions             Disabled\n", stdout);
+#endif /* LUA_CODIW6 */
 }
 
 #define IS(s) (strcmp(argv[i],s)==0)
@@ -220,9 +255,9 @@ static int doargs(int argc, char *argv[])
   int info=0;
   int a=0,b=0; /* uses of `-a' and `-b' */
   const char *opt_a, *opt_b;
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   const char *opt_withdebug;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
   {
@@ -250,14 +285,14 @@ static int doargs(int argc, char *argv[])
       ++b;
       opt_b = (const char *)argv[i];
     }
-#ifdef LUA_COD
+#ifdef LUA_CODT6
     else if (IS("-g") || IS("--with-debug")) {
       withdebug=1;
       opt_withdebug = (const char *)argv[i];
     }
     CHECK_LONG_OPT("--callstackdb", profilefile);
     CHECK_LONG_OPT("--debugfile", debugfile);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
     else if (IS("-i") || IS("--ignore-debug")) ignore_debug=1;
     else if (IS("--print-config")) ++info;
     else if (IS("--help")) { /* print help message and exit */
@@ -306,12 +341,12 @@ static int doargs(int argc, char *argv[])
       dumping=0;
     else if (HAS("-s"))     /* specify stripping level */
     {
-#ifdef LUA_COD
+#ifdef LUA_CODT6
       /* do nothing */
       (void)striplevel;
       if (argv[i][2] != '\0')
         usage(argv[i]);
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
       char *mode;
       if (striparg)
         usage("'-s' used multiple times");
@@ -338,7 +373,7 @@ static int doargs(int argc, char *argv[])
       continue;
       badstriparg:
       usage("invalid stripping mode given with '-s'");
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
     }
     else if (IS("--version"))     /* show version */
       ++version;
@@ -366,7 +401,7 @@ static int doargs(int argc, char *argv[])
     mode=HKSC_MODE_BINARY;
   if (striparg && !dumping)
     warn_unused("-s", "not dumping bytecode");
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   debugfile_arg = (debugfile != NULL);
   profilefile_arg = (profilefile != NULL);
   if ((debugfile_arg || profilefile_arg) && !withdebug) {
@@ -375,7 +410,7 @@ static int doargs(int argc, char *argv[])
   }
   if (striparg && withdebug)
     usage("'-s' cannot be used when '%s' is provided", opt_withdebug);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   return nfiles;
 }
 
@@ -456,12 +491,12 @@ int main(int argc, char *argv[])
   else if (argc > 1) {
     if (output != NULL)
       error_multiple_inputs("--output");
-#ifdef LUA_COD
+#ifdef LUA_CODT6
     if (debugfile_arg)
       error_multiple_inputs("--debugfile");
     if (profilefile_arg)
       error_multiple_inputs("--profilefile");
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   }
   hksI_StateSettings(&settings);
 #ifdef HKSC_LOGGING
@@ -488,17 +523,17 @@ int main(int argc, char *argv[])
   lua_setprefixmap(H, old_prefix, new_prefix);
   lua_setmode(H, mode);
   lua_setIntLiteralsEnabled(H,literals_enabled);
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   if (dumping) {
     lua_onstartcycle(H, luacod_startcycle);
     lua_onendcycle(H, luacod_endcycle);
   }
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
   lua_setIgnoreDebug(H, !withdebug);
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
   lua_setBytecodeStrippingLevel(H,striplevel);
   lua_setIgnoreDebug(H, ignore_debug);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 /*  if (listing)
     dumpf = hksc_dump_l;
   else if (!dumping)

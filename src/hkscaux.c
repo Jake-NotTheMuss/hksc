@@ -21,13 +21,13 @@
 
 extern const char *output;
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 extern int withdebug;
 extern const char *debugfile;
 extern const char *profilefile;
 extern int debugfile_arg;
 extern int profilefile_arg;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 /*extern const char *debugext;*/
 
 /* default extension of pre-compiled Lua files */
@@ -37,15 +37,15 @@ extern int profilefile_arg;
 /* default extension of decompiled Lua files */
 #define LUADEC_EXT  ".dec.lua"
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 /* default extension of callstack reconstruction files */
 # define LUACALLSTACK_EXT  ".luacallstackdb"
 /* defalt extension of debug info files */
 # define LUADEBUG_EXT  ".luadebug"
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
 # define LUACALLSTACK_EXT  ".luacprofile"
 # define LUADEBUG_EXT  ".luacdebug"
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 
 #define hasluaext(s,l) (hasext(s,l,LUA_EXT))
@@ -137,7 +137,7 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
   if (var==NULL) cannot("open",name); \
 } while (0)
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 
 void luacod_startcycle(hksc_State *H, const char *name) {
   /* err on the side of generating names from the input file - output debug
@@ -190,7 +190,7 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
   lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 
 int hksc_dump_bytecode(hksc_State *H, const char *filename) {
@@ -201,11 +201,11 @@ int hksc_dump_bytecode(hksc_State *H, const char *filename) {
     outname = basename(lua2luac(H, filename));
   else
     outname = output;
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   status = luacod_dumpdebug(H, outname); /* dump debug info to separate files */
   if (status)
     return status;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   out = fopen(outname, "wb");
   if (out == NULL)
     cannot("open", outname);

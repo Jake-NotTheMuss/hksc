@@ -45,9 +45,9 @@ Proto *luaF_newproto (hksc_State *H) {
   f->lastlinedefined = 0;
   f->source = NULL;
   f->name = NULL;
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   f->hash = 0;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   return f;
 }
 
@@ -63,7 +63,7 @@ void luaF_freeproto (hksc_State *H, Proto *f) {
 }
 
 
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 void luaF_hash (hksc_State *H, Proto *f) {
   char *str;
   size_t len = f->source->tsv.len;
@@ -77,7 +77,7 @@ void luaF_hash (hksc_State *H, Proto *f) {
   f->hash = luaS_cod_hashstring(H,str,len);
   luaM_freearray(H, str, len, char);
 }
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 
 /*

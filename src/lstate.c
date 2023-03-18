@@ -59,9 +59,9 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->status = 0;
   H->errormsg = NULL;
   H->last_result = NULL;
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
   H->currdebugfile = NULL;
-#endif /* defined(LUA_COD) */
+#endif /* defined(LUA_CODT6) */
 }
 
 
@@ -106,6 +106,9 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->strt.hash = NULL;
   g->mode = settings->mode;
   g->bytecode_endianness = settings->bytecode_endianness;
+#ifdef HKSC_MULTIPLAT
+  g->bytecode_target_id = settings->bytecode_target_id;
+#endif /* HKSC_MULTIPLAT */
   g->settings = settings->compilersettings;
   luaZ_initbuffer(H, &g->buff);
   g->prefix_map_from = NULL;
@@ -122,10 +125,10 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->gcpause = LUAI_GCPAUSE;
   g->gcstepmul = LUAI_GCMUL;
   g->startcycle = g->endcycle = NULL;
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
   g->debugLoadStateOpen = NULL;
   g->debugLoadStateClose = NULL;
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
   if (luaD_rawrunprotected(H, f_luaopen, NULL) != 0) {
     /* memory allocation error: free partial state */
     close_state(H);

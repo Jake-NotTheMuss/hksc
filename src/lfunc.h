@@ -15,9 +15,9 @@ LUAI_FUNC Proto *luaF_newproto (hksc_State *H);
 LUAI_FUNC void luaF_freeproto (hksc_State *H, Proto *f);
 LUAI_FUNC const char *luaF_getlocalname (const Proto *func, int local_number,
                                          int pc);
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 LUAI_FUNC void luaF_hash (hksc_State *H, Proto *f);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 
 #endif

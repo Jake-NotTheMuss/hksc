@@ -23,18 +23,25 @@
 #define ts2txt(ts) (((ts) != NULL && getstr(ts) != NULL) ? getstr(ts) : "")
 
 /* macros for testing stripping level properties */
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 # define needfuncinfo(D) ((D)->striplevel == BYTECODE_STRIPPING_NONE || \
   (D)->striplevel == BYTECODE_STRIPPING_PROFILING || \
   (D)->striplevel == BYTECODE_STRIPPING_ALL)
 # define needdebuginfo(D) ((D)->striplevel == BYTECODE_STRIPPING_NONE || \
   (D)->striplevel == BYTECODE_STRIPPING_DEBUG_ONLY)
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
 # define needfuncinfo(D) 1
 # define needdebuginfo(D) ((D)->striplevel == BYTECODE_STRIPPING_NONE)
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
-typedef struct {
+typedef struct DumpState DumpState;
+
+#ifdef HKSC_MULTIPLAT
+typedef void (*DumpPlatInt)(DumpState *D, int x);
+typedef void (*DumpPlatSize)(DumpState *D, size_t x);
+#endif /* HKSC_MULTIPLAT */
+
+struct DumpState {
   hksc_State *H;
   lua_Writer writer;
   void *data;
@@ -42,7 +49,15 @@ typedef struct {
   int striplevel;
   int status;
   int swapendian;
-} DumpState;
+#ifdef HKSC_MULTIPLAT
+  DumpPlatInt dumpint;
+  DumpPlatSize dumpsize;
+  int target_sizeint;
+  int target_sizesize;
+  int target_sizeinstr;
+  int target_id;  /* target platform id */
+#endif /* HKSC_MULTIPLAT */
+};
 
 #define DumpMem(b,n,size,D)	DumpBlock(b,(n)*(size),D)
 #define DumpVar(x,D)	 	DumpMem(&x,1,sizeof(x),D)
@@ -81,6 +96,7 @@ static void DumpNumber(lua_Number x, DumpState *D)
   correctendianness(D,x);
   DumpVar(x,D);
 }
+
 /*
 static void DumpVector(const void *b, int n, size_t size, DumpState *D)
 {
@@ -121,6 +137,79 @@ static void DumpUI64(lu_int64 x, DumpState *D)
   DumpVar(x,D);
 #endif
 }
+
+#ifdef HKSC_MULTIPLAT
+static void toowide(DumpState *D, const char *what)
+{
+  hksc_State *H = D->H;
+  luaD_setferror(H, "host %s field too wide for target (value too large)",
+                 what);
+  luaD_throw(H,LUA_ERRRUN);
+}
+
+static void DumpInt16(DumpState *D, int x)
+{
+  lua_assert(D->target_sizeint == 2);
+  if (sizeof(int) == 2)
+    DumpInt(x,D);
+  else {
+    unsigned short target_x = cast(unsigned short, cast(unsigned int, x));
+    if (target_x != x)
+      toowide(D,"integer");
+    correctendianness(D,target_x);
+    DumpVar(target_x,D);
+  }
+}
+
+static void DumpInt32(DumpState *D, int x)
+{
+  lua_assert(D->target_sizeint == 4);
+  if (sizeof(int) == 4)
+    DumpInt(x,D);
+  else {
+    lu_int32 target_x = cast(lu_int32, cast(unsigned int, x));
+    correctendianness(D,target_x);
+    DumpVar(target_x,D);
+  }
+}
+
+static void DumpSize32(DumpState *D, size_t x)
+{
+  lua_assert(D->target_sizesize == 4);
+  if (sizeof(size_t) == 4)
+    DumpSize(x,D);
+  else {
+    lu_int32 target_x = cast(lu_int32, x);
+    if (sizeof(size_t) > 4 && cast(size_t, target_x) != x)
+      toowide(D,"size");
+    correctendianness(D,target_x);
+    DumpVar(target_x,D);
+  }
+}
+
+static void DumpSize64(DumpState *D, size_t x)
+{
+  lua_assert(D->target_sizesize == 8);
+  if (sizeof(size_t) == 8)
+    DumpSize(x,D);
+  else {
+    lu_int64 target_x;
+#ifdef LUA_UI64_S
+    if (sizeof(size_t) <= sizeof(lu_int32)) {
+      target_x.lo = cast(lu_int32, x);
+      target_x.hi = 0;
+    }
+    else {
+      target_x.lo = cast(lu_int32, x & 0xFFFFFFFFlu);
+      target_x.hi = cast(lu_int32, x >> (CHAR_BIT * 4));
+    }
+#else /* LUA_UI64_S */
+    target_x = cast(lu_int64, x);
+#endif /* LUA_UI64_S */
+    DumpUI64(x,D);
+  }
+}
+#endif /* HKSC_MULTIPLAT */
 
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D);
 
@@ -182,12 +271,12 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
   if (D->striplevel == BYTECODE_STRIPPING_ALL) {
-#ifdef LUA_COD
+#ifdef LUA_CODT6
     DumpInt(1,D);
     DumpInt(f->hash,D);
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
     DumpInt(0,D);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   } else if (D->striplevel == BYTECODE_STRIPPING_PROFILING) {
     DumpInt(1,D);
     DumpInt(0,D); /* strip line info */
@@ -201,7 +290,7 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
       DumpString(NULL,D);
     DumpString(f->name,D);
   }
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
     n=f->sizelineinfo;
     for (i=0; i<n; i++) {
@@ -212,7 +301,7 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
       DumpMem(str,strlen(str),sizeof(char),D);
     }
   }
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   else { /* (BYTECODE_STRIPPING_NONE || BYTECODE_STRIPPING_DEBUG_ONLY) */
     DumpInt(1,D);
     DumpInt(f->sizelineinfo,D);

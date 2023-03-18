@@ -23,7 +23,14 @@
 #include "lundump.h"
 #include "lzio.h"
 
-typedef struct {
+typedef struct LoadState LoadState;
+
+#ifdef HKSC_MULTIPLAT
+typedef lu_int32 (*LoadPlatInt)(LoadState *S);
+typedef size_t (*LoadPlatSize)(LoadState *S);
+#endif /* HKSC_MULTIPLAT */
+
+struct LoadState {
   hksc_State *H;
   ZIO *Z;
   Mbuffer *b;
@@ -31,7 +38,13 @@ typedef struct {
   const char *desc;  /* what is being loaded? */
   size_t pos;
   int swapendian;
-} LoadState;
+#ifdef HKSC_MULTIPLAT
+  LoadPlatInt loadint;
+  LoadPlatSize loadsize;
+  int target_sizeinstr;
+  int target_id;  /* target platform id */
+#endif /* HKSC_MULTIPLAT */
+};
 
 #define BADHEADERMSG "Header mismatch when loading bytecode."
 #define BADCOMPATMSG BADHEADERMSG " The following build settings differ:"
@@ -65,28 +78,58 @@ static int LoadChar(LoadState *S)
 
 static int LoadInt(LoadState *S)
 {
+#ifndef HKSC_MULTIPLAT
   int x;
   LoadVar(S,x);
   correctendianness(S,x);
   IF(x<0, "bad integer");
   return x;
+#else /* HKSC_MULTIPLAY */
+  unsigned int x;
+  lu_int32 platx = (*S->loadint)(S);
+  x = cast(unsigned int, platx);
+  if (x != platx)
+    error(S, "target integer field too wide (value too large)");
+  return cast_int(x);
+#endif /* HKSC_MULTIPLAT */
 }
 
-#ifdef LUA_COD
-static int LoadHash(LoadState *S)
+#ifdef LUA_CODT6
+static lu_int32 LoadHash(LoadState *S)
 {
-  int x;
+  lu_int32 x;
   LoadVar(S,x);
   correctendianness(S,x);
   return x;
 }
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 static size_t LoadSize(LoadState *S)
 {
   size_t x;
+#ifndef HKSC_MULTIPLAT
   LoadVar(S,x);
   correctendianness(S,x);
+#else /* HKSC_MULTIPLAT */
+  lu_int64 platx = (*S->loadsize)(S);
+#ifdef LUA_UI64_S
+  if (sizeof(size_t) < sizeof(lu_int64)) {
+    if (platx.hi != 0)
+      error(S, "target size field too wide (value too large)");
+    else
+      x = cast(size_t, platx.lo);
+  }
+  else {
+    size_t hi = cast(size_t, platx.hi);
+    x = hi << (CHAR_BIT * sizeof(lu_int32));
+    x |= cast(size_t, platx.lo);
+  }
+#else /* !LUA_UI64_S */
+  x = cast(size_t, platx);
+  if (x != platx)
+    error(S, "target size field too wide (value too large)");
+#endif /* LUA_UI64_S */
+#endif /* HKSC_MULTIPLAT */
   return x;
 }
 
@@ -146,6 +189,14 @@ static void LoadCode(LoadState *S, Proto *f)
   LoadBlock(S,buf,(aligned2instr(S->pos) - S->pos));
   f->code=luaM_newvector(S->H,n,Instruction);
   f->sizecode=n;
+#ifdef HKSC_MULTIPLAT
+  if (sizeof(Instruction) < S->target_sizeinstr) {
+    luaD_setferror(S->H,"target instruction field is too wide to represent"
+                   " (host size is (%d), target size is (%d)",
+                   cast_int(sizeof(Instruction)), cast_int(S->target_sizeinstr));
+    luaD_throw(S->H,LUA_ERRRUN);
+  }
+#endif /* HKSC_MULTIPLAT */
   if (!S->swapendian) /* not swapping endianness */
     LoadMem(S, f->code, f->sizecode, sizeof(Instruction));
   else { /* need to swap endianness */
@@ -232,7 +283,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   f->upvalues=luaM_newvector(S->H,n,TString *);
   for (i=0; i<n; i++) f->upvalues[i]=NULL;
   for (i=0; i<n; i++) f->upvalues[i]=LoadString(S);
-#ifndef LUA_COD
+#ifndef LUA_CODT6
   /* all the arrays above needed to be allocated in any case to read and
   advance over the data, but now it needs to be freed if ignoring debug info */
   if (hksc_getIgnoreDebug(S->H)) {
@@ -241,7 +292,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
     luaM_freearray(S->H, f->upvalues, f->sizeupvalues, TString *);
     memset(f, 0, sizeof(Proto));
   }
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 }
 
 
@@ -258,18 +309,18 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   LoadCode(S,f);
   LoadConstants(S,f);
   n=LoadInt(S);
-#ifdef LUA_COD /* Call of Duty also includes a hash after the debug flag */
+#ifdef LUA_CODT6 /* Call of Duty also includes a hash after the debug flag */
   if (n==1)
     f->hash=LoadHash(S);
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
   if (n!=0)
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   {
     if (debugS != NULL) {
-#ifdef LUA_COD
+#ifdef LUA_CODT6
       if (LoadInt(debugS) != 1)
          error(debugS, "bad data");
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
       LoadDebug(debugS,f,p);
     }
   }
@@ -368,11 +419,11 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   struct SUndump u;
   int status;
   LoadState S;
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   LoadState SD; /* debug load state */
   ZIO ZD; /* debugS->Z */
   Mbuffer buffD; /* debugS->b */
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   LoadState *debugS;
   if (*name=='@' || *name=='=')
     S.name=name+1;
@@ -386,7 +437,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.pos=0;
   S.desc="precompiled chunk";
   LoadHeader(&S); /* need some info in the header to initialize debug reader */
-#ifdef LUA_COD /* some gymnastics for loading Call of Duty debug files */
+#ifdef LUA_CODT6 /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
     int openstatus = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, name);
     if (openstatus == 0) {
@@ -405,19 +456,19 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
     }
   }
   else debugS = NULL; /* do not load debug info */
-#else /* !LUA_COD */
+#else /* !LUA_CODT6 */
   debugS = &S; /* still need to read the embedded debug info if present */
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   u.S = &S;
   u.debugS = debugS;
   status = luaD_pcall(H, f_undump, &u);
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   if (G(H)->debugLoadStateClose && !Settings(H).ignore_debug) {
     int closestatus = (*G(H)->debugLoadStateClose)(H, &ZD, &buffD, name);
     if (status == 0 && closestatus != 0)
       status = closestatus;
   }
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   if (status)
     luaD_throw(H, status); /* return the error to the outer pcall */
   return u.f;

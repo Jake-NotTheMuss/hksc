@@ -252,7 +252,7 @@ LUA_API void lua_setlogpriority (hksc_State *H, int priority) {
 #endif /* HKSC_LOGGING */
 
 
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
 
 LUA_API const char *lua_getDebugFile (hksc_State *H) {
   const char *currdebugfile;
@@ -268,7 +268,7 @@ LUA_API void lua_setDebugFile (hksc_State *H, const char *name) {
   lua_unlock(H);
 }
 
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 /*
 ** compiler/decompiler settings (C -> stack)

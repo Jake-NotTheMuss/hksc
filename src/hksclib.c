@@ -336,7 +336,7 @@ static int panic (hksc_State *H) {
   return 0;
 }
 
-#if defined(LUA_COD) /*&& defined(HKSC_DECOMPILER)*/
+#if defined(LUA_CODT6) /*&& defined(HKSC_DECOMPILER)*/
 
 typedef struct LoadDebug
 {
@@ -394,16 +394,16 @@ static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
   return 0;
 }
 
-#endif /* defined(LUA_COD) && defined(HKSC_DECOMPILER) */
+#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
 
 LUA_API void hksI_CompilerSettings(hksc_CompilerSettings *settings) {
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 # ifdef LUA_CODT7
   settings->hash_step = 1;
 # else /* !LUA_CODT7 */
   settings->hash_step = 2;
 # endif /* LUA_CODT7 */
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   settings->ignore_debug = 0;
   settings->emit_struct = 0;
   settings->enable_int_literals = INT_LITERALS_NONE;
@@ -419,6 +419,9 @@ LUA_API void hksI_StateSettings(hksc_StateSettings *settings) {
   settings->panic = &panic;
   settings->mode = HKSC_MODE_DEFAULT;
   settings->bytecode_endianness = HKSC_DEFAULT_ENDIAN;
+#ifdef HKSC_MULTIPLAT
+  settings->bytecode_target_id = HKSC_TARGET_DEFAULT;
+#endif /* HKSC_MULTIPLAT */
 #ifdef HKSC_LOGGING
   memset(&settings->logctx, 0, sizeof(settings->logctx));
 #endif /* HKSC_LOGGING */
@@ -435,11 +438,11 @@ LUA_API hksc_State *hksI_newstate(hksc_StateSettings *settings)
   }
   H = lua_newstate(settings);
   if (H) {
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
     /* Call of Duty needs a separate debug reader when loading bytecode */
     G(H)->debugLoadStateOpen = init_debug_reader;
     G(H)->debugLoadStateClose = close_debug_reader;
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
   }
   return H;
 }

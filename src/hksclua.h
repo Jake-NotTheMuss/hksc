@@ -63,6 +63,17 @@ typedef struct hksc_LogContext {
 #define DEFAULT_LOGCTX {NULL, NULL, 0}
 #endif /* HKSC_LOGGING */
 
+#ifdef HKSC_MULTIPLAT
+#define HKSC_TARGET_DEFAULT 0
+#define HKSC_TARGET_WII 1
+#define HKSC_TARGET_PS3 2
+#define HKSC_TARGET_XBOX360 3
+#define HKSC_TARGET_ORBIS 4
+#define HKSC_TARGET_DURANGO 5
+#define HKSC_TARGET_WIN32 6
+#define HKSC_TARGET_WIN64 7
+#endif /* HKSC_MULTIPLAT */
+
 /* user-defined callbacks for beginning/end of cycles */
 typedef void (*hksc_CycleCallback)(hksc_State *H, const char *name);
 
@@ -151,16 +162,16 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 #define BYTECODE_STRIPPING_NONE 0
 #define BYTECODE_STRIPPING_PROFILING 1
 #define BYTECODE_STRIPPING_ALL 2
-#ifdef LUA_COD /* Cod extensions */
+#ifdef LUA_CODT6 /* Cod extensions */
 #define BYTECODE_STRIPPING_DEBUG_ONLY 3
 #define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 /*
 ** Lua compiler settings (to be specified by the host program)
 */
 typedef struct {
-#ifdef LUA_COD
+#ifdef LUA_CODT6
   int hash_step;
 #endif
   /* general settings */
@@ -186,6 +197,9 @@ typedef struct {
   lua_CFunction panic;  /* to be called in unprotected errors */
   int mode;  /* what mode to run in (compiling/decompiling) */
   int bytecode_endianness;
+#ifdef HKSC_MULTIPLAT
+  int bytecode_target_id;
+#endif /* HKSC_MULTIPLAT */
 #ifdef HKSC_LOGGING
   hksc_LogContext logctx;  /* context for logging */
 #endif /* HKSC_LOGGING */
@@ -253,10 +267,10 @@ LUA_API int (lua_getlogpriority) (hksc_State *H);
 LUA_API void (lua_setlogpriority) (hksc_State *H, int priority);
 #endif /* HKSC_LOGGING */
 
-#if defined(LUA_COD)
+#if defined(LUA_CODT6)
 LUA_API const char *(lua_getDebugFile) (hksc_State *H);
 LUA_API void (lua_setDebugFile) (hksc_State *H, const char *name);
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
 /*
 ** Lua compiler/decompiler settings

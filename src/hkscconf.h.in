@@ -21,8 +21,15 @@
 ** are implemented in the compiler. If the game you are developing for enables
 ** any of the compatibility features, you will need to find out which ones are
 ** enabled and provide implementations for them. Also make sure to undefine the
-** macro `LUA_COD' if you are not developing for a Call of Duty game.
+** macro `LUA_CODT6' if you are not developing for a Call of Duty game.
 */
+
+/* LUA_COMPAT_VARARG does vary, at least between TA and non-TA */
+#if @LUACONFIG_COMPAT_VARARG@
+#undef HKSC_NO_COMPAT_VARARG
+#else
+#define HKSC_NO_COMPAT_VARARG
+#endif
 
 /* UI64 type */
 #if @LUACONFIG_WITH_UI64@
@@ -52,6 +59,13 @@
 #undef HKSC_LOGGING
 #endif
 
+/* IW6 `hdelete' extension */
+#if @LUACONFIG_CODIW6@
+#define LUA_CODIW6
+#else
+#undef LUA_CODIW6
+#endif
+
 /* T7 compatibility */
 #if @LUACONFIG_CODT7@
 #define LUA_CODT7
@@ -60,11 +74,18 @@
 #endif
 
 /* COD compatibility */
-#if @LUACONFIG_COD@
-#define LUA_COD
+#if @LUACONFIG_CODT6@
+#define LUA_CODT6
 #else
-#undef LUA_COD
+#undef LUA_CODT6
 #undef LUA_CODT7
+#endif
+
+/* multi-platform targeting */
+#if @LUACONFIG_MULTIPLAT@
+#define HKSC_MULTIPLAT
+#else
+#undef HKSC_MULTIPLAT
 #endif
 
 /* compatibility flags */

@@ -239,6 +239,7 @@
 
 
 
+#if 0
 /*
 @@ LUA_COMPAT_GETN controls compatibility with old getn behavior.
 ** CHANGE it (define it) if you want exact compatibility with the
@@ -252,20 +253,27 @@
 ** function (the function is still available as 'package.loadlib').
 */
 #undef LUA_COMPAT_LOADLIB
+#endif
 
 /*
 @@ LUA_COMPAT_VARARG controls compatibility with old vararg feature.
 ** CHANGE it to undefined as soon as your programs use only '...' to
 ** access vararg parameters (instead of the old 'arg' table).
 */
-/*#define LUA_COMPAT_VARARG*/
+#if defined(LUA_CODT6) || defined(HKSC_NO_COMPAT_VARARG)
+#undef LUA_COMPAT_VARARG
+#else
+#define LUA_COMPAT_VARARG
+#endif
 
+#if 0
 /*
 @@ LUA_COMPAT_MOD controls compatibility with old math.mod function.
 ** CHANGE it to undefined as soon as your programs use 'math.fmod' or
 ** the new '%' operator instead of 'math.mod'.
 */
 #define LUA_COMPAT_MOD
+#endif
 
 /*
 @@ LUA_COMPAT_LSTR controls compatibility with old long string nesting
@@ -275,6 +283,7 @@
 */
 #define LUA_COMPAT_LSTR		1
 
+#if 0
 /*
 @@ LUA_COMPAT_GFIND controls compatibility with old 'string.gfind' name.
 ** CHANGE it to undefined as soon as you rename 'string.gfind' to
@@ -289,6 +298,7 @@
 ** your uses of 'luaL_openlib'
 */
 #define LUA_COMPAT_OPENLIB
+#endif
 
 
 

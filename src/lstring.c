@@ -96,7 +96,7 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
 /*
 ** Function name hashes (Cod extension)
 */
-#ifdef LUA_COD
+#ifdef LUA_CODT6
 
 /*
 ** NOTE: T6 and early versions of T7 incremented i by 2 on each iteration when
@@ -117,5 +117,5 @@ lu_int32 luaS_cod_hashstring (hksc_State *H, const char *s, size_t l) {
   return hash;
 }
 
-#endif /* LUA_COD */
+#endif /* LUA_CODT6 */
 
