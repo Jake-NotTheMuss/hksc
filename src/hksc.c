@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <ctype.h>
 
 #define hksc_c
 
@@ -38,10 +39,10 @@ const char *output=NULL;
 int withdebug=0;
 #endif /* LUA_CODT6 */
 
-#ifdef HKSC_LOGGING
-static const char *logfilename=NULL;
-static FILE *logfile=NULL;
-#endif /* HKSC_LOGGING */
+#ifdef HKSC_MULTIPLAT
+static int target_plat=-1;
+static int target_ws=-1;
+#endif /* HKSC_MULTIPLAT */
 
 #ifdef LUA_CODT6
 const char *debugfile=NULL;
@@ -101,16 +102,14 @@ static void print_usage(void)
    "      --callstackdb=FILE  Dump callstack reconstruction to FILE\n"
    "      --debugfile=FILE    Use FILE for loading/dumping debug information\n"
 #endif
-#ifdef HKSC_LOGGING
-   "      --logfile=FILE      Output logs to FILE\n"
-#endif
    , stderr);
   fputs(
    "\nOther Options:\n"
    "      --file-prefix-map=<OLD=NEW>\n"
    "                          Remap file source paths in debug info\n"
 #ifdef HKSC_MULTIPLAT
-   "  -m, --machine=PLATFORM  Load/dump bytecode for the given PLATFORM\n"
+   "  -m<PLATFORM>            Load/dump bytecode for the given PLATFORM\n"
+   "  -m<16|32|64>            Load/dump bytecode with given word size\n"
 #endif
    "      --                  Stop handling options\n", stderr);
   fputs(
@@ -131,23 +130,21 @@ static void print_usage(void)
 #ifdef HKSC_MULTIPLAT
   fputs(
    "\nPLATFORM names (to use with '-m')\n"
-   "  gamecube\n"
+   /* most of these platforms are the same where it matters to the compiler,
+   i.e. when it comes to word-size and integer-size */
    "  wii\n"
    "  wiiu\n"
-   "  switch\n"
-   "  ps1\n"
-   "  ps2\n"
+   "  nx\n"
    "  ps3\n"
    "  orbis\n"
-   "  xbox\n"
-   "  xbox360\n"
+   "  xenon\n"
    "  durango\n"
    "  windows\n"
    "  gnu\n"
-   "'-m' options to use the default platform with specified word-sizes\n"
-   "  16   Use 16-bit word size (16-bit integers, 16-bit addresses)\n"
-   "  32   Use 32-bit word size (32-bit integers, 32-bit addresses)\n"
-   "  64   Use 64-bit word size (32-bit integers, 64-bit addresses)\n"
+   "'-m' options to target the default platform with specified word-sizes\n"
+   "  16   (16-bit integers, 16-bit addresses)\n"
+   "  32   (32-bit integers, 32-bit addresses)\n"
+   "  64   (32-bit integers, 64-bit addresses)\n"
    , stderr);
 #endif /* HKSC_MULTIPLAT */
 }
@@ -196,15 +193,10 @@ static void print_config(void)
 #else /* !HKSC_DECOMPILER */
   fputs("  Decompiler                 Disabled\n", stdout);
 #endif /* HKSC_DECOMPILER */
-#ifdef HKSC_LOGGING
-  fputs("  Logging                    Enabled\n", stdout);
-#else /* !HKSC_LOGGING */
-  fputs("  Logging                    Disabled\n", stdout);
-#endif /* HKSC_LOGGING */
 #ifdef HKSC_MULTIPLAT
-  fputs("  Multiplatform targeting    Enabled\n", stdout);
+  fputs("  Multi-platform targeting   Enabled\n", stdout);
 #else /* !HKSC_MULTIPLAT */
-  fputs("  Multiplatform targeting    Disabled\n", stdout);
+  fputs("  Multi-platform targeting   Disabled\n", stdout);
 #endif /* HKSC_MULTIPLAT */
   fputc('\n', stdout);
   fputs("Call of Duty settings:\n", stdout);
@@ -225,13 +217,28 @@ static void print_config(void)
 #endif /* LUA_CODIW6 */
 }
 
+#ifdef HKSC_MULTIPLAT
+static int hksc_casecmp(const char *str1, const char *str2)
+{
+  for (; *str1 && *str2; str1++, str2++) {
+    if (tolower(*str1) != tolower(*str2))
+      return 0;
+  }
+  return (*str1 == *str2);
+}
+#endif /* HKSC_MULTIPLAT */
+
+#define STREQ(a,b) (hksc_casecmp(a,b))
 #define IS(s) (strcmp(argv[i],s)==0)
 #define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
 
 #define DO_ARG(opt,v) do { \
   char *val = argv[i] + sizeof(opt)-1; \
   if (*val == '=') val++; \
-  else if (*val == '\0') val = argv[++i]; \
+  else if (*val == '\0') { \
+    if (++i >= argc) usage("'" opt "' needs an argument"); \
+    val = argv[i]; \
+  } \
   else usage(argv[i]); \
   if (val == NULL || *val == '\0') \
     usage("'" opt "' needs an argument"); \
@@ -334,9 +341,38 @@ static int doargs(int argc, char *argv[])
     }
     CHECK_LONG_OPT("--file-prefix-map", file_prefix_map_arg);
     CHECK_OPT("-o", "--output", output);
-#ifdef HKSC_LOGGING
-    CHECK_LONG_OPT("--logfile", logfilename);
-#endif /* HKSC_LOGGING */
+#ifdef HKSC_MULTIPLAT
+    else if (HAS("-m"))
+    {
+      char *arg;
+      if (argv[i][2] == 0) {
+        if (++i >= argc) usage("'-m' needs an argument");
+        arg = argv[i];
+      }
+      else if (argv[i][2] == '=')
+        arg = &argv[i][3];
+      else
+        arg = &argv[i][2];
+      if (*arg == '\0')
+        usage("'-m' needs an argument");
+      else if (STREQ(arg, "wii"))
+        target_plat = HKSC_TARGET_PLAT_WII;
+      else if (STREQ(arg, "wiiu"))
+        target_plat = HKSC_TARGET_PLAT_WIIU;
+      else if (STREQ(arg, "switch") || STREQ(arg, "nx"))
+        target_plat = HKSC_TARGET_PLAT_NX;
+      else if (STREQ(arg, "ps3"))
+        target_plat = HKSC_TARGET_PLAT_PS3;
+      else if (STREQ(arg, "psv"))
+        target_plat = HKSC_TARGET_PLAT_PSV;
+      else if (STREQ(arg, "ps4") || STREQ("orbis"))
+        target_plat = HKSC_TARGET_PLAT_ORBIS;
+      else if (STREQ(arg, "xbox360") || STREQ(arg, "xenon"))
+        target_plat = HKSC_TARGET_PLAT_XENON;
+      else if (STREQ(arg, "xboxone") || STREQ(arg, "durango"))
+        target_plat = HKSC_TARGET_PLAT_DURANGO;
+    }
+#endif /* HKSC_MULTIPLAT */
     else if (IS("-p") || IS("--parse"))      /* parse only */
       dumping=0;
     else if (HAS("-s"))     /* specify stripping level */
@@ -499,15 +535,6 @@ int main(int argc, char *argv[])
 #endif /* LUA_CODT6 */
   }
   hksI_StateSettings(&settings);
-#ifdef HKSC_LOGGING
-  if (logfilename != NULL && *logfilename != '\0') {
-    logfile = fopen(logfilename, "w");
-    if (!logfile) {
-      fatal("cannot open log file");
-    }
-    settings.logctx.ud = logfile;
-  }
-#endif /* HKSC_LOGGING */
   if (file_prefix_map_arg) {
     old_prefix = file_prefix_map_arg;
     new_prefix = strrchr(file_prefix_map_arg, '=');
@@ -542,8 +569,5 @@ int main(int argc, char *argv[])
     dumpf = hksc_dump_default;*/
   status = dofiles(H, argc, argv);
   hksI_close(H);
-#ifdef HKSC_LOGGING
-  if (logfile) fclose(logfile);
-#endif /* HKSC_LOGGING */
   return status ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -117,7 +117,6 @@ program_suffix=
 with_ui64=1
 emu_ui64=0
 with_decompiler=1
-with_logging=0
 debug=0
 testing=0
 debug_pass=
@@ -162,8 +161,6 @@ for opt; do
 		--no-emu-ui64) emu_ui64=0 ;;
 		--multi-plat*) lua_multiplat=1;;
 		--no-multi-plat*) lua_multiplat=0;;
-		--with-logging) with_logging=1 ;;
-		--disable-logging) with_logging=0 ;;
 		--debug) debug=1 ;;
 		--release) debug=0 ;;
 		--testing) testing=1 ;;
@@ -251,7 +248,7 @@ esac
 case $game in
 	"")
 		echo "Configuring compatibility settings for 't7' by default"
-		game=t7; lua_codt6=1; lua_codt7=1 ;;
+		game=t7; lua_codt6=1; lua_codt7=1; lua_codiw6=0 ;;
 	t6) lua_codiw6=0; lua_codt6=1; lua_codt7=0 ;;
 	t7) lua_codiw6=0; lua_codt6=1; lua_codt7=1 ;;
 	iw6|s1)
@@ -298,8 +295,6 @@ set10()
 }
 
 set10 lua_codt6 LUA_COD_YESNO yes no
-# set which flag is needed to suppress log output
-set10 with_logging HKSC_SUPPRESS_LOGGING --logfile=/dev/null
 # set build compiler flags for debug or release builds
 set10 debug BUILDCONFIGTYPE TESTS RELEASE
 # set which tests to include based on whether the decompiler is enabled
@@ -358,7 +353,6 @@ logvar program_suffix
 logvar with_ui64
 logvar emu_ui64
 logvar with_decompiler
-logvar with_logging
 logvar debug
 logvar testing
 logvar debug_pass
@@ -534,7 +528,6 @@ s/@LUACONFIG_COMPAT_VARARG@/$compat_vararg/g
 s/@LUACONFIG_WITH_UI64@/$with_ui64/g
 s/@LUACONFIG_EMU_UI64@/$emu_ui64/g
 s/@LUACONFIG_DECOMPILER@/$with_decompiler/g
-s/@LUACONFIG_LOGGING@/$with_logging/g
 s/@LUACONFIG_CODT6@/$lua_codt6/g
 s/@LUACONFIG_CODT7@/$lua_codt7/g
 s/@LUACONFIG_CODIW6@/$lua_codiw6/g

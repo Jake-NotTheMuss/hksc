@@ -8,7 +8,6 @@ top_builddir=@top_builddir@
 
 RM=@RM@
 
-HKSC_SUPPRESS_LOGGING=@HKSC_SUPPRESS_LOGGING@
 HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
 
 HKSC_NAME=hksc
@@ -17,7 +16,7 @@ EXESUF=@EXESUF@
 HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
 
 # -p so that no binaries get generated accidentally
-HKSCFLAGS=-p -a $(HKSC_SUPPRESS_LOGGING) $(HKSC_PREFIX_MAP)
+HKSCFLAGS=-p -a $(HKSC_PREFIX_MAP)
 
 # files are generated for each BOM that is NOT accepted by hksc
 BOM_TESTS=utf16be_bom.test utf16le_bom.test utf32be_bom.test utf32le_bom.test  \

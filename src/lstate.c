@@ -113,9 +113,6 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   luaZ_initbuffer(H, &g->buff);
   g->prefix_map_from = NULL;
   g->prefix_map_to = NULL;
-#ifdef HKSC_LOGGING
-  g->logctx = settings->logctx;
-#endif /* HKSC_LOGGING */
   g->panic = NULL;
   g->gcstate = GCSpause;
   g->rootgc = obj2gco(H);

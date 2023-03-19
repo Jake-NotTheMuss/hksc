@@ -52,13 +52,6 @@
 #undef HKSC_DECOMPILER
 #endif
 
-/* Lua logging */
-#if @LUACONFIG_LOGGING@
-#define HKSC_LOGGING
-#else
-#undef HKSC_LOGGING
-#endif
-
 /* IW6 `hdelete' extension */
 #if @LUACONFIG_CODIW6@
 #define LUA_CODIW6

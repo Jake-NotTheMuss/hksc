@@ -18,7 +18,6 @@
 #include "ldo.h"
 #include "lgc.h"
 #include "llex.h"
-#include "llog.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lopcodes.h"

@@ -22,7 +22,6 @@
 #include "ldo.h"
 #include "lfunc.h"
 #include "lgc.h"
-#include "llog.h"
 #include "lmem.h"
 #include "lopcodes.h"
 #include "lstate.h"
@@ -45,86 +44,6 @@ static hksc_State *lua_state = NULL;
 int islocked = 0;
 
 
-/*
-** Logging stuff for tests
-*/
-#ifdef HKSC_LOGGING
-
-/* extra code for logging test information */
-#define LOG_PRIORITY_INTERNAL LOG_PRIORITY_MAX
-
-#if defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__)
-# include <unistd.h>
-# define lua_is_tty(f)  isatty(fileno(f))
-#else
-# define lua_is_tty(f)  0
-#endif
-
-/*
-** Colors to map to log priority levels
-*/
-#define COLOR_BLACK    0
-#define COLOR_RED      1
-#define COLOR_GREEN    2
-#define COLOR_YELLOW   3
-#define COLOR_BLUE     4
-#define COLOR_MAGENTA  5
-#define COLOR_CYAN     6
-#define COLOR_WHITE    7
-#define COLOR_RESET    8
-
-#define BOLDCODE "\033[1m"
-
-#define COLOR_DEFAULT COLOR_WHITE
-
-static const char *const color_table[] = {
-  "\033[30m",
-  "\033[31m",
-  "\033[32m",
-  "\033[33m",
-  "\033[34m",
-  "\033[35m",
-  "\033[36m",
-  "\033[0m",
-  "\033[0m"
-};
-
-/* set what colors you want for each priority level */
-static int priority_colors[] = {
-  [LOG_PRIORITY_DEBUG] = COLOR_GREEN,
-  [LOG_PRIORITY_INFO] = COLOR_DEFAULT,
-  [LOG_PRIORITY_WARN] = COLOR_YELLOW,
-  [LOG_PRIORITY_ERROR] = COLOR_RED,
-  [LOG_PRIORITY_FATAL] = COLOR_RED,
-  [LOG_PRIORITY_INTERNAL] = COLOR_CYAN
-};
-
-static int use_color;
-
-static int debug_log(hksc_State *H, const char *label, int priority,
-                     const char *msg, void *ud) {
-  FILE *f;
-  UNUSED(H);
-  f = (FILE *)ud;
-  if (use_color)
-    fprintf(f, BOLDCODE);
-    /* print label */
-  fprintf(f, "[%s]", label);
-  if (use_color) {
-    fprintf(f, "%s", color_table[COLOR_RESET]);
-    /* switch to color for priority */
-    fprintf(f, "%s", color_table[priority_colors[priority]]);
-  }
-  /* print msg */
-  fprintf(f, " %s\n", msg);
-  if (use_color)
-    /* reset color */
-    fprintf(f, "%s", color_table[COLOR_RESET]);
-  return 0;
-}
-
-#endif /* HKSC_LOGGING */
-
 hksc_State *debug_newstate(hksc_StateSettings *settings)
 {
   hksc_State *H;
@@ -135,29 +54,9 @@ hksc_State *debug_newstate(hksc_StateSettings *settings)
   }
   settings->frealloc = debug_realloc;
   settings->ud = &memcontrol;
-#ifdef HKSC_LOGGING
-  settings->logctx.f = &debug_log;
-  if (settings->logctx.ud == NULL)
-    settings->logctx.ud = stderr;
-  settings->logctx.priority = LOG_PRIORITY_DEBUG;
-#endif /* HKSC_LOGGING */
   H = hksI_newstate(settings);
   /*H = lua_newstate(settings);*/
   if (H) {
-#ifdef HKSC_LOGGING
-    use_color = lua_is_tty(settings->logctx.ud);
-#endif /* HKSC_LOGGING */
-    lua_lock(H);
-    lua_loginfo(H,        "created a new Lua debug state");
-    lua_loginfo(H,         "--------------------------------------");
-    lua_logdebug(H,        "This is what DEBUG messages look like.");
-    lua_loginfo(H,         "This is what INFO messages look like.");
-    lua_logwarning(H,      "This is what WARN messages look like.");
-    lua_logerror(H,        "This is what ERROR messages look like.");
-    lua_logfatalerror(H,   "This is what FATAL messages look like.");
-    lua_logtest(H,         "This is what TEST messages look like.");
-    lua_loginfo(H,         "--------------------------------------");
-    lua_unlock(H);
     luaB_opentests(H);
   }
   return H;
@@ -447,243 +346,6 @@ static void checkfinalmem (void) {
 }
 
 
-static const char *currentcheck=NULL;
-
-
-#define lua_checkstarted(H) \
-  (lua_loginfo(H, ""), /* print empty line */ \
-   lua_logtest(H,   "----------- STARTING CHECK -----------"), \
-   lua_logtest(H, luaI_formatmsg(H, "STARTING CHECK: %s", currentcheck)))
-#define lua_checkpassed(H) \
-  (lua_logtest(H,   "------------ CHECK PASSED ------------"), \
-   lua_loginfo(H, "")/* print empty line */)
-#define lua_checkfailed(H) \
-  (lua_logerror(H,  "------------ CHECK FAILED ------------"), \
-   lua_loginfo(H, "")/* print empty line */)
-
-/* an even more debug-friendly assert which logs the assertion failure */
-#define test_assert(H,c) do { \
-  if (!(c)) { \
-    lua_logerror(H, luaI_formatmsg(H, \
-      "%s:%d: assertion failed: (%s), (in function %s)", __FILE__, __LINE__, \
-      #c, currentcheck)); \
-    lua_assert(c); \
-    return 1; \
-  } \
-} while (0)
-
-#define test_api_assert(H,c) do { \
-  int cond = (c); \
-  if (!cond) { \
-    lua_lock(H); \
-    lua_logerror(H, luaI_formatmsg(H, \
-      "%s:%d: assertion failed: (%s), (in function %s)", __FILE__, __LINE__, \
-      #c, currentcheck)); \
-    lua_unlock(H); \
-    lua_assert(c); \
-    return 1; \
-  } \
-} while (0)
-
-static void lua_docheck(hksc_State *H, lua_CFunction f, const char *name) {
-  int status;
-  currentcheck = name;
-  lua_lock(H);
-  lua_checkstarted(H);
-  status = (*f)(H);
-  if (status)
-    lua_checkfailed(H);
-  else
-    lua_checkpassed(H);
-  lua_unlock(H);
-}
-
-#define docheck(H,f) lua_docheck(H, f, #f)
-
-#define lua_checking(f) do { \
-  lua_lock(H); lua_logtest(H, "Checking `" #f "'"); lua_unlock(H); \
-} while (0)
-
-
-static void f_pcalldummy(hksc_State *H, void *ud) {
-  UNUSED(ud);
-  hksc_seterror(H, "HKSC TEST ERROR");
-  luaD_throw(H, LUA_ERRERR);
-}
-
-#ifdef HKSC_LOGGING
-static int dummy_log(hksc_State *H, const char *label, int priority,
-                     const char *msg, void *ud) {
-  (void)ud;
-  return debug_log(H,label,priority,msg,stderr);
-}
-#endif /* HKSC_LOGGING */
-
-
-/*
-** check APIs that aren't used by the standalone compiler
-*/
-static int apichecks(hksc_State *H) {
-  int dummy;
-  int mode;
-  lua_CFunction panic;
-  hksc_CycleCallback cycle;
-#ifdef HKSC_LOGGING
-  hksc_LogFunction log;
-  hksc_LogFunction dummylog;
-  void *ud = NULL;
-  void *dummyud = NULL;
-  int logpriority;
-#endif /* HKSC_LOGGING */
-#if defined(LUA_CODT6)
-  const char *debugfile = NULL;
-#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
-  const char *string = NULL;
-  /* lua_atpanic */
-  lua_checking(lua_atpanic);
-  panic = lua_atpanic(H, NULL);
-  test_api_assert(H, lua_atpanic(H, panic) == NULL);
-  test_api_assert(H, lua_atpanic(H, panic) == panic);
-  /* lua_onstart_cycle */
-  lua_checking(lua_onstartcycle);
-  cycle = lua_onstartcycle(H, NULL);
-  test_api_assert(H, lua_onstartcycle(H, cycle) == NULL);
-  test_api_assert(H, lua_onstartcycle(H, cycle) == cycle);
-  /* lua_onendcycle */
-  lua_checking(lua_onendcycle);
-  cycle = lua_onendcycle(H, NULL);
-  test_api_assert(H, lua_onendcycle(H, cycle) == NULL);
-  test_api_assert(H, lua_onendcycle(H, cycle) == cycle);
-  /* lua_newstring */
-  lua_checking(lua_newstring);
-  string = lua_newstring(H, "HELLO");
-  test_api_assert(H, strcmp(string, "HELLO") == 0);
-  /* lua_newlstring */
-  lua_checking(lua_newlstring);
-  string = lua_newlstring(H, "HELLO", 3);
-  test_api_assert(H, strcmp(string, "HEL") == 0);
-  /* lua_newfstring/lua_newvfstring */
-  lua_checking(lua_newfstring);
-  string = lua_newfstring(H, "HELLO%s%d%u%c%%", "WORLD", 1, 2, 'a');
-  test_api_assert(H, strcmp(string, "HELLOWORLD12a%") == 0);
-  /* lua_geterror */
-  lua_checking(lua_geterror);
-  test_api_assert(H, lua_geterror(H) == NULL);
-  dummy = luaD_pcall(H, f_pcalldummy, NULL);
-  test_api_assert(H, lua_geterror(H) != NULL);
-  /* lua_seterror */
-  lua_checking(lua_seterror);
-  lua_seterror(H, "error set by lua_seterror");
-  string = lua_geterror(H);
-  test_api_assert(H, strcmp(lua_geterror(H), "error set by lua_seterror") == 0);
-  /* lua_setferror/lua_setvferror */
-  lua_checking(lua_setferror);
-  lua_setferror(H, "error code %d: %s", 1, "out of memory");
-  test_api_assert(H, strcmp(lua_geterror(H),
-                            "error code 1: out of memory") == 0);
-  /* lua_clearerror */
-  lua_checking(lua_clearerror);
-  test_api_assert(H, lua_geterror(H) != NULL);
-  lua_clearerror(H);
-  test_api_assert(H, lua_geterror(H) == NULL);
-  /* lua_getmode */
-  lua_checking(lua_getmode);
-  mode = hksc_mode(H);
-  test_api_assert(H, mode == lua_getmode(H));
-  /* lua_setmode */
-  lua_checking(lua_setmode);
-  /* change whatever value it was */
-  mode = (mode == HKSC_MODE_DEFAULT) ? HKSC_MODE_SOURCE : HKSC_MODE_DEFAULT;
-  lua_setmode(H, mode);
-  test_api_assert(H, lua_getmode(H) == mode);
-#ifdef HKSC_LOGGING
-  /* lua_getlogf */
-  lua_checking(lua_getlogf);
-  log = lua_getlogf(H, &ud);
-  test_api_assert(H, log == &debug_log);
-  /* lua_setlogf */
-  lua_checking(lua_setlogf);
-  lua_setlogf(H, &dummy_log, &dummy);
-  dummylog = lua_getlogf(H, &dummyud);
-  test_api_assert(H, dummylog == &dummy_log);
-  test_api_assert(H, dummyud == &dummy);
-  /* clean up */
-  lua_setlogf(H, log, ud);
-  /* lua_getlogpriority */
-  lua_checking(lua_getlogpriority);
-  logpriority = G(H)->logctx.priority;
-  test_api_assert(H, logpriority == lua_getlogpriority(H));
-  /* lua_setlogpriority */
-  lua_checking(lua_setlogpriority);
-  /* change whatever value it was */
-  logpriority = (logpriority == LOG_PRIORITY_DEBUG) ? LOG_PRIORITY_INFO : 
-                                                     LOG_PRIORITY_DEBUG;
-  lua_setlogpriority(H, logpriority);
-  test_api_assert(H, logpriority == lua_getlogpriority(H));
-#endif /* HKSC_LOGGING */
-#if defined(LUA_CODT6)
-  /* lua_getDebugFile */
-  lua_checking(lua_getDebugFile);
-  debugfile = H->currdebugfile;
-  H->currdebugfile = "TESTDEBUGFILE";
-  test_api_assert(H, lua_getDebugFile(H) == H->currdebugfile &&
-                     strcmp(lua_getDebugFile(H), "TESTDEBUGFILE") == 0);
-  /* lua_setDebugFile */
-  lua_checking(lua_setDebugFile);
-  lua_setDebugFile(H, debugfile);
-  test_api_assert(H, lua_getDebugFile(H) == debugfile);
-#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
-  return 0;
-}
-
-static void lua_doapichecks(hksc_State *H) {
-  int status;
-  lua_lock(H);
-  lua_logtest(H, "");
-  lua_logtest(H, "Starting Lua API checks");
-  lua_logtest(H, "--------------------------------------");
-  lua_unlock(H);
-  status = apichecks(H);
-  lua_lock(H);
-  if (status) 
-    lua_checkfailed(H);
-  else
-    lua_checkpassed(H);
-  lua_unlock(H);
-}
-
-/*
-** make sure `luaO_pushfstring' behaves as expected
-*/
-static int checkpushfstring(hksc_State *H) {
-  int result;
-  const char *str;
-  char pcnt = '\0'; /* '%' read in sscanf */
-  char c = 'z';
-  int i = 100;
-  unsigned int u = 1488553344;
-  lua_Number f = 100.0f;
-  void *p = NULL;  /* H is not NULL */
-  char s[sizeof("hello")+100] = {0};
-  lua_logtest(H, "testing functionality of `luaO_pushfstring'");
-  lua_logtest(H, "invokation: `luaO_pushfstring(H, \"%c %d %u %f %p %s %%\","
-               "'a', 1, 2, 3.0f, (void *)H, \"hello\");");
-  str = luaO_pushfstring(H, "%c %d %u %f %p %s %%",
-                         'a', 101, 1488553398, 3.0f, cast(void *, H), "hello");
-  lua_logtest(H, luaI_formatmsg(H, "returned: \"%s\"", str));
-  result = sscanf(str,"%c %d %u %f %p %[a-z] %c", &c, &i, &u, &f, &p, s, &pcnt);
-  test_assert(H, result == 7);
-  test_assert(H, c == 'a');
-  test_assert(H, i == 101);
-  test_assert(H, u == 1488553398);
-  test_assert(H, f > 2.9f && f < 3.1f);
-  test_assert(H, p == cast(void *, H));
-  test_assert(H, strcmp(s, "hello") == 0);
-  test_assert(H, pcnt == '%');
-  return 0;
-}
-
-
 void luaB_opentests (hksc_State *H) {
   void *ud;
   atexit(checkfinalmem);
@@ -691,10 +353,6 @@ void luaB_opentests (hksc_State *H) {
   lua_assert(ud == cast(void *, &memcontrol));
   lua_setallocf(H, lua_getallocf(H, NULL), ud);
   lua_state = H;  /* keep first state to be opened */
-  /* internal tests */
-  docheck(H, checkpushfstring);
-  /* API tests */
-  lua_doapichecks(H);
 }
 
 #endif

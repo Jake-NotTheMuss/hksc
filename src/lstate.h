@@ -53,9 +53,6 @@ typedef struct global_State {
   int gcstepmul;  /* GC `granularity' */
   const char *prefix_map_from;  /* OLD value in file prefix map */
   const char *prefix_map_to;  /* NEW value in file prefix map */
-#ifdef HKSC_LOGGING
-  hksc_LogContext logctx;
-#endif
   lua_CFunction panic;  /* to be called in unprotected errors */
 #if defined(LUA_CODT6)
   LoadStateCB debugLoadStateOpen; /* (COD) debug reader initializer */

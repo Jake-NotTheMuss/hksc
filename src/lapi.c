@@ -213,45 +213,6 @@ LUA_API void lua_setprefixmap (hksc_State *H, const char *from, const char *to)
 }
 
 
-#ifdef HKSC_LOGGING
-
-LUA_API hksc_LogFunction lua_getlogf (hksc_State *H, void **ud) {
-  hksc_LogFunction f;
-  lua_lock(H);
-  if (ud) *ud = G(H)->logctx.ud;
-  f = G(H)->logctx.f;
-  lua_unlock(H);
-  return f;
-}
-
-
-LUA_API void lua_setlogf (hksc_State *H, hksc_LogFunction f, void *ud) {
-  lua_lock(H);
-  G(H)->logctx.ud = ud;
-  G(H)->logctx.f = f;
-  lua_unlock(H);
-}
-
-
-LUA_API int lua_getlogpriority (hksc_State *H) {
-  int priority;
-  lua_lock(H);
-  priority = G(H)->logctx.priority;
-  lua_unlock(H);
-  return priority;
-}
-
-
-LUA_API void lua_setlogpriority (hksc_State *H, int priority) {
-  lua_lock(H);
-  api_check(H, priority >= 0 && priority < LOG_PRIORITY_MAX);
-  G(H)->logctx.priority = priority;
-  lua_unlock(H);
-}
-
-#endif /* HKSC_LOGGING */
-
-
 #if defined(LUA_CODT6)
 
 LUA_API const char *lua_getDebugFile (hksc_State *H) {

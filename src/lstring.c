@@ -12,7 +12,6 @@
 
 #include "hksclua.h"
 
-#include "llog.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"

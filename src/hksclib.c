@@ -422,9 +422,6 @@ LUA_API void hksI_StateSettings(hksc_StateSettings *settings) {
 #ifdef HKSC_MULTIPLAT
   settings->bytecode_target_id = HKSC_TARGET_DEFAULT;
 #endif /* HKSC_MULTIPLAT */
-#ifdef HKSC_LOGGING
-  memset(&settings->logctx, 0, sizeof(settings->logctx));
-#endif /* HKSC_LOGGING */
 }
 
 

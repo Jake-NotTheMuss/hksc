@@ -42,36 +42,23 @@ typedef struct hksc_State hksc_State;
 
 typedef int (*lua_CFunction) (hksc_State *H);
 
-#ifdef HKSC_LOGGING
-
-#define LOG_PRIORITY_DEBUG     0
-#define LOG_PRIORITY_INFO      1
-#define LOG_PRIORITY_WARN      2
-#define LOG_PRIORITY_ERROR     3
-#define LOG_PRIORITY_FATAL     4
-#define LOG_PRIORITY_MAX       5
-
-typedef int (*hksc_LogFunction) (hksc_State *H, const char *label, int priority,
-                                 const char *msg, void *ud);
-
-typedef struct hksc_LogContext {
-  hksc_LogFunction f;
-  void *ud;
-  int priority;
-} hksc_LogContext;
-
-#define DEFAULT_LOGCTX {NULL, NULL, 0}
-#endif /* HKSC_LOGGING */
 
 #ifdef HKSC_MULTIPLAT
-#define HKSC_TARGET_DEFAULT 0
-#define HKSC_TARGET_WII 1
-#define HKSC_TARGET_PS3 2
-#define HKSC_TARGET_XBOX360 3
-#define HKSC_TARGET_ORBIS 4
-#define HKSC_TARGET_DURANGO 5
-#define HKSC_TARGET_WIN32 6
-#define HKSC_TARGET_WIN64 7
+/* putany targets that Havok Script is used on */
+#define HKSC_TARGET_PLAT_DEFAULT 0 /* the host platform */
+#define HKSC_TARGET_PLAT_WII 1
+#define HKSC_TARGET_PLAT_WIIU 2
+#define HKSC_TARGET_PLAT_NX 3
+#define HKSC_TARGET_PLAT_PS3 4
+#define HKSC_TARGET_PLAT_PSV 5
+#define HKSC_TARGET_PLAT_ORBIS 6
+#define HKSC_TARGET_PLAT_XENON 7
+#define HKSC_TARGET_PLAT_DURANGO 8
+
+#define HKSC_TARGET_WS_DEFAULT 0  /* host word-size */
+#define HKSC_TARGET_WS_16 1
+#define HKSC_TARGET_WS_32 2
+#define HKSC_TARGET_WS_64 3
 #endif /* HKSC_MULTIPLAT */
 
 /* user-defined callbacks for beginning/end of cycles */
@@ -200,9 +187,6 @@ typedef struct {
 #ifdef HKSC_MULTIPLAT
   int bytecode_target_id;
 #endif /* HKSC_MULTIPLAT */
-#ifdef HKSC_LOGGING
-  hksc_LogContext logctx;  /* context for logging */
-#endif /* HKSC_LOGGING */
   hksc_CompilerSettings compilersettings;
 } hksc_StateSettings;
 
@@ -259,13 +243,6 @@ LUA_API void (lua_setallocf) (hksc_State *H, lua_Alloc f, void *ud);
 
 LUA_API void (lua_setprefixmap) (hksc_State *H, const char *from,
                                  const char *to);
-
-#ifdef HKSC_LOGGING
-LUA_API hksc_LogFunction (lua_getlogf) (hksc_State *H, void **ud);
-LUA_API void (lua_setlogf) (hksc_State *H, hksc_LogFunction f, void *ud);
-LUA_API int (lua_getlogpriority) (hksc_State *H);
-LUA_API void (lua_setlogpriority) (hksc_State *H, int priority);
-#endif /* HKSC_LOGGING */
 
 #if defined(LUA_CODT6)
 LUA_API const char *(lua_getDebugFile) (hksc_State *H);
