@@ -365,6 +365,7 @@ logvar lua_codt6
 logvar lua_codt7
 logvar lua_codiw6
 logvar lua_multiplat
+logvar HKSC_TARGET_PLAT
 logvar GETGLOBAL_MEMOIZATION
 logvar STRUCTURE_EXTENSION_ON
 logvar SELF
