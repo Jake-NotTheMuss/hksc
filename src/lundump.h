@@ -37,6 +37,13 @@ static int isbigendian() {
   return ((char)*(char *)&x == 0);
 }
 
+struct target_info {
+  int sizeint, sizesize, sizeinstr;
+  int needendianswap;
+};
+
+LUAI_FUNC void luaU_target_info (hksc_State *H, struct target_info *target);
+
 #endif /* ldump_c || lundump_c */
 
 #if defined(LUA_CODT6)
@@ -59,8 +66,10 @@ typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
                               const char *name);
 
+#if defined(ldump_c) || defined(lundump_c)
 /* make header; from lundump.c */
-LUAI_FUNC void luaU_header (char *h, int swapendian);
+LUAI_FUNC void luaU_header (struct target_info *target, char *h);
+#endif /* ldump_c || lundump_c */
 
 /* dump one chunk; from ldump.c */
 LUAI_FUNC int luaU_dump (hksc_State *H,
@@ -99,7 +108,7 @@ typedef struct HkscHeader {
   char signature[sizeof(LUA_SIGNATURE)-1]; /* Lua binary signature */
   char version;  /* Lua version */
   char formatversion;  /* Lua format version */
-  char swapendian;  /* true if need to swap endianness when loading/dumping */
+  char endianflag;  /* 0 if need to swap endianness when loading/dumping */
   char sizeint;  /* size of int */
   char sizesize;  /* size of size_t */
   char sizeinstr;  /* size of Instruction */

@@ -420,7 +420,8 @@ LUA_API void hksI_StateSettings(hksc_StateSettings *settings) {
   settings->mode = HKSC_MODE_DEFAULT;
   settings->bytecode_endianness = HKSC_DEFAULT_ENDIAN;
 #ifdef HKSC_MULTIPLAT
-  settings->bytecode_target_id = HKSC_TARGET_DEFAULT;
+  settings->target_plat = HKSC_TARGET_PLAT_DEFAULT;
+  settings->target_ws = HKSC_TARGET_WS_DEFAULT;
 #endif /* HKSC_MULTIPLAT */
 }
 

@@ -107,7 +107,8 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->mode = settings->mode;
   g->bytecode_endianness = settings->bytecode_endianness;
 #ifdef HKSC_MULTIPLAT
-  g->bytecode_target_id = settings->bytecode_target_id;
+  g->target_plat = settings->target_plat;
+  g->target_ws = settings->target_ws;
 #endif /* HKSC_MULTIPLAT */
   g->settings = settings->compilersettings;
   luaZ_initbuffer(H, &g->buff);

@@ -63,8 +63,8 @@ Lua/Hksc Options:
   --no-ui64                Disable UI64 type
   --emu-ui64               Use C structs to emulate UI64 (disabled by default)
   --no-emu-ui64            Disable using C structs to emulate UI64
-  --with-logging           Enable logging information and warning messages
-  --disable-logging        Disable logging (deault)
+  --multi-plat             Enable multi-platform targeting
+  --no-multi-plat          Disable multi-platform targeting (default)
   --                       Stop handling options
 
 Advanced Options:

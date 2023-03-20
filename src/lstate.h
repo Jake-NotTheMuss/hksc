@@ -33,7 +33,8 @@ typedef struct global_State {
   int mode; /* input file mode, source of binary */
   int bytecode_endianness; /* bytecode endianness */
 #ifdef HKSC_MULTIPLAT
-  int bytecode_target_id;
+  int target_plat;
+  int target_ws;
 #endif /* HKSC_MULTIPLAT */
   hksc_CompilerSettings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */

@@ -19,6 +19,7 @@
 #include "lfunc.h"
 #include "lmem.h"
 #include "lobject.h"
+#include "lstate.h"
 #include "lstring.h"
 #include "lundump.h"
 #include "lzio.h"
@@ -26,8 +27,8 @@
 typedef struct LoadState LoadState;
 
 #ifdef HKSC_MULTIPLAT
-typedef lu_int32 (*LoadPlatInt)(LoadState *S);
-typedef size_t (*LoadPlatSize)(LoadState *S);
+typedef int (*LoadTargetInt)(LoadState *S);
+typedef size_t (*LoadTargetSize)(LoadState *S);
 #endif /* HKSC_MULTIPLAT */
 
 struct LoadState {
@@ -38,11 +39,10 @@ struct LoadState {
   const char *desc;  /* what is being loaded? */
   size_t pos;
   int swapendian;
+  struct target_info target;
 #ifdef HKSC_MULTIPLAT
-  LoadPlatInt loadint;
-  LoadPlatSize loadsize;
-  int target_sizeinstr;
-  int target_id;  /* target platform id */
+  LoadTargetInt loadint;
+  LoadTargetSize loadsize;
 #endif /* HKSC_MULTIPLAT */
 };
 
@@ -78,20 +78,15 @@ static int LoadChar(LoadState *S)
 
 static int LoadInt(LoadState *S)
 {
-#ifndef HKSC_MULTIPLAT
   int x;
+#ifndef HKSC_MULTIPLAT
   LoadVar(S,x);
   correctendianness(S,x);
+#else /* HKSC_MULTIPLAY */
+  x = (*S->loadint)(S);
+#endif /* HKSC_MULTIPLAT */
   IF(x<0, "bad integer");
   return x;
-#else /* HKSC_MULTIPLAY */
-  unsigned int x;
-  lu_int32 platx = (*S->loadint)(S);
-  x = cast(unsigned int, platx);
-  if (x != platx)
-    error(S, "target integer field too wide (value too large)");
-  return cast_int(x);
-#endif /* HKSC_MULTIPLAT */
 }
 
 #ifdef LUA_CODT6
@@ -111,24 +106,7 @@ static size_t LoadSize(LoadState *S)
   LoadVar(S,x);
   correctendianness(S,x);
 #else /* HKSC_MULTIPLAT */
-  lu_int64 platx = (*S->loadsize)(S);
-#ifdef LUA_UI64_S
-  if (sizeof(size_t) < sizeof(lu_int64)) {
-    if (platx.hi != 0)
-      error(S, "target size field too wide (value too large)");
-    else
-      x = cast(size_t, platx.lo);
-  }
-  else {
-    size_t hi = cast(size_t, platx.hi);
-    x = hi << (CHAR_BIT * sizeof(lu_int32));
-    x |= cast(size_t, platx.lo);
-  }
-#else /* !LUA_UI64_S */
-  x = cast(size_t, platx);
-  if (x != platx)
-    error(S, "target size field too wide (value too large)");
-#endif /* LUA_UI64_S */
+  x = (*S->loadsize)(S);
 #endif /* HKSC_MULTIPLAT */
   return x;
 }
@@ -182,6 +160,95 @@ static lu_int64 LoadUI64(LoadState *S)
   return x;
 }
 
+#ifdef HKSC_MULTIPLAT
+static void toowide(LoadState *S, const char *what)
+{
+  hksc_State *H = S->H;
+  luaD_setferror(H, "target %s field too wide for host (value too large)",
+                 what);
+  luaD_throw(H,LUA_ERRRUN);
+}
+
+static int LoadInt16(LoadState *S)
+{
+  short x;
+  lua_assert(S->target.sizeint == 2);
+  LoadVar(S,x);
+  correctendianness(S,x);
+  IF(x<0, "bad integer");
+  return cast_int(x);
+}
+
+static int LoadInt32(LoadState *S)
+{
+  l_int32 x;
+  int i;
+  lua_assert(S->target.sizeint == 4);
+  LoadVar(S,x);
+  correctendianness(S,x);
+  IF(x<0, "bad integer");
+  i = cast_int(x);
+  if (sizeof(i) < sizeof(x) && cast(l_int32, i) != x)
+    toowide(S,"integer");
+  return i;
+}
+
+static size_t LoadSize16(LoadState *S)
+{
+  unsigned short x;
+  size_t size;
+  lua_assert(S->target.sizesize == 2);
+  LoadVar(S,x);
+  correctendianness(S,x);
+  size = cast(size_t, x);
+  if (sizeof(size) < sizeof(x) && cast(unsigned short, size) != x)
+    toowide(S,"size");
+  return size;
+}
+
+static size_t LoadSize32(LoadState *S)
+{
+  lu_int32 x;
+  size_t size;
+  lua_assert(S->target.sizesize == 4);
+  LoadVar(S,x);
+  correctendianness(S,x);
+  size = cast(size_t, x);
+  if (sizeof(size) < sizeof(x) && cast(lu_int32, size) != x)
+    toowide(S,"size");
+  return size;
+}
+
+static size_t LoadSize64(LoadState *S)
+{
+  lu_int64 x;
+  size_t size;
+  lua_assert(S->target.sizesize == 8);
+  if (sizeof(size_t) == 8) {
+    LoadVar(S,size);
+    correctendianness(S,size);
+  }
+  else {
+    lu_int32 lo;
+    x = LoadUI64(S);
+#ifdef LUA_UI64_S
+    lo = x.lo;
+    if (x.hi != 0)
+      toowide(S,"size");
+#else /* !LUA_UI64_S */
+    lo = cast(lu_int32, (x & 0xFFFFFFFFlu));
+    if (cast(lu_int64, lo) != x)
+      toowide(S,"size");
+#endif /* LUA_UI64_S */
+    size = cast(size_t, lo);
+    if (sizeof(size) < sizeof(lo) && cast(lu_int32, size) != lo)
+      toowide(S,"size");
+  }
+  return size;
+}
+
+#endif /* HKSC_MULTIPLAT */
+
 static void LoadCode(LoadState *S, Proto *f)
 {
   char buf[sizeof(Instruction)];
@@ -190,10 +257,10 @@ static void LoadCode(LoadState *S, Proto *f)
   f->code=luaM_newvector(S->H,n,Instruction);
   f->sizecode=n;
 #ifdef HKSC_MULTIPLAT
-  if (sizeof(Instruction) < S->target_sizeinstr) {
+  if (cast_int(sizeof(Instruction)) < S->target.sizeinstr) {
     luaD_setferror(S->H,"target instruction field is too wide to represent"
                    " (host size is (%d), target size is (%d)",
-                   cast_int(sizeof(Instruction)), cast_int(S->target_sizeinstr));
+                   cast_int(sizeof(Instruction)), cast_int(S->target.sizeinstr));
     luaD_throw(S->H,LUA_ERRRUN);
   }
 #endif /* HKSC_MULTIPLAT */
@@ -362,23 +429,59 @@ static void pushCompatibilityErrorString(hksc_State *H, char bits) {
 
 static void LoadHeader(LoadState *S)
 {
+  struct target_info *target = &S->target;
   char typename[MAX_TYPE_LENGTH]; /* buffer for type names */
   int numtypes;
   HkscHeader h, s;
+  lua_assert(sizeof(HkscHeader) == LUAC_HEADERSIZE);
   LoadBlock(S,&s,LUAC_HEADERSIZE);
-  S->swapendian = (s.swapendian == 0);
-  luaU_header((char *)&h, s.swapendian == 0);
+  S->swapendian = (s.endianflag == 0);
+#ifdef HKSC_MULTIPLAT
+  if (G(S->H)->target_plat == HKSC_TARGET_PLAT_DEFAULT &&
+      G(S->H)->target_ws == HKSC_TARGET_WS_DEFAULT) {
+    /* one of the features of HKSC_MULTIPLAT - adapt to the word-size of the
+       current bytecode stream if no platform is specified */
+    target->sizeint = s.sizeint;
+    target->sizesize = s.sizesize;
+  }
+  /* from this point, the target type sizes are in stone, so now the callbacks
+     can be set */
+  if (target->sizeint == 2)
+    S->loadint = LoadInt16;
+  else if (target->sizeint == 4)
+    S->loadint = LoadInt32;
+  else
+    lua_assert(0);
+  if (target->sizesize == 2)
+    S->loadsize = LoadSize16;
+  else if (target->sizesize == 4)
+    S->loadsize = LoadSize32;
+  else if (target->sizesize == 8)
+    S->loadsize = LoadSize64;
+  else
+    lua_assert(0);
+#endif /* HKSC_MULTIPLAT */
+  /* don't let the swapendian flag cause a header mismatch */
+  target->needendianswap = S->swapendian;
+  luaU_header(target, (char *)&h);
   if (s.compatbits != h.compatbits) /* build settings do not match */
     pushCompatibilityErrorString(S->H, s.compatbits);
   if (memcmp(&h,&s,LUAC_HEADERSIZE)!=0) goto badheader;
   numtypes = LoadInt(S); /* number of types */
   if (numtypes != LUAC_NUMTYPES) {
+#ifndef HKSC_MULTIPLAT
     if (G(S->H)->bytecode_endianness != HKSC_DEFAULT_ENDIAN)
+#else /* HKSC_MULTIPLAT */
+    if (G(S->H)->target_plat != HKSC_TARGET_PLAT_DEFAULT)
+#endif /* HKSC_MULTIPLAT */
       goto badheader; /* a specific endianness is expected */
     else { /* try again with swapped endianness */
       swapvarendianness(numtypes);
       if (numtypes != LUAC_NUMTYPES) goto badheader;
-      else S->swapendian = !S->swapendian;
+      else { /* good */
+        S->swapendian = !S->swapendian;
+        target->needendianswap = S->swapendian;
+      }
     }
   }
 #define DEFTYPE(t) \
@@ -436,7 +539,10 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.b=buff;
   S.pos=0;
   S.desc="precompiled chunk";
-  LoadHeader(&S); /* need some info in the header to initialize debug reader */
+  /* set initial target values, any corrections are made in `LoadHeader' */
+  luaU_target_info(H,&S.target);
+  /* need some info in the header before initializing the COD debug reader */
+  LoadHeader(&S);
 #ifdef LUA_CODT6 /* some gymnastics for loading Call of Duty debug files */
   if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
     int openstatus = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, name);
@@ -449,6 +555,10 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.name = H->currdebugfile;
       SD.pos = 0;
       SD.desc="debug info";
+#ifdef HKSC_MULTIPLAT
+      SD.loadint = S.loadint;
+      SD.loadsize = S.loadsize;
+#endif /* HKSC_MULTIPLAT */
     }
     else {
       luaD_throw(S.H,openstatus);
@@ -485,19 +595,93 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
 /*
 * make header
 */
-void luaU_header (char *h, int swapendian)
+void luaU_header (struct target_info *target, char *h)
 {
   memcpy(h,LUA_SIGNATURE,sizeof(LUA_SIGNATURE)-1);
   h+=sizeof(LUA_SIGNATURE)-1;
   *h++=(char)LUAC_VERSION;
   *h++=(char)LUAC_FORMAT;
-  *h++=(char)(swapendian == 0);        /* endianness */
-  *h++=(char)sizeof(int);
-  *h++=(char)sizeof(size_t);
-  *h++=(char)sizeof(Instruction);
+  *h++=(char)(target->needendianswap == 0);        /* endianness */
+  *h++=(char)(target->sizeint);
+  *h++=(char)(target->sizesize);
+  *h++=(char)(target->sizeinstr);
   *h++=(char)sizeof(lua_Number);
   *h++=(char)(((lua_Number)0.5)==0);    /* is lua_Number integral? */
   *h++=(char)compatbits; /* build settings */
   *h++=(char)0; /* true if in a shared state, false for an offline compiler */
 }
+
+
+/* set target type sizes and endianness */
+void luaU_target_info (hksc_State *H, struct target_info *target)
+#ifdef HKSC_MULTIPLAT
+{
+  int sizeint, sizesize, sizeinstr, bigendian;
+  switch (G(H)->target_plat) {
+    case HKSC_TARGET_PLAT_DEFAULT:
+      bigendian = isbigendian();
+      break;
+    case HKSC_TARGET_PLAT_WII:
+    case HKSC_TARGET_PLAT_WIIU:
+    case HKSC_TARGET_PLAT_PS3:
+    case HKSC_TARGET_PLAT_XENON:
+      sizeint = 4;
+      sizesize = 4;
+      sizeinstr = 4;
+      bigendian = 1;
+      break;
+    case HKSC_TARGET_PLAT_PSV:
+      sizeint = 4;
+      sizesize = 4;
+      sizeinstr = 4;
+      bigendian = 0;
+    case HKSC_TARGET_PLAT_ORBIS:
+    case HKSC_TARGET_PLAT_DURANGO:
+      sizeint = 4;
+      sizesize = 8;
+      sizeinstr = 4;
+      bigendian = 0;
+      break;
+    default:
+      lua_assert(0);
+  }
+  switch (G(H)->target_ws) {
+    case HKSC_TARGET_WS_16:
+      sizeint = 2;
+      sizesize = 2;
+      sizeinstr = 4;
+      break;
+    case HKSC_TARGET_WS_32:
+      sizeint = 4;
+      sizesize = 4;
+      sizeinstr = 4;
+      break;
+    case HKSC_TARGET_WS_64:
+      sizeint = 4;
+      sizesize = 8;
+      sizeinstr = 4;
+      break;
+    default:
+      if (G(H)->target_plat == HKSC_TARGET_PLAT_DEFAULT) {
+        sizeint = sizeof(int);
+        sizesize = sizeof(size_t);
+        sizeinstr = sizeof(Instruction);
+      }
+      break;
+  }
+  target->sizeint = sizeint;
+  target->sizesize = sizesize;
+  target->sizeinstr = sizeinstr;
+  target->needendianswap = (bigendian != isbigendian());
+}
+#else /* !HKSC_MULTIPLAT */
+{
+  target->sizeint = sizeof(int);
+  target->sizesize = sizeof(size_t);
+  if (isbigendian())
+    target->needendianswap=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);
+  else /* little endian */
+    target->needendianswap=(G(H)->bytecode_endianness==HKSC_BIG_ENDIAN);
+}
+#endif /* HKSC_MULTIPLAT */
 

@@ -59,6 +59,7 @@ typedef int (*lua_CFunction) (hksc_State *H);
 #define HKSC_TARGET_WS_16 1
 #define HKSC_TARGET_WS_32 2
 #define HKSC_TARGET_WS_64 3
+#define HKSC_TARGET_WS_COUNT 4
 #endif /* HKSC_MULTIPLAT */
 
 /* user-defined callbacks for beginning/end of cycles */
@@ -185,7 +186,8 @@ typedef struct {
   int mode;  /* what mode to run in (compiling/decompiling) */
   int bytecode_endianness;
 #ifdef HKSC_MULTIPLAT
-  int bytecode_target_id;
+  int target_plat;
+  int target_ws;
 #endif /* HKSC_MULTIPLAT */
   hksc_CompilerSettings compilersettings;
 } hksc_StateSettings;

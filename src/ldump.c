@@ -16,7 +16,6 @@
 
 #include "ldo.h"
 #include "lobject.h"
-#include "lstate.h"
 #include "lundump.h"
 
 /* for TStrings which may be NULL */
@@ -37,8 +36,8 @@
 typedef struct DumpState DumpState;
 
 #ifdef HKSC_MULTIPLAT
-typedef void (*DumpPlatInt)(DumpState *D, int x);
-typedef void (*DumpPlatSize)(DumpState *D, size_t x);
+typedef void (*DumpTargetInt)(DumpState *D, int x);
+typedef void (*DumpTargetSize)(DumpState *D, size_t x);
 #endif /* HKSC_MULTIPLAT */
 
 struct DumpState {
@@ -49,13 +48,10 @@ struct DumpState {
   int striplevel;
   int status;
   int swapendian;
+  struct target_info target;
 #ifdef HKSC_MULTIPLAT
-  DumpPlatInt dumpint;
-  DumpPlatSize dumpsize;
-  int target_sizeint;
-  int target_sizesize;
-  int target_sizeinstr;
-  int target_id;  /* target platform id */
+  DumpTargetInt dumpint;
+  DumpTargetSize dumpsize;
 #endif /* HKSC_MULTIPLAT */
 };
 
@@ -81,14 +77,22 @@ static void DumpChar(int y, DumpState *D)
 
 static void DumpInt(int x, DumpState* D)
 {
+#ifndef HKSC_MULTIPLAT
   correctendianness(D,x);
   DumpVar(x,D);
+#else /* HKSC_MULTIPLAT */
+  (*D->dumpint)(D,x);
+#endif /* HKSC_MULTIPLAT */
 }
 
 static void DumpSize(size_t x, DumpState *D)
 {
+#ifndef HKSC_MULTIPLAT
   correctendianness(D,x);
   DumpVar(x, D);
+#else /* HKSC_MULTIPLAT */
+  (*D->dumpsize)(D,x);
+#endif /* HKSC_MULTIPLAT */
 }
 
 static void DumpNumber(lua_Number x, DumpState *D)
@@ -133,6 +137,7 @@ static void DumpUI64(lu_int64 x, DumpState *D)
     DumpVar(x.hi,D);
   }
 #else
+  (void)isbigendian;
   correctendianness(D,x);
   DumpVar(x,D);
 #endif
@@ -149,65 +154,69 @@ static void toowide(DumpState *D, const char *what)
 
 static void DumpInt16(DumpState *D, int x)
 {
-  lua_assert(D->target_sizeint == 2);
-  if (sizeof(int) == 2)
-    DumpInt(x,D);
-  else {
-    unsigned short target_x = cast(unsigned short, cast(unsigned int, x));
-    if (target_x != x)
-      toowide(D,"integer");
-    correctendianness(D,target_x);
-    DumpVar(target_x,D);
-  }
+  unsigned short shrt;
+  lua_assert(D->target.sizeint == 2);
+  shrt = cast(unsigned short, cast(unsigned int, x));
+  if (sizeof(shrt) < sizeof(x) && cast_int(shrt) != x)
+    toowide(D,"integer");
+  correctendianness(D,shrt);
+  DumpVar(shrt,D);
 }
 
 static void DumpInt32(DumpState *D, int x)
 {
-  lua_assert(D->target_sizeint == 4);
-  if (sizeof(int) == 4)
-    DumpInt(x,D);
-  else {
-    lu_int32 target_x = cast(lu_int32, cast(unsigned int, x));
-    correctendianness(D,target_x);
-    DumpVar(target_x,D);
-  }
+  lu_int32 u32;
+  lua_assert(D->target.sizeint == 4);
+  u32 = cast(lu_int32, cast(unsigned int, x));
+  if (sizeof(u32) < sizeof(x) && cast_int(u32) != x)
+    toowide(D,"integer");
+  correctendianness(D,u32);
+  DumpVar(u32,D);
+}
+
+static void DumpSize16(DumpState *D, size_t x)
+{
+  unsigned short shrt;
+  lua_assert(D->target.sizesize == 2);
+  shrt = cast(unsigned short, x);
+  if (sizeof(shrt) < sizeof(x) && cast(size_t, shrt) != x)
+    toowide(D,"size");
+  correctendianness(D,shrt);
+  DumpVar(shrt,D);
 }
 
 static void DumpSize32(DumpState *D, size_t x)
 {
-  lua_assert(D->target_sizesize == 4);
-  if (sizeof(size_t) == 4)
-    DumpSize(x,D);
-  else {
-    lu_int32 target_x = cast(lu_int32, x);
-    if (sizeof(size_t) > 4 && cast(size_t, target_x) != x)
-      toowide(D,"size");
-    correctendianness(D,target_x);
-    DumpVar(target_x,D);
-  }
+  lu_int32 u32;
+  lua_assert(D->target.sizesize == 4);
+  u32 = cast(lu_int32, x);
+  if (sizeof(u32) < sizeof(x) && cast(size_t, u32) != x)
+    toowide(D,"size");
+  correctendianness(D,u32);
+  DumpVar(u32,D);
 }
 
 static void DumpSize64(DumpState *D, size_t x)
 {
-  lua_assert(D->target_sizesize == 8);
-  if (sizeof(size_t) == 8)
-    DumpSize(x,D);
-  else {
-    lu_int64 target_x;
+  lu_int64 u64;
+  lua_assert(D->target.sizesize == 8);
 #ifdef LUA_UI64_S
-    if (sizeof(size_t) <= sizeof(lu_int32)) {
-      target_x.lo = cast(lu_int32, x);
-      target_x.hi = 0;
-    }
-    else {
-      target_x.lo = cast(lu_int32, x & 0xFFFFFFFFlu);
-      target_x.hi = cast(lu_int32, x >> (CHAR_BIT * 4));
-    }
-#else /* LUA_UI64_S */
-    target_x = cast(lu_int64, x);
-#endif /* LUA_UI64_S */
-    DumpUI64(x,D);
+  if (sizeof(size_t) <= sizeof(lu_int32)) {
+    u64.hi = 0;
+    u64.lo = cast(lu_int32, x);
   }
+  else {
+    u64.hi = cast(lu_int32, x >> (CHAR_BIT * 4));
+    u64.lo = cast(lu_int32, x & 0xFFFFFFFFlu);
+  }
+  if (sizeof(size_t) > 8 && ((x >> (CHAR_BIT*8)) != 0))
+    toowide(D,"size");
+#else
+  u64 = cast(lu_int64, x);
+  if (sizeof(u64) < sizeof(x) && cast(size_t, u64) != x)
+    toowide(D,"size");
+#endif /* LUA_UI64_S */
+  DumpUI64(u64,D);
 }
 #endif /* HKSC_MULTIPLAT */
 
@@ -352,7 +361,7 @@ static void DumpHeader(DumpState *D)
 {
   if (needfuncinfo(D)) {
     char h[LUAC_HEADERSIZE];
-    luaU_header(h, D->swapendian);
+    luaU_header(&D->target,h);
     DumpBlock(h,LUAC_HEADERSIZE,D);
     DumpInt(LUAC_NUMTYPES,D); /* number of types */
 #define DEFTYPE(t) \
@@ -395,10 +404,24 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.pos=0;
   D.striplevel=hksc_getBytecodeStrippingLevel(H);
   D.status=0;
-  if (isbigendian())
-    D.swapendian=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);
-  else /* little endian */
-    D.swapendian=(G(H)->bytecode_endianness==HKSC_BIG_ENDIAN);
+  luaU_target_info(H, &D.target);
+  D.swapendian = D.target.needendianswap;
+#ifdef HKSC_MULTIPLAT
+  if (D.target.sizeint == 2)
+    D.dumpint = DumpInt16;
+  else if (D.target.sizeint == 4)
+    D.dumpint = DumpInt32;
+  else
+    lua_assert(0);
+  if (D.target.sizesize == 2)
+    D.dumpsize = DumpSize16;
+  else if (D.target.sizesize == 4)
+    D.dumpsize = DumpSize32;
+  else if (D.target.sizesize == 8)
+    D.dumpsize = DumpSize64;
+  else
+    lua_assert(0);
+#endif /* HKSC_MULTIPLAT */
   sd.D=&D;
   sd.f=f;
   status = luaD_pcall(H, f_dump, &sd);

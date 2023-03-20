@@ -40,8 +40,8 @@ int withdebug=0;
 #endif /* LUA_CODT6 */
 
 #ifdef HKSC_MULTIPLAT
-static int target_plat=-1;
-static int target_ws=-1;
+static int target_plat=HKSC_TARGET_PLAT_DEFAULT;
+static int target_ws=HKSC_TARGET_WS_DEFAULT;
 #endif /* HKSC_MULTIPLAT */
 
 #ifdef LUA_CODT6
@@ -365,12 +365,20 @@ static int doargs(int argc, char *argv[])
         target_plat = HKSC_TARGET_PLAT_PS3;
       else if (STREQ(arg, "psv"))
         target_plat = HKSC_TARGET_PLAT_PSV;
-      else if (STREQ(arg, "ps4") || STREQ("orbis"))
+      else if (STREQ(arg, "ps4") || STREQ(arg, "orbis"))
         target_plat = HKSC_TARGET_PLAT_ORBIS;
       else if (STREQ(arg, "xbox360") || STREQ(arg, "xenon"))
         target_plat = HKSC_TARGET_PLAT_XENON;
       else if (STREQ(arg, "xboxone") || STREQ(arg, "durango"))
         target_plat = HKSC_TARGET_PLAT_DURANGO;
+      else if (arg[0] == '1' && arg[1] == '6')
+        target_ws = HKSC_TARGET_WS_16;
+      else if (arg[0] == '3' && arg[1] == '2')
+        target_ws = HKSC_TARGET_WS_32;
+      else if (arg[0] == '6' && arg[1] == '4')
+        target_ws = HKSC_TARGET_WS_64;
+      else
+        usage("invalid argument given with '-m'");
     }
 #endif /* HKSC_MULTIPLAT */
     else if (IS("-p") || IS("--parse"))      /* parse only */
@@ -460,39 +468,18 @@ static int hksc_dump_f(hksc_State *H, void *ud) {
     fprintf(stderr, "Successfully parsed `%s'\n", filename);
     return 0;
   }
-  if (listing)
+  if (listing) {
     lua_print(H, listing > 1);
+    return 0;
+  }
 #ifdef HKSC_DECOMPILER
   if (decompiling)
     return hksc_dump_decomp(H, filename);
 #endif /* HKSC_DECOMPILER */
   return hksc_dump_bytecode(H, filename);
 }
-#if 0
-/* dump function for -l */
-static int hksc_dump_l(hksc_State *H, void *ud) {
-  (void)ud;
-  lua_print(H, listing > 1);
-  return 0;
-}
 
-/* dump function for -p */
-static int hksc_dump_p(hksc_State *H, void *ud) {
-  (void)H;
-  fprintf(stderr, "Successfully parsed `%s'\n", (const char *)ud);
-  return 0;
-}
 
-/* default dump function */
-static int hksc_dump_default(hksc_State *H, void *ud) {
-  const char *filename = (const char *)ud;
-#ifdef HKSC_DECOMPILER
-  if (decompiling)
-    return hksc_dump_decomp(H, filename);
-#endif /* HKSC_DECOMPILER */
-  return hksc_dump_bytecode(H, filename);
-}
-#endif
 /*
 ** parser loop function
 */
@@ -531,7 +518,7 @@ int main(int argc, char *argv[])
     if (debugfile_arg)
       error_multiple_inputs("--debugfile");
     if (profilefile_arg)
-      error_multiple_inputs("--profilefile");
+      error_multiple_inputs("--callstackdb");
 #endif /* LUA_CODT6 */
   }
   hksI_StateSettings(&settings);
@@ -539,12 +526,16 @@ int main(int argc, char *argv[])
     old_prefix = file_prefix_map_arg;
     new_prefix = strrchr(file_prefix_map_arg, '=');
     if (!new_prefix)
-      usage("invalid value for --file-prefix-map");
+      usage("invalid value for '--file-prefix-map'");
     *((char *)new_prefix) = '\0';
     new_prefix++;
   }
   else
     new_prefix = old_prefix = NULL;
+#ifdef HKSC_MULTIPLAT
+  settings.target_plat = target_plat;
+  settings.target_ws = target_ws;
+#endif /* HKSC_MULTIPLAT */
   H = hksI_newstate(&settings);
   if (H==NULL) fatal("cannot create state: not enough memory");
   lua_setprefixmap(H, old_prefix, new_prefix);
