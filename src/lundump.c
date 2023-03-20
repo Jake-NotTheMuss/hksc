@@ -636,7 +636,7 @@ void luaU_target_info (hksc_State *H, struct target_info *target)
       bigendian = isbigendian();
       break;
     case HKSC_TARGET_PLAT_WII:
-    case HKSC_TARGET_PLAT_WIIU:
+    case HKSC_TARGET_PLAT_CAFE:
     case HKSC_TARGET_PLAT_PS3:
     case HKSC_TARGET_PLAT_XENON:
       sizeint = 4;
@@ -651,6 +651,9 @@ void luaU_target_info (hksc_State *H, struct target_info *target)
       bigendian = 0;
     case HKSC_TARGET_PLAT_ORBIS:
     case HKSC_TARGET_PLAT_DURANGO:
+    case HKSC_TARGET_PLAT_WINDOWS:
+    case HKSC_TARGET_PLAT_GNU:
+    case HKSC_TARGET_PLAT_DARWIN:
       sizeint = 4;
       sizesize = 8;
       sizeinstr = 4;

@@ -47,13 +47,19 @@ typedef int (*lua_CFunction) (hksc_State *H);
 /* putany targets that Havok Script is used on */
 #define HKSC_TARGET_PLAT_DEFAULT 0 /* the host platform */
 #define HKSC_TARGET_PLAT_WII 1
-#define HKSC_TARGET_PLAT_WIIU 2
+#define HKSC_TARGET_PLAT_CAFE 2
 #define HKSC_TARGET_PLAT_NX 3
 #define HKSC_TARGET_PLAT_PS3 4
 #define HKSC_TARGET_PLAT_PSV 5
 #define HKSC_TARGET_PLAT_ORBIS 6
 #define HKSC_TARGET_PLAT_XENON 7
 #define HKSC_TARGET_PLAT_DURANGO 8
+#define HKSC_TARGET_PLAT_WINDOWS 9
+#define HKSC_TARGET_PLAT_GNU 10
+#define HKSC_TARGET_PLAT_DARWIN 11
+
+/* the last of the embedded devices */
+#define HKSC_TARGET_PLAT_LAST_EMBEDDED HKSC_TARGET_PLAT_DURANGO
 
 #define HKSC_TARGET_WS_DEFAULT 0  /* host word-size */
 #define HKSC_TARGET_WS_16 1

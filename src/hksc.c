@@ -131,7 +131,10 @@ static void print_usage(void)
   fputs(
    "\nPLATFORM names (to use with '-m')\n"
    /* most of these platforms are the same where it matters to the compiler,
-   i.e. when it comes to word-size and integer-size */
+   i.e. when it comes to word-size and integer-size - providing options for
+   all of these platforms is to avoid confusion for the user when, for example,
+   they want to target macos, where `-mwindows' would suffice, but they probably
+   want to do `-mdarwin' */
    "  wii\n"
    "  wiiu\n"
    "  nx\n"
@@ -141,6 +144,7 @@ static void print_usage(void)
    "  durango\n"
    "  windows\n"
    "  gnu\n"
+   "  darwin\n"
    "'-m' options to target the default platform with specified word-sizes\n"
    "  16   (16-bit integers, 16-bit addresses)\n"
    "  32   (32-bit integers, 32-bit addresses)\n"
@@ -226,9 +230,22 @@ static int hksc_casecmp(const char *str1, const char *str2)
   }
   return (*str1 == *str2);
 }
+
+static int hksc_casencmp(const char *str1, const char *str2, size_t n)
+{
+  size_t i = 0;
+  for (; *str1 && *str2; str1++, str2++) {
+    if (i++ >= n)
+      return 1;
+    if (tolower(*str1) != tolower(*str2))
+      return 0;
+  }
+  return (i >= n) || (*str1 == *str2);
+}
 #endif /* HKSC_MULTIPLAT */
 
 #define STREQ(a,b) (hksc_casecmp(a,b))
+#define STREQN(a,b) (hksc_casencmp(a,"" b,sizeof(b)-1))
 #define IS(s) (strcmp(argv[i],s)==0)
 #define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
 
@@ -344,6 +361,7 @@ static int doargs(int argc, char *argv[])
 #ifdef HKSC_MULTIPLAT
     else if (HAS("-m"))
     {
+      int optionalnumber = 0; /* numeric suffix is optional */
       char *arg;
       if (argv[i][2] == 0) {
         if (++i >= argc) usage("'-m' needs an argument");
@@ -357,8 +375,8 @@ static int doargs(int argc, char *argv[])
         usage("'-m' needs an argument");
       else if (STREQ(arg, "wii"))
         target_plat = HKSC_TARGET_PLAT_WII;
-      else if (STREQ(arg, "wiiu"))
-        target_plat = HKSC_TARGET_PLAT_WIIU;
+      else if (STREQ(arg, "wiiu") || STREQ(arg, "cafe"))
+        target_plat = HKSC_TARGET_PLAT_CAFE;
       else if (STREQ(arg, "switch") || STREQ(arg, "nx"))
         target_plat = HKSC_TARGET_PLAT_NX;
       else if (STREQ(arg, "ps3"))
@@ -371,14 +389,43 @@ static int doargs(int argc, char *argv[])
         target_plat = HKSC_TARGET_PLAT_XENON;
       else if (STREQ(arg, "xboxone") || STREQ(arg, "durango"))
         target_plat = HKSC_TARGET_PLAT_DURANGO;
-      else if (arg[0] == '1' && arg[1] == '6')
-        target_ws = HKSC_TARGET_WS_16;
-      else if (arg[0] == '3' && arg[1] == '2')
-        target_ws = HKSC_TARGET_WS_32;
-      else if (arg[0] == '6' && arg[1] == '4')
-        target_ws = HKSC_TARGET_WS_64;
-      else
-        usage("invalid argument given with '-m'");
+      else if (STREQN(arg, "windows")) {
+        optionalnumber = 1;
+        target_plat = HKSC_TARGET_PLAT_WINDOWS;
+        arg += sizeof("windows")-1;
+        goto numsuffix;
+      }
+      else if (STREQN(arg, "win")) {
+        optionalnumber = 1;
+        target_plat = HKSC_TARGET_PLAT_WINDOWS;
+        arg += sizeof("win")-1;
+        goto numsuffix;
+      }
+      else if (STREQN(arg, "gnu")) {
+        optionalnumber = 1;
+        target_plat = HKSC_TARGET_PLAT_GNU;
+        arg += sizeof("gnu")-1;
+        goto numsuffix;
+      }
+      else if (STREQN(arg, "darwin")) {
+        optionalnumber = 1;
+        target_plat = HKSC_TARGET_PLAT_DARWIN;
+        arg += sizeof("darwin")-1;
+        goto numsuffix;
+      }
+      else { /* `-m<16|32|64>' */
+        numsuffix:
+        if (arg[0] == '1' && arg[1] == '6')
+          target_ws = HKSC_TARGET_WS_16;
+        else if (arg[0] == '3' && arg[1] == '2')
+          target_ws = HKSC_TARGET_WS_32;
+        else if (arg[0] == '6' && arg[1] == '4')
+          target_ws = HKSC_TARGET_WS_64;
+        else {
+          if (!optionalnumber)
+            usage("invalid argument given with '-m'");
+        }
+      }
     }
 #endif /* HKSC_MULTIPLAT */
     else if (IS("-p") || IS("--parse"))      /* parse only */
