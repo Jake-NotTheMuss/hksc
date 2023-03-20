@@ -6,6 +6,7 @@ top_builddir=@top_builddir@
 
 EXESUF=@EXESUF@
 
+HKSC_TARGET_PLAT=@HKSC_TARGET_PLAT@
 HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
 HKSC_GEN_PROFILE=@HKSC_GEN_PROFILE@
 HKSC_GEN_DEBUG=@HKSC_GEN_DEBUG@
@@ -31,9 +32,9 @@ HKSC_NAME=hksc
 HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
 
 # flags for loading source files
-HKSCAFLAGS=-L $(HKSC_PREFIX_MAP)
+HKSCAFLAGS=-L $(HKSC_TARGET_PLAT) $(HKSC_PREFIX_MAP)
 # flags for loading binary files
-HKSCBFLAGS=
+HKSCBFLAGS=$(HKSC_TARGET_PLAT)
 
 TESTMAKEFLAGS=
 
@@ -154,16 +155,14 @@ error:
 	@$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug $(srcdir)/$*.lua
 # 	compare code with expected
 	@echo $(HKSC_CMP_CODE) $*.cexpect $*.luac >> $(MAKELOG)
-	@ $(HKSC_CMP_CODE) $*.cexpect $*.luac; \
-	if test $$? = 0; then echo "$*.luac OK"; fi
+	@ $(HKSC_CMP_CODE) $*.cexpect $*.luac &&  echo "$*.luac OK"
 # 	compare profile info with expected
 	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile >> $(MAKELOG)
-	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile; \
-	if test $$? = 0; then echo "$*.luaprofile OK"; fi
+	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile && \
+	echo "$*.luaprofile OK"
 # 	compare debug info with expected
 	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
-	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug; \
-	if test $$? = 0; then echo "$*.luadebug OK"; fi
+	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug && echo "$*.luadebug OK"
 # 	check bytecode loader by loading $*.luac and dumping it again
 # 	echo the command for logs
 	@echo HKSC='$(HKSC)' HKSCFLAGS='$(HKSCBFLAGS)' $(srcdir)/redump \

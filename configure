@@ -122,6 +122,7 @@ testing=0
 debug_pass=
 compat_vararg=1
 lua_multiplat=0
+HKSC_TARGET_PLAT=
 
 test -e "$config_file" && . "$config_file"
 
@@ -161,6 +162,7 @@ for opt; do
 		--no-emu-ui64) emu_ui64=0 ;;
 		--multi-plat*) lua_multiplat=1;;
 		--no-multi-plat*) lua_multiplat=0;;
+		--target=*) lua_multiplat=1; HKSC_TARGET_PLAT=-m${opt#*=};;
 		--debug) debug=1 ;;
 		--release) debug=0 ;;
 		--testing) testing=1 ;;
@@ -500,7 +502,7 @@ config_makefile()
 			s&@top_srcdir@&$top_srcdir&;t t
 			s&@top_builddir@&$top_builddir&;t t
 			s&@LINK_LIBHKSC_TYPE@&$LINK_LIBHKSC_TYPE&;t t
-			s&@HKSC_SUPPRESS_LOGGING@&$HKSC_SUPPRESS_LOGGING&;t t
+			s&@HKSC_TARGET_PLAT@&$HKSC_TARGET_PLAT&;t t
 			s&@HKSC_PREFIX_MAP@&$HKSC_PREFIX_MAP&;t t
 			s&@CONFIGURE@&$me&;t t
 			s&@WITH_COD_EXT@&$LUA_COD_YESNO&;t t
