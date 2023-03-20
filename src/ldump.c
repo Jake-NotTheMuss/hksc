@@ -276,6 +276,42 @@ static void DumpConstants(const Proto *f, DumpState *D)
   }
 }
 
+#if HKSC_FORMAT_VERSION <= 13
+#define aligned(x,n) (((x) + (n-1)) & ~(n-1))
+
+static int sizeofdebuginfo(struct target_info *target)
+{
+  /*
+  struct DebugInfo {
+    int line_defined;
+    int last_line_defined;
+    int sizelineinfo;
+    int *lineinfo;
+    int sizeupvalues;
+    TString **upvalues;
+    TString *source;
+    TString *name;
+    int sizelocvars;
+    LocVar *locvars;
+  };
+  */
+  int sizeint = target->sizeint;
+  int sizesize = target->sizesize;
+  int size = 0;
+  size += sizeint * 3; /* line_defined, last_line_defined, sizelineinfo */
+  size = aligned(size,sizesize);
+  size += sizesize; /* lineinfo */
+  size += sizeint; /* sizeupvalues */
+  size = aligned(size,sizesize);
+  size += sizesize; /* upvalues */
+  size += sizesize * 2; /* source, name */
+  size += sizeint; /* sizelocvars */
+  size = aligned(size,sizesize);
+  size += sizesize; /* locvars */
+  return size;
+}
+#endif /* HKSC_FORMAT_VERSION <= 13 */
+
 static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
@@ -289,7 +325,7 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 #endif /* LUA_CODT6 */
   } else if (D->striplevel == BYTECODE_STRIPPING_PROFILING) {
 #if HKSC_FORMAT_VERSION <= 13
-    DumpInt(40,D);
+    DumpInt(sizeofdebuginfo(&D->target),D);
 #else /* HKSC_FORMAT_VERSION > 13 */
     DumpInt(1,D);
     DumpInt(0,D); /* strip line info */
@@ -326,7 +362,7 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
     int sizeneeded = f->sizelocvars*(D->target.sizesize + D->target.sizeint*2) +
                      f->sizeupvalues*(D->target.sizesize) +
                      f->sizelineinfo*(D->target.sizeint);
-    DumpInt(sizeneeded+40,D);
+    DumpInt(sizeneeded+sizeofdebuginfo(&D->target),D);
 #else /* HKSC_FORMAT_VERSION > 13 */
     DumpInt(1,D);
     DumpInt(f->sizelineinfo,D);
