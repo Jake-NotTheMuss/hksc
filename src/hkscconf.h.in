@@ -66,9 +66,10 @@
 #undef LUA_CODT7
 #endif
 
-/* COD compatibility */
+/* T6 compatibility */
 #if @LUACONFIG_CODT6@
 #define LUA_CODT6
+#undef LUA_CODIW6
 #else
 #undef LUA_CODT6
 #undef LUA_CODT7
@@ -95,9 +96,10 @@
 #undef HKSC_TESTING
 #endif
 
+#ifdef HKSC_DECOMPILER
 /* set which decompiler pass to test */
 #define HKSC_DEBUG_PASS @HKSC_DEBUG_PASS@
-#if HKSC_DEBUG_PASS == 0 || !defined(HKSC_DECOMPILER)
+#else
 #undef HKSC_DEBUG_PASS
 #endif
 
