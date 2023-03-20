@@ -324,14 +324,19 @@ static void LoadConstants(LoadState *S, Proto *f)
 static void LoadDebug(LoadState *S, Proto *f, TString *p)
 {
   int i,n;
+#if HKSC_FORMAT_VERSION > 13
   f->sizelineinfo=LoadInt(S);
   f->sizelocvars=LoadInt(S);
   f->sizeupvalues=LoadInt(S);
+#endif /* HKSC_FORMAT_VERSION > 13 */
   f->linedefined=LoadInt(S);
   f->lastlinedefined=LoadInt(S);
   f->source = LoadString(S);
   if (f->source == NULL) f->source = p;
   f->name = LoadString(S);
+#if HKSC_FORMAT_VERSION <= 13
+  f->sizelineinfo=LoadInt(S);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
   n=f->sizelineinfo;
   f->lineinfo=luaM_newvector(S->H,n,int);
 #ifdef HKSC_MULTIPLAT
@@ -344,7 +349,9 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
     for (i=0; i<n; i++) f->lineinfo[i] = LoadInt(S);
   }
 #endif /* HKSC_MULTIPLAT */
-
+#if HKSC_FORMAT_VERSION <= 13
+  f->sizelocvars=LoadInt(S);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
   n=f->sizelocvars;
   f->locvars=luaM_newvector(S->H,n,LocVar);
   for (i=0; i<n; i++) f->locvars[i].varname=NULL;
@@ -354,6 +361,9 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
     f->locvars[i].startpc=LoadInt(S);
     f->locvars[i].endpc=LoadInt(S);
   }
+#if HKSC_FORMAT_VERSION <= 13
+  f->sizeupvalues=LoadInt(S);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
   n=f->sizeupvalues;
   f->upvalues=luaM_newvector(S->H,n,TString *);
   for (i=0; i<n; i++) f->upvalues[i]=NULL;
@@ -370,7 +380,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
     f->sizelocvars = 0;
     f->locvars = NULL;
     f->sizeupvalues = 0;
-    f->sizeupvalues = 0;
+    f->upvalues = NULL;
   }
 #endif /* LUA_CODT6 */
 }
@@ -398,8 +408,7 @@ static Proto *LoadFunction(LoadState *S, TString *p, LoadState *debugS)
   {
     if (debugS != NULL) {
 #ifdef LUA_CODT6
-      if (LoadInt(debugS) != 1)
-         error(debugS, "bad data");
+      if (LoadInt(debugS) != 0)
 #endif /* LUA_CODT6 */
       LoadDebug(debugS,f,p);
     }

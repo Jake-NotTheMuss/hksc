@@ -281,16 +281,21 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
   int i,n;
   if (D->striplevel == BYTECODE_STRIPPING_ALL) {
 #ifdef LUA_CODT6
+    /* T6/T7 */
     DumpInt(1,D);
     DumpInt(f->hash,D);
 #else /* !LUA_CODT6 */
     DumpInt(0,D);
 #endif /* LUA_CODT6 */
   } else if (D->striplevel == BYTECODE_STRIPPING_PROFILING) {
+#if HKSC_FORMAT_VERSION <= 13
+    DumpInt(40,D);
+#else /* HKSC_FORMAT_VERSION > 13 */
     DumpInt(1,D);
     DumpInt(0,D); /* strip line info */
     DumpInt(0,D); /* strip local names */
     DumpInt(0,D); /* strip upval names */
+#endif /* HKSC_FORMAT_VERSION <= 13 */
     DumpInt(f->linedefined,D);
     DumpInt(f->lastlinedefined,D);
     if (p == NULL) /* main chunk */
@@ -298,6 +303,11 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
     else
       DumpString(NULL,D);
     DumpString(f->name,D);
+#if HKSC_FORMAT_VERSION <= 13
+    DumpInt(0,D); /* strip line info */
+    DumpInt(0,D); /* strip local names */
+    DumpInt(0,D); /* strip upval names */
+#endif /* HKSC_FORMAT_VERSION <= 13 */
   }
 #ifdef LUA_CODT6
   else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
@@ -312,10 +322,17 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
   }
 #endif /* LUA_CODT6 */
   else { /* (BYTECODE_STRIPPING_NONE || BYTECODE_STRIPPING_DEBUG_ONLY) */
+#if HKSC_FORMAT_VERSION <= 13
+    int sizeneeded = f->sizelocvars*(D->target.sizesize + D->target.sizeint*2) +
+                     f->sizeupvalues*(D->target.sizesize) +
+                     f->sizelineinfo*(D->target.sizeint);
+    DumpInt(sizeneeded+40,D);
+#else /* HKSC_FORMAT_VERSION > 13 */
     DumpInt(1,D);
     DumpInt(f->sizelineinfo,D);
     DumpInt(f->sizelocvars,D);
     DumpInt(f->sizeupvalues,D);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
     DumpInt(f->linedefined,D);
     DumpInt(f->lastlinedefined,D);
     if (p == NULL)
@@ -323,15 +340,24 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
     else
       DumpString(NULL,D);
     DumpString(f->name,D);
+#if HKSC_FORMAT_VERSION <= 13
+    DumpInt(f->sizelineinfo,D);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
     n=f->sizelineinfo;
     for (i=0; i<n; i++)
       DumpInt(f->lineinfo[i],D);
+#if HKSC_FORMAT_VERSION <= 13
+    DumpInt(f->sizelocvars,D);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
     n=f->sizelocvars;
     for (i=0; i<n; i++) {
       DumpString(f->locvars[i].varname,D);
       DumpInt(f->locvars[i].startpc,D);
       DumpInt(f->locvars[i].endpc,D);
     }
+#if HKSC_FORMAT_VERSION <= 13
+    DumpInt(f->sizeupvalues,D);
+#endif /* HKSC_FORMAT_VERSION <= 13 */
     n=f->sizeupvalues;
     for (i=0; i<n; i++)
       DumpString(f->upvalues[i],D);

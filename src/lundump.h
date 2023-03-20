@@ -91,12 +91,15 @@ LUAI_FUNC void luaU_print (const Proto *f, int full);
 /* for header of binary files -- this is the official format */
 #if defined(LUA_CODT7)
 #define LUAC_FORMAT  14 /* T7 format version */
+#define HKSC_FORMAT_VERSION  14 /* T7 format version */
 #elif defined(LUA_CODT6)
 #define LUAC_FORMAT  13 /* T6 format version */
+#define HKSC_FORMAT_VERSION  13 /* T6 format version */
 #elif defined(HKSC_FORMAT_VERSION)
 #define LUAC_FORMAT  HKSC_FORMAT_VERSION
 #else
 #define LUAC_FORMAT  14
+#define HKSC_FORMAT_VERSION  14
 /*#error "You need to define HKSC_FORMAT_VERSION"*/
 #endif
 
