@@ -121,9 +121,7 @@ static lua_Number LoadNumber(LoadState *S)
 
 static TString *LoadString(LoadState *S)
 {
-  size_t size;
-  LoadVar(S,size);
-  correctendianness(S,size);
+  size_t size = LoadSize(S);
   if (size==0)
     return NULL;
   else
@@ -251,9 +249,9 @@ static size_t LoadSize64(LoadState *S)
 
 static void LoadCode(LoadState *S, Proto *f)
 {
-  char buf[sizeof(Instruction)];
+  char buff[sizeof(Instruction)];
   int n=cast_int(LoadSize(S));
-  LoadBlock(S,buf,(aligned2instr(S->pos) - S->pos));
+  LoadBlock(S,buff,(aligned2instr(S->pos) - S->pos));
   f->code=luaM_newvector(S->H,n,Instruction);
   f->sizecode=n;
 #ifdef HKSC_MULTIPLAT
@@ -336,7 +334,17 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   f->name = LoadString(S);
   n=f->sizelineinfo;
   f->lineinfo=luaM_newvector(S->H,n,int);
+#ifdef HKSC_MULTIPLAT
+  if (S->target.sizeint == sizeof(int)) {
+#endif /* HKSC_MULTIPLAT */
   LoadVector(S,f->lineinfo,n,sizeof(int));
+#ifdef HKSC_MULTIPLAT
+  }
+  else {
+    for (i=0; i<n; i++) f->lineinfo[i] = LoadInt(S);
+  }
+#endif /* HKSC_MULTIPLAT */
+
   n=f->sizelocvars;
   f->locvars=luaM_newvector(S->H,n,LocVar);
   for (i=0; i<n; i++) f->locvars[i].varname=NULL;
@@ -357,7 +365,12 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
     luaM_freearray(S->H, f->lineinfo, f->sizelineinfo, int);
     luaM_freearray(S->H, f->locvars, f->sizelocvars, LocVar);
     luaM_freearray(S->H, f->upvalues, f->sizeupvalues, TString *);
-    memset(f, 0, sizeof(Proto));
+    f->sizelineinfo = 0;
+    f->lineinfo = NULL;
+    f->sizelocvars = 0;
+    f->locvars = NULL;
+    f->sizeupvalues = 0;
+    f->sizeupvalues = 0;
   }
 #endif /* LUA_CODT6 */
 }
@@ -555,6 +568,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.name = H->currdebugfile;
       SD.pos = 0;
       SD.desc="debug info";
+      SD.target = S.target;
 #ifdef HKSC_MULTIPLAT
       SD.loadint = S.loadint;
       SD.loadsize = S.loadsize;
