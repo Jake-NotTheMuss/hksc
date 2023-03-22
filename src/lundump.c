@@ -82,10 +82,10 @@ static int LoadInt(LoadState *S)
 #ifndef HKSC_MULTIPLAT
   LoadVar(S,x);
   correctendianness(S,x);
+  IF(x<0, "bad integer");
 #else /* HKSC_MULTIPLAY */
   x = (*S->loadint)(S);
 #endif /* HKSC_MULTIPLAT */
-  IF(x<0, "bad integer");
   return x;
 }
 
