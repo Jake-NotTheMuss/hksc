@@ -2366,26 +2366,15 @@ typedef struct StackAnalyzer {
   const Instruction *code;
 } StackAnalyzer;
 
-/*
-** Second pass `basic block' handler - the function's registers and stack are
-** analyzed and local variables are detected. With information about the local
-** variables, any undetected do-end blocks can be detected in this pass.
-*/
-static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bl)
-{
-  const Instruction *code = sa->code;
-  BasicBlock *nextchild = bl->firstchild;
-  int nextchildstart = nextchild ? nextchild->startpc : -1;
-  int startpc = bl->startpc;
-  int endpc = bl->endpc;
-  int type = bl->type;
-  lua_assert(sa->pc == startpc);
 #ifdef LUA_DEBUG
-  if (type == BBL_FUNCTION) {
-    lua_assert(sa->pc == 0);
-    lua_assert(endpc == sa->sizecode-1);
-  }
-  else if (type < BBL_DO) {
+static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
+{
+  int startpc = bbl->startpc;
+  int endpc = bbl->endpc;
+  int type = bbl->type;
+  lua_assert(startpc <= endpc);
+  lua_assert(type >= 0 && type < MAX_BBLTYPE);
+  if (type < BBL_DO && type != BBL_FUNCTION) {
     lua_assert(test_ins_property(fs, endpc, INS_LOOPEND));
     if (type == BBL_WHILE)
       lua_assert(test_ins_property(fs, startpc, INS_WHILESTAT));
@@ -2396,7 +2385,30 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bl)
     else if (type == BBL_FORLIST)
       lua_assert(test_ins_property(fs, startpc, INS_FORLIST));
   }
+}
+#else /* !LUA_DEBUG */
+#define assertbblvalid(fs,bbl) ((void)(fs), (void)(bbl))
 #endif /* LUA_DEBUG */
+
+/*
+** Second pass `basic block' handler - the function's registers and stack are
+** analyzed and local variables are detected. With information about the local
+** variables, any undetected do-end blocks can be detected in this pass.
+*/
+static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
+{
+  const Instruction *code = sa->code;
+  BasicBlock *nextchild = bbl->firstchild;
+  int nextchildstart = nextchild ? nextchild->startpc : -1;
+  int startpc = bbl->startpc;
+  int endpc = bbl->endpc;
+  int type = bbl->type;
+  lua_assert(sa->pc == startpc);
+  if (type == BBL_FUNCTION) {
+    lua_assert(sa->pc == 0);
+    lua_assert(endpc == sa->sizecode-1);
+  }
+  assertbblvalid(fs,bbl);
   printf("pass2: entered block %s (%d-%d) at pc (%d)\n", bbltypename(type),
          startpc+1, endpc+1, sa->pc+1);
   for (; sa->pc < sa->sizecode; sa->pc++) {
