@@ -545,11 +545,8 @@ static int hksc_dump_f(hksc_State *H, void *ud) {
       return 0;
   }
 #ifdef HKSC_DECOMPILER
-  if (decompiling) {
-    int status = hksc_dump_decomp(H, filename);
-    if (status)
-      return status;
-  }
+  if (decompiling)
+    return hksc_dump_decomp(H, filename);
 #endif /* HKSC_DECOMPILER */
   return hksc_dump_bytecode(H, filename);
 }

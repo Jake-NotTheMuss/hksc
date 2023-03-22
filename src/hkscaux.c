@@ -223,7 +223,7 @@ int hksc_dump_decomp(hksc_State *H, const char *filename) {
   FILE *out; /* output file */
   const char *outname; /* output file name */
   if (output == NULL) /* generate an output name if needed */
-    outname = luac2luadec(H, filename);
+    outname = basename(luac2luadec(H, filename));
   else
     outname = output;
   out = fopen(outname, "w");
