@@ -147,7 +147,7 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 */
 #define HKSC_MODE_DEFAULT   0 /* infer from content of first file */
 #define HKSC_MODE_SOURCE   1 /* compiling source */
-#define HKSC_MODE_BINARY 2 /* decompiling bytecode */
+#define HKSC_MODE_BINARY 2 /* loading bytecode */
 
 
 /*
@@ -160,7 +160,7 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 #define BYTECODE_STRIPPING_DEBUG_ONLY 3
 #define BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION 4
 #endif /* LUA_CODT6 */
-
+ 
 /*
 ** Lua compiler settings (to be specified by the host program)
 */
