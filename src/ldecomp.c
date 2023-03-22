@@ -1750,34 +1750,59 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         lua_assert(pc > 0);
         prevop = GET_OPCODE(code[pc-1]);
         if (prevop == OP_TESTSET) {/* a jump after OP_TESTSET is not a branch */
-          if (ca->testset.endpc == -1) {
-            ca->testset.endpc = target;
+          if (ca->testset.endpc == -1) { /* no pending testset expression */
+            ca->testset.endpc = target; /* create a new testset expression */
             init_ins_property(fs, target-1, INS_TESTSETEND);
+            /* Some testset expressions can end with non-testset-controlled
+               jumps, i.e. jumps that follow a test instruction that is not
+               OP_TESTSET. For example:
+                  local a;
+                  a = a .. b or a or b;
+               The above code will generate the following opcodes:
+               OP_TESTSET      -- if (a .. b) then a = a .. b;
+               OP_JMP          -- true-exit
+               OP_TEST         -- if (a) then ; -- do nothing
+               OP_JMP          -- true-exit
+               OP_GETBLOBAL    -- if (b) then a = b;
+               The code analyzer will encounter the final jump first, and it
+               will detect a branch. But now, it has encountered the OP_TESTSET,
+               so it has to check if it previously marked the jump target as the
+               end of a branch, and correct the erroneous branch detection. */
             if (test_ins_property(fs, target-1, INS_BLOCKEND)) {
-              int testsetpc;
+              int testsetpc; /* pc to traverse this testset expression */
+              /* there can be no blocks inside a testset expression, this was
+                 a false positive; unmark the target as a block-ending */
               unset_ins_property(fs, target-1, INS_BLOCKEND);
+              /* todo: should this be a code check instead? */
               lua_assert(nextsibling == NULL ||
                          nextsibling == fs->a->bbllist.first);
               printbblmsg("nextbranch =", nextbranch);
               printf("cleaning up testset expression from (%d-%d)\n",
                      pc+1, target);
               printf("--\n");
+              /* now, any and all blocks that were detected within this testset
+                 expression need to be deleted, as they are all false */
               for (testsetpc = pc; testsetpc < target; testsetpc++) {
+                /* delete all blocks which start on TESTSETPC */
                 while (nextsibling && nextsibling->startpc == testsetpc) {
                   BasicBlock *nextnextsibling = nextsibling->nextsibling;
+                  /* unlink NEXTSIBLING from the chain; it will be deleted */
                   fs->a->bbllist.first = nextsibling->next;
                   if (nextsibling == fs->a->bbllist.last)
                     fs->a->bbllist.last = fs->a->bbllist.first;
                   printbblmsg("deleting erroneous block", nextsibling);
+                  /* todo: what if the block endpc is after target? */
                   luaM_free(fs->H, nextsibling);
-                  nextsibling = nextnextsibling;
+                  nextsibling = nextnextsibling; /* update NEXTSIBLING */
                 }
+                /* make sure none of these markings are on this pc */
                 unset_ins_property(fs, testsetpc, INS_BRANCHFAIL);
                 unset_ins_property(fs, testsetpc+1, INS_BRANCHBEGIN);
                 unset_ins_property(fs, testsetpc, INS_BRANCHPASS);
                 unset_ins_property(fs, testsetpc, INS_BLOCKEND);
               }
               printf("--\n");
+              /* also update NEXTBRANCH */
               if (nextsibling && nextsibling->type == BBL_IF)
                 nextbranch = nextsibling;
               else
@@ -1785,7 +1810,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               printbblmsg("nextbranch =", nextbranch);
             }
           }
-          else {
+          else { /* part of a pending testset expression */
             if (ca->testset.endpc != target) {
               /* bad code */
             }
