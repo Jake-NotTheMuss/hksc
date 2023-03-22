@@ -371,7 +371,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
 #ifndef LUA_CODT6
   /* all the arrays above needed to be allocated in any case to read and
   advance over the data, but now it needs to be freed if ignoring debug info */
-  if (hksc_getIgnoreDebug(S->H)) {
+  if (hksc_getignoredebug(S->H)) {
     luaM_freearray(S->H, f->lineinfo, f->sizelineinfo, int);
     luaM_freearray(S->H, f->locvars, f->sizelocvars, LocVar);
     luaM_freearray(S->H, f->upvalues, f->sizeupvalues, TString *);

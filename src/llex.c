@@ -649,7 +649,7 @@ static int readBOM (LexState *ls) {
 }
 
 
-void luaX_readFirstToken (LexState *ls) {
+void luaX_readfirsttoken (LexState *ls) {
   luaZ_resetbuffer(ls->buff);
   if (!zhasmore(ls->z)) { /* empty stream */
     ls->t.token = TK_EOS;

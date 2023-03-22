@@ -88,17 +88,17 @@ struct hksc_State {
 #define hksc_seterror(H,s) ((H)->errormsg = (s))
 
 /* macros for setting compiler options */
-#define hksc_getEmitStruct(H) (Settings(H).emit_struct)
-#define hksc_setEmitStruct(H,v) (Settings(H).emit_struct = (v))
-#define hksc_getIntLiteralsEnabled(H) (Settings(H).enable_int_literals)
-#define hksc_setIntLiteralsEnabled(H,v) (Settings(H).enable_int_literals = (v))
-#define hksc_getBytecodeStrippingLevel(H) (Settings(H).strip)
-#define hksc_setBytecodeStrippingLevel(H,v) (Settings(H).strip = (v))
-#define hksc_getIgnoreDebug(H) (Settings(H).ignore_debug)
-#define hksc_setIgnoreDebug(H,v) (Settings(H).ignore_debug = (v))
+#define hksc_getemitstruct(H) (Settings(H).emit_struct)
+#define hksc_setemitstruct(H,v) (Settings(H).emit_struct = (v))
+#define hksc_getintliteralsenabled(H) (Settings(H).enable_int_literals)
+#define hksc_setintliteralsenabled(H,v) (Settings(H).enable_int_literals = (v))
+#define hksc_getbytecodestrippinglevel(H) (Settings(H).strip)
+#define hksc_setbytecodestrippinglevel(H,v) (Settings(H).strip = (v))
+#define hksc_getignoredebug(H) (Settings(H).ignore_debug)
+#define hksc_setignoredebug(H,v) (Settings(H).ignore_debug = (v))
 #ifdef HKSC_DECOMPILER
-#define hksc_getMatchLineInfo(H) (Settings(H).match_line_info)
-#define hksc_setMatchLineInfo(H,v) (Settings(H).match_line_info = (v))
+#define hksc_getmatchlineinfo(H) (Settings(H).match_line_info)
+#define hksc_setmatchlineinfo(H,v) (Settings(H).match_line_info = (v))
 #endif /* HKSC_DECOMPILER */
 
 

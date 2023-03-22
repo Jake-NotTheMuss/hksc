@@ -70,7 +70,7 @@ typedef struct LexState {
   Token lookahead;  /* look ahead token */
   struct FuncState *fs;  /* `FuncState' is private to the parser */
   struct hksc_State *H;
-  struct FunctionNameStack *functionNameStack;
+  struct FunctionNameStack *funcnamestack;
   ZIO *z;  /* input stream */
   Mbuffer *buff;  /* buffer for tokens */
   TString *source;  /* current source name */
@@ -84,7 +84,7 @@ LUAI_FUNC void luaX_setinput (hksc_State *H, LexState *LS, ZIO *z,
 LUAI_FUNC TString *luaX_newstring (LexState *LS, const char *str, size_t l);
 LUAI_FUNC void luaX_next (LexState *ls);
 LUAI_FUNC void luaX_lookahead (LexState *ls);
-LUAI_FUNC void luaX_readFirstToken (LexState *ls);
+LUAI_FUNC void luaX_readfirsttoken (LexState *ls);
 LUAI_FUNC void luaX_lexerror (LexState *ls, const char *msg, int token);
 LUAI_FUNC void luaX_syntaxerror (LexState *ls, const char *s);
 LUAI_FUNC void luaX_inputerror (LexState *ls, const char *s);

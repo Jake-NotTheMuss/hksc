@@ -152,7 +152,7 @@ void luacod_startcycle(hksc_State *H, const char *name) {
       debugfile = lua2luadebug(H, name);
     if (profilefile == NULL)
       profilefile = lua2luaprofile(H, name);
-    lua_setDebugFile(H, debugfile);
+    lua_setdebugfile(H, debugfile);
   }
 }
 
@@ -163,13 +163,13 @@ void luacod_endcycle(hksc_State *H, const char *name) {
      run in that case */
   debugfile = NULL;
   profilefile = NULL;
-  lua_setDebugFile(H, NULL);
+  lua_setdebugfile(H, NULL);
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
   FILE *debug_file_; \
   xopenfile(debug_file_,name,mode); \
-  lua_setBytecodeStrippingLevel(H,striplevel); \
+  lua_setbytecodestrippinglevel(H,striplevel); \
   lua_dump(H,writer_2file,debug_file_); \
   if (ferror(debug_file_)) cannot("write",name); \
   if (fclose(debug_file_)) cannot("close",name); \
@@ -187,7 +187,7 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
       profilefile = lua2luaprofile(H, outname);
     dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
   }
-  lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL); /* reset */
+  lua_setbytecodestrippinglevel(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }
 #endif /* LUA_CODT6 */

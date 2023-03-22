@@ -464,7 +464,7 @@ int luaU_dump (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.writer=w;
   D.data=data;
   D.pos=0;
-  D.striplevel=hksc_getBytecodeStrippingLevel(H);
+  D.striplevel=hksc_getbytecodestrippinglevel(H);
   D.status=0;
   luaU_target_info(H, &D.target);
   D.swapendian = D.target.needendianswap;

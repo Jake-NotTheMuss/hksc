@@ -357,7 +357,7 @@ static int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
                              const char *name) {
   LoadDebug *ld;
   FILE *f;
-  lua_assert(hksc_getIgnoreDebug(H) == 0);
+  lua_assert(hksc_getignoredebug(H) == 0);
   if (H->currdebugfile == NULL) {
     luaD_setferror(H, "debug file name not set for input `%s'", name);
     return LUA_ERRRUN;
@@ -380,7 +380,7 @@ static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
   LoadDebug *ld;
   FILE *f;
   UNUSED(name);
-  lua_assert(hksc_getIgnoreDebug(H) == 0);
+  lua_assert(hksc_getignoredebug(H) == 0);
   ld = z->data;
   f = ld->f;
   luaM_free(H, ld); UNUSED(ld);

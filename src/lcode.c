@@ -263,10 +263,10 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
   TValue o;
   lua_assert(type == TK_LITERALLUD || type == TK_LITERALUI64);
   if (type == TK_LITERALLUD &&
-      (hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_LUD))
+      (hksc_getintliteralsenabled(fs->H) & INT_LITERALS_LUD))
     setpvalue(&o, lua_ui64tolud(l));
   else if (type == TK_LITERALUI64) {
-    if ((hksc_getIntLiteralsEnabled(fs->H) & INT_LITERALS_UI64) == 0)
+    if ((hksc_getintliteralsenabled(fs->H) & INT_LITERALS_UI64) == 0)
       goto literals_not_enabled;
 #ifdef HKSC_UI64API
     else

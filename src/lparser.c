@@ -373,9 +373,9 @@ struct FunctionNameStack {
 #define MAX_FUNCNAME 512
 
 /* add a name to the current list of name parts */
-static void addNamePart (LexState *ls, TString *name, int type) {
+static void addnamepart (LexState *ls, TString *name, int type) {
   NamePart *namepart;
-  struct FunctionNameStack *stk = ls->functionNameStack;
+  struct FunctionNameStack *stk = ls->funcnamestack;
   lua_assert(stk != NULL);
   lua_assert(type != NAMEPART_NONE);
   if (type == NAMEPART_NAME) /* regular names can only be first in the list */
@@ -395,8 +395,8 @@ static void addNamePart (LexState *ls, TString *name, int type) {
 
 
 /* free the entire name part stack */
-static void freeFunctionNameStack (LexState *ls) {
-  struct FunctionNameStack *stk = ls->functionNameStack;
+static void freefuncnamestack (LexState *ls) {
+  struct FunctionNameStack *stk = ls->funcnamestack;
   lua_assert(stk != NULL);
   if (stk->names != NULL)
     luaM_freearray(ls->H, stk->names, stk->alloc, NamePart);
@@ -411,12 +411,12 @@ static void freeFunctionNameStack (LexState *ls) {
 ** overrun vulnerability, and cannot be preserved. The other is a benign one
 ** which causes too-long function names to contain an embedded null terminator
 */
-static TString *buildFunctionName (LexState *ls) {
+static TString *buildfuncname (LexState *ls) {
   char buff[MAX_FUNCNAME];
   int i;
   size_t len = 0;
   size_t namelen;
-  struct FunctionNameStack *stk = ls->functionNameStack;
+  struct FunctionNameStack *stk = ls->funcnamestack;
   lua_assert(stk != NULL);
   for (i = 0; i < stk->used; i++) {
     size_t l;
@@ -469,7 +469,7 @@ static void open_func (LexState *ls, FuncState *fs) {
   if (ls->fs == NULL) /* main chunk */
     name = luaS_newliteral(ls->H, MAINCHUNKNAME);
   else
-    name = buildFunctionName(ls);
+    name = buildfuncname(ls);
   fs->prev = ls->fs;  /* linked list of funcstates */
   fs->ls = ls;
   fs->H = H;
@@ -528,7 +528,7 @@ static void parser_inner_func (hksc_State *H, void *ud) {
   struct FuncState *fs = p->fs;
   open_func(ls, fs);
   fs->f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
-  luaX_readFirstToken(ls);  /* read first token */
+  luaX_readfirsttoken(ls);  /* read first token */
   switch (ls->t.token) {
     case TK_BOM_UTF8:
       ls->textmode = UTF8;
@@ -555,16 +555,16 @@ Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
   struct SParser p;
   struct LexState lexstate;
   struct FuncState funcstate;
-  struct FunctionNameStack functionNameStack;
+  struct FunctionNameStack funcnamestack;
   p.ls = &lexstate;
   p.fs = &funcstate;
   lexstate.buff = buff;
-  lexstate.functionNameStack = &functionNameStack;
-  functionNameStack.names = NULL;
-  functionNameStack.used = functionNameStack.alloc = 0;
+  lexstate.funcnamestack = &funcnamestack;
+  funcnamestack.names = NULL;
+  funcnamestack.used = funcnamestack.alloc = 0;
   luaX_setinput(H, &lexstate, z, luaS_new(H, name));
   status = luaD_pcall(H, parser_inner_func, &p);
-  freeFunctionNameStack(&lexstate);
+  freefuncnamestack(&lexstate);
   if (status)
     luaD_throw(H, status); /* return the error to the outer pcall */
   luaK_optimize_function(H, funcstate.f);
@@ -592,7 +592,7 @@ static void field (LexState *ls, expdesc *v, int type) {
   checkname(ls, &key);
   if (type != NAMEPART_NONE) {
     lua_assert(type == NAMEPART_FIELD || type == NAMEPART_SELF);
-    addNamePart(ls, name, type); /* add the name part to the chain */
+    addnamepart(ls, name, type); /* add the name part to the chain */
   }
   luaK_indexed(fs, v, &key);
 }
@@ -1384,7 +1384,7 @@ static void localfunc (LexState *ls) {
   FuncState *fs = ls->fs;
   TString *name = str_checkname(ls);
   new_localvar(ls, name, 0);
-  addNamePart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
+  addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
   init_exp(&v, VLOCAL, fs->freereg);
   luaK_reserveregs(fs, 1);
   adjustlocalvars(ls, 1);
@@ -1425,7 +1425,7 @@ static int funcname (LexState *ls, expdesc *v) {
   /* funcname -> NAME {field} [`:' NAME] */
   int needself = 0;
   TString *name = singlevar(ls, v);
-  addNamePart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
+  addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
   while (ls->t.token == '.')
     field(ls, v, NAMEPART_FIELD);
   if (ls->t.token == ':') {

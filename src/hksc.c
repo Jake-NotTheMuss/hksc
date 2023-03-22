@@ -587,17 +587,17 @@ int main(int argc, char *argv[])
   if (H==NULL) fatal("cannot create state: not enough memory");
   lua_setprefixmap(H, old_prefix, new_prefix);
   lua_setmode(H, mode);
-  lua_setIntLiteralsEnabled(H,literals_enabled);
+  lua_setintliteralsenabled(H,literals_enabled);
 #ifdef LUA_CODT6
   if (dumping) {
     lua_onstartcycle(H, luacod_startcycle);
     lua_onendcycle(H, luacod_endcycle);
   }
-  lua_setBytecodeStrippingLevel(H,BYTECODE_STRIPPING_ALL);
-  lua_setIgnoreDebug(H, !withdebug);
+  lua_setbytecodestrippinglevel(H,BYTECODE_STRIPPING_ALL);
+  lua_setignoredebug(H, !withdebug);
 #else /* !LUA_CODT6 */
-  lua_setBytecodeStrippingLevel(H,striplevel);
-  lua_setIgnoreDebug(H, ignore_debug);
+  lua_setbytecodestrippinglevel(H,striplevel);
+  lua_setignoredebug(H, ignore_debug);
 #endif /* LUA_CODT6 */
 /*  if (listing)
     dumpf = hksc_dump_l;

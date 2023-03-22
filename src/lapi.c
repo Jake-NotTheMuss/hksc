@@ -215,7 +215,7 @@ LUA_API void lua_setprefixmap (hksc_State *H, const char *from, const char *to)
 
 #if defined(LUA_CODT6)
 
-LUA_API const char *lua_getDebugFile (hksc_State *H) {
+LUA_API const char *lua_getdebugfile (hksc_State *H) {
   const char *currdebugfile;
   lua_lock(H);
   currdebugfile = H->currdebugfile;
@@ -223,7 +223,7 @@ LUA_API const char *lua_getDebugFile (hksc_State *H) {
   return currdebugfile;
 }
 
-LUA_API void lua_setDebugFile (hksc_State *H, const char *name) {
+LUA_API void lua_setdebugfile (hksc_State *H, const char *name) {
   lua_lock(H);
   H->currdebugfile = name;
   lua_unlock(H);
@@ -235,85 +235,85 @@ LUA_API void lua_setDebugFile (hksc_State *H, const char *name) {
 ** compiler/decompiler settings (C -> stack)
 */
 
-LUA_API int lua_getEmitStruct (hksc_State *H) {
+LUA_API int lua_getemitstruct (hksc_State *H) {
   int emit_struct;
   lua_lock(H);
-  emit_struct = hksc_getEmitStruct(H);
+  emit_struct = hksc_getemitstruct(H);
   lua_unlock(H);
   return emit_struct;
 }
 
 
-LUA_API void lua_setEmitStruct (hksc_State *H, int emit_struct) {
+LUA_API void lua_setemitstruct (hksc_State *H, int emit_struct) {
   lua_lock(H);
-  hksc_setEmitStruct(H, emit_struct);
+  hksc_setemitstruct(H, emit_struct);
   lua_unlock(H);
 }
 
 
-LUA_API int lua_getIntLiteralsEnabled (hksc_State *H) {
+LUA_API int lua_getintliteralsenabled (hksc_State *H) {
   int enable_int_literals;
   lua_lock(H);
-  enable_int_literals = hksc_getIntLiteralsEnabled(H);
+  enable_int_literals = hksc_getintliteralsenabled(H);
   lua_unlock(H);
   return enable_int_literals;
 }
 
 
-LUA_API void lua_setIntLiteralsEnabled (hksc_State *H, int enable_int_literals)
+LUA_API void lua_setintliteralsenabled (hksc_State *H, int enable_int_literals)
 {
   lua_lock(H);
-  hksc_setIntLiteralsEnabled(H, enable_int_literals);
+  hksc_setintliteralsenabled(H, enable_int_literals);
   lua_unlock(H);
 }
 
 
-LUA_API int lua_getBytecodeStrippingLevel (hksc_State *H) {
+LUA_API int lua_getbytecodestrippinglevel (hksc_State *H) {
   int strip;
   lua_lock(H);
-  strip = hksc_getBytecodeStrippingLevel(H);
+  strip = hksc_getbytecodestrippinglevel(H);
   lua_unlock(H);
   return strip;
 }
 
 
-LUA_API void lua_setBytecodeStrippingLevel (hksc_State *H, int strip) {
+LUA_API void lua_setbytecodestrippinglevel (hksc_State *H, int strip) {
   lua_lock(H);
-  hksc_setBytecodeStrippingLevel(H, strip);
+  hksc_setbytecodestrippinglevel(H, strip);
   lua_unlock(H);
 }
 
 
-LUA_API int lua_getIgnoreDebug (hksc_State *H) {
+LUA_API int lua_getignoredebug (hksc_State *H) {
   int ignore_debug;
   lua_lock(H);
-  ignore_debug = hksc_getIgnoreDebug(H);
+  ignore_debug = hksc_getignoredebug(H);
   lua_unlock(H);
   return ignore_debug;
 }
 
 
-LUA_API void lua_setIgnoreDebug (hksc_State *H, int ignore_debug) {
+LUA_API void lua_setignoredebug (hksc_State *H, int ignore_debug) {
   lua_lock(H);
-  hksc_setIgnoreDebug(H, ignore_debug);
+  hksc_setignoredebug(H, ignore_debug);
   lua_unlock(H);
 }
 
 
 #ifdef HKSC_DECOMPILER
 
-LUA_API int lua_getMatchLineInfo (hksc_State *H) {
+LUA_API int lua_getmatchlineinfo (hksc_State *H) {
   int match_line_info;
   lua_lock(H);
-  match_line_info = hksc_getMatchLineInfo(H);
+  match_line_info = hksc_getmatchlineinfo(H);
   lua_unlock(H);
   return match_line_info;
 }
 
 
-LUA_API void lua_setMatchLineInfo (hksc_State *H, int match_line_info) {
+LUA_API void lua_setmatchlineinfo (hksc_State *H, int match_line_info) {
   lua_lock(H);
-  hksc_setMatchLineInfo(H, match_line_info);
+  hksc_setmatchlineinfo(H, match_line_info);
   lua_unlock(H);
 }
 

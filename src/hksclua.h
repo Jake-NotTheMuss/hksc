@@ -253,25 +253,25 @@ LUA_API void (lua_setprefixmap) (hksc_State *H, const char *from,
                                  const char *to);
 
 #if defined(LUA_CODT6)
-LUA_API const char *(lua_getDebugFile) (hksc_State *H);
-LUA_API void (lua_setDebugFile) (hksc_State *H, const char *name);
+LUA_API const char *(lua_getdebugfile) (hksc_State *H);
+LUA_API void (lua_setdebugfile) (hksc_State *H, const char *name);
 #endif /* LUA_CODT6 */
 
 /*
 ** Lua compiler/decompiler settings
 */
-LUA_API int (lua_getEmitStruct) (hksc_State *H);
-LUA_API void (lua_setEmitStruct) (hksc_State *H, int emit_struct);
-LUA_API int (lua_getIntLiteralsEnabled) (hksc_State *H);
-LUA_API void (lua_setIntLiteralsEnabled) (hksc_State *H,
+LUA_API int (lua_getemitstruct) (hksc_State *H);
+LUA_API void (lua_setemitstruct) (hksc_State *H, int emit_struct);
+LUA_API int (lua_getintliteralsenabled) (hksc_State *H);
+LUA_API void (lua_setintliteralsenabled) (hksc_State *H,
                                           int enable_int_literals);
-LUA_API int (lua_getBytecodeStrippingLevel) (hksc_State *H);
-LUA_API void (lua_setBytecodeStrippingLevel) (hksc_State *H, int strip);
-LUA_API int (lua_getIgnoreDebug) (hksc_State *H);
-LUA_API void (lua_setIgnoreDebug) (hksc_State *H, int ignore_debug);
+LUA_API int (lua_getbytecodestrippinglevel) (hksc_State *H);
+LUA_API void (lua_setbytecodestrippinglevel) (hksc_State *H, int strip);
+LUA_API int (lua_getignoredebug) (hksc_State *H);
+LUA_API void (lua_setignoredebug) (hksc_State *H, int ignore_debug);
 #ifdef HKSC_DECOMPILER
-LUA_API int (lua_getMatchLineInfo) (hksc_State *H);
-LUA_API void (lua_setMatchLineInfo) (hksc_State *H, int match_line_info);
+LUA_API int (lua_getmatchlineinfo) (hksc_State *H);
+LUA_API void (lua_setmatchlineinfo) (hksc_State *H, int match_line_info);
 #endif /* HKSC_DECOMPILER */
 
 /*
