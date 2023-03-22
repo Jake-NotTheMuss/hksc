@@ -23,6 +23,7 @@
 
 static int listing=0;     /* list bytecodes? */
 static int dumping=1;     /* dump bytecodes? */
+static int compiling=0;
 #ifdef HKSC_DECOMPILER
 static int decompiling=0;
 #endif /* HKSC_DECOMPILER */
@@ -77,8 +78,9 @@ static void print_usage(void)
    "      --print-config      Show build configuration and exit\n"
    "  -a, --source            Expect source files as input\n"
    "  -b, --binary            Expect binary files as input\n"
+   "  -c, --compile           Compile input files\n"
 #ifdef HKSC_DECOMPILER
-   "  -d, --decompile         Decompile\n"
+   "  -d, --decompile         Decompile input files\n"
 #endif
    "  -l, --list              List (use -l -l for full listing)\n"
    "  -p, --parse             Parse only\n"
@@ -278,10 +280,14 @@ static int doargs(int argc, char *argv[])
   int version=0;
   int info=0;
   int a=0,b=0; /* uses of `-a' and `-b' */
+  int explicit_dumping=0;
   const char *opt_a, *opt_b;
 #ifdef LUA_CODT6
   const char *opt_withdebug;
 #endif /* LUA_CODT6 */
+#ifdef HKSC_DECOMPILER
+  const char *opt_compile, *opt_decompile;
+#endif /* HKSC_DECOMPILER */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
   {
@@ -323,12 +329,25 @@ static int doargs(int argc, char *argv[])
       print_usage();
       exit(EXIT_SUCCESS);
     }
-    else if (IS("-l") || IS("--list"))      /* list */
+    else if (IS("-l") || IS("--list")) {     /* list */
       ++listing;
+      if (!explicit_dumping)
+        dumping=0;
+    }
+    else if (IS("-c") || IS("--compile")) {
+      compiling=1;
+      dumping=1;
+      explicit_dumping=1;
+#ifdef HKSC_DECOMPILER
+      opt_compile = (const char *)argv[i];
+#endif /* HKSC_DECOMPILER */
+    }
 #ifdef HKSC_DECOMPILER
     else if (IS("-d") || IS("--decompile")) {
       decompiling=1;
       dumping=1;
+      explicit_dumping=1;
+      opt_decompile = (const char *)argv[i];
     }
 #endif /* HKSC_DECOMPILER */
     else if (HAS("-L"))   /* specify int literal options */
@@ -428,8 +447,10 @@ static int doargs(int argc, char *argv[])
       }
     }
 #endif /* HKSC_MULTIPLAT */
-    else if (IS("-p") || IS("--parse"))      /* parse only */
+    else if (IS("-p") || IS("--parse")) {     /* parse only */
       dumping=0;
+      explicit_dumping=0;
+    }
     else if (HAS("-s"))     /* specify stripping level */
     {
 #ifdef LUA_CODT6
@@ -480,7 +501,12 @@ static int doargs(int argc, char *argv[])
     }
     exit(EXIT_SUCCESS);
   }
-  if (a && b) /* both compile and decompile mode specified? */
+#ifdef HKSC_DECOMPILER
+  if (compiling && decompiling) /* both compile and decompile mode specified? */
+    usage("both '%s' and '%s' used; only one may be used per invokation",
+          opt_compile, opt_decompile);
+#endif /* HKSC_DECOMPILER */
+  if (a && b) /* both source and binary mode specified? */
     usage("both '%s' and '%s' used; only one may be used per invokation",
           opt_a, opt_b);
   else if (a) {
@@ -507,8 +533,6 @@ static int doargs(int argc, char *argv[])
 
 #define FUNCTION "(function()end)();"
 
-/*static hksc_DumpFunction dumpf;*/
-
 static int hksc_dump_f(hksc_State *H, void *ud) {
   const char *filename = (const char *)ud;
   if (!listing && !dumping) {
@@ -517,11 +541,15 @@ static int hksc_dump_f(hksc_State *H, void *ud) {
   }
   if (listing) {
     lua_print(H, listing > 1);
-    return 0;
+    if (!dumping)
+      return 0;
   }
 #ifdef HKSC_DECOMPILER
-  if (decompiling)
-    return hksc_dump_decomp(H, filename);
+  if (decompiling) {
+    int status = hksc_dump_decomp(H, filename);
+    if (status)
+      return status;
+  }
 #endif /* HKSC_DECOMPILER */
   return hksc_dump_bytecode(H, filename);
 }
