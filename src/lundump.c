@@ -340,7 +340,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
   n=f->sizelineinfo;
   f->lineinfo=luaM_newvector(S->H,n,int);
 #ifdef HKSC_MULTIPLAT
-  if (S->target.sizeint == sizeof(int)) {
+  if (S->target.sizeint == sizeof(int) && S->swapendian == 0) {
 #endif /* HKSC_MULTIPLAT */
   LoadVector(S,f->lineinfo,n,sizeof(int));
 #ifdef HKSC_MULTIPLAT
