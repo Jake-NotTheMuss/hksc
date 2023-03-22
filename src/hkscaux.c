@@ -107,9 +107,9 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
   size_t n = 0;
   size_t namelen = strlen(name);
   size_t extlen = strlen(ext);
-  if (hasluacext(name,namelen)) /* `*.luac'? */
+  if (hasluacext(name,namelen) && (strcmp(ext,LUAC_EXT)!=0)) /* `*.luac'? */
     namelen-=sizeof(LUAC_EXT)-1; /* remove `.luac' */
-  else if (hasluaext(name,namelen)) /* `*.lua'? */
+  else if (hasluaext(name,namelen) && (strcmp(ext,LUA_EXT)!=0)) /* `*.lua'? */
     namelen-=sizeof(LUA_EXT)-1; /* remove `.lua' */
   if ((namelen+extlen+1) >= MAXLUACNAME)
     namelen = MAXLUACNAME-(extlen+1);
