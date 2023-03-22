@@ -1571,7 +1571,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 ** `branch1' holds the context for an if-else branch construct in the first pass
 */
 struct branch1 {
-  struct branch1 *prev;  /* previous branch context */
+  struct branch1 *prev;  /* enclosing branch context */
   BasicBlock *next;  /* the next branch block in this group */
   struct stat1 *outer;  /* saved values for the outer loop statement */
   int target1;  /* jump target out of the branch condition */
@@ -1686,11 +1686,12 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  struct branch1 *branch, struct block1 *block)
 {
-  struct stat1 outer;
-  BasicBlock *nextsibling;
+  struct stat1 outer; /* the outer loop context, saved on the stack */
+  BasicBlock *nextsibling; /* the most recently created block, since the code
+                              is traversed backwards */
   BasicBlock *nextbranch = NULL;
   int nextbranchtarget = -1;
-  int endpc;
+  int endpc; /* endpc of the current block */
   const Instruction *code = ca->code;
   if (branch == NULL && block == NULL) { /* inside a loop */
     nextsibling = NULL;
@@ -1743,7 +1744,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           ca->prevTMode = 0;
           goto jmpisfirst;
         }
-        /* excluding the above cases, this cannot be the first instruction */
+        /* excluding the above cases, this cannot be the first instruction
+           (this is ok as an assert as long as PC is checked against zero
+           before) */
         lua_assert(pc > 0);
         prevop = GET_OPCODE(code[pc-1]);
         if (prevop == OP_TESTSET) {/* a jump after OP_TESTSET is not a branch */
@@ -2409,6 +2412,10 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bl)
       bbl2(sa, fs, nextchild);
       nextchild = nextchild->nextsibling;
       nextchildstart = nextchild ? nextchild->startpc : -1;
+      /* todo: a block can have the same start- and endpc for example,
+         an if-branch which has only 1 instruction,
+         todo: what about an if-branch with 0 instructions, would the endpc
+         be before the startpc? */
       continue;
     }
     if (pc == endpc)
