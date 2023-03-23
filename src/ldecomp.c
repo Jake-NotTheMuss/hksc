@@ -226,6 +226,7 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
   bbl->startpc = startpc;
   bbl->endpc = endpc;
   bbl->type = type;
+  bbl->isempty = (endpc < startpc);
   return bbl;
 }
 
@@ -954,7 +955,7 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
   int pc;
   const Instruction *code = f->code;
   int sizecode = f->sizecode;
-  for (pc = 0; pc < sizecode - 1; pc++) {
+  for (pc = 0; pc < sizecode; pc++) {
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     if (test_ins_property(fs, pc, INS_REPEATSTAT))
@@ -1020,6 +1021,8 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
     }
     else if (test_ins_property(fs, pc, INS_TESTSETEND))
       DumpLiteral("END TESTSET\n", D);
+    if (test_ins_property(fs, pc, INS_EMPTYBLOCK))
+      DumpLiteral("EMPTY BLOCK\n", D);
     if (test_ins_property(fs, pc, INS_LOOPEND))
       DumpLiteral("END LOOP\n", D);
     DumpStringf(D, "\t%d\t%s\n", pc+1, luaP_opnames[o]);
@@ -2126,16 +2129,21 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   nextbranch = NULL;
                   nextbranchtarget = -1;
                   if (branch) branch->target1 = target;
-                  /* at this point the start and endpc of the block is known */
-                  lua_assert(branchendpc >= branchstartpc);
                   if (issingle && branch != NULL) {
                     printf("THIS BRANCH IS A CHILD BLOCK of the top-level one\n");
                   }
                   addbbl1(fs, branchstartpc, branchendpc, BBL_IF);
                   new_block = fs->a->bbllist.first;
                   blockcreated:
-                  init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
-                  set_ins_property(fs, branchendpc, INS_BLOCKEND);
+                  /* BRANCHENDPC can be less than BRANCHSTARTPC if the block is
+                     empty */
+                  if (branchstartpc <= branchendpc) {
+                    init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
+                    set_ins_property(fs, branchendpc, INS_BLOCKEND);
+                  }
+                  else { /* empty block */
+                    init_ins_property(fs, branchstartpc, INS_EMPTYBLOCK);
+                  }
                   lua_assert(new_block != NULL);
                   printbblmsg("BRANCH BLOCK -", new_block);
                   fixsiblingchain1(new_block, &nextsibling);
@@ -2219,8 +2227,15 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 noblock = 0;
               branchstartpc = pc+1;
               init_ins_property(fs, pc, INS_BLOCKEND);
-              init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
-              set_ins_property(fs, branchendpc, INS_BLOCKEND);
+              /* BRANCHENDPC will be less than BRANCHSTARTPC if it is an empty
+                 block (target-1 == pc) */
+              if (branchstartpc <= branchendpc) {
+                init_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
+                set_ins_property(fs, branchendpc, INS_BLOCKEND);
+              }
+              else { /* empty block */
+                init_ins_property(fs, branchstartpc, INS_EMPTYBLOCK);
+              }
               new_branch.prev = branch;
               new_branch.outer = &outer; /* keep the same loop context */
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
@@ -2487,7 +2502,7 @@ static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
   int startpc = bbl->startpc;
   int endpc = bbl->endpc;
   int type = bbl->type;
-  lua_assert(startpc <= endpc);
+  lua_assert(startpc <= endpc || bbl->isempty);
   lua_assert(type >= 0 && type < MAX_BBLTYPE);
   if (type < BBL_DO && type != BBL_FUNCTION) {
     lua_assert(test_ins_property(fs, endpc, INS_LOOPEND));
@@ -2514,7 +2529,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 {
   const Instruction *code = sa->code;
   BasicBlock *nextchild = bbl->firstchild;
-  int nextchildstart = nextchild ? nextchild->startpc : -1;
+  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
   int startpc = bbl->startpc;
   int endpc = bbl->endpc;
   int type = bbl->type;
@@ -2526,29 +2541,29 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   assertbblvalid(fs,bbl);
   printf("pass2: entered block %s (%d-%d) at pc (%d)\n", bbltypename(type),
          startpc+1, endpc+1, sa->pc+1);
+  if (bbl->isempty) goto block2finished;
   for (; sa->pc < sa->sizecode; sa->pc++) {
-    int pc = sa->pc;
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
-    int b = GETARG_B(i);
-    int c = GETARG_C(i);
-    DumpStringf(fs->D, "pc = (%d), OP_%s\n", pc+1, luaP_opnames[o]);
-    if (pc == nextchildstart) {
+    int pc, a, b, c;
+    Instruction i;
+    OpCode o;
+    if (sa->pc == nextchildstartpc) {
       lua_assert(nextchild != NULL);
       bbl2(sa, fs, nextchild);
       nextchild = nextchild->nextsibling;
-      nextchildstart = nextchild ? nextchild->startpc : -1;
-      /* todo: a block can have the same start- and endpc for example,
-         an if-branch which has only 1 instruction,
-         todo: what about an if-branch with 0 instructions, would the endpc
-         be before the startpc? */
-      continue;
+      nextchildstartpc = nextchild ? nextchild->startpc : -1;
     }
+    pc = sa->pc;
+    i = code[pc];
+    o = GET_OPCODE(i);
+    a = GETARG_A(i);
+    b = GETARG_B(i);
+    c = GETARG_C(i);
+    DumpStringf(fs->D, "pc = (%d), OP_%s\n", pc+1, luaP_opnames[o]);
     if (pc == endpc)
       break;
     (void)a; (void)b; (void)c;
   }
+  block2finished:
   printf("pass2: leaving block %s (%d-%d) at pc (%d)\n", bbltypename(type),
          startpc+1,endpc+1,sa->pc+1);
 }

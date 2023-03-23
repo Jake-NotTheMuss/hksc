@@ -74,7 +74,8 @@ enum BBLTYPE {
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
-  DEFINSFLAG(DOSTAT)  /* pc begins a block */
+  DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
+  DEFINSFLAG(EMPTYBLOCK)
 
 #define DEFINSFLAG(e)  INS_##e,
 enum INSFLAG {
@@ -109,6 +110,7 @@ typedef struct BasicBlock {
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
   int type;  /* the type of the block */
+  lu_byte isempty;  /* true if the block has zero instructions */
 } BasicBlock;
 
 #endif /* ldecomp_c */
