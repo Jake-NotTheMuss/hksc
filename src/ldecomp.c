@@ -1687,8 +1687,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  struct branch1 *branch, struct block1 *block)
 {
   struct stat1 outer; /* the outer loop context, saved on the stack */
-  BasicBlock *nextsibling; /* the most recently created block, since the code
-                              is traversed backwards */
+  BasicBlock *nextsibling; /* the most recently created block; it gets assigned
+                              to the ->nextsibling field for each newly created
+                              BasicBlock, before being set to the new block */
   BasicBlock *nextbranch = NULL;
   int nextbranchtarget = -1;
   int endpc; /* endpc of the current block */
@@ -1732,23 +1733,35 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     printf("pc %d: OP_%s\n", pc+1, getOpName(o));
     switch (o) {
       case OP_JMP: {
+        /* todo: check that target is a valid pc */
         int target = pc + 1 + sbx; /* the jump target pc */
-        int branchstartpc, branchendpc;
-        int tailbranchjump=0;
+        int branchstartpc, branchendpc; /* these are used when creating
+                                           branch BasicBlocks (BBL_IF/BBL_ELSE),
+                                           they are declared here because they
+                                           get set in different control paths
+                                           depending on the type of jump */
+        int tailbranchjump=0; /* this is set to true if the jump is a
+                                 branch-exit, where the branch is at the end of
+                                 a while-loop body, and the jump is optimized
+                                 to jump back to the start of the while-loop,
+                                 also declared here as it gets set in a
+                                 different control path than the one which
+                                 handles branch constructs */
         OpCode prevop; /* previous opcode to see if it is a test instruction */
         if (test_ins_property(fs, pc+1, INS_FORLIST)) {
           forlistprep1(ca, fs, target);
           break;
         }
         if (pc == 0) {
-          ca->prevTMode = 0;
+          ca->prevTMode = 0; /* unconditional jump */
           goto jmpisfirst;
         }
         /* excluding the above cases, this cannot be the first instruction
            (this is ok as an assert as long as PC is checked against zero
-           before) */
+           above) */
         lua_assert(pc > 0);
         prevop = GET_OPCODE(code[pc-1]);
+        /* OP_TESTSET needs to be handled differently than other test opcodes */
         if (prevop == OP_TESTSET) {/* a jump after OP_TESTSET is not a branch */
           if (ca->testset.endpc == -1) { /* no pending testset expression */
             ca->testset.endpc = target; /* create a new testset expression */
@@ -1839,7 +1852,22 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             else { /* either an optimized jump or a repeat-loop */
               /* check if this jumps to the start of a while-loop first; in that
                  case, this is an optimized jump either from a failed branch
-                 test or a failed inner while-loop condition */
+                 test or a failed inner while-loop condition, e.g.:
+                  failed tail branch:
+                      while a do
+                          local b;
+                          if b then -- fail-jumps back to start of loop
+                              ...
+                          end
+                      end
+                  failed inner-loop test:
+                      while a do
+                          local b;
+                          while b do -- fail-jumps back to start of outer loop
+                              ...
+                          end
+                      end
+                  */
               if (type == BBL_WHILE) { /* inside a while-loop */
                 if (target == startpc) { /* jumps to the start of the loop */
                   /* this is an optimized jump from a branch test that would
@@ -1854,8 +1882,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      otherwise jump to the very end of an enclosing loop */
                   init_ins_property(fs, pc, INS_LOOPFAIL);
                 }
-                else {
-                  /* a repeat-loop jumps to somewhere inside the current loop */
+                else { /* a repeat-loop fail-jump */
                   goto markrepeatstat;
                 }
               }
@@ -1869,11 +1896,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                 ...
                             until b
                         until a */
+                  /* todo: should this be an assert or a code check? */
                   lua_assert(test_ins_property(fs, target, INS_REPEATSTAT));
                   goto markrepeatstat;
                 }
+                /* todo: what should be done in this case? */
               }
-              else { /* a repeat-loop */
+              else { /* a repeat-loop fail-jump */
                 markrepeatstat:
                 encountered1("repeat", target);
                 set_ins_property(fs, target, INS_REPEATSTAT);
@@ -1885,9 +1914,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           }
           else { /* unconditional backward jump */
             if (prevop == OP_CLOSE) {
-              int pc1=pc-2;
-              const OpCode o1[2] = {OP_JMP, OP_CLOSE};
-              int i1=0;
+              int pc1=pc-2; /* separate pc variable for looking-behind, starting
+                               with the one before the previous */
+              const OpCode o1[2] = {OP_JMP, OP_CLOSE}; /* the pattern to match
+                                                          alternates between
+                                                          these codes */
+              int i1=0; /* state machine variable */
               while (pc1 >= 0) {
                 if (GET_OPCODE(code[pc1]) == o1[i1%2]) {
                   i1++;
@@ -1896,37 +1928,92 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       OP_JMP    <-- pc1
                       OP_CLOSE
                       OP_JMP
-                      OP_CLOSE  <-- prevop
-                      OP_JMP    <-- o
+                      OP_CLOSE  <-- prevop (pc-1)
+                      OP_JMP    <-- o (pc)
                      This can either be a while-loop with multiple break
                      statements at the end or a repeat-loop, both containing
-                     local variables that are used as upvaleus. In the case of a
-                     repeat-loop, the instruction that precedes the OP_JMP at
-                     `pc1' must be a test instruction. */
+                     local variables that are used as upvaleus:
+                     while-loop:
+                        while a do
+                            local b;
+                            local function c()
+                               b = b + 1;
+                            end
+                            do break; end
+                            do break; end
+                        end
+                     repeat-loop
+                        repeat
+                            local b;
+                            local function c()
+                               b = b + 1;
+                            end
+                        until a;
+                     In the case of a repeat-loop, the instruction that precedes
+                     the OP_JMP at `pc1' must be a test instruction, and the
+                     jump instruction at PC1 jumps to the instruction at (PC-1)
+                     */
+                    Instruction ins1 = code[pc1]; /* OP_JMP */
                     pc1--;
-                    if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])))
+                    if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])) &&
+                        (pc1 + 1 + 1 + GETARG_sBx(ins1)) == (pc - 1))
                       goto markrepeatstat; /* repeat-loop that has upvalues */
-                    break;
+                    /* while-loop is handled below */
+                    break; /* pattern matched */
                   }
                 }
                 else
-                  break;
+                  break; /* pattern not matched */
                 pc1--;
               }
               /* fallthrough */
             }
             /* inside a while-loop, jumping unconditionally back to the start
                is an optimized jump out of a branch-block which would otherwise
-               jump to the very end of the loop */
+               jump to the very end of the loop, eg.:
+                  while a do
+                      local b;
+                      if b then
+                          ...
+                      else -- jump back to start of the while-loop
+                          ...
+                      end
+                  end */
             if (type == BBL_WHILE && target == startpc) {
+              /* ...unless this jump is immediately before the end of the
+                 enclosing loop, in which case there is a nested while-loop,
+                 e.g.:
+                    while true do
+                        while a do
+                            local b = 12;
+                        end -- OP_JMP to pc=0
+                    end -- OP_JMP to pc=0
+                 though the decompiler detects this as:
+                    while true do
+                        while true do
+                            if a then
+                                local b = 12;
+                            end
+                        end
+                    end
+                 which is semantically equivalent and generates the same code */
               if (pc == endpc-1)
                 goto markwhilestat;
-              /* this instruction is the end of a basic block */
+              /* this instruction is the end of a tail-if-block with an
+                 else-part */
               branchendpc = endpc-1;
               goto elsebranch;
             }
             /* inside a loop enclosed by a while-loop, jumping back to the start
-               of the while-loop, i.e. an optimized `break' out of the for-loop
+               of the while-loop, i.e. an optimized `break' out of the
+               inner-loop, e.g.:
+                  while a do
+                      local a = 12;
+                      while b do
+                          local b = 34;
+                          do break; end
+                      end
+                  end
                */
             else if (type != BBL_FUNCTION && outer.type == BBL_WHILE &&
                      target == outer.start) {
@@ -1937,10 +2024,14 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               encountered1("while", target);
               set_ins_property(fs, target, INS_WHILESTAT);
               init_ins_property(fs, pc, INS_LOOPEND);
+              /* if this while-loop is at the end of an enclosing block, mark
+                 the exit-target of the enclosing block as a potential target
+                 for optimized exits out of this while-loop */
               if (test_ins_property(fs, pc+1, INS_BLOCKEND)) {
                 Instruction nexti = code[pc+1];
                 int nexttarget;
-                /* only jumps can be marked as block endings */
+                /* only a jump could be marked as a block ending this near
+                   removed */
                 lua_assert(GET_OPCODE(nexti) == OP_JMP);
                 nexttarget = pc + 1 + 1 + GETARG_sBx(nexti);
                 if (nexttarget > pc + 1) /* really a branch exit */
@@ -1989,11 +2080,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else {
                 init_ins_property(fs, pc, INS_BRANCHFAIL);
                 if (!test_ins_property(fs, target-1, INS_BRANCHPASS)) {
-                  /* true if this branch has no else-block; this is significant
-                     because only branches with an else-block cause a recursive
-                     call, whereas else-less branches are always child blocks in
-                     the current branch context */
-                  int issingle;
+                  int issingle; /* true if this branch has no else-block; this
+                                   is significant because only branches with an
+                                   else-block cause a recursive call, whereas
+                                   else-less branches are always child blocks in
+                                   the current branch context */
                   BasicBlock *new_block;
                   ifbranch:
                   branchstartpc = pc+1;
@@ -2037,7 +2128,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   if (branch) branch->target1 = target;
                   /* at this point the start and endpc of the block is known */
                   lua_assert(branchendpc >= branchstartpc);
-                  lua_assert(issingle == 0 || issingle == 1);
                   if (issingle && branch != NULL) {
                     printf("THIS BRANCH IS A CHILD BLOCK of the top-level one\n");
                   }
