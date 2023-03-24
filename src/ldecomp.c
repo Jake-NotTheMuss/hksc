@@ -1558,7 +1558,8 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 
 #define loop1(ca,fs,startpc,type) do { \
   struct BasicBlock *new; /* the new block */ \
-  bbl1(ca, fs, startpc, type, NULL, NULL); /* create the new block */ \
+  /* create the new block */ \
+  bbl1(ca, fs, startpc, type, NULL, NULL, nextsibling); \
   new = fs->a->bbllist.first; \
   lua_assert(new != nextsibling); \
   addsibling1(new, nextsibling); \
@@ -1687,7 +1688,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
 
 
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
-                 struct branch1 *branch, struct block1 *block)
+       struct branch1 *branch, struct block1 *block, BasicBlock *futuresibling)
 {
   struct stat1 outer; /* the outer loop context, saved on the stack */
   BasicBlock *nextsibling; /* the most recently created block; it gets assigned
@@ -2060,6 +2061,33 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           }
         }
         else { /* forward jump (sbx >= 0) */
+          if (target > endpc+1) { /* jumps past the end of the enclosing loop */
+            /* this jump must be optimized if its target is outside the
+               enclosing loop; it could be a break or a fail-exit from the loop
+               condition, or an unconditional exit in the case of `while false'
+               */
+            Instruction siblingjump;
+            int siblingtarget;
+            /* todo: should these be an assert or bad code? */
+            lua_assert(futuresibling != NULL);
+            lua_assert(type != BBL_FUNCTION);
+            siblingjump = code[futuresibling->startpc];
+            if (GET_OPCODE(siblingjump) != OP_JMP) {
+              /* todo: bad code? */
+              lua_assert(0);
+            }
+            siblingtarget = futuresibling->startpc + 1+GETARG_sBx(siblingjump);
+            if (target == siblingtarget) { /* optimized jump? */
+              if (ca->prevTMode || pc == startpc) /* loop-exit */
+                init_ins_property(fs, pc, INS_LOOPFAIL);
+              else /* break */
+                init_ins_property(fs, pc, INS_BREAKSTAT);
+              break;
+            }
+            else { /* bad code? */
+              lua_assert(0);
+            }
+          }
           if (ca->prevTMode) { /* conditional forward jump */
             /* check for a fail-jump out of a repeat-loop condition */
             if (type == BBL_REPEAT && target-1 == endpc) {
@@ -2223,6 +2251,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  has a literal `false' condition */
               if (pc != startpc || type != BBL_WHILE)
                 init_ins_property(fs, pc, INS_BREAKSTAT);
+              else /* (pc == startpc && type == BBL_WHILE) */
+                init_ins_property(fs, pc, INS_LOOPFAIL);
             }
             else { /* exiting a branch */
               struct branch1 new_branch;
@@ -2284,7 +2314,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               new_branch.outer = &outer; /* keep the same loop context */
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
                          &nextsibling);
-              bbl1(ca, fs, startpc, type, &new_branch, NULL);
+              bbl1(ca, fs, startpc, type, &new_branch, NULL, nextsibling);
               {
                 BasicBlock *first_block = new_branch.next;
                 lua_assert(first_block != NULL);
@@ -2372,7 +2402,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.startpc = pc;
             new_block.endpc = pc;
             new_block.reg = a;
-            bbl1(ca, fs, startpc, type, NULL, &new_block);
+            bbl1(ca, fs, startpc, type, NULL, &new_block, nextsibling);
             printbblmsg("new_block.prevsibling =", new_block.prevsibling);
             /* check if the block was inside an else-branch */
             if (new_block.nextbranch != NULL) {
@@ -2499,7 +2529,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.testset.endpc = ca.testset.reg = -1;
   ca.code = f->code;
   UNUSED(D);
-  bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL);
+  bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL, NULL);
   /*init_ins_property(fs, f->sizecode - 1, INS_BLOCKEND);*/ /* mark end of function */
   {
     BasicBlock *first = fs->a->bbllist.first;
