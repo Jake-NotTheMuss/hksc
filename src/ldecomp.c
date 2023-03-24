@@ -2547,13 +2547,16 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     Instruction i;
     OpCode o;
     if (sa->pc == nextchildstartpc) {
+      int ischildempty;
       lua_assert(nextchild != NULL);
+      ischildempty = nextchild->isempty;
       bbl2(sa, fs, nextchild);
       nextchild = nextchild->nextsibling;
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
       if (sa->pc == endpc) /* multiple blocks can end on the same instruction */
         break;
-      continue; /* go to next instruction */
+      if (!ischildempty)
+        continue; /* go to next instruction */
     }
     pc = sa->pc;
     i = code[pc];
