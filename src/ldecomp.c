@@ -2558,7 +2558,20 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     a = GETARG_A(i);
     b = GETARG_B(i);
     c = GETARG_C(i);
-    DumpStringf(fs->D, "pc = (%d), OP_%s\n", pc+1, luaP_opnames[o]);
+    {
+      const char *opname;
+      char spaces[18];
+      int numspaces;
+      memset(spaces, ' ', sizeof(spaces)-1);
+      spaces[sizeof(spaces)-1] = '\0';
+      opname = getOpName(o);
+      numspaces = sizeof(spaces)-1-strlen(opname);
+      if (numspaces <= 0) numspaces = 1;
+      lua_assert(cast(size_t, numspaces) < sizeof(spaces));
+      spaces[numspaces] = '\0';
+      DumpStringf(fs->D, "pc = (%d), OP_%s%s%s\n", pc+1, opname, spaces,
+                  bbltypename(type));
+    }
     if (pc == endpc)
       break;
     (void)a; (void)b; (void)c;
