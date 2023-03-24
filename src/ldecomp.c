@@ -1958,9 +1958,19 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      */
                     Instruction ins1 = code[pc1]; /* OP_JMP */
                     pc1--;
-                    if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])) &&
-                        (pc1 + 1 + 1 + GETARG_sBx(ins1)) == (pc - 1))
-                      goto markrepeatstat; /* repeat-loop that has upvalues */
+                    /* need at least 1 more preceding instruction for it to be a
+                       repeat-loop */
+                    if (pc1 >= 0) {
+                      /* INS1 is the first jump instruction in the pattern
+                         given above. It should target the last OP_CLOSE in said
+                         pattern, i.e. (PC-1), if it is a repeat-loop */
+                      if ((pc1 + 1 + 1 + GETARG_sBx(ins1)) == (pc - 1)) {
+                        /* a normal repeat-loop tests a condition before the
+                           jump at PC1 */
+                        /*if (testTMode(GET_OPCODE(code[pc1])))*/
+                          goto markrepeatstat;
+                      }
+                    }
                     /* while-loop is handled below */
                     break; /* pattern matched */
                   }
@@ -2055,6 +2065,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             if (type == BBL_REPEAT && target-1 == endpc) {
               markrepeatfail:
               init_ins_property(fs, pc, INS_LOOPFAIL);
+            }
+            else if (type == BBL_REPEAT &&
+                     test_ins_property(fs, pc, INS_LOOPPASS)) {
+              break; /* already marked; do nothing */
             }
             /* if the jump skips over a false-jump, this is a true-jump */
             else if (test_ins_property(fs, target-1, INS_LOOPFAIL)) {
@@ -2165,15 +2179,45 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           }
           else { /* unconditional forward jump */
             if (prevop == OP_CLOSE && type == BBL_REPEAT && target-1 == endpc) {
-              int pc1 = pc-2;
-              if (pc1 >= 0 && GET_OPCODE(code[pc1]) == OP_JMP) {
-                pc1--;
-                if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])))
-                  goto markrepeatfail; /* fail-jump out of repeat-loop */
+              /* need at least 3 preceding instructions to check for a
+                 repeat-loop */
+              if (pc >= 2 && GET_OPCODE(code[pc-2]) == OP_JMP) {
+                if (((pc-2) + 1 + GETARG_sBx(code[pc-2])) == (pc+1)) {
+                  /* mark PC-2 now so it doesn't get detected later as something
+                     else */
+                  init_ins_property(fs, pc-2, INS_LOOPPASS);
+                  goto markrepeatfail;
+                }
               }
+#if 0
+              if (pc > 3 && GET_OPCODE(code[pc-2]) == OP_JMP) {
+                if (testTMode(GET_OPCODE(code[pc-3])))
+                  goto markrepeatfail; /* fail-jump out of repeat-loop */
+                else {
+                  /* in a repeat-loop, OP_JMP at PC1 should jump to (PC+1):
+                       JMP     2 <-- PC1  (jump to PC+1)
+                       CLOSE   n <-- PC1+1 (PREVOP)
+                       JMP     2 <-- PC
+                       CLOSE   n <-- PC+1
+                       JMP     (to start of repeat-loop)
+                   */
+                  if ((pc-2 + 1 + GETARG_sBx(code[pc1])) == (pc+1)) {
+                  /*if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])))*/
+                    /* mark this now so it doesn't get detected as something
+                       else */
+                    init_ins_property(fs, pc-2, INS_LOOPPASS);
+                    goto markrepeatfail; /* fail-jump out of repeat-loop */
+                  }
+                }
+              }
+#endif
               /* fallthrough */
             }
-            if (test_ins_property(fs, target-1, INS_LOOPEND) &&
+            if (type == BBL_REPEAT && target <= endpc &&
+                     test_ins_property(fs, pc, INS_LOOPPASS)) {
+              break; /* already marked from above; do nothing */
+            }
+            else if (test_ins_property(fs, target-1, INS_LOOPEND) &&
                 target-1 == endpc) { /* break statement */
               /* a while-loop can begin with a jump that is not a break if it
                  has a literal `false' condition */
