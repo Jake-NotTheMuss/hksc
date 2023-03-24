@@ -1697,7 +1697,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   int nextbranchtarget = -1;
   int endpc; /* endpc of the current block */
   const Instruction *code = ca->code;
-  if (branch == NULL && block == NULL) { /* inside a loop */
+  if (branch == NULL && block == NULL) { /* inside a loop or function */
     nextsibling = NULL;
     endpc = ca->pc;
     outer = ca->curr; /* save old values */
