@@ -1574,7 +1574,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 ** `branch1' holds the context for an if-else branch construct in the first pass
 */
 struct branch1 {
-  struct branch1 *prev;  /* enclosing branch context */
+  struct branch1 *prev;  /* enclosing branch context if nested */
   BasicBlock *next;  /* the next branch block in this group */
   struct stat1 *outer;  /* saved values for the outer loop statement */
   int target1;  /* jump target out of the branch condition */
