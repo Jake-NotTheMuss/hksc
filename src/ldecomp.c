@@ -1148,8 +1148,8 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
             if ((pc-1) >= 0) {
               Instruction prev = code[pc-1];
               OpCode prevop = GET_OPCODE(prev);
-              int preva = GETARG_A(prev);
-              return !(testAMode(prevop) && preva >= firstreg);
+              int prevA = GETARG_A(prev);
+              return !(testAMode(prevop) && prevA >= firstreg);
             }
             else return 1; /* this is the first instruction */
           }
