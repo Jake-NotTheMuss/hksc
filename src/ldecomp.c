@@ -1566,11 +1566,14 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   nextsibling = new; \
   /* if enclosed by a block, save a previous sibling for it, as the block may \
      really begin after this newly created block */ \
-  if (block != NULL && block->prevsibling == NULL) \
-    block->prevsibling = new; \
+  if (block != NULL && block->state.prevsibling == NULL) \
+    block->state.prevsibling = new; \
   if (branch != NULL && branch->elseprevsibling == NULL) \
     branch->elseprevsibling = new; \
 } while(0)
+
+
+struct block1;
 
 
 /*
@@ -1578,6 +1581,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 */
 struct branch1 {
   struct branch1 *prev;  /* enclosing branch context if nested */
+  struct block1 *parentblock;  /* enclosing block if nested */
   /*BasicBlock *next;*/  /* the next branch block in this group */
   BasicBlock *ifblock;  /* first if-part */
   BasicBlock *elseblock;  /* the else-part */
@@ -1586,6 +1590,17 @@ struct branch1 {
   int target1;  /* jump target out of the branch condition */
   int startpc, endpc, midpc;  /* midpc is the start of the else-part */
   int optimalexit;  /* target of optimized jumps out of this branch */
+};
+
+
+/*
+** `blockstate1' holds all block data that is continuously updated while within
+** a block or branch context
+*/
+struct blockstate1 {
+  int startpc;
+  BasicBlock *firstchild;  /* see explanation in `block1' */
+  BasicBlock *prevsibling;  /* see explanation in `block1' */
 };
 
 
@@ -1620,19 +1635,22 @@ struct block1 {
      instruction that clobbers the first register that is closed by the block.
      The `nextsibling' block will continue to be updated even past the real
      start of the block, so the block's true previous sibling is saved */
-  BasicBlock *prevsibling;
+  /*BasicBlock *prevsibling;*/
   /* `firstsibling' is used to pass the local variable `nextsibling' back to the
      caller, so that it may update its `nextsibling' to that value */
   BasicBlock *firstsibling;
   /* `firstchild' holds the first block that starts after the real start of the
      block. This is needed for the same reason as described in the description
      for `prevsibling' */
-  BasicBlock *firstchild;
+  /*BasicBlock *firstchild;*/
   struct stat1 *outer;  /* saved values for the outer loop statement */
   int pass;  /* true if passing data to its caller/parent block */
   int reg;  /* register to close up to in OP_CLOSE */
   int seenclosure;
-  int startpc, endpc;
+  int endpc;
+  struct blockstate1 state;  /* todo: explain these fields */
+  struct blockstate1 possiblestate;
+  /*int startpc, endpc;*/
 };
 
 
@@ -2276,7 +2294,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 struct block1 *bl = block;
                 struct block1 *lastbl = NULL;
                 int i=0;
-                BasicBlock *childblock = bl->firstchild;
+                BasicBlock *childblock = bl->state.firstchild;
                 printf("encountered an else-block which closes variables, "
                        "correcting erroneous do-block detection\n");
                 /* the OP_CLOSE at the end of this branch is not for a block */
@@ -2288,7 +2306,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   lastbl = bl;
                   if (bl->endpc < branchendpc) {
                     BasicBlock *currblock;
-                    addbbl1(fs, bl->startpc, bl->endpc, BBL_DO);
+                    addbbl1(fs, bl->state.startpc, bl->endpc, BBL_DO);
                     currblock = fs->a->bbllist.first;
                     lua_assert(currblock != NULL);
                     printbblmsg("found an inner block", currblock);
@@ -2320,6 +2338,15 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               }
               new_branch.prev = branch;
               new_branch.outer = &outer; /* keep the same loop context */
+              if (branch != NULL)
+                new_branch.parentblock = branch->parentblock;
+              else
+                new_branch.parentblock = block; /* enclosing block or NULL */
+              if (block != NULL)
+                /* update the block's possible state to its actual state, as the
+                   possible state may be what gets updated within the branch
+                   context, so it needs to be initialized */
+                block->possiblestate = block->state;
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
                          &nextsibling);
               bbl1(ca, fs, startpc, type, &new_branch, NULL, nextsibling);
@@ -2385,6 +2412,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 else {
                   nextbranch = NULL;
                   nextbranchtarget = -1;
+                  if (block != NULL) {
+                    block->state = block->possiblestate;
+                  }
                 }
                 if (noblock) { /* close the erroneous block and pass data */
                   lua_assert(block != NULL);
@@ -2425,28 +2455,30 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                instead of pushing a new one */
             BasicBlock *new_block;
             printf("encountered adjacent do-block\n");
-            addbbl1(fs, block->startpc, block->endpc, BBL_DO);
+            addbbl1(fs, block->state.startpc, block->endpc, BBL_DO);
             new_block = fs->a->bbllist.first;
             lua_assert(new_block != NULL);
-            new_block->firstchild = block->firstchild;
-            printbblmsg("setting first child for block to", block->firstchild);
+            new_block->firstchild = block->state.firstchild;
+            printbblmsg("setting first child for block to",
+                        block->state.firstchild);
             new_block->nextsibling = block->nextsibling;
             printbblmsg("setting next sibling for block to",block->nextsibling);
             /* link the last sibling before the adjacent block to it */
-            if (block->prevsibling) {
-              block->prevsibling->nextsibling = new_block;
-              printbblmsg("connecting previous sibling", block->prevsibling);
+            if (block->state.prevsibling) {
+              block->state.prevsibling->nextsibling = new_block;
+              printbblmsg("connecting previous sibling",
+                          block->state.prevsibling);
             }
             else
               nextsibling = new_block;
             /* re-initialize the context and continue without recursing */
-            block->prevsibling = NULL;
+            block->state.prevsibling = NULL;
             block->nextsibling = nextsibling;
             block->firstsibling = NULL;
-            block->firstchild = NULL;
+            block->state.firstchild = NULL;
             block->nextbranch = NULL;
             block->pass = 0;
-            block->startpc = pc;
+            block->state.startpc = pc;
             block->endpc = pc;
             block->reg = a;
             nextsibling = NULL; /* set to NULL as if recursing */
@@ -2457,15 +2489,15 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.nextbranch = NULL;
             new_block.nextsibling = nextsibling;
             new_block.firstsibling = NULL;
-            new_block.prevsibling = NULL;
-            new_block.firstchild = NULL;
+            new_block.state.prevsibling = NULL;
+            new_block.state.firstchild = NULL;
             new_block.pass = 0;
             new_block.outer = &outer; /* keep the same loop context */
-            new_block.startpc = pc;
+            new_block.state.startpc = pc;
             new_block.endpc = pc;
             new_block.reg = a;
             bbl1(ca, fs, startpc, type, NULL, &new_block, nextsibling);
-            printbblmsg("new_block.prevsibling =", new_block.prevsibling);
+            printbblmsg("new_block.prevsibling =", new_block.state.prevsibling);
             /* check if the block was inside an else-branch */
             if (new_block.nextbranch != NULL) {
               nextbranch = new_block.nextbranch;
@@ -2480,14 +2512,15 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             else { /* create a new basic block entry */
               BasicBlock *doblock;
               lua_assert(new_block.pass == 0);
-              addbbl1(fs, new_block.startpc, new_block.endpc, BBL_DO);
+              addbbl1(fs, new_block.state.startpc, new_block.endpc, BBL_DO);
               doblock = fs->a->bbllist.first;
               lua_assert(doblock != NULL);
-              doblock->firstchild = new_block.firstchild;
+              doblock->firstchild = new_block.state.firstchild;
               doblock->nextsibling = new_block.nextsibling;
-              if (new_block.prevsibling) {
-                printbblmsg("connecting previous sibling", new_block.prevsibling);
-                new_block.prevsibling->nextsibling = doblock;
+              if (new_block.state.prevsibling) {
+                printbblmsg("connecting previous sibling",
+                            new_block.state.prevsibling);
+                new_block.state.prevsibling->nextsibling = doblock;
                 /* there were blocks encountered that come before this block */
                 nextsibling = new_block.firstsibling;
               }
@@ -2496,7 +2529,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 nextsibling = doblock;
               }
               if (block != NULL)
-                block->firstchild = doblock; /* update child for the parent */
+                /* update child for the parent */
+                block->state.firstchild = doblock;
               if (branch != NULL && branch->elseprevsibling == NULL)
                 branch->elseprevsibling = doblock;
             }
@@ -2531,21 +2565,37 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         c = GETARG_C(i);
       default:
         if (beginseval(o, a, b, c, 0)) {
+          int stateunsure;
+          struct block1 *bl;
+          struct blockstate1 *blstate;
           fs->firstclob = pc; /* update first unstruction that clobbers A */
-          if (block != NULL) { /* update for enclosing block contexts */
-            struct block1 *bl = block;
-            int i = 0;
+          if (branch != NULL && branch->parentblock != NULL) {
+            bl = branch->parentblock;
+            blstate = &bl->possiblestate;
+            stateunsure = 1;
+            goto updateblockstate1;
+          }
+          else if (block != NULL) { /* update for enclosing block contexts */
+            int i;
+            bl = block;
+            blstate = &bl->state;
+            stateunsure = 0;
+            updateblockstate1:
+            i = 0;
             if (bl->reg == a) {
               /* this block is now caught up to the current pc */
-              bl->startpc = pc; /* update start */
-              bl->firstchild = nextsibling; /* update first child */
-              bl->prevsibling = NULL; /* discharge saved previous sibling */
+              blstate->startpc = pc; /* update start */
+              blstate->firstchild = nextsibling; /* update first child */
+              /* discharge saved previous sibling */
+              blstate->prevsibling = NULL;
             }
             /* update the rest of the parents but only update startpc */
             for (bl = bl->prev; bl != NULL; bl = bl->prev) {
+              blstate = stateunsure ? &bl->possiblestate : &bl->state;
               if (bl->reg == a) {
-                bl->startpc = pc;
-                printf("updating .firstclob for (%d) to (%d), %d block removed\n",
+                blstate->startpc = pc;
+                printf("%supdating .firstclob for (%d) to (%d), %d block "
+                       "removed\n", stateunsure ? "(possibly) " : "",
                        bl->reg, pc+1, i);
               }
               i++;
