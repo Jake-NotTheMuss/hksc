@@ -1586,6 +1586,10 @@ struct branch1 {
   BasicBlock *ifblock;  /* first if-part */
   BasicBlock *elseblock;  /* the else-part */
   BasicBlock *elseprevsibling;  /* the preceding sibling of the else-part */
+  BasicBlock *firstblock;  /* the first block in the branch context, used when
+                              no if-part is found when returning, meaning the
+                              detection was erroneous and this block needs to be
+                              accounted for in the parent call */
   struct stat1 *outer;  /* saved values for the outer loop statement */
   int target1;  /* jump target out of the branch condition */
   int startpc, endpc, midpc;  /* midpc is the start of the else-part */
@@ -1708,6 +1712,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->elseblock = block;
   branch->ifblock = NULL;
   branch->elseprevsibling = NULL;
+  branch->firstblock = NULL;
 }
 
 
@@ -2219,6 +2224,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   if (branch) {
                     if (nextbranch == NULL) {
                       branch->ifblock = new_block;
+                      branch->firstblock = new_block;
                       ca->testset.endpc = ca->testset.reg = -1;
                       return;
                     }
@@ -2366,7 +2372,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     goto badelsebranch;
                   }
                   else
-                    new_block = ifblock;
+                    new_block = nextsibling = ifblock;
                 }
                 else {
                   BasicBlock *elseprevsibling;
@@ -2400,9 +2406,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   set_ins_property(fs, pc, INS_BREAKSTAT);
                   /* ELSEBLOCK is not actually an else-block */
                   new_block = elseblock;
+                  nextsibling = new_branch.firstblock;
                 }
                 printbblmsg("exited block", new_block);
-                nextsibling = new_block;
                 lua_assert(new_block != NULL);
                 if (new_block == ifblock) {
                   nextbranch = ifblock;
@@ -2612,8 +2618,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     ca->curr = outer; /* pop old values */
   }
   else {
-    if (branch != NULL)
+    if (branch != NULL) {
+      printf("forced to return from branch without finding an if-part\n");
+      branch->firstblock = nextsibling;
       /*lua_assert(branch->next != NULL && branch->next->type == BBL_IF)*/;
+    }
     else {
       printbblmsg("setting block->firstsibling to", nextsibling);
       block->firstsibling = nextsibling;
