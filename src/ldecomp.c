@@ -1723,6 +1723,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->ifblock = NULL;
   branch->elseprevsibling = NULL;
   branch->firstblock = NULL;
+  branch->contextswitched = 0;
 }
 
 
@@ -2306,7 +2307,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else
                 branchendpc = target-1;
               elsebranch:
-              new_branch.contextswitched = 0;
               if (branch != NULL) {
                 printf("nested branch ends at (%d), the enclosing one ends "
                        "at (%d)\n", branchendpc+1, branch->midpc+1);
