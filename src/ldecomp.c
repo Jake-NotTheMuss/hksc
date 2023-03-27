@@ -1594,6 +1594,16 @@ struct branch1 {
   int target1;  /* jump target out of the branch condition */
   int startpc, endpc, midpc;  /* midpc is the start of the else-part */
   int optimalexit;  /* target of optimized jumps out of this branch */
+  int contextswitched;  /* this flag was created to handle to the case where an
+                           erroneous branch detection is discovered at the time
+                           when a new branch has been detected; if this happens,
+                           there is an enclosing branch context to return from,
+                           the one which was erroneous, and the context for it
+                           needs to be switched out with the new branch
+                           detection, and the recursion performed again with the
+                           new context, and the erroneous branch needs to be
+                           changed to a repeat-loop node and the sibling chain
+                           needs to be fixed */
 };
 
 
@@ -1707,7 +1717,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   addbbl1(fs, midpc, endpc, BBL_ELSE);
   block = fs->a->bbllist.first;
   lua_assert(block != NULL);
-  printf("ELSE BLOCK - (%d-%d)\n", midpc+2, endpc+1);
+  printf("ELSE BLOCK - (%d-%d)\n", midpc+1, endpc+1);
   fixsiblingchain1(block, nextsibling);
   branch->elseblock = block;
   branch->ifblock = NULL;
@@ -2296,6 +2306,32 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else
                 branchendpc = target-1;
               elsebranch:
+              new_branch.contextswitched = 0;
+              if (branch != NULL) {
+                printf("nested branch ends at (%d), the enclosing one ends "
+                       "at (%d)\n", branchendpc+1, branch->midpc+1);
+              }
+              /*if (branch != NULL && branchendpc >= branch->midpc) {
+              }*/
+              /* something is wrong if this new else-branch ends after an
+                 enclosing if-branch ends  */
+              if (branch != NULL && branchendpc >= branch->midpc) {
+                /* the problem: a new branch has been encountered and a context
+                   for it must be created, but simultaneously, the enclosing
+                   branch context is false and needs to be returned from */
+                /* the idea: switch out the branch context for the enclosing
+                   one, return from the enclosing context, fix the erroneous
+                   block, and recurse into the new branch context */
+                printf("existing branch-context is erroneous, performing "
+                       "context-switch and returning from context before "
+                       "recursing\n");
+                lua_assert(branch->contextswitched == 0);
+                branch->contextswitched = 1;
+                lua_assert(branch->ifblock == NULL);
+                branch->firstblock = nextsibling;
+                branch->endpc = branchendpc;
+                return;
+              }
               if (block != NULL && block->endpc <= branchendpc) {
                 struct block1 *bl = block;
                 struct block1 *lastbl = NULL;
@@ -2307,6 +2343,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 noblock = 1;
                 /* need to close all the child blocks that are contained inside
                    the else-part as well */
+                printbblmsg("childblock initialized to", childblock);
                 for (; bl != NULL; bl = bl->prev) {
                   printf("i = (%d), bl = (%p)\n", i, (void *)bl);
                   lastbl = bl;
@@ -2327,6 +2364,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 lua_assert(lastbl != NULL);
                 lastbl->pass = 0;
                 nextsibling = childblock;
+                printbblmsg("nextsibling set to", nextsibling);
                 lua_assert(nextsibling != NULL);
               }
               else
@@ -2346,6 +2384,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               new_branch.outer = &outer; /* keep the same loop context */
               if (branch != NULL)
                 new_branch.parentblock = branch->parentblock;
+              else if (noblock)
+                new_branch.parentblock = NULL;
               else
                 new_branch.parentblock = block; /* enclosing block or NULL */
               if (block != NULL)
@@ -2377,6 +2417,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 else {
                   BasicBlock *elseprevsibling;
                   badelsebranch:
+                  printbblmsg("handling erroneous else-branch detection",
+                              elseblock);
                   elseprevsibling = new_branch.elseprevsibling;
                   if (elseprevsibling != NULL) {
                     /* make sure the sibling relation exists */
@@ -2391,8 +2433,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     lua_assert(elseprevsibling->endpc+1 < elseblock->startpc);
                   }
                   /* correct the else-block that has already been created */
-                  elseblock->startpc = pc;
+                  elseblock->startpc = elseblock->endpc = pc;
+                  elseblock->isempty = 0;
                   elseblock->type = BBL_REPEAT;
+                  printbblmsg("elseblock->nextsibling =", elseblock->nextsibling);
                   unset_ins_property(fs, pc, INS_BLOCKEND);
                   if (branchstartpc <= branchendpc) {
                     unset_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
@@ -2407,6 +2451,24 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   /* ELSEBLOCK is not actually an else-block */
                   new_block = elseblock;
                   nextsibling = new_branch.firstblock;
+                  if (new_branch.contextswitched) {
+                    printf("handling else-branch context-switch for pc (%d)\n",
+                           ca->pc+1);
+                    pc = ca->pc;
+                    branchendpc = new_branch.endpc;
+                    target = pc + 1 + GETARG_sBx(code[pc]);
+                    printf("update variables before recursing with new context:\n"
+                           "  pc = (%d)\n"
+                           "  branchendpc = (%d)\n"
+                           "  target = (%d)\n", pc+1, branchendpc+1, target+1);
+                    printbblmsg("  nextsibling =",nextsibling);
+                    nextbranch = NULL;
+                    nextbranchtarget = -1;
+                    if (block != NULL) {
+                      block->state = block->possiblestate;
+                    }
+                    goto elsebranch;
+                  }
                 }
                 printbblmsg("exited block", new_block);
                 lua_assert(new_block != NULL);
