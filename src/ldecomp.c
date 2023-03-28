@@ -2864,7 +2864,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     lua_assert(endpc == sa->sizecode-1);
   }
   assertbblvalid(fs,bbl);
-  printf("pass2: entered block %s (%d-%d) at pc (%d)\n", bbltypename(type),
+  printf("pass2: entered %sblock %s (%d-%d) at pc (%d)\n", 
+         bbl->isempty ? "empty " : "", bbltypename(type),
          startpc+1, endpc+1, sa->pc+1);
   if (bbl->isempty) goto block2finished;
   for (; sa->pc < sa->sizecode; sa->pc++) {
@@ -2878,10 +2879,16 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
       bbl2(sa, fs, nextchild);
       nextchild = nextchild->nextsibling;
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      if (sa->pc == endpc) /* multiple blocks can end on the same instruction */
-        break;
-      if (!ischildempty)
-        continue; /* go to next instruction */
+      if (!ischildempty) {
+        /* multiple blocks can end on the same instruction, so make sure not to
+           process the last instruction more than once */
+        if (sa->pc == endpc)
+          break;
+        /* go to the next instruction */
+        continue;
+      }
+      /* process the same instruction, as it was not processed in the child
+         call due to the child being empty */
     }
     pc = sa->pc;
     i = code[pc];
@@ -2908,7 +2915,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     (void)a; (void)b; (void)c;
   }
   block2finished:
-  printf("pass2: leaving block %s (%d-%d) at pc (%d)\n", bbltypename(type),
+  printf("pass2: leaving %sblock %s (%d-%d) at pc (%d)\n", bbl->isempty ? 
+         "empty " : "", bbltypename(type),
          startpc+1,endpc+1,sa->pc+1);
 }
 
