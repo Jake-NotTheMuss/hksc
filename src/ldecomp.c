@@ -2468,9 +2468,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     lua_assert(elseprevsibling->endpc+1 < elseblock->startpc);
                   }
                   /* correct the else-block that has already been created */
-                  elseblock->startpc = elseblock->endpc = pc;
-                  elseblock->isempty = 0;
+                  /*elseblock->startpc = elseblock->endpc = pc;*/
+                  elseblock->startpc = pc;
+                  elseblock->isempty = (elseblock->endpc < elseblock->startpc);
+                  /*elseblock->isempty = 0;*/
                   elseblock->type = BBL_REPEAT;
+                  printbblmsg("else-block corrected to", elseblock);
                   printbblmsg("elseblock->nextsibling =", elseblock->nextsibling);
                   unset_ins_property(fs, pc, INS_BLOCKEND);
                   if (branchstartpc <= branchendpc) {
@@ -2485,7 +2488,35 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   set_ins_property(fs, pc, INS_BREAKSTAT);
                   /* ELSEBLOCK is not actually an else-block */
                   new_block = elseblock;
+                  /* firstblock should never be NULL as it gets set to the value
+                     of NEXTSIBLING when returning, and NEXTSIBLING is
+                     intialized to the else-part (ELSEBLOCK when recursing into
+                     a branch context) */
+                  lua_assert(new_branch.firstblock != NULL);
                   nextsibling = new_branch.firstblock;
+                  printbblmsg("new_branch.firstblock =", new_branch.firstblock);
+                  /* This is here to handle back-to-back `repeat-break'
+                     statements and turn them into child and parent instead of
+                     siblings, since the outer one's endpc will be after the
+                     inner one's startpc. If NEXTSIBLING is not NEW_BLOCK, then
+                     this is not the innermost context, and the sibling chain
+                     can be fixed up. In this case, NEXTSIBLING is actually the
+                     previous sibling of NEW_BLOCK (confusing, I know) as the
+                     order of recursive calls for this type of else-branch is
+                     from innermost-to-outermost, and the order in which the
+                     calls return is outermost-to-innermost, so the `firstblock'
+                     field in each call will be set to the block's enclosing
+                     context, because that is what has returned before returning
+                     from the current context */
+                  if (nextsibling != new_block) {
+                    /* NEXTSIBLING is the outer block that needs to be made the
+                       parent. NEW_BLOCK is the inner block that is currently
+                       the next sibling, but needs to be made the child. Use a
+                       dummy variable so `fixsiblingchain' doesn't change these
+                       variables */
+                    BasicBlock *dummynextsibling = new_block;
+                    fixsiblingchain1(nextsibling, &dummynextsibling);
+                  }
                   if (new_branch.contextswitched) {
                     printf("handling else-branch context-switch for pc (%d)\n",
                            ca->pc+1);
