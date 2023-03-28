@@ -2052,7 +2052,17 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                             end
                         end
                     end
-                 which is semantically equivalent and generates the same code */
+                 which is semantically equivalent and generates the same code
+                 NOTE: this could also be the following code:
+                    while a do
+                        ...
+                        repeat
+                            break;
+                        until true;
+                    end
+                 this is a special case that is handled later, in the code right
+                 before the if-branch handler code below, once the while-loop
+                 context has already been recursed into */
               if (pc == endpc-1)
                 goto markwhilestat;
               /* this instruction is the end of a tail-if-block with an
@@ -2110,25 +2120,28 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                */
             Instruction siblingjump;
             int siblingtarget;
-            /* todo: should these be an assert or bad code? */
-            lua_assert(futuresibling != NULL);
             lua_assert(type != BBL_FUNCTION);
-            siblingjump = code[futuresibling->startpc];
-            if (GET_OPCODE(siblingjump) != OP_JMP) {
-              /* todo: bad code? */
-              lua_assert(0);
+            /* the current loop must have a sibling for it to be an optimized
+               exit */
+            if (futuresibling != NULL) {
+              siblingjump = code[futuresibling->startpc];
+              if (GET_OPCODE(siblingjump) != OP_JMP) {
+                /* todo: bad code? */
+                lua_assert(0);
+              }
+              siblingtarget = futuresibling->startpc+1+GETARG_sBx(siblingjump);
+              if (target == siblingtarget) { /* optimized jump? */
+                if (ca->prevTMode || pc == startpc) /* loop-exit */
+                  init_ins_property(fs, pc, INS_LOOPFAIL);
+                else /* break */
+                  init_ins_property(fs, pc, INS_BREAKSTAT);
+                break;
+              }
+              else { /* bad code? */
+                lua_assert(0);
+              }
             }
-            siblingtarget = futuresibling->startpc + 1+GETARG_sBx(siblingjump);
-            if (target == siblingtarget) { /* optimized jump? */
-              if (ca->prevTMode || pc == startpc) /* loop-exit */
-                init_ins_property(fs, pc, INS_LOOPFAIL);
-              else /* break */
-                init_ins_property(fs, pc, INS_BREAKSTAT);
-              break;
-            }
-            else { /* bad code? */
-              lua_assert(0);
-            }
+            /* fallthrough */
           }
           if (ca->prevTMode) { /* conditional forward jump */
             /* check for a fail-jump out of a repeat-loop condition */
@@ -2160,6 +2173,28 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       (test_ins_property(fs, target, INS_OPTLOOPFAILTARGET)))) {
               lua_assert(outer.end != -1);
               init_ins_property(fs, pc, INS_LOOPFAIL);
+            }
+            /* before assuming this is an if-branch, check the jump target and
+               the enclosing loops to see if there has been an erroneous
+               while-loop detection caused by an optimized jump from an `if
+               false' or a `repeat break' statement at the end of the enclosing
+               while-loop */
+            else if (type == BBL_WHILE && outer.type == BBL_WHILE &&
+                     target > outer.end) {
+              /* todo: should this be a code check */
+              lua_assert(branch == NULL && block == NULL);
+              if (target-1 == outer.end && outer.end-1 == endpc &&
+                  futuresibling == NULL) {
+                init_ins_property(fs, pc, INS_LOOPFAIL);
+                /* this block is really `if false then ... end' or equivalent */
+                addbbl1(fs, endpc+1, endpc, BBL_IF);
+                ca->testset.endpc = ca->testset.reg = -1;
+                ca->curr = outer;
+                return;
+              }
+              else { /* todo: when is this the case? */
+                lua_assert(0);
+              }
             }
             else { /* jumping inside a branch-condition */
               if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
