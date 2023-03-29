@@ -2337,6 +2337,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 init_ins_property(fs, pc, INS_LOOPFAIL);
             }
             else { /* exiting a branch */
+              struct block1 *parentblock;
               struct branch1 new_branch;
               int noblock; /* true if the analyzer marked this branch as a
                               do-block and needs to correct */
@@ -2402,12 +2403,18 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 }
                 lua_assert(lastbl != NULL);
                 lastbl->pass = 0;
-                nextsibling = childblock;
+                if (childblock != NULL)
+                  nextsibling = childblock;
                 printbblmsg("nextsibling set to", nextsibling);
-                lua_assert(nextsibling != NULL);
+                if (lastbl->endpc > branchendpc)
+                  parentblock = lastbl;
+                else
+                  parentblock = NULL;
               }
-              else
+              else {
                 noblock = 0;
+                parentblock = block;
+              }
               branchstartpc = pc+1;
               init_ins_property(fs, pc, INS_BLOCKEND);
               /* BRANCHENDPC will be less than BRANCHSTARTPC if it is an empty
@@ -2423,10 +2430,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               new_branch.outer = &outer; /* keep the same loop context */
               if (branch != NULL)
                 new_branch.parentblock = branch->parentblock;
-              else if (noblock)
-                new_branch.parentblock = NULL;
               else
-                new_branch.parentblock = block; /* enclosing block or NULL */
+                new_branch.parentblock = parentblock;
               if (block != NULL)
                 /* update the block's possible state to its actual state, as the
                    possible state may be what gets updated within the branch
