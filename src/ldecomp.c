@@ -1867,11 +1867,21 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               }
               printf("--\n");
               /* also update NEXTBRANCH */
-              if (nextsibling && nextsibling->type == BBL_IF)
+              if (nextsibling && nextsibling->type == BBL_IF) {
                 nextbranch = nextsibling;
-              else
+                lua_assert(nextbranch->startpc-1 >= 0 &&
+                           nextbranch->startpc-1 < fs->f->sizecode);
+                lua_assert(GET_OPCODE(code[nextbranch->startpc-1]) == OP_JMP);
+                nextbranchtarget = nextbranch->startpc-1 + 1 +
+                                   GETARG_sBx(code[nextbranch->startpc-1]);
+              }
+              else {
                 nextbranch = NULL;
+                nextbranchtarget = -1;
+              }
               printbblmsg("nextbranch =", nextbranch);
+              if (nextbranchtarget != -1)
+              printf("nextbranchtarget = (%d)\n", nextbranchtarget+1);
             }
           }
           else { /* part of a pending testset expression */
