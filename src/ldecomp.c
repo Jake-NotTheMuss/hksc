@@ -1634,6 +1634,7 @@ struct block1 {
      even when the function returns again (after returning from the branch
      context) in order to pop off the erroneous block context */
   BasicBlock *nextbranch;
+  int nextbranchtarget;
   /* `nextsibling' is used when 2 adjacent blocks are detected. The analyzer
      will end the existing block and overwrite the current context for the new
      block instead of recursing into a new context. In this case, the basic
@@ -2559,6 +2560,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   nextbranch = ifblock;
                   printbblmsg("setting nextbranch to", ifblock);
                   nextbranchtarget = new_branch.target1;
+                  printf("setting nextbranchtarget to (%d)\n",
+                         nextbranchtarget+1);
                 }
                 else {
                   nextbranch = NULL;
@@ -2570,6 +2573,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 if (noblock) { /* close the erroneous block and pass data */
                   lua_assert(block != NULL);
                   block->nextbranch = nextbranch;
+                  block->nextbranchtarget = nextbranchtarget;
                   return; /* return from the do-block context */
                 }
               }
@@ -2627,6 +2631,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             block->firstsibling = NULL;
             block->state.firstchild = NULL;
             block->nextbranch = NULL;
+            block->nextbranchtarget = -1;
             block->pass = 0;
             block->state.startpc = pc;
             block->endpc = pc;
@@ -2637,6 +2642,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             struct block1 new_block;
             new_block.prev = block;
             new_block.nextbranch = NULL;
+            new_block.nextbranchtarget = -1;
             new_block.nextsibling = nextsibling;
             new_block.firstsibling = NULL;
             new_block.state.prevsibling = NULL;
@@ -2651,11 +2657,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             /* check if the block was inside an else-branch */
             if (new_block.nextbranch != NULL) {
               nextbranch = new_block.nextbranch;
+              nextbranchtarget = new_block.nextbranchtarget;
               nextsibling = nextbranch;
               /* check if the parent was also inside the else-branch */
               if (new_block.pass) { /* also pass this data to the parent */
                 lua_assert(block != NULL);
                 block->nextbranch = nextbranch;
+                block->nextbranchtarget = nextbranchtarget;
                 return; /* return for each block that was in the else-branch */
               }
             }
