@@ -295,7 +295,7 @@ static void addsibling1(BasicBlock *bbl1, BasicBlock *bbl2) {
   bbl1->nextsibling = bbl2;
 }
 
-static void addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
+static BasicBlock *addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
   BasicBlock *curr, *new;
@@ -307,6 +307,7 @@ static void addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
     a->bbllist.last = new;
   printf("recording new basic block of type %s (%d-%d)\n",
          bbltypename(type),startpc+1,endpc+1);
+  return new;
 }
 
 
@@ -1716,8 +1717,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
     branch->optimalexit = branch->prev->optimalexit;
   else
     branch->optimalexit = jumptarget;
-  addbbl1(fs, midpc, endpc, BBL_ELSE);
-  block = fs->a->bbllist.first;
+  block = addbbl1(fs, midpc, endpc, BBL_ELSE);
   if (branch->prev != NULL && branch->prev->elseprevsibling == NULL)
     branch->prev->elseprevsibling = block;
   lua_assert(block != NULL);
@@ -2255,8 +2255,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   if (issingle && branch != NULL) {
                     printf("THIS BRANCH IS A CHILD BLOCK of the top-level one\n");
                   }
-                  addbbl1(fs, branchstartpc, branchendpc, BBL_IF);
-                  new_block = fs->a->bbllist.first;
+                  new_block = addbbl1(fs, branchstartpc, branchendpc, BBL_IF);
                   blockcreated:
                   /* BRANCHENDPC can be less than BRANCHSTARTPC if the block is
                      empty */
@@ -2389,8 +2388,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   lastbl = bl;
                   if (bl->endpc < branchendpc) {
                     BasicBlock *currblock;
-                    addbbl1(fs, bl->state.startpc, bl->endpc, BBL_DO);
-                    currblock = fs->a->bbllist.first;
+                    currblock = addbbl1(fs,bl->state.startpc,bl->endpc,BBL_DO);
                     lua_assert(currblock != NULL);
                     printbblmsg("found an inner block", currblock);
                     currblock->firstchild = childblock;
@@ -2608,8 +2606,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                instead of pushing a new one */
             BasicBlock *new_block;
             printf("encountered adjacent do-block\n");
-            addbbl1(fs, block->state.startpc, block->endpc, BBL_DO);
-            new_block = fs->a->bbllist.first;
+            new_block = addbbl1(fs, block->state.startpc, block->endpc, BBL_DO);
             lua_assert(new_block != NULL);
             new_block->firstchild = block->state.firstchild;
             printbblmsg("setting first child for block to",
@@ -2665,8 +2662,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             else { /* create a new basic block entry */
               BasicBlock *doblock;
               lua_assert(new_block.pass == 0);
-              addbbl1(fs, new_block.state.startpc, new_block.endpc, BBL_DO);
-              doblock = fs->a->bbllist.first;
+              doblock = addbbl1(fs, new_block.state.startpc, new_block.endpc,
+                                BBL_DO);
               lua_assert(doblock != NULL);
               doblock->firstchild = new_block.state.firstchild;
               doblock->nextsibling = new_block.nextsibling;
@@ -2776,9 +2773,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     }
     return;
   }
-  addbbl1(fs, startpc, endpc, type); /* create a new basic block node */
+  /* create a new basic block node */
   /* `nextsibling' will end up being the first child of this new block */
-  fs->a->bbllist.first->firstchild = nextsibling;
+  addbbl1(fs, startpc, endpc, type)->firstchild = nextsibling;
   printf("ca->pc = (%d)\n", ca->pc);
 }
 
