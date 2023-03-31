@@ -127,6 +127,7 @@ void luaC_newcycle (hksc_State *H)
   g->gcstate = GCSsweep;
   sweepwholelist(H, &g->rootgc); /* free all temporary objects */
   g->sweepgc = &g->rootgc;
+  g->sweepstrgc = 0;
   g->gcstate = GCSsweepstring; /* maybe collect dead strings */
   luaC_checkGC(H);
   g->gcstate = GCSpause; /* end of collection */
@@ -143,6 +144,7 @@ static l_mem singlestep (hksc_State *H) {
     case GCSsweepstring: {
       lu_mem old = g->totalbytes;
       lua_assert(*g->sweepgc == g->rootgc); /* all temps have been collected */
+      lua_assert(g->sweepstrgc < g->strt.size);
       sweepwholelist(H, &g->strt.hash[g->sweepstrgc++]);
       if (g->sweepstrgc >= g->strt.size) { /* nothing more to sweep? */
         checkSizes(H);
