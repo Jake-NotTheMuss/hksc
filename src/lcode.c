@@ -662,15 +662,15 @@ void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
 
 static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   lua_Number v1, v2, r;
+#ifdef LUA_CODT7
   lu_int32 iv1, iv2;
+#endif /* LUA_CODT7 */
   if (!isnumeral(e1) || !isnumeral(e2)) return 0;
   v1 = e1->u.nval;
   v2 = e2->u.nval;
 #ifdef LUA_CODT7
   iv1 = cast(lu_int32, v1);
   iv2 = cast(lu_int32, v2);
-#else /* !LUA_CODT7 */
-  (void)iv1; (void)iv2;
 #endif /* LUA_CODT7 */
   switch (op) {
     case OP_ADD: r = luai_numadd(v1, v2); break;
