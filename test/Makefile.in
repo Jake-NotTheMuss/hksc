@@ -73,7 +73,30 @@ ALL_SRC=	00_comment.lua \
 	30_long_string.lua \
 	31_early_return.lua \
 	32_early_break.lua \
-	33_concat_call.lua
+	33_concat_call.lua \
+	34_testset_with_test.lua \
+	35_emptyif.lua \
+	36_emptyelse.lua \
+	37_emptywhile.lua \
+	37_whilewhile.lua \
+	38_upvalue_repeatorwhile.lua \
+	39_optimizedbreak.lua \
+	40_repuntilfalse.lua \
+	41_repuntiltrue.lua \
+	42_whilefalse.lua \
+	43_upvalue_repuntilfalse.lua \
+	44_break_repuntilfalse.lua \
+	45_empty_repuntiltrue.lua \
+	46_b2b_while_false.lua \
+	47_rep_break_until_true.lua \
+	48_while_rep_break_until_true.lua \
+	49_ifelse_rep_break_until_true.lua \
+	50_b2b_rep_break_until_true.lua \
+	51_while2_if_false.lua \
+	52_nested_ifelse.lua \
+	53_do_ifelse_do.lua \
+	54_erro_if.lua \
+	55_newtable_arg.lua
 
 UI64_SRC_NO=
 HSTRUCTURE_SRC_NO=
