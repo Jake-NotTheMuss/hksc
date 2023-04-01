@@ -187,6 +187,12 @@ static void close_func (DecompState *D) {
   UNUSED(fs->sizelocvars);
   UNUSED(fs->D->usedebuginfo);
   D->fs = fs->prev;
+  /* todo here: mark the analyzer for collection so it may be collected in this
+     cycle if needed */
+  /* in lgc.c, add logic to avoid collecting TEMP objects when the library is
+     still mid-cycle, in which case it is an emergency GC cycle. Add the
+     mid-cycle flag to the global_State */
+  /* todo: see how Lua does emergency GC */
 }
 
 static void addsibling1(BasicBlock *bbl1, BasicBlock *bbl2) {

@@ -513,6 +513,9 @@ static void close_func (LexState *ls) {
   lua_assert(luaG_checkcode(f));
   lua_assert(fs->bl == NULL);
   ls->fs = fs->prev;
+  /* todo here: mark the table and prototype for collection
+     in Lua, it decrements the stack by 2, but here, with no stack, mark them
+     explicitly as dead so they may be collected within this cycle if needed */
   /* last token read was anchored in defunct function; must reanchor it */
   if (fs) anchor_token(ls);
 }
