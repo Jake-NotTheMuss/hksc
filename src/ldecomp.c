@@ -49,12 +49,14 @@ static const char *const insflagnames [] = {
 };
 #undef DEFINSFLAG
 
+#if 0
 #define DEFREGFLAG(e)  "REG_" #e,
 static const char *const regflagnames [] = {
   REGFLAG_TABLE
   "MAX_REGFLAG"
 };
 #undef DEFREGFLAG
+#endif
 
 #define bbltypename(v) (bbltypenames[v])
 #define insflagname(v) (insflagnames[v])
@@ -110,75 +112,8 @@ typedef struct {
   int usedebuginfo;  /* true if using debug info */
   int matchlineinfo;  /* true if matching statements to line info */
   /* data for the current function's decompilation */
-  int indentlevel;  /* the initial indentation level of this function */
   int funcidx;  /* n for the nth function that is being decompiled */
-  int needspace;
 } DecompState;
-
-#define expliteral(e,l) ((e)->str = "" l, (e)->len = sizeof(l)-1, (e))
-#define expts(e,ts) ((e)->str = getstr(ts), (e)->len = (ts)->tsv.len, (e))
-
-#define detype(e) ((e)->flags)
-#define dereg(e) ((e)->u.reg)
-#define detok(e) ((e)->u.token)
-#define delocidx(e) ((e)->u.locidx)
-
-/* decompiler expression flags */
-enum DEXPTYPE {
-  DK = (1 << 0), /* a constant */
-  DID = (1 << 1), /* an identifier */
-  DTOKEN = (1 << 2), /* a reserved Lua token */
-  DLHS = (1 << 3), /* left-hand-side of an assignment */
-  DDECL = (1 << 4), /* an identifier in a local variable declaration */
-  DRET = (1 << 5), /* expression is returned */
-  DLIST = (1 << 6), /* part of an expression list */
-  DSTARTFUNC = (1 << 17), /* first node in a function */
-  DENDLINE = (1 << 18), /* the last node in a line */
-  DENDSTMT = (1 << 19), /* the last node in a statement */
-  DENDBLOCK = (1 << 20), /* the last node in a block */
-  DCOMMENT = (1 << 21), /* a Lua comment */
-  DLONGCOMMENT = (1 << 22) /* a long Lua comment */
-};
-
-#define deisk(e)              ((detype(e) & DK) != 0)
-#define deisid(e)             ((detype(e) & DID) != 0)
-#define deistoken(e)          ((detype(e) & DTOKEN) != 0)
-#define deislhs(e)            ((detype(e) & DLHS) != 0)
-#define deisdecl(e)           ((detype(e) & DDECL) != 0)
-#define deisret(e)            ((detype(e) & DRET) != 0)
-#define deislist(e)           ((detype(e) & DLIST) != 0)
-#define deisfuncstart(e)      ((detype(e) & DSTARTFUNC) != 0)
-#define deislineend(e)        ((detype(e) & DENDLINE) != 0)
-#define deisstmtend(e)        ((detype(e) & DENDSTMT) != 0)
-#define deisblockend(e)       ((detype(e) & DENDBLOCK) != 0)
-#define deiscomment(e)        ((detype(e) & DCOMMENT) != 0)
-#define deislongcomment(e)    ((detype(e) & DLONGCOMMENT) != 0)
-
-#define desettype(e,t) ((detype(e) |= (t)))
-#define deunsettype(e,t) ((detype(e) &= ~(t)))
-#define deresettype(e,t) ((detype(e) = (t)))
-
-#define ID_LOCAL 0
-#define ID_UPVALUE 1
-#define ID_GLOBAL 2
-
-/* a decompiled expression */
-typedef struct DExp {
-  struct DExp *prev, *next;
-  struct DExp *nextinlist;
-  const char *str; /* the expressions's printable form */
-  size_t len; /* length of str */
-  int flags;
-  int pc; /* pc at which this expression was encountered */
-  lu_byte istemp; /* true if this expression is stored in a temp register */
-  int lines_needed; /* number of line feeds needed after this expression */
-  int idtype;
-  union {
-    int locidx; /* local variable index for identifiers */
-    int reg; /* the register that stores this expression */
-    int token; /* the token id if this is a reserved token */
-  } u;
-} DExp;
 
 
 /* a decompiled function */
@@ -188,34 +123,14 @@ typedef struct DFuncState {
   Analyzer *a; /* function analyzer data */
   const Proto *f;  /* current function header */
   hksc_State *H;  /* copy of the Lua state */
-  struct {
-    DExp *first, *last;
-  } explist;  /* current chain of pending expressions */
-  int nexps;  /* number of expressions in current chain */
   int idx;  /* the nth function */
-  int nbbl; /* number of basic blocks */
   struct LocVar *locvars;  /* information about local variables */
   int locvaridx;
   int nlocvars;  /* number of local variables declared so far */
   int sizelocvars;
   int pc;  /* current pc */
-  int line;  /* actual current line number */
-  int linepending;  /* line + number of pending new lines */
-  int numdecls;  /* number of initial implicit nil local variables */
   int firstclob;  /* first pc that clobbers register A */
 } DFuncState;
-
-static DExp *newexp(DFuncState *fs, int type) {
-  DExp *e = luaM_new(fs->H, DExp);
-  memset(e, 0, sizeof(DExp));
-  desettype(e, type);
-  e->pc = fs->pc;
-  return e;
-}
-
-static void freeexp(DFuncState *fs, DExp *exp) {
-  luaM_free(fs->H, exp);
-}
 
 
 static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
@@ -231,7 +146,7 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
 }
 
 
-static void open_func(DFuncState *fs, DecompState *D, const Proto *f) {
+static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
   fs->a = a;
@@ -240,11 +155,8 @@ static void open_func(DFuncState *fs, DecompState *D, const Proto *f) {
   fs->H = H;
   D->fs = fs;
   fs->f = f;
-  fs->explist.first = fs->explist.last = NULL;
-  fs->nexps = 0;
   fs->idx = D->funcidx++;
   fs->nlocvars = 0;
-  fs->nbbl = 0;
   if (D->usedebuginfo) { /* have debug info */
     printf("using debug info for function '%s'\n", f->name ? getstr(f->name) : "(anonymous)");
     fs->sizelocvars = f->sizelocvars;
@@ -257,8 +169,6 @@ static void open_func(DFuncState *fs, DecompState *D, const Proto *f) {
     fs->locvars = a->locvars;
   }
   fs->locvaridx = fs->sizelocvars - 1;
-  fs->line = (fs->prev != NULL) ? fs->prev->linepending : 1;
-  fs->linepending = fs->line;
   fs->firstclob = -1;
   /* allocate vectors for instruction and register properties */
   a->sizeinsproperties = f->sizecode; /* flags for each instruction */
@@ -269,25 +179,14 @@ static void open_func(DFuncState *fs, DecompState *D, const Proto *f) {
   memset(a->regproperties, 0, a->sizeregproperties * sizeof(RegisterFlags));
 }
 
-static void append_func(DFuncState *fs1, DFuncState *fs2);
 
-static void close_func(DecompState *D) {
+static void close_func (DecompState *D) {
   DFuncState *fs = D->fs;
-  lua_assert(fs->explist.first == NULL);
-  lua_assert(fs->explist.last == NULL);
-  lua_assert(fs->nexps == 0);
-  lua_assert(fs->line == fs->linepending);
   D->funcidx--;
   UNUSED(fs->locvars);
   UNUSED(fs->sizelocvars);
   UNUSED(fs->D->usedebuginfo);
-  if (fs->prev != NULL) { /* update line number for parent */
-    DFuncState *prev = fs->prev;
-    int pending = prev->linepending - prev->line;
-    prev->line = fs->line;
-    prev->linepending = prev->line + pending;
-    append_func(prev, fs);
-  }
+  D->fs = fs->prev;
 }
 
 static void addsibling1(BasicBlock *bbl1, BasicBlock *bbl2) {
@@ -309,6 +208,22 @@ static BasicBlock *addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
          bbltypename(type),startpc+1,endpc+1);
   return new;
 }
+
+
+#if 0
+static BasicBlock *addbbl2(DFuncState *fs, int startpc, int endpc, int type) {
+  hksc_State *H = fs->H;
+  Analyzer *a = fs->a;
+  BasicBlock *curr, *new;
+  curr = a->bbllist.last;
+  new = newbbl(H, startpc, endpc, type);
+  /* the first pass should always create at least 1 block */
+  lua_assert(a->bbllist.first != NULL);
+  lua_assert(a->bbllist.last != NULL);
+  curr->next = new;
+  a->bbllist.last = new;
+}
+#endif
 
 
 static void printbblmsg(const char *msg, BasicBlock *block) {
@@ -335,12 +250,6 @@ static void DumpBlock(const void *b, size_t size, DecompState *D)
   }
 }
 
-static void DumpExp(DExp *exp, DecompState *D)
-{
-  lua_assert(exp->str != NULL);
-  lua_assert(exp->len > 0);
-  DumpBlock(exp->str, exp->len, D);
-}
 
 static void DumpStringf(DecompState *D, const char *fmt, ...)
 {
@@ -356,35 +265,26 @@ static void DumpStringf(DecompState *D, const char *fmt, ...)
 #ifdef LUA_DEBUG
 
 static void debugbbl(DFuncState *fs, BasicBlock *bbl, int indent) {
-  BasicBlock *child = bbl->firstchild;
-  BasicBlock *nextsibling = bbl->nextsibling;
+  BasicBlock *child, *nextsibling;
   int i;
-  for (i = 0; i < indent; i++) {
+  lua_assert(bbl != NULL);
+  child = bbl->firstchild;
+  nextsibling = bbl->nextsibling;
+  for (i = 0; i < indent; i++)
     printf("  ");
-#ifdef HKSC_DECOMP_DEBUG_PASS1
-    DumpLiteral("\t",fs->D);
-#endif /* HKSC_DECOMP_DEBUG_PASS1 */
-  }
   if (indent) printf("- ");
-  printf("(%d-%d) %s (%s sibling)\n", bbl->startpc+1, bbl->endpc+1,
-         bbltypename(bbl->type), (nextsibling != NULL)?"YES":"NO");
-#ifdef HKSC_DECOMP_DEBUG_PASS1
-  DumpStringf(fs->D, "%s\n", bbltypename(bbl->type));
-#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+  printf("(%d-%d) %s ", bbl->startpc+1, bbl->endpc+1, bbltypename(bbl->type));
+  if (nextsibling != NULL)
+    printf("(sibling (%d-%d) %s\n", nextsibling->startpc+1,
+           nextsibling->endpc+1, bbltypename(nextsibling->type));
+  else
+    printf("(NO sibling)\n");
   while (child != NULL) {
     debugbbl(fs, child, indent+1);
     child = child->nextsibling;
   }
-#ifdef HKSC_DECOMP_DEBUG_PASS1
-  if (bbl->type != BBL_IF &&
-      (bbl->nextsibling == NULL ||
-       bbl->nextsibling->type != BBL_ELSE)) {  /* if-statement has no else */
-    for (i = 0; i < indent; i++)
-      DumpLiteral("\t",fs->D);
-    DumpLiteral("END\n",fs->D);
-  }
-#endif
 }
+
 
 static void debugbblsummary(DFuncState *fs)
 {
@@ -395,561 +295,43 @@ static void debugbblsummary(DFuncState *fs)
   fputs("-------------------\n", stdout);
 }
 
-#else
+
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+static void dumpbblpass1(DFuncState *fs, BasicBlock *bbl, int indent) {
+  BasicBlock *child;
+  int i;
+  lua_assert(bbl != NULL);
+  child = bbl->firstchild;
+  for (i = 0l i < indent; i++) /* put indentation */
+    DumpLiteral("\t",fs->D);
+  DumpString(bbltypename(bbl->type), fs->D); /* put block type */
+  DumpLiteral("\n",fs->D);
+  while (child != NULL) {
+    dumpbblpass1(fs, child, indent+1);
+    child = child->nextsibling;
+  }
+  if (bbl->type != BBL_IF &&
+      (bbl->nextsibling == NULL ||
+       bbl->nextsibling->type != BBL_ELSE)) {  /* block ends with `END' */
+    for (i = 0; i < indent; i++)
+      DumpLiteral("\t", fs->D);
+    DumpLiteral("END\n", fs->D);
+  }
+}
+
+static void dumppass1(DFuncState *fs)
+{
+  Analyzer *a = fs->a;
+  dumpbblpass1(fs, a->bbllist.first, 0);
+}
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+
+#else /* !LUA_DEBUG */
 
 #define debugbblsummary(fs)  ((void)(fs))
 
 #endif /* LUA_DEBUG */
 
-
-#define createvarname(type) \
-  char buff[sizeof("f_" type) + (2 * INT_CHAR_MAX_DEC)]; \
-  lua_assert(i >= 0 && i < LUAI_MAXVARS); \
-  lua_assert(fs->idx >= 0); \
-  sprintf(buff, "f%d_" type "%d", fs->idx, i); \
-  return luaS_new(fs->H, buff)
-
-/* when debug info is not present/used, generate a local variable name */
-static TString *createlocvarname(DFuncState *fs, int i) {
-  createvarname("local");
-}
-
-/* when debug info is not present/used, generate a argument variable name */
-static TString *createargname(DFuncState *fs, int i) {
-  createvarname("arg");
-}
-
-#undef createvarname
-
-#define DumpAugVar(fs,n,D,s) DumpStringf((D), "f%d_" s "%d", (fs)->idx, (n))
-#define DumpAugLocVar(fs,n,D) DumpAugVar(fs,n,D,"local")
-#define DumpAugArgVar(fs,n,D) DumpAugVar(fs,n,D,"arg")
-
-#define NextLine(fs,D) AddLines(fs,1,D)
-static void AddLines(DFuncState *fs, int n, DecompState *D)
-{
-  int i;
-  for (i=0; i<n; i++)
-    DumpLiteral("\n",D);
-  fs->line+=n;
-}
-
-/* begin a new statement */
-static void begin_stmt(DFuncState *fs) {
-  DExp *curr = fs->explist.last;
-  if (curr != NULL)
-    desettype(curr, DENDSTMT);
-}
-
-/* begin a new line */
-static void begin_line(DFuncState *fs, int n, DecompState *D) {
-  DExp *curr = fs->explist.last;
-  lua_assert(n >= 0);
-  fs->linepending += n;
-  if (curr != NULL && n > 0) {
-    desettype(curr, DENDLINE);
-    curr->lines_needed = n;
-  }
-  else {
-    AddLines(fs, n, D);
-    lua_assert(fs->line == fs->linepending);
-  }
-}
-
-/* when line info is not present/used, check if a new line is needed */
-static void maybe_begin_line(DFuncState *fs, DecompState *D) {
-  DExp *curr = fs->explist.last;
-  if (curr != NULL && (deisstmtend(curr) || deisblockend(curr))) {
-    printf("Adding a new line before the next node\n");
-    begin_line(fs, 1, D);
-  }
-}
-
-static void append_exp(DFuncState *fs, DExp *exp) {
-  DExp *last = fs->explist.last;
-  fs->explist.last = exp;
-  exp->prev = last;
-  exp->next = NULL;
-  if (last != NULL)
-    last->next = exp;
-  fs->nexps++;
-  if (fs->explist.first == NULL)
-    fs->explist.first = fs->explist.last;
-}
-
-static void prepend_exp(DFuncState *fs, DExp *exp) {
-  DExp *first = fs->explist.first;
-  fs->explist.first = exp;
-  exp->prev = NULL;
-  exp->next = first;
-  if (first)
-    first->prev = exp;
-  fs->nexps++;
-  if (fs->explist.last == NULL)
-    fs->explist.last = fs->explist.first;
-}
-
-static void insert_exp_before(DFuncState *fs, DExp *pos, DExp *exp) {
-  DExp *prev;
-  lua_assert(pos != NULL);
-  if (pos == fs->explist.first) {
-    prepend_exp(fs, exp);
-    return;
-  }
-  prev = pos->prev;
-  if (prev != NULL)
-    prev->next = exp;
-  exp->prev = prev;
-  exp->next = pos;
-  pos->prev = exp;
-  fs->nexps++;
-}
-
-static void insert_exp_after(DFuncState *fs, DExp *pos, DExp *exp) {
-  DExp *next;
-  lua_assert(pos != NULL);
-  if (pos == fs->explist.last) {
-    append_exp(fs, exp);
-    return;
-  }
-  next = pos->next;
-  if (next != NULL)
-    next->prev = exp;
-  exp->prev = pos;
-  exp->next = next;
-  pos->next = exp;
-  fs->nexps++;
-}
-
-static void remove_exp(DFuncState *fs, DExp *exp) {
-  DExp *prev, *next;
-  prev = exp->prev;
-  next = exp->next;
-  if (prev != NULL) 
-    prev->next = next;
-  else
-    fs->explist.first = next;
-  if (next != NULL)
-    next->prev = prev;
-  else
-    fs->explist.last = prev;
-  freeexp(fs, exp);
-  fs->nexps--;
-}
-
-static void append_func(DFuncState *fs1, DFuncState *fs2) {
-  DExp *first, *last;
-  first = fs2->explist.first;
-  last = fs2->explist.last;
-  lua_assert(deisfuncstart(first));
-  lua_assert(deisblockend(last));
-  append_exp(fs1, first);
-  fs1->explist.last = last;
-}
-
-static int empty_chain(DFuncState *fs) {
-  if (fs->explist.first == NULL) {
-    lua_assert(fs->explist.last == NULL);
-    lua_assert(fs->nexps == 0);
-    return 1;
-  }
-  else {
-    lua_assert(fs->explist.last != NULL);
-    lua_assert(fs->nexps > 0);
-    return 0;
-  }
-}
-
-static void setlhs(DFuncState *fs, DExp *exp) {
-#if 0
-  if (fs->nexps >= 2) {
-    DExp *second = fs->explist.first->next;
-    lua_assert(deislhs(second)); /* LHS cannot already be set */
-  }
-#endif
-  desettype(exp, DLHS);
-  prepend_exp(fs, exp);
-}
-
-/* access a local variable; all local variable operations go through here */
-static DExp *locvar2exp(DFuncState *fs, int i) {
-  struct LocVar *var;
-  DExp *exp;
-  lua_assert(i < fs->sizelocvars);
-  var = &fs->locvars[i];
-  exp = newexp(fs, DID);
-  exp->idtype = ID_LOCAL;
-  delocidx(exp) = i;
-  lua_assert(var->varname != NULL);
-  expts(exp, var->varname);
-  return exp;
-}
-
-/* prepend a local variable declaration as an LHS in an assignment */
-static DExp *makedecl(DFuncState *fs, DExp *exp) {
-  DExp *decl;
-  int r = dereg(exp);
-  struct LocVar *var;
-  int idx = fs->nlocvars++;
-  lua_assert(r < fs->f->maxstacksize);
-  lua_assert(idx < fs->sizelocvars);
-  var = &fs->locvars[idx];
-  if (!fs->D->usedebuginfo) {
-    var->startpc = fs->pc; /* todo: is this always the case? */
-    var->endpc = fs->f->sizecode;
-    var->varname = createlocvarname(fs, idx);
-  }
-  decl = locvar2exp(fs, idx);
-  delocidx(decl) = idx;
-  desettype(decl, DLHS | DDECL);
-  if (fs->D->usedebuginfo) {
-    /*lua_assert(var->startpc == fs->pc);*/ /* todo: this isn't always true */
-  }
-  return decl;
-}
-
-/* prenend a declaration node to an expression, making it an assignment RHS */
-static void adddecl(DFuncState *fs, DExp *exp) {
-  insert_exp_before(fs, exp, makedecl(fs, exp));
-}
-
-/* true if EXP follows a node of type DDECL */
-static int isdecl(DExp *exp) {
-  DExp *prev = exp->prev;
-  return (prev != NULL && deisdecl(prev));
-}
-
-/* remove a preceding declaration node from an expression if present; this is
-   needed when the decompiler encounters an instruction that would augment the
-   previous declaration(s), such as a forloop or certain complex arithmetic
-   expressions */
-static void removedecl(DFuncState *fs, DExp *exp) {
-  if (isdecl(exp)) {
-    remove_exp(fs, exp->prev);
-  }
-}
-
-static void DumpExpList(DFuncState *fs, DExp *root, DecompState *D)
-{
-  DExp *exp = root;
-  if (exp->nextinlist != NULL)
-    lua_assert(deislist(exp));
-  DumpExp(exp,D);
-  exp = exp->nextinlist;
-  while (exp != NULL) {
-    DExp *next;
-    lua_assert(deislist(exp));
-    DumpLiteral(", ",D);
-    DumpExp(exp,D);
-    next = exp->nextinlist;
-    freeexp(fs, exp);
-    exp = next;
-  }
-  root->nextinlist = NULL;
-}
-
-static void DumpNode(DFuncState *fs, DExp *exp, DecompState *D)
-{
-  lua_assert(exp != NULL);
-  while (D->needspace > 0) {
-    DumpLiteral(" ", D);
-    D->needspace--;
-  }
-  if (deisdecl(exp)) { /* new local variable */
-    printf("   Dumping declaration node\n");
-    DumpLiteral("local ",D);
-    DumpExpList(fs, exp, D);
-  }
-  else if (deisret(exp)) { /* return statement */
-    DumpLiteral("return",D);
-    if (exp->str != NULL) { /* returns a value */
-      printf("   Dumping returned expression '%s'\n", exp->str);
-      DumpLiteral(" ",D);
-      DumpExp(exp,D);
-    }
-    else printf("   Dumping return statement\n");
-  }
-  else {
-    DumpExp(exp,D);
-  }
-  if (deislhs(exp)) DumpLiteral(" = ",D); /* assignment follows */
-  if (deisstmtend(exp)) {
-    DumpLiteral(";",D); /* end of statement */
-    if (!deislineend(exp))
-      D->needspace = 1;
-  }
-  if (deislineend(exp)) {
-    lua_assert(exp->lines_needed > 0);
-    AddLines(fs,exp->lines_needed,D);
-  }
-}
-
-/* discharge the pending expression chain */
-static void discharge(DFuncState *fs, DecompState *D) {
-  DExp *exp = fs->explist.first;
-  printf("--> DISCHARGING %d expression nodes:\n", fs->nexps);
-  while (exp != NULL) {
-    DExp *next;
-    DumpNode(fs,exp,D);
-    next = exp->next;
-    freeexp(fs, exp);
-    exp = next;
-    fs->nexps--;
-  }
-  lua_assert(fs->nexps == 0);
-  fs->explist.first = fs->explist.last = NULL;
-}
-
-static void addtolist(DFuncState *fs, DExp *e1, DExp *e2) {
-  UNUSED(fs);
-  e1->nextinlist = e2;
-  desettype(e1, DLIST);
-  desettype(e2, DLIST);
-}
-
-static DExp *nil2exp(DFuncState *fs, int i, DecompState *D)
-{
-  DExp *exp = newexp(fs, DK);
-  UNUSED(D);
-  expliteral(exp, "nil");
-  dereg(exp) = i;
-  return exp;
-}
-
-/* dump N nil variable declarations before dumping a function's code */
-static void dump_initial_decl(DFuncState *fs, int i, int n, DecompState *D)
-{
-  int line, lines_avail;
-  int declline; /* what line is the current declaration on */
-  /* assertions: this only happens at the start of function */
-  lua_assert(empty_chain(fs));
-  lua_assert(fs->line == fs->linepending);
-  line = getline(fs->f,0);
-  declline = fs->linepending;
-  if (line > 0 && D->matchlineinfo) {
-    lines_avail = line - fs->line; /* keep in sync with line info */
-    if (lines_avail > n)
-      declline += lines_avail - n;
-  }
-  else {
-    lines_avail = n; /* not matching line info, one line for each decl */
-  }
-  printf("line info line = %d\n", line);
-  printf("declline = %d, fs->linepending = %d\n", declline, fs->linepending);
-  begin_line(fs, declline - fs->linepending, D);
-  for (; i < n; i++) {
-    DExp *nil, *decl;
-    if (lines_avail == 1) break;
-    nil = nil2exp(fs, i, D); /* nil value */
-    decl = makedecl(fs, nil); /* the declaration*/
-    append_exp(fs, decl);
-    append_exp(fs, nil);
-    begin_stmt(fs);
-    if (lines_avail > 0) {
-      int nlines = ++declline - fs->linepending;
-      lines_avail-=nlines;
-      begin_line(fs, nlines, D);
-    }
-  }
-  if (i < n && lines_avail == 1) {
-    DExp *nil = nil2exp(fs, i, D);
-    DExp *lastdecl = NULL;
-    DExp *rootdecl;
-    for (; i < n; i++) {
-      DExp *decl;
-      dereg(nil) = i;
-      decl = makedecl(fs, nil);
-      if (lastdecl != NULL)
-        addtolist(fs, lastdecl, decl);
-      else
-        rootdecl = decl;
-      lastdecl = decl;
-    }
-    append_exp(fs, rootdecl);
-    append_exp(fs, nil);
-    begin_stmt(fs);
-    begin_line(fs, 1, D);
-  }
-  discharge(fs,D);
-  if (D->matchlineinfo) lua_assert(fs->line == line);
-}
-
-/* check for implicit nil variable declarations at the start of the function */
-static void implicit_decl(DFuncState *fs, int n, DecompState *D)
-{
-  int pc;
-  int numparams = fs->f->numparams;
-  /* find the first instruction that usesA as a register, check if it is > 0 */
-  for (pc=0; pc<n; pc++)
-  {
-    Instruction i=fs->f->code[pc];
-    OpCode o=GET_OPCODE(i);
-    int a=GETARG_A(i);
-    if (testAMode(o)) {
-      if ((a - numparams) > 0) {
-        printf("Should load nil into register %d-%d\n", numparams, a-1);
-        dump_initial_decl(fs, numparams, a, D);
-      }
-      break;
-    }
-  }
-}
-
-/* retrieve a global variable name from the given constant table index */
-static DExp *glob2exp(DFuncState *fs, int i, DecompState *D)
-{
-  DExp *exp = newexp(fs, DID);
-  TString *name = rawtsvalue(&fs->f->k[i]); /* global name */
-  UNUSED(D);
-  return expts(exp, name);
-}
-
-/* constant handler: convert a TValue to a printable string */
-static DExp *k2exp(DFuncState *fs, int i, DecompState *D)
-{
-  const Proto *f = fs->f;
-  DExp *exp = newexp(fs, DK);
-  const TValue *o=&f->k[i];
-  TString *result;
-  switch (ttype(o))
-  {
-    case LUA_TNIL:
-      return expliteral(exp, "nil");
-    case LUA_TBOOLEAN:
-      if (bvalue(o)) return expliteral(exp, "true");
-      else return expliteral(exp, "false");
-    case LUA_TLIGHTUSERDATA: {
-      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      sprintf(s, "0x%zxhi", cast(size_t, pvalue(o)));
-      result = luaS_new(D->H, s);
-      break;
-    }
-    case LUA_TNUMBER: {
-      char s[LUAI_MAXNUMBER2STR];
-      sprintf(s, "%g", nvalue(o));
-      result = luaS_new(D->H, s);
-      break;
-    }
-    case LUA_TSTRING:
-      result = luaO_kstring2print(D->H, rawtsvalue(o));
-      break;
-    case LUA_TUI64: {
-      char s[LUAI_MAXUI642STR+sizeof("0xhl")-1];
-      lua_ui642str(s+2, ui64value(o));
-      s[0] = '0'; s[1] = 'x';
-      strcat(s, "hl");
-      result = luaS_new(D->H, s);
-      break;
-    }
-    default: {
-      char s[10];
-      lua_assert(0);
-      sprintf(s, "? type=%d", ttype(o));
-      result = luaS_new(D->H, s);
-      break;
-    }
-  }
-  return expts(exp, result);
-}
-
-
-/* create parameter names for a function if debug info does not provide them */
-static void addargs(const Proto *f, DFuncState *fs) {
-  struct LocVar *var;
-  int i;
-  for (i = 0; i < f->numparams; i++) {
-    var = &fs->locvars[i];
-    if (!fs->D->usedebuginfo) {
-      var->startpc = 0;
-      var->endpc = f->sizecode-1;
-      var->varname = createargname(fs, i);
-    }
-    else {
-      lua_assert(var->startpc == 0);
-      lua_assert(var->endpc == f->sizecode - 1);
-    }
-    lua_assert(var->varname != NULL && getstr(var->varname) != NULL);
-  }
-  fs->nlocvars = i;
-}
-
-/* create a new local variable for a function; call this when the analyzer is
-   certain of the existence and startpc of the variable */
-static int addlocalvar(DFuncState *fs, int pc) {
-  struct LocVar *var;
-  int startpc;
-  int idx = fs->nlocvars++;
-  lua_assert(idx < fs->sizelocvars);
-  var = &fs->locvars[idx];
-  if (!fs->D->usedebuginfo) {
-    var->startpc = pc;
-    var->varname = createlocvarname(fs, idx - fs->f->numparams);
-  }
-  else {
-    lua_assert(var->startpc == pc); /* analyzer must be certain */
-  }
-  startpc = var->startpc;
-  lua_assert(var->varname != NULL && getstr(var->varname) != NULL);
-  return startpc;
-}
-
-/* create a new local variable for a function; call this when the analyzer is
-   NOT certain of the existence and startpc of the variable */
-static int maybe_addlocvar(DFuncState *fs, int pc) {
-  struct LocVar *var;
-  int idx = fs->nlocvars;
-  /* debug info will tell whether this is actually a local variable */
-  if (fs->D->usedebuginfo && idx < fs->sizelocvars) {
-    var = &fs->locvars[idx];
-    if (var->startpc == pc) /* yes */
-      return addlocalvar(fs, pc);
-    /* fallthrough */
-  }
-  /* either debug info tells you the analyzer was wrong, or there is no debug
-     info, in which case the analyzer may have been correct, but still assume
-     it was wrong to avoid cluttering the decompilation with extra generated
-     variable names (the decomp will be semantically equivalent in any case) */
-  return -1;
-}
-
-#if 0
-/* pc is what the decompiler thinks is the startpc */
-static int pass1_addlocalvar(DFuncState *fs, int pc) {
-  struct LocVar *var;
-  int startpc;
-  int idx = fs->nlocvars;
-  if (idx == fs->sizelocvars && fs->D->usedebuginfo)
-    return -1; /* debug info tells you it is a temporary register */
-  fs->nlocvars++;
-  lua_assert(idx < fs->sizelocvars); /* otherwise this is true */
-  var = &fs->locvars[idx];
-  if (!fs->D->usedebuginfo) {
-    var->startpc = pc;
-    var->varname = createlocvarname(fs, idx - fs->f->numparams);
-    startpc = pc;
-  }
-  else { /* have debug info */
-    startpc = var->startpc;
-  }
-  lua_assert(var->varname != NULL && getstr(var->varname) != NULL);
-  return startpc;
-}
-#endif
-
-static int pass2_endlocalvar(DFuncState *fs, int idx, int pc) {
-  struct LocVar *var;
-  int endpc;
-  lua_assert(idx < fs->nlocvars);
-  var = &fs->locvars[idx];
-  if (!fs->D->usedebuginfo) {
-    var->endpc = pc;
-    endpc = pc;
-  }
-  else { /* have debug info */
-    endpc = var->endpc;
-  }
-  return endpc;
-}
 
 static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
 {
@@ -1082,7 +464,7 @@ static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
   }
 }
 
-
+#if 0
 /*
 ** Returns true if the instruction at (PC-1) is OP_JMP.
 */
@@ -1093,6 +475,7 @@ static int previsjump(const Instruction *code, int pc) {
   }
   return 0;
 }
+#endif
 
 /*
 ** Check if the given instruction I begins a temporary expression in register
@@ -2832,7 +2215,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 
 static int varstarts_nodebug(DFuncState *fs, int pc) {
   UNUSED(fs); UNUSED(pc);
-  return 0;
+  return 0; /* no debug info, let the analyzer guess */
 }
 
 static int varstarts_withdebug(DFuncState *fs, int pc) {
@@ -2848,11 +2231,11 @@ static int varstarts_withdebug(DFuncState *fs, int pc) {
 }
 
 typedef struct StackAnalyzer {
+  const Instruction *code;
   int firstfree;
   int pc;
   int sizecode;
   int maxstacksize;
-  const Instruction *code;
 } StackAnalyzer;
 
 #ifdef LUA_DEBUG
@@ -3013,8 +2396,7 @@ static void f_decompiler (hksc_State *H, void *ud) {
 /*
 ** dump Lua function as decompiled chunk
 */
-int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w,
-                            void *data)
+int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
 {
   DecompState D;
   int status;
@@ -3024,9 +2406,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w,
   D.writer=w;
   D.data=data;
   D.status=0;
-  D.indentlevel=0;
   D.funcidx=0;
-  D.needspace=0;
   D.usedebuginfo = (!Settings(H).ignore_debug && f->sizelineinfo > 0);
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
   if (D.usedebuginfo)
@@ -3037,21 +2417,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w,
   sd.f=f;
   status = luaD_pcall(H, f_decompiler, &sd);
   if (status) D.status = status;
-  (void)addargs;
-  (void)insert_exp_before;
-  (void)insert_exp_after;
-  (void)setlhs;
-  (void)adddecl;
-  (void)removedecl;
-  (void)glob2exp;
-  (void)addlocalvar;
-  (void)pass2_endlocalvar;
-  (void)maybe_addlocvar;
-  (void)regflagnames;
-  (void)maybe_begin_line;
-  (void)implicit_decl;
-  (void)k2exp;
-  (void)previsjump;
   return D.status;
 }
 
