@@ -64,7 +64,7 @@ void luaF_freeproto (hksc_State *H, Proto *f) {
 
 
 #ifdef LUA_CODT6
-void luaF_hash (hksc_State *H, Proto *f) {
+void luaF_generatehash (hksc_State *H, Proto *f) {
   char *str;
   size_t len = f->source->tsv.len;
   lua_assert(len != 0);
