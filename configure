@@ -300,7 +300,23 @@ set10 lua_codt6 LUA_COD_YESNO yes no
 # set build compiler flags for debug or release builds
 set10 debug BUILDCONFIGTYPE TESTS RELEASE
 # set which tests to include based on whether the decompiler is enabled
-set10 with_decompiler TESTSUFFIX .dtest .ctest
+# set10 with_decompiler TESTSUFFIX .dtest .ctest
+if test "x$with_decompiler" = x0; then
+	TESTSUFFIX=.ctest
+	EXTRA_TESTS_VAR=EXTRA_TESTS
+else
+	case $debug_pass in
+		1)
+			TESTSUFFIX=.p1test
+			EXTRA_TESTS_VAR='#';;
+		2)
+			TESTSUFFIX=.p2test
+			EXTRA_TESTS_VAR='#';;
+		*)
+			TESTSUFFIX=.dtest
+			EXTRA_TESTS_VAR=EXTRA_TESTS;;
+	esac
+fi
 # set which error tests to do for compatibility features
 set10 STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
 set10 with_ui64 UI64_ERROR_CHECK yesui64 noui64
@@ -498,6 +514,7 @@ config_makefile()
 			s&@HKSC_CMP_DEBUG@&$HKSC_CMP_DEBUG&;t t
 			s&@HKSC_CMP_CODE@&$HKSC_CMP_CODE&;t t
 			s&@TESTSUFFIX@&$TESTSUFFIX&;t t
+			s&@EXTRA_TESTS_VAR@&$EXTRA_TESTS_VAR&;t t
 			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&;t t
 			s&@srcdir@&$srcdir&;t t
 			s&@top_srcdir@&$top_srcdir&;t t

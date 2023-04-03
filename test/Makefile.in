@@ -104,7 +104,7 @@ HSTRUCTURE_SRC_NO=
 UI64_SRC_YES=ui64.lua
 HSTRUCTURE_SRC_YES=
 
-EXTRA_TESTS=$(UI64_SRC_@WITH_UI64@) $(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
+@EXTRA_TESTS_VAR@=$(UI64_SRC_@WITH_UI64@) $(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
 
 ALL_TESTS=$(ALL_SRC:.lua=@TESTSUFFIX@) $(EXTRA_TESTS:.lua=@TESTSUFFIX@)
 
@@ -159,7 +159,7 @@ error:
 
 
 .SUFFIXES:
-.SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest
+.SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest .p1test
 
 # compiler test + bytecode loader test
 .cexpect.ctest:
@@ -207,6 +207,9 @@ error:
 
 # decompiler test, run after compiler and bytecode loader tests
 .ctest.dtest:
+	@ echo hello $@
+
+.ctest.p1test:
 	@ echo hello $@
 
 Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
