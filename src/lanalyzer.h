@@ -59,11 +59,6 @@ enum BBLTYPE {
   DEFINSFLAG(OPTLOOPFAILTARGET)  /* optimized jump target of a loop fail */ \
   DEFINSFLAG(REPEATSTAT)  /* first pc in a repeat-loop */ \
   DEFINSFLAG(WHILESTAT)  /* first pc in a while-loop */ \
-  DEFINSFLAG(WHILEEXIT)  /* a jump instruction in a while-loop condition */ \
-  DEFINSFLAG(IFSTAT)  /* first pc in an if-branch */ \
-  DEFINSFLAG(ELSEIFSTAT)  /* first pc in an elseif-branch */ \
-  DEFINSFLAG(ELSESTAT)  /* first pc in an else-branch */ \
-  DEFINSFLAG(IFSTATEND)  /* exit target of an if-statement */ \
   DEFINSFLAG(FORLIST)  /* first pc in a list for-loop */ \
   /* first pc to evaluate for-list control variables */ \
   DEFINSFLAG(PREFORLIST) \
@@ -75,7 +70,8 @@ enum BBLTYPE {
   DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
-  DEFINSFLAG(EMPTYBLOCK)
+  DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
+  DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
 #define DEFINSFLAG(e)  INS_##e,
 enum INSFLAG {
