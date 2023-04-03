@@ -116,6 +116,9 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->prefix_map_to = NULL;
   g->panic = NULL;
   g->midcycle = 0;
+#ifdef LUA_DEBUG
+  g->incyclecallback = 0;
+#endif /* LUA_DEBUG */
   g->rootgc = obj2gco(H);
   g->totalbytes = sizeof(LG);
   g->startcycle = g->endcycle = NULL;

@@ -21,6 +21,7 @@
 #include "hksclib.h"
 
 #include "ldo.h"
+#include "ldebug.h"
 #include "lgc.h"
 #include "lobject.h"
 #include "lparser.h"
@@ -221,8 +222,15 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 /* put here all logic to be run at the start of a parser cycle */
 static void startcycle(hksc_State *H, const char *name) {
   global_State *g = G(H);
+#ifdef LUA_DEBUG
+  if (g->incyclecallback) {
+    luaG_runerror(H, "cannot start a new parser cycle from inside a "
+                  "start-cycle callback");
+    return;
+  }
+  g->incyclecallback = 1;
+#endif /* LUA_DEBUG */
   lua_assert(H->last_result == NULL);
-  lua_assert(g->midcycle == 0);
   luaC_newcycle(H); /* collect garbage while in-between cycles */
   g->midcycle = 1;
   /* end of library start-cycle logic */
@@ -231,6 +239,9 @@ static void startcycle(hksc_State *H, const char *name) {
     (*G(H)->startcycle)(H, name);
     lua_lock(H);
   }
+#ifdef LUA_DEBUG
+  g->incyclecallback = 0;
+#endif /* LUA_DEBUG */
 }
 
 
@@ -238,17 +249,24 @@ static void startcycle(hksc_State *H, const char *name) {
 static void endcycle(hksc_State *H, const char *name) {
   global_State *g = G(H);
   lua_assert(g->midcycle);
+  lua_assert(!g->incyclecallback);
   g->midcycle = 0; /* set this before running user-defined logic so that temp
                       objects can be collected if a GC cycle happens */
   if (H->last_result != NULL) /* it can be NULL if there was a syntax error */
     /* make sure the compiler result is not collected until the cycle really
        ends */
     makelive(obj2gco(H->last_result));
+#ifdef LUA_DEBUG
+  g->incyclecallback = 1;
+#endif /* LUA_DEBUG */
   if (G(H)->endcycle) { /* user-defined logic */
     lua_unlock(H);
     (*G(H)->endcycle)(H, name);
     lua_lock(H);
   }
+#ifdef LUA_DEBUG
+  g->incyclecallback = 0;
+#endif /* LUA_DEBUG */
   /* start of library end-cycle logic */
   if (H->last_result != NULL)
     makedead(obj2gco(H->last_result)); /* now it can die */

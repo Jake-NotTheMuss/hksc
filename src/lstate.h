@@ -42,6 +42,7 @@ typedef struct global_State {
   void *ud;         /* auxiliary data to `frealloc' */
   lu_byte currentwhite;
   lu_byte midcycle;  /* (used in GC) true if in the middle of a cycle */
+  lu_byte incyclecallback;
   GCObject *rootgc;  /* list of all collectable objects */
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem GCthreshold;
