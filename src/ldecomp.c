@@ -34,6 +34,7 @@
 */
 #define opLoadsK(o) ((o) == OP_LOADK || (o) == OP_LOADBOOL || (o) == OP_LOADNIL)
 
+#ifdef LUA_DEBUG
 
 #define DEFBBLTYPE(e)  #e,
 static const char *const bbltypenames [] = {
@@ -62,38 +63,14 @@ static const char *const regflagnames [] = {
 #define insflagname(v) (insflagnames[v])
 #define regflagname(v) (regflagnames[v])
 
-#ifdef LUA_DEBUG
-#define info_setprop(fs,pc,val) \
-  printf("  marking pc (%d) as %s\n", (pc)+1, insflagname(val)); \
-  printf("  previous flags for pc (%d):", (pc)+1); \
-  { \
-    int flag_index_; \
-    for (flag_index_ = 0; flag_index_ < MAX_INSFLAG; flag_index_++) { \
-      if ((fs)->a->insproperties[(pc)] & (1 << flag_index_)) \
-        printf(" %s", insflagname(flag_index_)); \
-    } \
-    printf("\n"); \
-  } (void)0
 #else /* !LUA_DEBUG */
-#define info_setprop(fs,pc,val) (void)0
+
+#define bbltypename(v) ("")
+#define insflagname(v) ("")
+#define regflagname(v) ("")
+
 #endif /* LUA_DEBUG */
 
-#define test_ins_property(fs,pc,val) \
-  (((fs)->a->insproperties[(pc)] & (1 << (val))) != 0)
-
-#define set_ins_property(fs,pc,val) do { \
-  info_setprop(fs,pc,val); \
-  (fs)->a->insproperties[(pc)] |= (1 << (val)); \
-} while (0)
-
-#define unset_ins_property(fs,pc,val) do { \
-  (fs)->a->insproperties[(pc)] &= ~(1 << (val)); \
-} while (0)
-
-#define init_ins_property(fs,pc,val) do { \
-  lua_assert(!test_ins_property(fs,pc,val)); \
-  set_ins_property(fs,pc,val); \
-} while (0)
 
 /* for formatting decimal integers in generated variable names */
 #define INT_CHAR_MAX_DEC (3 * sizeof(int) * (CHAR_BIT/8))
@@ -113,6 +90,7 @@ typedef struct {
   int matchlineinfo;  /* true if matching statements to line info */
   /* data for the current function's decompilation */
   int funcidx;  /* n for the nth function that is being decompiled */
+  int indentlevel;
 } DecompState;
 
 
@@ -131,6 +109,93 @@ typedef struct DFuncState {
   int pc;  /* current pc */
   int firstclob;  /* first pc that clobbers register A */
 } DFuncState;
+
+
+/*
+** test_ins_property - check if flag VAL is set on the instruction at PC
+*/
+#define test_ins_property(fs,pc,val) test_ins_property_(fs,pc,1<<(val))
+
+static int test_ins_property_(DFuncState *fs, int pc, int mask)
+{
+  lua_assert(pc >= 0 && pc < fs->f->sizecode);
+  return ((fs->a->insproperties[pc] & mask) != 0);
+}
+
+#ifdef LUA_DEBUG
+#define check_ins_property(fs,pc,val) \
+  lua_assert(test_ins_property(fs, pc, val))
+#else /* !LUA_DEBUG */
+#define check_ins_property(fs,pc,val) ((void)0)
+#endif /* LUA_DEBUG */
+
+
+/*
+** set_ins_property - set flag VAL for the instruction at PC
+*/
+static void set_ins_property_(DFuncState *fs, int pc, int mask)
+{
+  fs->a->insproperties[pc] |= mask;
+}
+
+#ifdef LUA_DEBUG
+
+#define set_ins_property(fs,pc,val) \
+  set_ins_property_debug((fs),(pc),1<<(val),(val))
+
+static void set_ins_property_debug(DFuncState *fs, int pc, int mask, int idx)
+{
+  int i;
+  printf("  marking pc (%d) as %s\n", pc+1, insflagname(idx));
+  lua_assert(pc >= 0 && pc < fs->f->sizecode);
+  printf("  previous flags for pc (%d):", pc+1);
+  for (i = 0; i < MAX_INSFLAG; i++) {
+    if (fs->a->insproperties[pc] & (1 << i))
+      printf("  %s", insflagname(i));
+  }
+  printf("\n");
+  set_ins_property_(fs, pc, mask);
+}
+#else /* !LUA_DEBUG */
+#define set_ins_property(fs,pc,val) set_ins_property_(fs,pc,1<<(val))
+#endif /* LUA_DEBUG */
+
+
+/*
+** unset_ins_property - clear flag VAL for the instruction at PC
+*/
+static void unset_ins_property_(DFuncState *fs, int pc, int mask)
+{
+  fs->a->insproperties[pc] &= ~mask;
+}
+
+#ifdef LUA_DEBUG
+
+#define unset_ins_property(fs,pc,val) \
+  unset_ins_property_debug((fs),(pc),1<<(val),(val))
+
+static void unset_ins_property_debug(DFuncState *fs, int pc, int mask, int idx)
+{
+  printf("  clearing flag %s for pc (%d)\n", insflagname(idx), pc+1);
+  lua_assert(pc >= 0 && pc < fs->f->sizecode);
+  unset_ins_property_(fs, pc, mask);
+}
+#else /* !LUA_DEBUG */
+#define unset_ins_property(fs,pc,val) unset_ins_property_(fs,pc,1<<(val))
+#endif /* LUA_DEBUG */
+
+/*
+** init_ins_property - set flag VAL on the instruction at PC, assert the flag
+** was not previously set
+*/
+#ifdef LUA_DEBUG
+static void init_ins_property(DFuncState *fs, int pc, int val) {
+  lua_assert(!test_ins_property(fs,pc,val));
+  set_ins_property(fs,pc,val);
+}
+#else /* !LUA_DEBUG */
+#define init_ins_property(fs,pc,val) set_ins_property(fs,pc,val)
+#endif /* LUA_DEBUG */
 
 
 static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
@@ -264,6 +329,25 @@ static void DumpStringf(DecompState *D, const char *fmt, ...)
 }
 
 
+static void DumpIndentation(DecompState *D)
+{
+  static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 32 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 48 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t"; /* 64 */
+  const int buffsize = cast_int(sizeof(tabs)-1);
+  int indentlevel = D->indentlevel;
+  lua_assert(indentlevel >= 0);
+  while (indentlevel > buffsize) {
+    DumpBlock(tabs, buffsize, D);
+    indentlevel -= buffsize;
+  }
+  lua_assert(indentlevel >= 0 && indentlevel <= buffsize);
+  if (indentlevel != 0)
+    DumpBlock(tabs, indentlevel, D);
+}
+
+
 #ifdef LUA_DEBUG
 
 static void debugbbl(DFuncState *fs, BasicBlock *bbl, int indent) {
@@ -277,7 +361,7 @@ static void debugbbl(DFuncState *fs, BasicBlock *bbl, int indent) {
   if (indent) printf("- ");
   printf("(%d-%d) %s ", bbl->startpc+1, bbl->endpc+1, bbltypename(bbl->type));
   if (nextsibling != NULL)
-    printf("(sibling (%d-%d) %s\n", nextsibling->startpc+1,
+    printf("(sibling (%d-%d) %s)\n", nextsibling->startpc+1,
            nextsibling->endpc+1, bbltypename(nextsibling->type));
   else
     printf("(NO sibling)\n");
@@ -290,43 +374,15 @@ static void debugbbl(DFuncState *fs, BasicBlock *bbl, int indent) {
 
 static void debugbblsummary(DFuncState *fs)
 {
-  Analyzer *a = fs->a;
-  fputs("BASIC BLOCK SUMMARY\n"
-        "-------------------\n", stdout);
-  debugbbl(fs, a->bbllist.first, 0);
-  fputs("-------------------\n", stdout);
+  BasicBlock *first = fs->a->bbllist.first;
+  printf("BASIC BLOCK SUMMARY\n"
+         "-------------------\n");
+  lua_assert(first != NULL);
+  lua_assert(first->type == BBL_FUNCTION);
+  lua_assert(first->nextsibling == NULL);
+  debugbbl(fs, first, 0);
+  printf("-------------------\n");
 }
-
-
-#ifdef HKSC_DECOMP_DEBUG_PASS1
-static void dumpbblpass1(DFuncState *fs, BasicBlock *bbl, int indent) {
-  BasicBlock *child;
-  int i;
-  lua_assert(bbl != NULL);
-  child = bbl->firstchild;
-  for (i = 0l i < indent; i++) /* put indentation */
-    DumpLiteral("\t",fs->D);
-  DumpString(bbltypename(bbl->type), fs->D); /* put block type */
-  DumpLiteral("\n",fs->D);
-  while (child != NULL) {
-    dumpbblpass1(fs, child, indent+1);
-    child = child->nextsibling;
-  }
-  if (bbl->type != BBL_IF &&
-      (bbl->nextsibling == NULL ||
-       bbl->nextsibling->type != BBL_ELSE)) {  /* block ends with `END' */
-    for (i = 0; i < indent; i++)
-      DumpLiteral("\t", fs->D);
-    DumpLiteral("END\n", fs->D);
-  }
-}
-
-static void dumppass1(DFuncState *fs)
-{
-  Analyzer *a = fs->a;
-  dumpbblpass1(fs, a->bbllist.first, 0);
-}
-#endif /* HKSC_DECOMP_DEBUG_PASS1 */
 
 #else /* !LUA_DEBUG */
 
@@ -347,12 +403,6 @@ static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
       DumpLiteral("BEGIN REPEAT\n", D);
     if (test_ins_property(fs, pc, INS_WHILESTAT))
       DumpLiteral("BEGIN WHILE\n", D);
-    if (test_ins_property(fs, pc, INS_IFSTAT))
-      DumpLiteral("BEGIN IF\n", D);
-    if (test_ins_property(fs, pc, INS_ELSEIFSTAT))
-      DumpLiteral("BEGIN ELSEIF\n", D);
-    if (test_ins_property(fs, pc, INS_ELSESTAT))
-      DumpLiteral("BEGIN ELSE\n", D);
     if (test_ins_property(fs, pc, INS_PREFORLIST))
       DumpLiteral("PRE FORLIST\n", D);
     if (test_ins_property(fs, pc, INS_FORLIST))
@@ -602,11 +652,16 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs);
       goto label; \
     break;
 
+#ifdef LUA_DEBUG
 #define encounteredstat1(what) \
   printf("  encountered " what " ending at (%d)\n", endpc+1)
 
 #define leavingstat1(what) \
 printf("  leaving " what " ending at (%d), (%d-%d)\n", endpc+1,ca->pc+1,endpc+1)
+#else /* !LUA_DEBUG */
+#define encounteredstat1(what) ((void)0)
+#define leavingstat1(what) ((void)0)
+#endif /* LUA_DEBUG */
 
 /*
 ** concat -> ... OP_CONCAT
@@ -901,6 +956,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     lua_assert(ca->pc >= 0);
     entry = code[ca->pc];
     lua_assert(GET_OPCODE(entry) == OP_JMP);
+    /* todo: is this an assert ot code-check */
     lua_assert(GETARG_sBx(entry) >= 0); /* can be 0 in an empty loop */
     lua_assert(ca->pc + 1 + GETARG_sBx(entry) == endpc);
     test = code[endpc];
@@ -1786,6 +1842,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     BasicBlock *currblock;
                     currblock = addbbl1(fs,bl->state.startpc,bl->endpc,BBL_DO);
                     lua_assert(currblock != NULL);
+                    set_ins_property(fs, currblock->startpc, INS_DOSTAT);
                     printbblmsg("found an inner block", currblock);
                     currblock->firstchild = childblock;
                     childblock = currblock;
@@ -2007,6 +2064,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             printf("encountered adjacent do-block\n");
             new_block = addbbl1(fs, block->state.startpc, block->endpc, BBL_DO);
             lua_assert(new_block != NULL);
+            set_ins_property(fs, new_block->startpc, INS_DOSTAT);
             new_block->firstchild = block->state.firstchild;
             printbblmsg("setting first child for block to",
                         block->state.firstchild);
@@ -2068,6 +2126,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               doblock = addbbl1(fs, new_block.state.startpc, new_block.endpc,
                                 BBL_DO);
               lua_assert(doblock != NULL);
+              set_ins_property(fs, doblock->startpc, INS_DOSTAT);
               doblock->firstchild = new_block.state.firstchild;
               doblock->nextsibling = new_block.nextsibling;
               if (new_block.state.prevsibling) {
@@ -2240,6 +2299,41 @@ typedef struct StackAnalyzer {
   int maxstacksize;
 } StackAnalyzer;
 
+
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+static void enterblock2(DFuncState *fs, BasicBlock *bbl)
+{
+  if (bbl->type == BBL_FUNCTION && fs->prev == NULL) { /* top-level function */
+    lua_assert(fs->D->indentlevel == -1);
+    return;
+  }
+  lua_assert(fs->D->indentlevel >= 0);
+  DumpIndentation(fs->D);
+  DumpString(bbltypename(bbl->type),fs->D);
+  DumpLiteral("\n",fs->D);
+}
+
+
+static void leaveblock2(DFuncState *fs, BasicBlock *bbl)
+{
+  if (bbl->type == BBL_FUNCTION && fs->prev == NULL) { /* top-level function */
+    lua_assert(fs->D->indentlevel == -1);
+    return;
+  }
+  lua_assert(fs->D->indentlevel >= 0);
+  if (bbl->type != BBL_IF || bbl->nextsibling == NULL ||
+      bbl->nextsibling->type != BBL_ELSE) { /* block ends with `END' */
+    DumpIndentation(fs->D);
+    DumpLiteral("END\n",fs->D);
+  }
+}
+#else /* !HKSC_DECOMP_DEBUG_PASS1 */
+
+#define enterblock2(fs,bbl) (void)0
+#define leaveblock2(fs,bbl) (void)0
+
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+
 #ifdef LUA_DEBUG
 static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
 {
@@ -2249,20 +2343,44 @@ static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
   lua_assert(startpc <= endpc || bbl->isempty);
   lua_assert(type >= 0 && type < MAX_BBLTYPE);
   if (type < BBL_DO && type != BBL_FUNCTION) {
-    lua_assert(test_ins_property(fs, endpc, INS_LOOPEND));
+    check_ins_property(fs, endpc, INS_LOOPEND);
     if (type == BBL_WHILE)
-      lua_assert(test_ins_property(fs, startpc, INS_WHILESTAT));
+      check_ins_property(fs, startpc, INS_WHILESTAT);
     else if (type == BBL_REPEAT)
-      lua_assert(test_ins_property(fs, startpc, INS_REPEATSTAT));
+      check_ins_property(fs, startpc, INS_REPEATSTAT);
     else if (type == BBL_FORNUM)
-      lua_assert(test_ins_property(fs, startpc, INS_FORNUM));
+      check_ins_property(fs, startpc, INS_FORNUM);
     else if (type == BBL_FORLIST)
-      lua_assert(test_ins_property(fs, startpc, INS_FORLIST));
+      check_ins_property(fs, startpc, INS_FORLIST);
+  }
+  else if (type == BBL_DO) {
+    check_ins_property(fs, startpc, INS_DOSTAT);
+    check_ins_property(fs, endpc, INS_BLOCKEND);
   }
 }
+
+static void printins2(DFuncState *fs, BasicBlock *bbl, int pc, OpCode op)
+{
+  const char *opname;
+  int type = bbl->type;
+  char spaces[] = "                  ";
+  int numspaces;
+  opname = getOpName(op);
+  numspaces = cast_int(sizeof(spaces)-1-strlen(opname));
+  if (numspaces <= 0) numspaces = 1;
+  lua_assert(numspaces < cast_int(sizeof(spaces)));
+  spaces[numspaces] = '\0';
+  printf("pc = (%d), OP_%s%s%s\n", pc+1, opname, spaces, bbltypename(type));
+  UNUSED(fs);
+}
 #else /* !LUA_DEBUG */
-#define assertbblvalid(fs,bbl) ((void)(fs), (void)(bbl))
+#define assertbblvalid(fs,bbl) ((void)(fs),(void)(bbl))
+#define printins2(fs,bbl,pc,op) ((void)(fs),(void)(bbl),(void)(pc),(void)(op))
 #endif /* LUA_DEBUG */
+
+
+static void DecompileFunction(DecompState *D, const Proto *f);
+
 
 /*
 ** Second pass `basic block' handler - the function's registers and stack are
@@ -2286,9 +2404,11 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   printf("pass2: entered %sblock %s (%d-%d) at pc (%d)\n", 
          bbl->isempty ? "empty " : "", bbltypename(type),
          startpc+1, endpc+1, sa->pc+1);
+  enterblock2(fs, bbl);
   if (bbl->isempty) goto block2finished;
+  fs->D->indentlevel++;
   for (; sa->pc < sa->sizecode; sa->pc++) {
-    int pc, a, b, c;
+    int pc, a, b, c, bx;
     Instruction i;
     OpCode o;
     if (sa->pc == nextchildstartpc) {
@@ -2315,29 +2435,32 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     a = GETARG_A(i);
     b = GETARG_B(i);
     c = GETARG_C(i);
-    {
-      const char *opname;
-      char spaces[18];
-      int numspaces;
-      memset(spaces, ' ', sizeof(spaces)-1);
-      spaces[sizeof(spaces)-1] = '\0';
-      opname = getOpName(o);
-      numspaces = sizeof(spaces)-1-strlen(opname);
-      if (numspaces <= 0) numspaces = 1;
-      lua_assert(cast(size_t, numspaces) < sizeof(spaces));
-      spaces[numspaces] = '\0';
-      DumpStringf(fs->D, "pc = (%d), OP_%s%s%s\n", pc+1, opname, spaces,
-                  bbltypename(type));
+    bx = GETARG_Bx(i);
+    printins2(fs, bbl, pc, o);
+#ifdef LUA_DEBUG
+    /* make sure this instruction hasn't already been visited */
+    lua_assert(!test_ins_property(fs, pc, INS_VISITED));
+    /* set this directly to avoid printing debug message every time */
+    fs->a->insproperties[pc] |= (1 << INS_VISITED);
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+    if (o == OP_CLOSURE) { /* nested closure? */
+      const Proto *f = fs->f->p[bx];
+      DecompileFunction(fs->D,f);
     }
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+#endif /* LUA_DEBUG */
     if (pc == endpc)
       break;
     (void)a; (void)b; (void)c;
   }
+  fs->D->indentlevel--;
   block2finished:
+  leaveblock2(fs, bbl);
   printf("pass2: leaving %sblock %s (%d-%d) at pc (%d)\n", bbl->isempty ? 
          "empty " : "", bbltypename(type),
          startpc+1,endpc+1,sa->pc+1);
 }
+
 
 static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
 {
@@ -2351,9 +2474,15 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
   lua_assert(func != NULL);
   UNUSED(D);
   bbl2(&sa, fs, func);
+#ifdef LUA_DEBUG
+  { /* debug: make sure all instructions were visited */
+    int pc;
+    for (pc = 0; pc < f->sizecode; pc++)
+      check_ins_property(fs, pc, INS_VISITED);
+  }
+#endif /* LUA_DEBUG */
 }
 
-static void DecompileFunction(DecompState *D, const Proto *f);
 
 static void DecompileFunction(DecompState *D, const Proto *f)
 {
@@ -2370,14 +2499,10 @@ static void DecompileFunction(DecompState *D, const Proto *f)
     printf(", a = (%d)",GETARG_A(f->code[new_fs.firstclob]));
   printf("\n");
   debugbblsummary(&new_fs);
-#ifdef HKSC_DECOMP_DEBUG_PASS1
-  (void)pass2;
-#else
-  dumploopinfo(f, &new_fs, D);
-  DumpLiteral("\n\n", D);
+  /*dumploopinfo(f, &new_fs, D);*/ (void)dumploopinfo;
+  /*DumpLiteral("\n\n", D);*/
   pass2(f,&new_fs,D);
   /*DecompileCode(f,&new_fs,D);*/
-#endif /* HSKC_DECOMP_DEBUG_PASS1 */
   close_func(D);
 }
 
@@ -2409,6 +2534,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.data=data;
   D.status=0;
   D.funcidx=0;
+  D.indentlevel=-1;
   D.usedebuginfo = (!Settings(H).ignore_debug && f->sizelineinfo > 0);
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
   if (D.usedebuginfo)
@@ -2420,6 +2546,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   status = luaD_pcall(H, f_decompiler, &sd);
   if (status) D.status = status;
   return D.status;
+  (void)DumpIndentation; /* todo: remove when this is used by pass2 */
 }
 
 #endif /* HKSC_DECOMPILER */
