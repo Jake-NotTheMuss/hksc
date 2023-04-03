@@ -18,7 +18,7 @@
 #include "ldebug.h"
 #include "ldo.h"
 #include "lfunc.h"
-
+#include "lgc.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lopcodes.h"
@@ -50,6 +50,7 @@ struct lua_longjmp {
 
 void luaD_setvferror (hksc_State *H, const char *fmt, va_list argp)
 {
+  luaC_checkGC(H);
   hksc_seterror(H, luaO_pushvfstring(H, fmt, argp));
 }
 
@@ -65,10 +66,12 @@ void luaD_setferror (hksc_State *H, const char *fmt, ...) {
 void luaD_seterrorobj (hksc_State *H, int errcode) {
   switch (errcode) {
     case LUA_ERRMEM: {
+      luaC_checkGC(H);
       hksc_seterror(H, getstr(luaS_newliteral(H, MEMERRMSG)));
       break;
     }
     case LUA_ERRERR: {
+      luaC_checkGC(H);
       hksc_seterror(H,
         getstr(luaS_newliteral(H, "error in error handling")));
       break;
