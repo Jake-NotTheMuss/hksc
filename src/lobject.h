@@ -280,9 +280,6 @@ typedef struct LocVar {
 
 
 
-/*
-** Function analyzers
-*/
 #ifdef HKSC_DECOMPILER
 
 /* flags defined in lanalyzer.h */
@@ -290,6 +287,9 @@ typedef lu_int32 InstructionFlags;
 typedef lu_byte RegisterFlags;
 struct BasicBlock;
 
+/*
+** Function analyzers
+*/
 typedef struct Analyzer {
   CommonHeader;
   InstructionFlags *insproperties;  /* instruction flags */
