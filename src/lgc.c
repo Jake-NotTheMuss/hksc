@@ -23,12 +23,7 @@
 #include "ltable.h"
 
 
-#define GCSTEPSIZE  1024u
-#define GCSWEEPMAX  40
-#define GCSWEEPCOST 10
-
-
-#define setthreshold(g)  (g->GCthreshold = (g->totalbytes/100) * g->gcpause)
+#define setthreshold(g)  (g->GCthreshold = (2*g->totalbytes))
 
 
 
@@ -124,72 +119,29 @@ void luaC_newcycle (hksc_State *H)
 {
   global_State *g = G(H);
   lua_assert(g->midcycle == 0);
-  g->gcstate = GCSmarking;
   markstrings(H); /* mark non-fixed strings */
-  g->gcstate = GCSsweep;
-  sweepwholelist(H, &g->rootgc); /* free all temporary objects */
-  g->sweepgc = &g->rootgc;
-  g->sweepstrgc = 0;
-  g->gcstate = GCSsweepstring; /* maybe collect dead strings */
-  luaC_checkGC(H);
-  g->gcstate = GCSpause; /* end of collection */
-}
-
-
-static l_mem singlestep (hksc_State *H) {
-  global_State *g = G(H);
-  /*lua_checkmemory(H);*/
-  switch (g->gcstate) {
-    case GCSpause: {
-      return 0;
-    }
-    case GCSsweepstring: {
-      lu_mem old = g->totalbytes;
-      lua_assert(*g->sweepgc == g->rootgc); /* all temps have been collected */
-      lua_assert(g->sweepstrgc < g->strt.size);
-      sweepwholelist(H, &g->strt.hash[g->sweepstrgc++]);
-      if (g->sweepstrgc >= g->strt.size) { /* nothing more to sweep? */
-        checkSizes(H);
-        g->gcstate = GCSpause;  /* end sweep-string phase */
-      }
-      lua_assert(old >= g->totalbytes);
-      UNUSED(old); /* avoid warning */
-      return GCSWEEPCOST;
-    }
-    default: lua_assert(0); return 0;
-  }
+  luaC_collectgarbage(H);
 }
 
 
 void luaC_collectgarbage (hksc_State *H) {
   global_State *g = G(H);
-  l_mem lim;
+  lu_mem old = g->totalbytes;
+  int i;
   if (g->midcycle)
     /* do not collect temp objects mid-cycle */
     g->currentwhite |= bitmask(TEMPBIT);
   else
     /* in-between cycles, collect temp objects */
     g->currentwhite &= ~bitmask(TEMPBIT);
-  lim = (GCSTEPSIZE/100) * g->gcstepmul;
-  if (lim == 0)
-    lim = (MAX_LUMEM-1)/2;  /* no limit */
-  g->gcdept += g->totalbytes - g->GCthreshold;
-  do {
-    lim -= singlestep(H);
-    if (g->gcstate == GCSpause)
-      break;
-  } while (lim > 0);
-  if (g->gcstate != GCSpause) {
-    if (g->gcdept < GCSTEPSIZE)
-      g->GCthreshold = g->totalbytes + GCSTEPSIZE;  /* - lim/g->gcstepmul;*/
-    else {
-      g->gcdept -= GCSTEPSIZE;
-      g->GCthreshold = g->totalbytes;
-    }
+  sweepwholelist(H, &g->rootgc);
+  for (i=0; i<g->strt.size; i++) {  /* for each list */
+    sweeplist(H, &g->strt.hash[i]);
   }
-  else {
-    setthreshold(g);
-  }
+  lua_assert(old >= g->totalbytes);
+  UNUSED(old); /* avoid warning */
+  checkSizes(H);
+  setthreshold(g);
 }
 
 

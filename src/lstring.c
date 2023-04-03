@@ -23,8 +23,6 @@ void luaS_resize (hksc_State *H, int newsize) {
   GCObject **newhash;
   stringtable *tb;
   int i;
-  if (G(H)->gcstate == GCSsweepstring)
-    return;  /* cannot resize during GC traverse */
   newhash = luaM_newvector(H, newsize, GCObject *);
   tb = &G(H)->strt;
   for (i=0; i<newsize; i++) newhash[i] = NULL;

@@ -41,18 +41,11 @@ typedef struct global_State {
   lua_Alloc frealloc;  /* function to reallocate memory */
   void *ud;         /* auxiliary data to `frealloc' */
   lu_byte currentwhite;
-  lu_byte gcstate;  /* state of garbage collector */
   lu_byte midcycle;  /* (used in GC) true if in the middle of a cycle */
-  int sweepstrgc;  /* position of sweep in `strt' */
   GCObject *rootgc;  /* list of all collectable objects */
-  GCObject **sweepgc;  /* position of sweep in `rootgc' */
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem GCthreshold;
   lu_mem totalbytes;  /* number of bytes currently allocated */
-  lu_mem estimate;  /* an estimate of number of bytes actually in use */
-  lu_mem gcdept;  /* how much GC is `behind schedule' */
-  int gcpause;  /* size of pause between successive GCs */
-  int gcstepmul;  /* GC `granularity' */
   const char *prefix_map_from;  /* OLD value in file prefix map */
   const char *prefix_map_to;  /* NEW value in file prefix map */
   lua_CFunction panic;  /* to be called in unprotected errors */

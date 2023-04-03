@@ -136,6 +136,7 @@ static void f_parser (hksc_State *H, void *ud) {
   Proto *tf;
   struct SParser *p = cast(struct SParser *, ud);
   int c = luaZ_lookahead(p->z);
+  luaC_checkGC(H);
   if (c == LUA_SIGNATURE[0]) { /* binary file */
     lua_assert(hksc_mode(H) == HKSC_MODE_BINARY);
     tf = luaU_undump(H, p->z, &p->buff, p->name);

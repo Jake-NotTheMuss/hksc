@@ -221,7 +221,6 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 /* put here all logic to be run at the start of a parser cycle */
 static void startcycle(hksc_State *H, const char *name) {
   global_State *g = G(H);
-  lua_assert(g->gcstate == GCSpause); /* GC only active between cycles */
   lua_assert(H->last_result == NULL);
   lua_assert(g->midcycle == 0);
   luaC_newcycle(H); /* collect garbage while in-between cycles */
@@ -238,7 +237,6 @@ static void startcycle(hksc_State *H, const char *name) {
 /* put here all logic to be run at the end of a parser cycle */
 static void endcycle(hksc_State *H, const char *name) {
   global_State *g = G(H);
-  lua_assert(g->gcstate == GCSpause); /* GC only active between cycles */
   lua_assert(g->midcycle);
   g->midcycle = 0; /* set this before running user-defined logic so that temp
                       objects can be collected if a GC cycle happens */

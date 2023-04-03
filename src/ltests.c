@@ -191,7 +191,7 @@ static void printobj (global_State *g, GCObject *o) {
 static int testobjref (global_State *g, GCObject *f, GCObject *t) {
   int r = testobjref1(g,f,t);
   if (!r) {
-    printf("%d(%02X) - ", g->gcstate, g->currentwhite);
+    printf("(%02X) - ", g->currentwhite);
     printobj(g, f);
     printf("\t-> ");
     printobj(g, t);
@@ -257,13 +257,8 @@ static void checkproto (global_State *g, Proto *f) {
 
 static void checkobject (global_State *g, GCObject *o) {
   if (isdead(g, o))
-/*    lua_assert(g->gcstate == GCSsweepstring || g->gcstate == GCSsweep);*/
-{ if (!(g->gcstate == GCSsweepstring || g->gcstate == GCSsweep))
-printf(">>> %d  %s  %02x\n", g->gcstate, luaT_typenames[o->gch.tt], o->gch.marked);
-}
+printf(">>> %s  %02x\n", luaT_typenames[o->gch.tt], o->gch.marked);
   else {
-    /*if (g->gcstate == GCSfinalize)
-      lua_assert(iswhite(o));*/
     switch (o->gch.tt) {
       case LUA_TTABLE: {
         checktable(g, gco2h(o));

@@ -319,6 +319,7 @@ LUA_API int lua_dump (hksc_State *H, lua_Writer w, void *data) {
   lua_lock(H);
   api_check(H, H->last_result != NULL);
   api_check(H, w != NULL);
+  luaC_checkGC(H);
   f = H->last_result;
   status = luaU_dump(H, f, w, data);
   lua_unlock(H);
@@ -333,6 +334,7 @@ LUA_API int lua_decompile (hksc_State *H, lua_Writer w, void *data) {
   lua_lock(H);
   api_check(H, H->last_result != NULL);
   api_check(H, w != NULL);
+  luaC_checkGC(H);
   f = H->last_result;
   status = luaU_decompile(H, f, w, data);
   lua_unlock(H);
@@ -345,6 +347,7 @@ LUA_API void lua_print (hksc_State *H, int full) {
   const Proto *f;
   lua_lock(H);
   api_check(H, H->last_result != NULL);
+  luaC_checkGC(H);
   f = H->last_result;
   luaU_print(f, full);
   lua_unlock(H);
