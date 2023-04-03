@@ -5,26 +5,22 @@
 */
 
 /*******************************************************************************
-  The garbage collector was heavily simplified for the needs of hksc. There are
-  3 object types that are used by the library: strings, tables, and prototypes.
+  The garbage collector was simplified for the needs of hksc. It functions more
+  like the Lua 5.0 collector. There are 4 object types that are used by the
+  library, strings, tables, prototypes, and analyzers.
 
   Like in Lua, strings that are needed for the entire duration of the Lua state
   can be fixed (marked with FIXEDBIT) and can thus avoid normal collection.
 
-  Notably, there is now no need for `white', `gray', and `black' descriptors, as
-  traversable objects in hksc (tables and prototypes) are, from the collector's
-  perspective, already dead from the moment they are created.
-
-  Only strings have a `liveness', whereas tables and prototypes are given a new
-  mark, TEMPBIT. Tables and prototypes are marked as temporary because they are
-  only needed during a single compilation procedure. Afterward, they can not
-  serve a further purpose. Thus, they are always collected before each new
-  compilation procedure begins, which is when the collector performs a cycle.
-
-  Along with collecting all temporary objects, the collector also marks all
-  non-fixed strings for collection on each cycle, in the propogation phase. The
-  collector will then perform a string sweep if total memory usage is above a
-  given threshold.
+  A new mark is added, TEMPBIT, which is used for tables, prototypes, and
+  analyzers. Objects of these types only ever last one parser cycle, and
+  therefore can always be collected at the start of the next cycle, without
+  needing to mark them. Similarly, non-fixed strings could also be collected on
+  each new cycle, but instead they are only marked, and then maybe collected if
+  the total memory usage is above the given threshold. The reasoning is that
+  multiple Lua files may use the same strings (e.g. in using the same global
+  variables), and so not collecting them every cycle avoids having to
+  continuously deallocate and reallocate memory for the same string.
 *******************************************************************************/
 
 #ifndef lgc_h
@@ -32,15 +28,6 @@
 
 
 #include "lobject.h"
-
-
-/*
-** Possible states of the Garbage Collector
-*/
-#define GCSpause        0 /* inactive */
-#define GCSmarking      1 /* marking strings */
-#define GCSsweep        2 /* sweeping temp list */
-#define GCSsweepstring  3 /* sweeping string lists */
 
 
 /*
