@@ -119,8 +119,10 @@ void luaC_newcycle (hksc_State *H)
 {
   global_State *g = G(H);
   lua_assert(g->midcycle == 0);
+  g->currentwhite = bitmask(FIXEDBIT);
   markstrings(H); /* mark non-fixed strings */
-  luaC_collectgarbage(H);
+  sweepwholelist(H, &g->rootgc); /* collect tables and protypes */
+  luaC_checkGC(H); /* maybe collect strings */
 }
 
 
