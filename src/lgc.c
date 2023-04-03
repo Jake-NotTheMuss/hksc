@@ -54,16 +54,17 @@ static void freeobj (hksc_State *H, GCObject *o) {
 
 
 
-#define sweepwholelist(H,p) sweeplist(H,p,MAX_LUMEM)
+#define sweepwholelist(H,p) sweeplist(H,p)
 
 
-static GCObject **sweeplist (hksc_State *H, GCObject **p, lu_mem count) {
+static GCObject **sweeplist (hksc_State *H, GCObject **p) {
   GCObject *curr;
   global_State *g = G(H);
   int deadmask = otherwhite(g);
-  while ((curr = *p) != NULL && count-- > 0) {
+  while ((curr = *p) != NULL) {
     if (curr->gch.marked & deadmask) {  /* not dead? */
-      lua_assert(!isdead(g, curr) || testbit(curr->gch.marked, FIXEDBIT));
+      lua_assert(!isdead(g, curr) || testbit(curr->gch.marked, FIXEDBIT) ||
+                 (g->midcycle && istemp(g, curr)));
       makelive(curr);  /* make it white (for next cycle) */
       p = &curr->gch.next;
     }
@@ -122,6 +123,7 @@ static void markstrings(hksc_State *H)
 void luaC_newcycle (hksc_State *H)
 {
   global_State *g = G(H);
+  lua_assert(g->midcycle == 0);
   g->gcstate = GCSmarking;
   markstrings(H); /* mark non-fixed strings */
   g->gcstate = GCSsweep;
@@ -159,9 +161,16 @@ static l_mem singlestep (hksc_State *H) {
 }
 
 
-void luaC_step (hksc_State *H) {
+void luaC_collectgarbage (hksc_State *H) {
   global_State *g = G(H);
-  l_mem lim = (GCSTEPSIZE/100) * g->gcstepmul;
+  l_mem lim;
+  if (g->midcycle)
+    /* do not collect temp objects mid-cycle */
+    g->currentwhite |= bitmask(TEMPBIT);
+  else
+    /* in-between cycles, collect temp objects */
+    g->currentwhite &= ~bitmask(TEMPBIT);
+  lim = (GCSTEPSIZE/100) * g->gcstepmul;
   if (lim == 0)
     lim = (MAX_LUMEM-1)/2;  /* no limit */
   g->gcdept += g->totalbytes - g->GCthreshold;

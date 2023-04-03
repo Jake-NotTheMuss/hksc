@@ -116,6 +116,7 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->prefix_map_to = NULL;
   g->panic = NULL;
   g->gcstate = GCSpause;
+  g->midcycle = 0;
   g->rootgc = obj2gco(H);
   g->sweepstrgc = 0;
   g->sweepgc = &g->rootgc;

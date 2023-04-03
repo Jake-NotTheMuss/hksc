@@ -90,10 +90,13 @@
 
 #define luaC_checkGC(H) do { \
   if (G(H)->totalbytes >= G(H)->GCthreshold) \
-  luaC_step(H); } while (0)
+  luaC_collectgarbage(H); } while (0)
+
+#define killtemp(x)  \
+  check_exp(testbit((x)->gch.marked, TEMPBIT), (x)->gch.marked = 0)
 
 LUAI_FUNC void luaC_freeall (hksc_State *H);
-LUAI_FUNC void luaC_step (hksc_State *H);
+LUAI_FUNC void luaC_collectgarbage (hksc_State *H);
 LUAI_FUNC void luaC_link (hksc_State *H, GCObject *o, lu_byte tt);
 LUAI_FUNC void luaC_newcycle (hksc_State *H);
 LUAI_FUNC void luaC_printstrings (hksc_State *H);

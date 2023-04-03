@@ -220,9 +220,12 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 
 /* put here all logic to be run at the start of a parser cycle */
 static void startcycle(hksc_State *H, const char *name) {
-  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
+  global_State *g = G(H);
+  lua_assert(g->gcstate == GCSpause); /* GC only active between cycles */
   lua_assert(H->last_result == NULL);
-  luaC_newcycle(H); /* collect garbage */
+  lua_assert(g->midcycle == 0);
+  luaC_newcycle(H); /* collect garbage while in-between cycles */
+  g->midcycle = 1;
   /* end of library start-cycle logic */
   if (G(H)->startcycle) { /* user-defined logic */
     lua_unlock(H);
@@ -234,13 +237,23 @@ static void startcycle(hksc_State *H, const char *name) {
 
 /* put here all logic to be run at the end of a parser cycle */
 static void endcycle(hksc_State *H, const char *name) {
-  lua_assert(G(H)->gcstate == GCSpause); /* GC only active between cycles */
+  global_State *g = G(H);
+  lua_assert(g->gcstate == GCSpause); /* GC only active between cycles */
+  lua_assert(g->midcycle);
+  g->midcycle = 0; /* set this before running user-defined logic so that temp
+                      objects can be collected if a GC cycle happens */
+  if (H->last_result != NULL) /* it can be NULL if there was a syntax error */
+    /* make sure the compiler result is not collected until the cycle really
+       ends */
+    makelive(obj2gco(H->last_result));
   if (G(H)->endcycle) { /* user-defined logic */
     lua_unlock(H);
     (*G(H)->endcycle)(H, name);
     lua_lock(H);
   }
   /* start of library end-cycle logic */
+  if (H->last_result != NULL)
+    makedead(obj2gco(H->last_result)); /* now it can die */
   H->last_result = NULL; /* will be collected, remove dangling pointer */
 }
 

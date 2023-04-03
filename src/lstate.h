@@ -42,6 +42,7 @@ typedef struct global_State {
   void *ud;         /* auxiliary data to `frealloc' */
   lu_byte currentwhite;
   lu_byte gcstate;  /* state of garbage collector */
+  lu_byte midcycle;  /* (used in GC) true if in the middle of a cycle */
   int sweepstrgc;  /* position of sweep in `strt' */
   GCObject *rootgc;  /* list of all collectable objects */
   GCObject **sweepgc;  /* position of sweep in `rootgc' */
