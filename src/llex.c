@@ -628,11 +628,11 @@ static int readBOM (LexState *ls) {
       next(ls);
       return TK_BOM_UTF16LE;
 #else /* !HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
-      int nextCharacter = next(ls);
-      if (!zhasmore(ls->z) || nextCharacter != '\0')
+      int nextchar = next(ls);
+      if (!zhasmore(ls->z) || nextchar != '\0')
         return TK_BOM_UTF16LE;
-      nextCharacter = next(ls);
-      if (zhasmore(ls->z) && nextCharacter == '\0') {
+      nextchar = next(ls);
+      if (zhasmore(ls->z) && nextchar == '\0') {
         next(ls);
         return TK_BOM_UTF32LE;
       }
