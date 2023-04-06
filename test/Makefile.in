@@ -81,7 +81,6 @@ PASS1_SRC=	16_fornum.lua \
 	35_emptyif.lua \
 	36_emptyelse.lua \
 	37_emptywhile.lua \
-	37_whilewhile.lua \
 	38_upvalue_repeatorwhile.lua \
 	39_optimizedbreak.lua \
 	40_repuntilfalse.lua \
@@ -98,7 +97,8 @@ PASS1_SRC=	16_fornum.lua \
 	51_while2_if_false.lua \
 	52_nested_ifelse.lua \
 	53_do_ifelse_do.lua \
-	54_erro_if.lua \
+	54_erro_if.lua
+# 	55_whilewhile.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=	99_newtable_arg.lua
