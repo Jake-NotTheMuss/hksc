@@ -811,6 +811,10 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
           goto markconcat;
         break;
       case OP_CONCAT:
+        /* todo: what is the actual restruction on the nested firstreg? */
+        if (GETARG_B(code[pc]) <= firstreg) lua_assert(0);
+        concat1(ca, fs);
+        break;
       case OP_RETURN:
         lua_assert(0);
       default:
