@@ -303,17 +303,21 @@ set10 debug BUILDCONFIGTYPE TESTS RELEASE
 # set10 with_decompiler TESTSUFFIX .dtest .ctest
 if test "x$with_decompiler" = x0; then
 	TESTSUFFIX=.ctest
+	TESTS_SRC_VAR=ALL_SRC
 	EXTRA_TESTS_VAR=EXTRA_TESTS
 else
 	case $debug_pass in
 		1)
 			TESTSUFFIX=.p1test
+			TESTS_SRC_VAR=PASS1_SRC
 			EXTRA_TESTS_VAR='#';;
 		2)
 			TESTSUFFIX=.p2test
+			TESTS_SRC_VAR=PASS2_SRC
 			EXTRA_TESTS_VAR='#';;
 		*)
 			TESTSUFFIX=.dtest
+			TESTS_SRC_VAR=ALL_SRC
 			EXTRA_TESTS_VAR=EXTRA_TESTS;;
 	esac
 fi
@@ -514,6 +518,7 @@ config_makefile()
 			s&@HKSC_CMP_DEBUG@&$HKSC_CMP_DEBUG&;t t
 			s&@HKSC_CMP_CODE@&$HKSC_CMP_CODE&;t t
 			s&@TESTSUFFIX@&$TESTSUFFIX&;t t
+			s&@TESTS_SRC_VAR@&$TESTS_SRC_VAR&;t t
 			s&@EXTRA_TESTS_VAR@&$EXTRA_TESTS_VAR&;t t
 			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&;t t
 			s&@srcdir@&$srcdir&;t t

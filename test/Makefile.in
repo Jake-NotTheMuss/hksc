@@ -40,37 +40,40 @@ TESTMAKEFLAGS=
 
 MAKELOG=./tests.$(HKSC_NAME).log
 
-ALL_SRC=	00_comment.lua \
+# these tests are not interesting for decompiler pass1
+NOPASS1_SRC=	00_comment.lua \
 	01_k.lua \
 	02_constfold.lua \
 	03_float.lua \
 	04_intliterallud.lua \
 	05_table.lua \
 	06_bigtable.lua \
-	07_utf8_bom.lua \
-	08_fornum.lua \
-	09_forlist.lua \
-	10_function.lua \
-	11_repeat.lua \
-	12_while.lua \
-	13_do.lua \
-	14_bool.lua \
-	15_precedence.lua \
-	16_numeric_literals.lua \
-	17_recursion.lua \
-	18_testset.lua \
-	19_multiple_table_index.lua \
-	20_break.lua \
-	21_nested_break.lua \
-	22_bracket_evaluation.lua \
-	23_dead_code.lua \
-	24_dead_closure.lua \
-	25_nested_closure.lua \
-	26_nested_call.lua \
-	27_vararg.lua \
-	28_func_name.lua \
-	29_long_func_name.lua \
-	30_long_string.lua \
+	07_bool.lua \
+	08_utf8_bom.lua \
+	09_precedence.lua \
+	10_numeric_literals.lua \
+	11_bracket_evaluation.lua \
+	12_func_name.lua \
+	13_long_func_name.lua \
+	14_long_string.lua \
+	15_do.lua
+
+# decompiler pass1 tests
+PASS1_SRC=	16_fornum.lua \
+	17_forlist.lua \
+	18_repeat.lua \
+	19_while.lua \
+	20_function.lua \
+	21_recursion.lua \
+	22_testset.lua \
+	23_multiple_table_index.lua \
+	24_break.lua \
+	25_nested_break.lua \
+	26_dead_code.lua \
+	27_dead_closure.lua \
+	28_nested_closure.lua \
+	29_nested_call.lua \
+	30_vararg.lua \
 	31_early_return.lua \
 	32_early_break.lua \
 	33_concat_call.lua \
@@ -96,7 +99,15 @@ ALL_SRC=	00_comment.lua \
 	52_nested_ifelse.lua \
 	53_do_ifelse_do.lua \
 	54_erro_if.lua \
-	55_newtable_arg.lua
+
+# tests interesting for compiler/decompiler
+DECOMPILER_SRC=	99_newtable_arg.lua
+
+# all the tests that can be run
+ALL_SRC=$(NOPASS1_SRC) $(PASS1_SRC) $(DECOMPILER_SRC)
+
+# all the tests that need to be run
+TEST_SRC=$(@TESTS_SRC_VAR@)
 
 UI64_SRC_NO=
 HSTRUCTURE_SRC_NO=
@@ -104,9 +115,10 @@ HSTRUCTURE_SRC_NO=
 UI64_SRC_YES=ui64.lua
 HSTRUCTURE_SRC_YES=
 
+EXTRA_TESTS=
 @EXTRA_TESTS_VAR@=$(UI64_SRC_@WITH_UI64@) $(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
 
-ALL_TESTS=$(ALL_SRC:.lua=@TESTSUFFIX@) $(EXTRA_TESTS:.lua=@TESTSUFFIX@)
+ALL_TESTS=$(TEST_SRC:.lua=@TESTSUFFIX@) $(EXTRA_TESTS:.lua=@TESTSUFFIX@)
 
 all: prepare dummy version error $(ALL_TESTS)
 	@echo ----------------------------
