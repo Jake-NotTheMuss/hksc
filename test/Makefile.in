@@ -222,7 +222,11 @@ error:
 	@ echo hello $@
 
 .ctest.p1test:
-	@ echo hello $@
+	@echo Decompiling $*.lua
+	@echo $(HKSC) $(HKSCAFLAGS) -d $(srcdir)/$*.lua -o $*.decp1.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) -d $(srcdir)/$*.lua -o $*.decp1.lua > $*.decp1.log
+# 	@diff -u $*.p1expect $*.decp1.lua && echo "$*.lua decompiled OK"
+
 
 Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@echo regenerating test/$@
