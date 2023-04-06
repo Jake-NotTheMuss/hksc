@@ -816,7 +816,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
       default:
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markconcat:
-          init_ins_property(fs, pc, INS_PRECONCAT);
+          set_ins_property(fs, pc, INS_PRECONCAT);
           leavingstat1("concat");
           return;
         }
@@ -905,7 +905,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
         }
         else if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markcall:
-          init_ins_property(fs, pc, INS_PRECALL);
+          set_ins_property(fs, pc, INS_PRECALL);
           leavingstat1("call");
           return;
         }
