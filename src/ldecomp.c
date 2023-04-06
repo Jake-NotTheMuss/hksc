@@ -1963,6 +1963,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     currblock = addbbl1(fs,bl->state.startpc,bl->endpc,BBL_DO);
                     lua_assert(currblock != NULL);
                     set_ins_property(fs, currblock->startpc, INS_DOSTAT);
+                    set_ins_property(fs, currblock->endpc, INS_BLOCKEND);
                     D(lprintf("found an inner block %B\n", currblock));
                     currblock->firstchild = childblock;
                     childblock = currblock;
@@ -2188,6 +2189,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block = addbbl1(fs, block->state.startpc, block->endpc, BBL_DO);
             lua_assert(new_block != NULL);
             set_ins_property(fs, new_block->startpc, INS_DOSTAT);
+            set_ins_property(fs, new_block->endpc, INS_BLOCKEND);
             new_block->firstchild = block->state.firstchild;
             D(lprintf("setting first child for block to %B\n",
                       block->state.firstchild));
@@ -2252,6 +2254,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                 BBL_DO);
               lua_assert(doblock != NULL);
               set_ins_property(fs, doblock->startpc, INS_DOSTAT);
+              set_ins_property(fs, doblock->endpc, INS_BLOCKEND);
               doblock->firstchild = new_block.state.firstchild;
               doblock->nextsibling = new_block.nextsibling;
               if (new_block.state.prevsibling) {
