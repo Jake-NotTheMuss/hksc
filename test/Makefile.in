@@ -150,8 +150,8 @@ expect:
 
 expectsum:
 	@files= ; \
-	for f in *.cexpect *.debugexpect *.profileexpect; do \
-		files="$$files $(srcdir)/$${f%.*}.lua"; \
+	for f in $(TEST_SRC); do \
+		files="$$files $(srcdir)/$$f"; \
 	done; \
 	shasum -a1 -U $$files > expect.sum
 
