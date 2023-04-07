@@ -1119,13 +1119,15 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 #endif /* LUA_DEBUG */
 
 
-#define loop1(ca,fs,startpc,type) do { \
+#define loop1(ca,fs,startpc,blocktype) do { \
   struct BasicBlock *new; /* the new block */ \
   /* create the new block */ \
-  bbl1(ca, fs, startpc, type, NULL, NULL, nextsibling); \
+  bbl1(ca, fs, startpc, blocktype, NULL, NULL, nextsibling); \
   new = fs->a->bbllist.first; \
   lua_assert(new != nextsibling); \
-  addsibling1(new, nextsibling); \
+  /* in the case of an erroneous while-loop detection, whatever block is first \
+     will already have the correct nextsibling */ \
+  if (new->nextsibling == NULL) addsibling1(new, nextsibling); \
   nextsibling = new; \
   /* if enclosed by a block, save a previous sibling for it, as the block may \
      really begin after this newly created block */ \
@@ -1764,9 +1766,44 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               lua_assert(branch == NULL && block == NULL);
               if (target-1 == outer.end && outer.end-1 == endpc &&
                   futuresibling == NULL) {
+                BasicBlock *lastsibling = nextsibling;
+                BasicBlock *newblock;
+                D(lprintf("fixing erroneous while-true-loop detection\n"));
+                D(lprintf("the while-loop thought to end at (%i) actually ends "
+                          "at (%i) and is not nested\n", endpc, endpc+1));
                 init_ins_property(fs, pc, INS_LOOPFAIL);
                 /* this block is really `if false then ... end' or equivalent */
-                addbbl1(fs, endpc+1, endpc, BBL_IF);
+                D(lprintf("finding the last sibling in this context: "));
+                if (lastsibling != NULL) {
+                  int newblocktype;
+                  while (lastsibling->nextsibling != NULL)
+                    lastsibling = lastsibling->nextsibling;
+                  D(lprintf("%B\n", lastsibling));
+                  lua_assert(lastsibling != NULL);
+                  if (lastsibling->type == BBL_IF &&
+                      lastsibling->endpc == endpc-1) {
+                    lastsibling->endpc++; /* if-block includes the exit-jump */
+                    newblocktype = BBL_ELSE;
+                  }
+                  else
+                    newblocktype = BBL_IF;
+                  /* insert the new block in the middle of the chain, so that
+                     NEXTSIBLING gets set correctly after returning */
+                  newblock = newbbl(fs->H, endpc+1, endpc, newblocktype);
+                  {
+                    BasicBlock *nextinchain = lastsibling->next;
+                    lastsibling->next = newblock;
+                    lastsibling->nextsibling = newblock;
+                    newblock->next = nextinchain;
+                  }
+                }
+                else { /* no preceding sibling blocks */
+                  D(lprintf("(NULL)\n")); /* no last sibling */
+                  newblock = addbbl1(fs, endpc+1, endpc, BBL_IF);
+                }
+                D(lprintf("created new block %B\n", newblock));
+                D(lprintf("first block in chain is %B\n",
+                          fs->a->bbllist.first));
                 ca->testset.endpc = ca->testset.reg = -1;
                 ca->curr = outer;
                 return;
@@ -1846,7 +1883,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   D(lprintf("BRANCH BLOCK - %B\n", new_block));
                   fixsiblingchain1(new_block, &nextsibling);
                   nextsibling = new_block;
-                  if (branch) {
+                  if (branch && !issingle) {
                     if (nextbranch == NULL) {
                       branch->ifblock = new_block;
                       branch->firstblock = new_block;
@@ -2026,9 +2063,29 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 lua_assert(new_branch.midpc == elseblock->startpc);
                 if (ifblock != NULL) {
                   lua_assert(ifblock->type == BBL_IF);
+                  lua_assert(new_branch.target1 != -1);
+                  D(lprintf("ifblock = %B\n", ifblock));
+                  /* make sure this if-block is really the sibling of the
+                     else-block: the following must be true:
+                     - the if-block ends right before the else-block starts
+                     - the else-block is the immediate next sibling of the
+                       if-block
+                     - the jump-target out of the if-block condition is the
+                       startpc of the else-block, however:
+                       * there can be an exception to this, for example, if the
+                         elseblock is empty and at the end of a while-loop, the
+                         if-part will not fail-jump to the start of the
+                         else-part; instead, it will jump to the start of the
+                         loop, but this will never be the case here, because an
+                         unconditional backward jump right before ENDPC that
+                         jumps to the start of the loop is not detected as an
+                         else-branch, but rather a nested while-loop, and a
+                         correction gets made elsewhere if the jump really was
+                         for an empty else-branch at the end of the while-loop
+                     */
                   if (ifblock->endpc != new_branch.midpc-1 ||
-                      ifblock->nextsibling != elseblock) {
-                    /* erroneous else-branch */
+                      ifblock->nextsibling != elseblock ||
+                      new_branch.target1 != elseblock->startpc) {
                     goto badelsebranch;
                   }
                   else
@@ -2037,27 +2094,43 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 else {
                   BasicBlock *elseprevsibling;
                   badelsebranch:
-                  D(lprintf("handling erroneous else-branch detection %B\n", elseblock)); 
+                  D(lprintf("handling erroneous else-branch detection %B\n",
+                            elseblock)); 
                   /* correct the else-block that has already been created */
                   /*elseblock->startpc = elseblock->endpc = pc;*/
-                  elseblock->startpc = pc;
+                  D(lprintf("changing elseblock->startpc from (%i) to (%i)\n",
+                            elseblock->startpc, pc));
+                  elseblock->startpc = pc+1;
                   elseblock->isempty = (elseblock->endpc < elseblock->startpc);
                   /*elseblock->isempty = 0;*/
-                  elseblock->type = BBL_REPEAT;
+                  elseblock->type = BBL_IF;
+                  /* the if-block endpc may have defaulted to the pc just before
+                     the original startpc of the elseblock, but now the
+                     elseblock startpc has changed, and the if-block endpc needs
+                     to be adjusted in case it overlaps with the elseblock */
+                  if (ifblock != NULL && ifblock->endpc+1 >= elseblock->startpc)
+                  {
+                    ifblock->endpc = elseblock->startpc-2;
+                    ifblock->isempty = (ifblock->startpc > ifblock->endpc);
+                  }
                   D(lprintf("else-block corrected to %B\n", elseblock));
                   D(lprintf("elseblock->nextsibling = %B\n",
                             elseblock->nextsibling));
                   unset_ins_property(fs, pc, INS_BLOCKEND);
                   if (branchstartpc <= branchendpc) {
                     unset_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
-                    unset_ins_property(fs, branchendpc, INS_BLOCKEND);
+                    /*unset_ins_property(fs, branchendpc, INS_BLOCKEND);*/
                   }
                   else { /* empty block */
                     unset_ins_property(fs, branchstartpc, INS_EMPTYBLOCK);
                   }
-                  set_ins_property(fs, pc, INS_REPEATSTAT);
+                  if (elseblock->isempty)
+                    set_ins_property(fs, elseblock->startpc, INS_EMPTYBLOCK);
+                  else
+                    set_ins_property(fs, elseblock->startpc, INS_BRANCHBEGIN);
+                  /*set_ins_property(fs, pc, INS_REPEATSTAT);
                   set_ins_property(fs, elseblock->endpc, INS_LOOPEND);
-                  set_ins_property(fs, pc, INS_BREAKSTAT);
+                  set_ins_property(fs, pc, INS_BREAKSTAT);*/
                   /* ELSEBLOCK is not actually an else-block */
                   elseprevsibling = new_branch.elseprevsibling;
                   D(lprintf("elseprevsibling = %B\n", elseprevsibling));
@@ -2473,6 +2546,7 @@ static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
   int startpc = bbl->startpc;
   int endpc = bbl->endpc;
   int type = bbl->type;
+  BasicBlock *nextsibling = bbl->nextsibling;
   lua_assert(startpc <= endpc || bbl->isempty);
   lua_assert(type >= 0 && type < MAX_BBLTYPE);
   if (type < BBL_DO && type != BBL_FUNCTION) {
@@ -2489,6 +2563,10 @@ static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
   else if (type == BBL_DO) {
     check_ins_property(fs, startpc, INS_DOSTAT);
     check_ins_property(fs, endpc, INS_BLOCKEND);
+  }
+  else if (type == BBL_IF && nextsibling != NULL &&
+           nextsibling->type == BBL_ELSE) {
+    lua_assert(bbl->endpc+1 == nextsibling->startpc);
   }
 }
 
