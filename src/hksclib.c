@@ -228,20 +228,23 @@ static void startcycle(hksc_State *H, const char *name) {
                   "start-cycle callback");
     return;
   }
-  g->incyclecallback = 1;
 #endif /* LUA_DEBUG */
   lua_assert(H->last_result == NULL);
   luaC_newcycle(H); /* collect garbage while in-between cycles */
   g->midcycle = 1;
   /* end of library start-cycle logic */
   if (G(H)->startcycle) { /* user-defined logic */
+#ifdef LUA_DEBUG
+    g->incyclecallback = 1;
+#endif /* LUA_DEBUG */
     lua_unlock(H);
     (*G(H)->startcycle)(H, name);
     lua_lock(H);
-  }
 #ifdef LUA_DEBUG
-  g->incyclecallback = 0;
+    g->incyclecallback = 0;
 #endif /* LUA_DEBUG */
+  }
+  lua_assert(!g->incyclecallback);
 }
 
 
@@ -256,17 +259,17 @@ static void endcycle(hksc_State *H, const char *name) {
     /* make sure the compiler result is not collected until the cycle really
        ends */
     makelive(obj2gco(H->last_result));
-#ifdef LUA_DEBUG
-  g->incyclecallback = 1;
-#endif /* LUA_DEBUG */
   if (G(H)->endcycle) { /* user-defined logic */
+#ifdef LUA_DEBUG
+    g->incyclecallback = 1;
+#endif /* LUA_DEBUG */
     lua_unlock(H);
     (*G(H)->endcycle)(H, name);
     lua_lock(H);
-  }
 #ifdef LUA_DEBUG
-  g->incyclecallback = 0;
+    g->incyclecallback = 0;
 #endif /* LUA_DEBUG */
+  }
   /* start of library end-cycle logic */
   if (H->last_result != NULL)
     makedead(obj2gco(H->last_result)); /* now it can die */
