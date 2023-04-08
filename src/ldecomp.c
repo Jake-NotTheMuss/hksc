@@ -2101,6 +2101,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   D(lprintf("changing elseblock->startpc from (%i) to (%i)\n",
                             elseblock->startpc, pc));
                   elseblock->startpc = pc+1;
+                  if (new_branch.optimalexit > elseblock->endpc)
+                    elseblock->endpc = new_branch.optimalexit-1;
                   elseblock->isempty = (elseblock->endpc < elseblock->startpc);
                   /*elseblock->isempty = 0;*/
                   elseblock->type = BBL_IF;
