@@ -1963,8 +1963,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 branchendpc = target-1;
               elsebranch:
               if (branch != NULL) {
-                D(lprintf("nested branch ends at (%i), the enclosing if-branch "
-                       "ends at (%i)\n", branchendpc, branch->midpc));
+                D(lprintf("nested else-branch ends at (%i), the enclosing "
+                          "if-branch ends at (%i)\n", branchendpc,
+                          branch->midpc-1));
               }
               /*if (branch != NULL && branchendpc >= branch->midpc) {
               }*/
