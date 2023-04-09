@@ -2238,14 +2238,26 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   else if (branch != NULL) {
                     branch->elseprevsibling = new_branch.if_false_root;
                   }
+                  else {
+                    /* make sure the root block gets assigned the next sibling
+                       before updating NEXTSIBLING */
+                    new_branch.if_false_root->nextsibling = nextsibling;
+                  }
                   /* firstblock should never be NULL as it gets set to the value
                      of NEXTSIBLING when returning, and NEXTSIBLING is
                      intialized to the else-part (ELSEBLOCK when recursing into
                      a branch context) */
                   lua_assert(new_branch.firstblock != NULL);
-                  nextsibling = new_branch.firstblock;
                   D(lprintf("new_branch.firstblock = %B\n",
                             new_branch.firstblock));
+                  /* set NEXTSIBLING to the earliest block; if
+                     new_branch.firstblock is not new_branch.if_false_root,
+                     than the former must come earlier than the latter */
+                  if (new_branch.firstblock != new_branch.if_false_root)
+                    nextsibling = new_branch.firstblock;
+                  else
+                    nextsibling = new_branch.if_false_root;
+                  D(lprintf("updated nextsibling to %B\n", nextsibling));
                   /* This is here to handle back-to-back `repeat-break'
                      statements and turn them into child and parent instead of
                      siblings, since the outer one's endpc will be after the
@@ -2261,6 +2273,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      from the current context */
                   if (nextsibling != new_block &&
                       nextsibling->nextsibling == new_block) {
+                    nextsibling->nextsibling = new_branch.if_false_root;
                     /* NEXTSIBLING is the outer block that needs to be made the
                        parent. NEW_BLOCK is the inner block that is currently
                        the next sibling, but needs to be made the child. Use a
@@ -2303,6 +2316,18 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   nextbranchtarget = -1;
                   if (block != NULL) {
                     block->state = block->possiblestate;
+                    if (block->state.startpc <= branchendpc) {
+                      block->state.startpc =new_branch.if_false_root->startpc-1;
+                      block->state.firstchild = new_branch.if_false_root;
+                      if (nextsibling != new_branch.if_false_root)
+                        block->state.prevsibling = nextsibling;
+                      else
+                        block->state.prevsibling = NULL;
+                    }
+                    else {
+                      if (block->state.prevsibling == NULL)
+                        block->state.prevsibling = nextsibling;
+                    }
                   }
                 }
                 if (noblock) { /* close the erroneous block and pass data */
