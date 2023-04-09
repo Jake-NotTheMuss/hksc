@@ -1729,12 +1729,14 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             /* the current loop must have a sibling for it to be an optimized
                exit */
             if (futuresibling != NULL) {
-              siblingjump = code[futuresibling->startpc];
+              int siblingstartpc = futuresibling->startpc -
+                                   (futuresibling->type == BBL_ELSE);
+              siblingjump = code[siblingstartpc];
               if (GET_OPCODE(siblingjump) != OP_JMP) {
                 /* todo: bad code? */
                 lua_assert(0);
               }
-              siblingtarget = futuresibling->startpc+1+GETARG_sBx(siblingjump);
+              siblingtarget = siblingstartpc+1+GETARG_sBx(siblingjump);
               if (target == siblingtarget) { /* optimized jump? */
                 if (ca->prevTMode || pc == startpc) /* loop-exit */
                   init_ins_property(fs, pc, INS_LOOPFAIL);
