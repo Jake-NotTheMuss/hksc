@@ -1239,7 +1239,8 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   BasicBlock *lastchild = NULL;
   BasicBlock *nextsibling;
   BasicBlock *firstsibling;
-  lua_assert(chain != NULL);
+  lua_assert(block != NULL);
+  if (chain == NULL) chain = &block->nextsibling;
   nextsibling = firstsibling = *chain;
   D(printf("fixing up sibling chain\n"));
   D(printf("--\n"));
@@ -1251,6 +1252,8 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
     nextsibling = nextsibling->nextsibling;
   }
   D(printf("--\n"));
+  D(lprintf("next sibling changed to %B\n", nextsibling));
+  D(lprintf("previous next sibling was %B\n", block->nextsibling));
   *chain = nextsibling;
   if (lastchild) {
     block->firstchild = firstsibling;
@@ -1264,10 +1267,12 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   else {
     D(printf("found no children for this block\n"));
   }
-  D(lprintf("next sibling changed to %B\n", nextsibling)); 
-  D(lprintf("previous next sibling was %B\n", block->nextsibling)); 
-  lua_assert(block->nextsibling == NULL || block->nextsibling == firstsibling);
-  block->nextsibling = nextsibling;
+  /* chain may be &block->nextsibling to avoid having to update any extra
+     variables such as NEXTSIBLING in bbl1 */
+  if (chain != &block->nextsibling) {
+    lua_assert(block->nextsibling == NULL || block->nextsibling==firstsibling);
+    block->nextsibling = nextsibling;
+  }
   return lastchild;
 }
 
@@ -2150,7 +2155,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                 " (%i)\n", pc, branchendpc));
                       elseprevsibling->endpc = branchendpc;
                     }
-                    fixsiblingchain1(elseprevsibling, &dummynextsibling);
+                    fixsiblingchain1(elseprevsibling, NULL);
                     /*lua_assert(new_branch.elseprevsibling->nextsibling ==
                                elseblock);*/
                     /* the analyzer thought ELSEBLOCK was an else-block that
@@ -2189,8 +2194,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                        the next sibling, but needs to be made the child. Use a
                        dummy variable so `fixsiblingchain' doesn't change these
                        variables */
-                    BasicBlock *dummynextsibling = new_block;
-                    fixsiblingchain1(nextsibling, &dummynextsibling);
+                    fixsiblingchain1(nextsibling, NULL);
                   }
                   if (new_branch.contextswitched) {
                     D(lprintf("handling else-branch context-switch for pc "
