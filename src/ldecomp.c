@@ -1146,6 +1146,10 @@ struct block1;
 */
 struct branch1 {
   struct branch1 *prev;  /* enclosing branch context if nested */
+  struct branch1 *root;  /* the first context in this group of contexts, i.e.,
+                            the first in its group to be recursed into, and the
+                            last to be returned from; it is only used to handle
+                            adjacent groups of nested `if-false' blocks */
   struct block1 *parentblock;  /* enclosing block if nested */
   /*BasicBlock *next;*/  /* the next branch block in this group */
   BasicBlock *ifblock;  /* first if-part */
@@ -1155,6 +1159,13 @@ struct branch1 {
                               no if-part is found when returning, meaning the
                               detection was erroneous and this block needs to be
                               accounted for in the parent call */
+  /* `if_false_root' is used when handling erroneous else-branch detection, and
+     it is the root if-false block in the current context's group, where a
+     group is a hierarchy of nested if-false blocks. Because the root context
+     returns first in this case, the parent exists before the child. When the
+     leaf if-false-block in its group is created, all parent contexts have been
+     unwound, and this handle is needed to access the root of the hierarchy */
+  BasicBlock *if_false_root;
   struct stat1 *outer;  /* saved values for the outer loop statement */
   int target1;  /* jump target out of the branch condition */
   int startpc, endpc, midpc;  /* midpc is the start of the else-part */
@@ -1286,10 +1297,14 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->midpc = midpc;
   branch->endpc = endpc;
   branch->target1 = -1;
-  if (prev && endpc+1 == prev->midpc)
+  if (prev && endpc+1 == prev->midpc) {
     branch->optimalexit = prev->optimalexit;
-  else
+    branch->root = prev->root;
+  }
+  else {
     branch->optimalexit = jumptarget;
+    branch->root = branch; /* root points to itself */
+  }
   block = addbbl1(fs, midpc, endpc, BBL_ELSE);
   if (prev != NULL && prev->elseprevsibling == NULL)
     prev->elseprevsibling = block;
@@ -1301,6 +1316,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->elseprevsibling = NULL;
   branch->firstblock = NULL;
   branch->contextswitched = 0;
+  branch->if_false_root = NULL;
 }
 
 
@@ -2103,17 +2119,21 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 else {
                   BasicBlock *elseprevsibling;
                   badelsebranch:
+                  /* ELSEBLOCK is not actually an else-block */
                   D(lprintf("handling erroneous else-branch detection %B\n",
                             elseblock)); 
                   /* correct the else-block that has already been created */
-                  /*elseblock->startpc = elseblock->endpc = pc;*/
-                  D(lprintf("changing elseblock->startpc from (%i) to (%i)\n",
-                            elseblock->startpc, pc));
-                  elseblock->startpc = pc+1;
-                  if (new_branch.optimalexit > elseblock->endpc)
+                  lua_assert(elseblock->startpc == pc+1);
+                  D(lprintf("branchendpc = (%i)\n"
+                            "branch->midpc = (%i)\n",
+                            branchendpc, branch ? branch->midpc: -1));
+                  if (new_branch.optimalexit > elseblock->endpc &&
+                      branch && branchendpc+1 == branch->midpc) {
+                    D(lprintf("using new_branch.optimalexit-1 (%i) as the endpc"
+                              " instead of (%i)\n", new_branch.optimalexit-1,
+                              elseblock->endpc));
                     elseblock->endpc = new_branch.optimalexit-1;
-                  elseblock->isempty = (elseblock->endpc < elseblock->startpc);
-                  /*elseblock->isempty = 0;*/
+                  }
                   elseblock->type = BBL_IF;
                   /* the if-block endpc may have defaulted to the pc just before
                      the original startpc of the elseblock, but now the
@@ -2127,26 +2147,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   D(lprintf("else-block corrected to %B\n", elseblock));
                   D(lprintf("elseblock->nextsibling = %B\n",
                             elseblock->nextsibling));
+                  fixsiblingchain1(elseblock, NULL);
                   unset_ins_property(fs, pc, INS_BLOCKEND);
-                  if (branchstartpc <= branchendpc) {
-                    unset_ins_property(fs, branchstartpc, INS_BRANCHBEGIN);
-                    /*unset_ins_property(fs, branchendpc, INS_BLOCKEND);*/
-                  }
-                  else { /* empty block */
-                    unset_ins_property(fs, branchstartpc, INS_EMPTYBLOCK);
-                  }
-                  if (elseblock->isempty)
-                    set_ins_property(fs, elseblock->startpc, INS_EMPTYBLOCK);
-                  else
-                    set_ins_property(fs, elseblock->startpc, INS_BRANCHBEGIN);
-                  /*set_ins_property(fs, pc, INS_REPEATSTAT);
-                  set_ins_property(fs, elseblock->endpc, INS_LOOPEND);
-                  set_ins_property(fs, pc, INS_BREAKSTAT);*/
-                  /* ELSEBLOCK is not actually an else-block */
                   elseprevsibling = new_branch.elseprevsibling;
                   D(lprintf("elseprevsibling = %B\n", elseprevsibling));
                   if (elseprevsibling != NULL) {
-                    BasicBlock *dummynextsibling = elseblock;
                     /* make sure the sibling relation exists */
                     elseprevsibling->nextsibling = elseblock;
                     if (elseprevsibling->type == BBL_ELSE &&
@@ -2165,7 +2170,74 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                        it should be inside to ELSEBLOCK */
                     /*lua_assert(elseprevsibling->endpc+1 < elseblock->startpc);*/
                   }
+                  /* this is the new block resulting from the branch context */
                   new_block = elseblock;
+                  /* because parent contexts return first in the case of nested
+                     erroneous branch contexts, the root basic block in the
+                     group nesting needs to be forwarded to parent contexts,
+                     which actually represent child blocks, for example, given
+                     the source code:
+                        if false then
+                            ...
+                            if false then
+                                ...
+                                if false then
+                                    ...
+                                end
+                            end
+                        end
+                     the context for the inner block is pushed first and returns
+                     last, and within a given context, the BRANCH variable
+                     points to the immediate child block. This creates a problem
+                     when there are multiple, independent, adjcent nestings of
+                     if-false blocks, such as:
+                        if false then
+                            ...
+                            if false then
+                                ...
+                                if false then
+                                    ...
+                                end
+                            end
+                        end
+                        local a = 12;
+                        if false then
+                            ...
+                            if false then
+                                ...
+                                if false then
+                                    ...
+                                end
+                            end
+                        end
+                     There are six blocks and six branch contexts here, and they
+                     are pushed from last to first, and return first to last.
+                     When the context for the first block returns, it will save
+                     the basic block that it creates as an `if_false_root' for
+                     its group. It will then `forward' this root block to the
+                     parent (again, which actually represents the child), as
+                     long as the parent context and this context share the same
+                     root context (meaning they are in the same group). This
+                     way, `elseprevsibling' will be updated properly for the
+                     parent context - if the parent is part of a different
+                     group, its `elseprevsibling' will point to the
+                     `if_false_root' block so as to avoid attaching the parent
+                     as a sibling to the innermost child the preceding group;
+                     instead, it will be attached as a sibling of the root
+                     block of the previous group */
+                  /* set the root BasicBlock of this group */
+                  if (new_branch.if_false_root == NULL)
+                    new_branch.if_false_root = new_block;
+                  /* forward `if_false_root' to the parent if it is part of the
+                     same group */
+                  if (branch != NULL && branch->root == new_branch.root) {
+                    branch->if_false_root = new_branch.if_false_root;
+                  }
+                  /* otherwise, correct `elseprevsibling' to point to the root
+                     block of the previous group instead of the leaf */
+                  else if (branch != NULL) {
+                    branch->elseprevsibling = new_branch.if_false_root;
+                  }
                   /* firstblock should never be NULL as it gets set to the value
                      of NEXTSIBLING when returning, and NEXTSIBLING is
                      intialized to the else-part (ELSEBLOCK when recursing into
