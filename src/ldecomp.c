@@ -1243,7 +1243,9 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   nextsibling = firstsibling = *chain;
   D(printf("fixing up sibling chain\n"));
   D(printf("--\n"));
-  while (nextsibling && nextsibling->startpc <= endpc) {
+  while (nextsibling &&
+         (nextsibling->startpc <= endpc ||
+          (nextsibling->isempty && nextsibling->startpc-1 == endpc))) {
     lastchild = nextsibling;
     D(lprintf("found child %B\n", nextsibling)); 
     nextsibling = nextsibling->nextsibling;
