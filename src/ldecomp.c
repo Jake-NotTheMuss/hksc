@@ -1276,17 +1276,18 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
                        int endpc, int jumptarget, BasicBlock **nextsibling)
 {
   BasicBlock *block;
+  struct branch1 *prev = branch->prev;
   branch->startpc = -1;  /* startpc of the if-part is unknown right now */
   branch->midpc = midpc;
   branch->endpc = endpc;
   branch->target1 = -1;
-  if (branch->prev)
-    branch->optimalexit = branch->prev->optimalexit;
+  if (prev && endpc+1 == prev->midpc)
+    branch->optimalexit = prev->optimalexit;
   else
     branch->optimalexit = jumptarget;
   block = addbbl1(fs, midpc, endpc, BBL_ELSE);
-  if (branch->prev != NULL && branch->prev->elseprevsibling == NULL)
-    branch->prev->elseprevsibling = block;
+  if (prev != NULL && prev->elseprevsibling == NULL)
+    prev->elseprevsibling = block;
   lua_assert(block != NULL);
   D(lprintf("ELSE BLOCK - (%i-%i)\n", midpc, endpc));
   fixsiblingchain1(block, nextsibling);
