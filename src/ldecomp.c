@@ -2228,11 +2228,16 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      instead, it will be attached as a sibling of the root
                      block of the previous group */
                   /* set the root BasicBlock of this group */
-                  if (new_branch.if_false_root == NULL)
+                  if (new_branch.if_false_root == NULL) {
+                    D(lprintf("setting if_false_root for this group to %B\n",
+                              new_block));
                     new_branch.if_false_root = new_block;
+                  }
                   /* forward `if_false_root' to the parent if it is part of the
                      same group */
                   if (branch != NULL && branch->root == new_branch.root) {
+                    D(lprintf("forwarding if_false_root %B to parent branch "
+                              "context\n", new_branch.if_false_root));
                     branch->if_false_root = new_branch.if_false_root;
                   }
                   /* otherwise, correct `elseprevsibling' to point to the root
@@ -2321,8 +2326,21 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     if (block->state.startpc <= branchendpc) {
                       block->state.startpc =new_branch.if_false_root->startpc-1;
                       block->state.firstchild = new_branch.if_false_root;
-                      if (nextsibling != new_branch.if_false_root)
-                        block->state.prevsibling = nextsibling;
+                      D(lprintf("comparing nextsibling %B to if_false_root "
+                                "%B\n", nextsibling, new_branch.if_false_root));
+                      if (nextsibling != new_branch.if_false_root) {
+                        /* find the previous sibling of if_false_root */
+                        BasicBlock *prevsibling = nextsibling;
+                        BasicBlock *if_false_root = new_branch.if_false_root;
+                        lua_assert(prevsibling != NULL);
+                        while (prevsibling->nextsibling != if_false_root &&
+                               prevsibling->nextsibling != NULL) {
+                          prevsibling = prevsibling->nextsibling;
+                        }
+                        D(lprintf("setting block->state.prevsibling to %B\n",
+                                  prevsibling));
+                        block->state.prevsibling = prevsibling;
+                      }
                       else
                         block->state.prevsibling = NULL;
                     }
