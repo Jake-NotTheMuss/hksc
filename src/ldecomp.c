@@ -1260,7 +1260,8 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   D(printf("--\n"));
   while (nextsibling &&
          (nextsibling->startpc <= endpc ||
-          (nextsibling->isempty && nextsibling->startpc-1 == endpc))) {
+          (nextsibling->isempty && nextsibling->startpc-1 == endpc &&
+           block->type == BBL_IF && block->nextsibling == nextsibling))) {
     lastchild = nextsibling;
     D(lprintf("found child %B\n", nextsibling)); 
     nextsibling = nextsibling->nextsibling;
