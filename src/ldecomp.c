@@ -2705,6 +2705,7 @@ typedef struct StackAnalyzer {
   int pc;
   int sizecode;
   int maxstacksize;
+  lu_byte intailemptyblock;
 } StackAnalyzer;
 
 
@@ -2808,14 +2809,20 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   int startpc = bbl->startpc;
   int endpc = bbl->endpc;
   int type = bbl->type;
-  lua_assert(sa->pc == startpc);
+  if (sa->intailemptyblock) {
+    lua_assert(sa->pc+1 == startpc);
+    lua_assert(bbl->nextsibling == NULL);
+  }
+  else
+    lua_assert(sa->pc == startpc);
   if (type == BBL_FUNCTION) {
     lua_assert(sa->pc == 0);
     lua_assert(endpc == sa->sizecode-1);
   }
   assertbblvalid(fs,bbl);
   D(lprintf("pass2: entered %sblock %b (%i-%i) at pc (%i)\n", 
-         bbl->isempty ? "empty " : "", bbl, startpc, endpc, sa->pc));
+         bbl->isempty ? (sa->intailemptyblock ? "tail-empty " : "empty") : "",
+         bbl, startpc, endpc, sa->pc));
   enterblock2(fs, bbl);
   if (bbl->isempty) goto block2finished;
   fs->D->indentlevel++;
@@ -2825,12 +2832,17 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     OpCode o;
     if (sa->pc == nextchildstartpc) {
       int ischildempty;
+      processnextchild:
       lua_assert(nextchild != NULL);
       ischildempty = nextchild->isempty;
       bbl2(sa, fs, nextchild);
       nextchild = nextchild->nextsibling;
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      if (!ischildempty) {
+      if (sa->intailemptyblock) {
+        sa->intailemptyblock = 0;
+        goto loopfinished;
+      }
+      else if (!ischildempty) {
         /* multiple blocks can end on the same instruction, so make sure not to
            process the last instruction more than once */
         if (sa->pc == endpc)
@@ -2865,11 +2877,22 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
       break;
     (void)a; (void)b; (void)c; (void)bx;
   }
+  /* check for an empty child block at the end of this block */
+  if (nextchildstartpc != -1) {
+    lua_assert(nextchild != NULL);
+    lua_assert(nextchild->isempty != 0);
+    lua_assert(nextchild->nextsibling == NULL);
+    lua_assert(sa->intailemptyblock == 0);
+    sa->intailemptyblock = 1;
+    goto processnextchild;
+  }
+  loopfinished:
   fs->D->indentlevel--;
   block2finished:
   leaveblock2(fs, bbl);
-  D(lprintf("pass2: leaving %sblock %b (%i-%i) at pc (%i)\n", bbl->isempty ? 
-         "empty " : "", bbl, startpc, endpc, sa->pc));
+  D(lprintf("pass2: leaving %sblock %b (%i-%i) at pc (%i)\n", bbl->isempty ?
+            (sa->intailemptyblock ? "tail-empty " : "empty") : "", bbl,
+            startpc, endpc, sa->pc));
 }
 
 
@@ -2882,6 +2905,7 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
   sa.code = f->code;
   sa.sizecode = f->sizecode;
   sa.maxstacksize = f->maxstacksize;
+  sa.intailemptyblock = 0;
   lua_assert(func != NULL);
   UNUSED(D);
   bbl2(&sa, fs, func);
