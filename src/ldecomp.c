@@ -321,6 +321,7 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
   bbl->endpc = endpc;
   bbl->type = type;
   bbl->isempty = (endpc < startpc);
+  bbl->visited = 0;
   return bbl;
 }
 
@@ -488,9 +489,25 @@ static void debugbblsummary(DFuncState *fs)
   printf("-------------------\n");
 }
 
+
+static void checktreevisited(BasicBlock *bbl)
+{
+  BasicBlock *child, *nextsibling;
+  lua_assert(bbl != NULL);
+  child = bbl->firstchild;
+  nextsibling = bbl->nextsibling;
+  lua_assert(bbl->visited);
+  while (child != NULL) {
+    checktreevisited(child);
+    child = child->nextsibling;
+  }
+}
+
+
 #else /* !LUA_DEBUG */
 
 #define debugbblsummary(fs)  ((void)(fs))
+#define checktreevisited(bbl)  ((void)(bbl))
 
 #endif /* LUA_DEBUG */
 
@@ -2824,6 +2841,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
          bbl->isempty ? (sa->intailemptyblock ? "tail-empty " : "empty") : "",
          bbl, startpc, endpc, sa->pc));
   enterblock2(fs, bbl);
+  lua_assert(bbl->visited == 0);
+  bbl->visited = 1;
   if (bbl->isempty) goto block2finished;
   fs->D->indentlevel++;
   for (; sa->pc < sa->sizecode; sa->pc++) {
@@ -2912,8 +2931,10 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
 #ifdef LUA_DEBUG
   { /* debug: make sure all instructions were visited */
     int pc;
+    BasicBlock *functionblock = fs->a->bbllist.first;
     for (pc = 0; pc < f->sizecode; pc++)
       check_ins_property(fs, pc, INS_VISITED);
+    checktreevisited(functionblock);
   }
 #endif /* LUA_DEBUG */
 }
