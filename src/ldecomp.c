@@ -2181,8 +2181,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                          for an empty else-branch at the end of the while-loop
                      */
                   if (ifblock->endpc != new_branch.midpc-1 ||
-                      ifblock->nextsibling != elseblock ||
-                      new_branch.target1 != elseblock->startpc) {
+                      ifblock->nextsibling != elseblock /*||
+                      new_branch.target1 != elseblock->startpc*/) {
                     goto badelsebranch;
                   }
                   else
@@ -2313,11 +2313,26 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   /* otherwise, correct `elseprevsibling' to point to the root
                      block of the previous group instead of the leaf */
                   else if (branch != NULL) {
-                    branch->elseprevsibling = new_branch.if_false_root;
+                    D(lprintf("comparing nextsibling to branch->elseblock\n"
+                              "  nextsibling = %B\n"
+                              "  branch->elseblock = %B\n",
+                              nextsibling, branch->elseblock));
+                    if (branch->elseblock == nextsibling) {
+                      branch->elseprevsibling = new_branch.if_false_root;
+                    }
+                    else {
+                      D(lprintf("setting new_branch.if_false_root->nextsibling "
+                              "to %B\n", nextsibling));
+                      new_branch.if_false_root->nextsibling = nextsibling;
+                      branch->elseprevsibling = NULL;
+                    }
                   }
                   else {
                     /* make sure the root block gets assigned the next sibling
                        before updating NEXTSIBLING */
+                    D(lprintf("if_false_root = %B\n",new_branch.if_false_root));
+                    D(lprintf("setting nextsibling for if_false_root to %B\n",
+                              nextsibling));
                     new_branch.if_false_root->nextsibling = nextsibling;
                   }
                   /* firstblock should never be NULL as it gets set to the value
@@ -2412,10 +2427,28 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     }
                     else if (block->state.startpc <= branchendpc) {
                       /* make sure the block starts before the if-block */
-                      if (block->state.startpc >
-                          new_branch.if_false_root->startpc-1) {
-                        block->state.startpc =
-                          new_branch.if_false_root->startpc-1;
+                      D(lprintf("block->state.startpc = (%i)\n",
+                                block->state.startpc));
+                      D(lprintf("new_branch.elseprevsibling = %B\n",
+                                new_branch.elseprevsibling));
+                      if (new_branch.elseprevsibling)
+                      D(lprintf("elseprevsibling->nextsibling = %B\n",
+                                new_branch.elseprevsibling->nextsibling));
+                      D(lprintf("nextsibling = %B\n", nextsibling));
+                      {
+                        BasicBlock *sibling = nextsibling;
+                        BasicBlock *if_false_root = new_branch.if_false_root;
+                        lua_assert(sibling != NULL);
+                        while (sibling->nextsibling != if_false_root &&
+                               sibling->nextsibling != NULL)
+                          sibling = sibling->nextsibling;
+                        D(lprintf("sibling = %B\n", sibling));
+                        if (block->state.startpc > if_false_root->startpc-1 ||
+                            (sibling != NULL &&
+                             block->state.startpc > sibling->startpc-1)) {
+                          block->state.startpc =
+                            new_branch.if_false_root->startpc-1;
+                        }
                       }
                       block->state.firstchild = new_branch.if_false_root;
                       D(lprintf("comparing nextsibling %B to if_false_root "
