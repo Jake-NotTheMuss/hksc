@@ -2394,7 +2394,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       }
                     }
                     else if (block->state.startpc <= branchendpc) {
-                      block->state.startpc =new_branch.if_false_root->startpc-1;
+                      /* make sure the block starts before the if-block */
+                      if (block->state.startpc >
+                          new_branch.if_false_root->startpc-1) {
+                        block->state.startpc =
+                          new_branch.if_false_root->startpc-1;
+                      }
                       block->state.firstchild = new_branch.if_false_root;
                       D(lprintf("comparing nextsibling %B to if_false_root "
                                 "%B\n", nextsibling, new_branch.if_false_root));
