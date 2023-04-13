@@ -2644,6 +2644,36 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     if (ca->pc == startpc)
       break;
   }
+  /* make sure branch-blocks are corrected if their relationship doesn't make
+     sense; NEXTBRANCH should have an exit-jump that jumps to  */
+  if (nextbranch != NULL && nextbranch->startpc != 0 &&
+      nextbranch->nextsibling != NULL &&
+      nextbranch->nextsibling->type == BBL_ELSE) {
+    Instruction jmp;
+    int jmpval;
+    int jmptarget;
+    BasicBlock *nextif = nextbranch;
+    BasicBlock *nextelse = nextbranch->nextsibling;
+    lua_assert(nextif->type == BBL_IF);
+    lua_assert(nextelse->type == BBL_ELSE);
+    jmp = code[nextif->startpc-1];
+    lua_assert(GET_OPCODE(jmp) == OP_JMP);
+    jmpval = GETARG_sBx(jmp);
+    jmptarget = nextif->startpc + jmpval;
+    if (jmptarget != nextelse->startpc) {
+      BasicBlock *bbl = nextif->firstchild;
+      nextelse->type = BBL_IF;
+      nextif->endpc = nextelse->endpc;
+      if (bbl != NULL) {
+        while (bbl->nextsibling != NULL)
+          bbl = bbl->nextsibling;
+        bbl->nextsibling = nextelse;
+      }
+      else
+        nextif->firstchild = nextelse;
+      nextif->nextsibling = nextelse->nextsibling;
+    }
+  }
   ca->testset.endpc = ca->testset.reg = -1;
   if (branch == NULL && block == NULL) {
     ca->curr = outer; /* pop old values */
