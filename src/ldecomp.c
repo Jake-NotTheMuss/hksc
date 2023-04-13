@@ -2137,7 +2137,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 block->possiblestate = block->state;
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
                          &nextsibling);
-              bbl1(ca, fs, startpc, type, &new_branch, NULL, nextsibling);
+              bbl1(ca, fs, startpc, type, &new_branch, NULL, futuresibling);
               {
                 BasicBlock *new_block;
                 BasicBlock *ifblock = new_branch.ifblock;
@@ -2527,7 +2527,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.state.startpc = pc;
             new_block.endpc = pc;
             new_block.reg = a;
-            bbl1(ca, fs, startpc, type, NULL, &new_block, nextsibling);
+            bbl1(ca, fs, startpc, type, NULL, &new_block, futuresibling);
             D(lprintf("new_block.prevsibling = %B\n",
                       new_block.state.prevsibling));
             /* check if the block was inside an else-branch */
