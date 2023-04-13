@@ -1273,7 +1273,7 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   lua_assert(block != NULL);
   if (chain == NULL) chain = &block->nextsibling;
   nextsibling = firstsibling = *chain;
-  D(printf("fixing up sibling chain\n"));
+  D(lprintf("fixing up sibling chain for %B\n", block));
   D(printf("--\n"));
   while (nextsibling &&
          (nextsibling->startpc <= endpc ||
