@@ -2199,12 +2199,21 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   D(lprintf("branchendpc = (%i)\n"
                             "branch->midpc = (%i)\n",
                             branchendpc, branch ? branch->midpc: -1));
-                  if (new_branch.optimalexit > elseblock->endpc &&
-                      branch && branchendpc+1 == branch->midpc) {
+                  if (branch != NULL && branchendpc+1 == branch->midpc &&
+                      target == new_branch.optimalexit &&
+                      new_branch.optimalexit > elseblock->endpc) {
                     D(lprintf("using new_branch.optimalexit-1 (%i) as the endpc"
                               " instead of (%i)\n", new_branch.optimalexit-1,
                               elseblock->endpc));
                     elseblock->endpc = new_branch.optimalexit-1;
+                  }
+                  else if (branch != NULL && target == branch->midpc) {
+                    elseblock->type = BBL_IF;
+                    branch->ifblock = elseblock;
+                    branch->firstblock = new_branch.firstblock;
+                    branch->startpc = elseblock->startpc;
+                    branch->target1 = target;
+                    return;
                   }
                   elseblock->type = BBL_IF;
                   /* the if-block endpc may have defaulted to the pc just before
