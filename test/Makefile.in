@@ -97,8 +97,19 @@ PASS1_SRC=	16_fornum.lua \
 	51_while2_if_false.lua \
 	52_nested_ifelse.lua \
 	53_do_ifelse_do.lua \
-	54_erro_if.lua
-# 	55_whilewhile.lua
+	54_erro_if.lua \
+	55_whilewhile.lua \
+	56_while_if_false.lua \
+	57_while_tailbranch.lua \
+	58_while_emptytailbranch.lua \
+	59_ifsingle.lua \
+	60_ifsingle_upval.lua \
+	61_nested_if_false_groups.lua \
+	62_nested_if_false_siblings.lua \
+	63_if_false_else.lua \
+	64_do_if_false.lua \
+	65_do_if_false_b2b.lua \
+	66_while_if_false_2.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=	99_newtable_arg.lua
