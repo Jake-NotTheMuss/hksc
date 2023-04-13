@@ -1180,6 +1180,9 @@ struct branch1 {
                            new context, and the erroneous branch needs to be
                            changed to a repeat-loop node and the sibling chain
                            needs to be fixed */
+  int nocommit; /* this flag is used to tell the parent `bbl1' caller to delete
+                   the basic block that it created before recursing into the
+                   branch context */
 };
 
 
@@ -1316,7 +1319,28 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->elseprevsibling = NULL;
   branch->firstblock = NULL;
   branch->contextswitched = 0;
+  branch->nocommit = 0;
   branch->if_false_root = NULL;
+}
+
+/*
+** decommit a basic block and promote its children to the same level as its
+** sibling
+*/
+static BasicBlock *hangbbl(BasicBlock *bbl)
+{
+  BasicBlock *firstchild, *nextsibling;
+  lua_assert(bbl != NULL);
+  firstchild = bbl->firstchild;
+  nextsibling = bbl->nextsibling;
+  if (firstchild != NULL) {
+    BasicBlock *child = firstchild;
+    while (child->nextsibling != NULL)
+      child = child->nextsibling;
+    lua_assert(child != NULL);
+    child->nextsibling = nextsibling;
+  }
+  return firstchild;
 }
 
 
@@ -1990,8 +2014,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                           "if-branch ends at (%i)\n", branchendpc,
                           branch->midpc-1));
               }
-              /*if (branch != NULL && branchendpc >= branch->midpc) {
-              }*/
               /* something is wrong if this new else-branch ends after an
                  enclosing if-branch ends  */
               if (branch != NULL && branchendpc >= branch->midpc) {
@@ -2001,10 +2023,28 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 /* the idea: switch out the branch context for the enclosing
                    one, return from the enclosing context, fix the erroneous
                    block, and recurse into the new branch context */
-                D(printf("existing branch-context is erroneous, performing "
-                       "context-switch and returning from context before "
-                       "recursing\n"));
+                D(lprintf("existing branch-context is erroneous\n"));
                 lua_assert(branch->contextswitched == 0);
+                /* Check if this new branch ends in the middle of the parent
+                   branch. Even if the parent branch is erroneous, it is still a
+                   valid block and if this branch jumps to the middle of that
+                   block, neither this context nor the parent context should be
+                   committed as basic blocks. This addresses the following case:
+                      local a = true or 5;
+                      local b = false or 5;
+                      local c = 1 or 5;
+                   */
+                if (branchendpc >= branch->midpc &&
+                    branchendpc < branch->endpc) {
+                  D(lprintf("avoiding impossible parent-child relationship "
+                            "between this new context and the parent context -"
+                            " the parent context (%i-%i) will be ignored\n",
+                            branch->midpc, branch->endpc));
+                  branch->nocommit = 1;
+                  return;
+                }
+                D(lprintf("performing context-switch and returning from context"
+                          " before recursing\n"));
                 branch->contextswitched = 1;
                 lua_assert(branch->ifblock == NULL);
                 branch->firstblock = nextsibling;
@@ -2088,7 +2128,19 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 lua_assert(elseblock != NULL);
                 lua_assert(elseblock->type == BBL_ELSE);
                 lua_assert(new_branch.midpc == elseblock->startpc);
-                if (ifblock != NULL) {
+                if (new_branch.nocommit) {
+                  /* the elseblock that was created needs to be ignored -
+                     promote all its children and update NEXTSIBLING */
+                  BasicBlock *firstchild = hangbbl(elseblock);
+                  if (firstchild != NULL)
+                    nextsibling = firstchild;
+                  else
+                    /* if this block has no children, NEXTSIBLING should already
+                       point to the correct basic block */
+                    lua_assert(nextsibling == elseblock->nextsibling);
+                  new_block = NULL; /* no new block */
+                }
+                else if (ifblock != NULL) {
                   lua_assert(ifblock->type == BBL_IF);
                   lua_assert(new_branch.target1 != -1);
                   D(lprintf("ifblock = %B\n", ifblock));
@@ -2310,7 +2362,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   }
                 }
                 D(lprintf("exited block %B\n", new_block));
-                lua_assert(new_block != NULL);
+                lua_assert(new_block != NULL || new_branch.nocommit);
                 if (new_block == ifblock) {
                   nextbranch = ifblock;
                   D(lprintf("setting nextbranch to %B\n", ifblock));
@@ -2323,7 +2375,24 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   nextbranchtarget = -1;
                   if (block != NULL) {
                     block->state = block->possiblestate;
-                    if (block->state.startpc <= branchendpc) {
+                    if (new_branch.nocommit) {
+                      if (block->state.prevsibling == NULL &&
+                          nextsibling != elseblock->nextsibling) {
+                        BasicBlock *prevsibling = nextsibling;
+                        BasicBlock *elsenextsibling = elseblock->nextsibling;
+                        lua_assert(prevsibling != NULL);
+                        while (prevsibling->nextsibling != NULL &&
+                               prevsibling->nextsibling != elsenextsibling) {
+                          prevsibling = prevsibling->nextsibling;
+                        }
+                        block->state.prevsibling = prevsibling;
+                      }
+                      else {
+                        lua_assert(block->state.prevsibling ==
+                                   elseblock->nextsibling);
+                      }
+                    }
+                    else if (block->state.startpc <= branchendpc) {
                       block->state.startpc =new_branch.if_false_root->startpc-1;
                       block->state.firstchild = new_branch.if_false_root;
                       D(lprintf("comparing nextsibling %B to if_false_root "
