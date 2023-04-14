@@ -175,19 +175,19 @@ static void lprintf(const char *fmt, ...)
           printf("(%s) (%d-%d)", bbltypename(block->type), block->startpc+1,
                  block->endpc+1);
         else
-          fputs("(NULL)", stdout);
+          printf("(NULL)");
         break;
       }
       case 'b': { /* BasicBlock * (type only) */
         BasicBlock *block = va_arg(argp, BasicBlock *);
         if (block != NULL)
-          fputs(bbltypename(block->type), stdout);
+          printf("%s", bbltypename(block->type));
         else
-          fputs("(NULL)", stdout);
+          printf("(NULL)");
         break;
       }
       case 'c':
-        fputc(va_arg(argp, int), stdout);
+        putchar(va_arg(argp, int));
         break;
       case 'd':
         printf("%d", va_arg(argp, int));
@@ -199,17 +199,17 @@ static void lprintf(const char *fmt, ...)
         printf("%p", va_arg(argp, void *));
         break;
       case '%':
-        fputc('%', stdout);
+        putchar('%');
         break;
       default:
-        fputc('%', stdout);
-        fputc(*(e+1), stdout);
+        putchar('%');
+        putchar(*(e+1));
         break;
     }
     fmt = e+2;
   }
   if (*fmt != '\0')
-    fputs(fmt, stdout);
+    printf("%s", fmt);
   va_end(argp);
 }
 
