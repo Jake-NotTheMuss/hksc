@@ -107,7 +107,9 @@ typedef struct BasicBlock {
   int endpc;  /* endpc of the block */
   int type;  /* the type of the block */
   lu_byte isempty;  /* true if the block has zero instructions */
+#ifdef LUA_DEBUG
   lu_byte visited;  /* has this block been visited in pass2 */
+#endif
 } BasicBlock;
 
 #endif /* ldecomp_c */

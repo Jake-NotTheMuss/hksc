@@ -321,7 +321,7 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
   bbl->endpc = endpc;
   bbl->type = type;
   bbl->isempty = (endpc < startpc);
-  bbl->visited = 0;
+  D(bbl->visited = 0);
   return bbl;
 }
 
@@ -2914,7 +2914,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
          bbl, startpc, endpc, sa->pc));
   enterblock2(fs, bbl);
   lua_assert(bbl->visited == 0);
-  bbl->visited = 1;
+  D(bbl->visited = 1);
   if (bbl->isempty) goto block2finished;
   fs->D->indentlevel++;
   for (; sa->pc < sa->sizecode; sa->pc++) {
