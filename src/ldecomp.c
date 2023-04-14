@@ -98,7 +98,7 @@ typedef struct {
 typedef struct DFuncState {
   struct DFuncState *prev;  /* enclosing function */
   DecompState *D;  /* decompiler state */
-  Analyzer *a; /* function analyzer data */
+  Analyzer *a;  /* function analyzer data */
   const Proto *f;  /* current function header */
   hksc_State *H;  /* copy of the Lua state */
   int idx;  /* the nth function */
