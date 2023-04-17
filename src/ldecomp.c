@@ -2491,8 +2491,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 }
                 if (noblock) { /* close the erroneous block and pass data */
                   lua_assert(block != NULL);
-                  block->nextbranch = nextbranch;
-                  block->nextbranchtarget = nextbranchtarget;
+                  if (new_block == ifblock) {
+                    block->nextbranch = nextbranch;
+                    block->nextbranchtarget = nextbranchtarget;
+                  }
+                  else {
+                    block->ifblock = new_branch.if_false_root;
+                  }
                   return; /* return from the do-block context */
                 }
               }
