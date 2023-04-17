@@ -248,7 +248,8 @@ Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@cd $(top_builddir) && @CONFIGURE@ > /dev/null
 
 clean:
-	-@$(RM) *.luac *.luadebug *.luaprofile *.luacallstackdb *.ctest *.dtest
+	-@$(RM) *.luac *.luadebug *.luaprofile *.luacallstackdb *.ctest *.dtest \
+	*.decp1.lua *.decp1.log
 	@cd error && $(MAKE) $@
 
 .PHONY: test all checkexpect expectsum dummy clean version error
