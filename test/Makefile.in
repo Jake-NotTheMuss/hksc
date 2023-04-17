@@ -105,15 +105,15 @@ PASS1_SRC=	16_fornum.lua \
 	59_ifsingle.lua \
 	60_ifsingle_upval.lua \
 	61_ifsingle_upval_2.lua \
-	62_iffalse_upval.lua \
-	63_iffalse_upval_nested.lua \
-	64_iffalse_upval_nested_2.lua \
-	65_nested_if_false_siblings.lua \
-	66_if_false_else.lua \
-	66_while_if_false_2.lua \
-	67_do_if_false.lua \
-	68_nested_if_false_groups.lua \
-	69_do_if_false_b2b.lua
+	62_nested_if_false_groups.lua \
+	63_nested_if_false_siblings.lua \
+	64_if_false_else.lua \
+	65_do_if_false.lua \
+	66_do_if_false_b2b.lua \
+	67_while_if_false_2.lua \
+	68_iffalse_upval.lua \
+	69_iffalse_upval_nested.lua \
+	70_iffalse_upval_nested_2.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=	99_newtable_arg.lua
