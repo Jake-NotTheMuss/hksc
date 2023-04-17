@@ -1229,6 +1229,7 @@ struct block1 {
      even when the function returns again (after returning from the branch
      context) in order to pop off the erroneous block context */
   BasicBlock *nextbranch;
+  BasicBlock *ifblock;  /* if this block is actually an if-statement */
   int nextbranchtarget;
   /* `nextsibling' is used when 2 adjacent blocks are detected. The analyzer
      will end the existing block and overwrite the current context for the new
@@ -1963,6 +1964,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       nextbranchtarget = target;
                     }
                   }
+                  else if (block != NULL && block->endpc == branchendpc) {
+                    block->ifblock = new_block;
+                    return;
+                  }
                 }
               }
             }
@@ -2547,6 +2552,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             block->nextsibling = nextsibling;
             block->firstsibling = NULL;
             block->state.firstchild = NULL;
+            block->ifblock = NULL;
             block->nextbranch = NULL;
             block->nextbranchtarget = -1;
             block->pass = 0;
@@ -2558,6 +2564,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           else {
             struct block1 new_block;
             new_block.prev = block;
+            new_block.ifblock = NULL;
             new_block.nextbranch = NULL;
             new_block.nextbranchtarget = -1;
             new_block.nextsibling = nextsibling;
@@ -2584,6 +2591,16 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 block->nextbranchtarget = nextbranchtarget;
                 return; /* return for each block that was in the else-branch */
               }
+            }
+            else if (new_block.ifblock != NULL) {
+              BasicBlock *ifblock = new_block.ifblock;
+              ifblock->nextsibling = nextsibling;
+              nextsibling = ifblock;
+              if (block != NULL && block->state.prevsibling == NULL)
+                block->state.prevsibling = nextsibling;
+              if (branch != NULL && branch->elseprevsibling == NULL)
+                branch->elseprevsibling = nextsibling;
+              break; /* the block was actually an if-statement */
             }
             else { /* create a new basic block entry */
               BasicBlock *doblock;
