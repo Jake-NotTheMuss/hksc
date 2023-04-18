@@ -1880,12 +1880,92 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else { /* no preceding sibling blocks */
                 D(lprintf("(NULL)\n")); /* no last sibling */
                 newblock = addbbl1(fs, endpc+1, endpc, BBL_IF);
+                nextsibling = newblock;
               }
               D(lprintf("created new block %B\n", newblock));
               D(lprintf("first block in chain is %B\n",
                         fs->a->bbllist.first));
               ca->testset.endpc = ca->testset.reg = -1;
               ca->curr = outer;
+              /* check if there is OP_CLOSE before the `if-false' starts; this
+                 would have been skipped over earlier due to being followed by
+                 a jump, so it needs to handled now before returning -
+                 the following code is handled here:
+                    while a do
+                        local a = 12;
+                        do
+                            local b = 34;
+                            local function c()
+                                b = b + 1;
+                            end
+                        end
+                        if false then
+                        end
+                    end
+                 */
+              if (newblock->type == BBL_IF &&
+                  (lastsibling == NULL || lastsibling->endpc < endpc-1) &&
+                  GET_OPCODE(code[endpc-1]) == OP_CLOSE) {
+                int closereg = GETARG_A(code[endpc-1]);
+                int blockpc;
+                int nextblockchildend;
+                int wasbetweenchildren;
+                BasicBlock *doblock;
+                BasicBlock *blockchild = nextsibling;
+                BasicBlock *blockprevsibling = NULL;
+                nextblockchildend = blockchild ? blockchild->endpc : -1;
+                CHECK(fs, closereg >= 0 && closereg < fs->f->maxstacksize,
+                      "invalid register operand in OP_CLOSE");
+                /* find the start of the block */
+                for (blockpc = pc; blockpc < endpc-1; blockpc++) {
+                  Instruction blockins = code[blockpc];
+                  OpCode blockop = GET_OPCODE(blockins);
+                  int blocka = GETARG_A(blockins);
+                  int blockb = GETARG_B(blockins);
+                  int blockc = GETARG_C(blockins);
+                  /* update previous sibling for the block */
+                  if (nextblockchildend+1 == blockpc) {
+                    lua_assert(blockchild != NULL);
+                    blockprevsibling = blockchild;
+                    blockchild = blockchild->nextsibling;
+                    nextblockchildend = blockchild ? blockchild->endpc : -1;
+                  }
+                  if (blocka == closereg &&
+                      beginseval(blockop, blocka, blockb, blockc, 0)) {
+                    break;
+                  }
+                }
+                /* if the start wasn't found, start the block at PC */
+                if (blockpc == endpc-1)
+                  blockpc = pc;
+                /* make sure the block doesn't start in the middle of a child */
+                if (blockchild != NULL && blockpc > blockchild->startpc) {
+                  blockpc = blockchild->startpc;
+                  wasbetweenchildren = 0;
+                }
+                else
+                  wasbetweenchildren = 1;
+                /* `addbbl1' will put this block first in the chain which is ok
+                   because it is the first child of the parent */
+                if (blockprevsibling == NULL) {
+                  doblock = addbbl1(fs, blockpc, endpc-1, BBL_DO);
+                }
+                else {
+                  /* add the block into the chain explicitly to preserve the
+                     first child of the parent */
+                  BasicBlock *nextinchain = blockprevsibling->next;
+                  doblock = newbbl(fs->H, blockpc, endpc-1, BBL_DO);
+                  blockprevsibling->next = doblock;
+                  blockprevsibling->nextsibling = doblock;
+                  doblock->next = nextinchain;
+                }
+                if (wasbetweenchildren)
+                  doblock->nextsibling = blockchild;
+                else
+                  doblock->firstchild = blockchild;
+                set_ins_property(fs, blockpc, INS_DOSTAT);
+                set_ins_property(fs, endpc-1, INS_BLOCKEND);
+              }
               return;
             }
             else { /* jumping inside a branch-condition */
