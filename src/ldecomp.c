@@ -1398,27 +1398,6 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->if_false_root = NULL;
 }
 
-/*
-** decommit a basic block and promote its children to the same level as its
-** sibling
-*/
-static BasicBlock *hangbbl(BasicBlock *bbl)
-{
-  BasicBlock *firstchild, *nextsibling;
-  lua_assert(bbl != NULL);
-  firstchild = bbl->firstchild;
-  nextsibling = bbl->nextsibling;
-  if (firstchild != NULL) {
-    BasicBlock *child = firstchild;
-    while (child->nextsibling != NULL)
-      child = child->nextsibling;
-    lua_assert(child != NULL);
-    child->nextsibling = nextsibling;
-  }
-  return firstchild;
-}
-
-
 
 static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
        struct branch1 *branch, struct block1 *block, BasicBlock *futuresibling)
@@ -2214,15 +2193,18 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 lua_assert(elseblock->type == BBL_ELSE);
                 lua_assert(new_branch.midpc == elseblock->startpc);
                 if (new_branch.nocommit) {
-                  /* the elseblock that was created needs to be ignored -
+                  /* the elseblock that was created needs to be deleted -
                      promote all its children and update NEXTSIBLING */
-                  BasicBlock *firstchild = hangbbl(elseblock);
-                  if (firstchild != NULL)
-                    nextsibling = firstchild;
-                  else
-                    /* if this block has no children, NEXTSIBLING should already
-                       point to the correct basic block */
-                    lua_assert(nextsibling == elseblock->nextsibling);
+                  BasicBlock *earliestblock =
+                    rembbl1(fs, elseblock, new_branch.elseprevsibling);
+                  /* update NEXTSIBLING to the earliest block so far */
+                  lua_assert(new_branch.firstblock != NULL);
+                  /* if FIRSTBLOCK was updated to something earlier than
+                     ELSEBLOCK, than that is the earliest block */
+                  if (new_branch.firstblock != elseblock)
+                    earliestblock = new_branch.firstblock;
+                  nextsibling = earliestblock;
+                  elseblock = NULL;
                   new_block = NULL; /* no new block */
                 }
                 else if (ifblock != NULL) {
