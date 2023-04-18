@@ -2884,7 +2884,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               if (bl->reg == a) {
                 blstate->startpc = pc;
                 D(lprintf("%supdating .firstclob for R(%d) to (%i), %d block%s "
-                          "removed\n", stateunsure ? "(possibly)" : "", bl->reg,
+                          "removed\n", stateunsure ? "(possibly) " : "",bl->reg,
                           pc, i, i == 1 ? "" : "s"));
 
               }
