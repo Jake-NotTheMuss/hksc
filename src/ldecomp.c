@@ -393,6 +393,60 @@ static BasicBlock *addbbl1(DFuncState *fs, int startpc, int endpc, int type) {
 }
 
 
+/*
+** delete a BasicBlock node and return the new earliest block based on the
+** arguments provided (promote all the block's children to siblings)
+*/
+static BasicBlock *rembbl1(DFuncState *fs, BasicBlock *bbl,
+                           BasicBlock *prevsibling) {
+  BasicBlock *child = bbl->firstchild;
+  BasicBlock *earliestblock; /* return value */
+  lua_assert(prevsibling == NULL || prevsibling->nextsibling == bbl);
+  D(lprintf("deleting erroneous block %B\n", bbl));
+  /* remove BBL from its sibling chain (promote any children) */
+  if (child != NULL) { /* promote children */
+    if (prevsibling != NULL) {
+      prevsibling->nextsibling = child;
+      earliestblock = prevsibling;
+    }
+    else {
+      earliestblock = child;
+    }
+    while (child->nextsibling != NULL)
+      child = child->nextsibling;
+    /* connect the last child and the next sibilng */
+    child->nextsibling = bbl->nextsibling;
+  }
+  else if (prevsibling != NULL) {
+    /* connect the previous sibling and the next sibling */
+    prevsibling->nextsibling = bbl->nextsibling;
+    earliestblock = prevsibling;
+  }
+  else {
+    earliestblock = bbl->nextsibling;
+  }
+  /* remove BBL from the linked list */
+  if (fs->a->bbllist.first == bbl) { /* BBL is first in the list */
+    fs->a->bbllist.first = bbl->next;
+    if (fs->a->bbllist.last == bbl)
+      fs->a->bbllist.last = fs->a->bbllist.first;
+  }
+  else {
+    BasicBlock *iterblock = fs->a->bbllist.first;
+    while (iterblock->next != bbl)
+      iterblock = iterblock->next;
+    lua_assert(iterblock->next == bbl);
+    if (fs->a->bbllist.last == bbl) {
+      fs->a->bbllist.last = iterblock;
+      lua_assert(bbl->next == NULL);
+    }
+    iterblock->next = bbl->next;
+  }
+  luaM_free(fs->H, bbl);
+  return earliestblock;
+}
+
+
 #if 0
 static BasicBlock *addbbl2(DFuncState *fs, int startpc, int endpc, int type) {
   hksc_State *H = fs->H;
@@ -1485,13 +1539,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 /* delete all blocks which start on TESTSETPC */
                 while (nextsibling && nextsibling->startpc == testsetpc) {
                   BasicBlock *nextnextsibling = nextsibling->nextsibling;
-                  /* unlink NEXTSIBLING from the chain; it will be deleted */
-                  fs->a->bbllist.first = nextsibling->next;
-                  if (nextsibling == fs->a->bbllist.last)
-                    fs->a->bbllist.last = fs->a->bbllist.first;
-                  D(lprintf("deleting erroneous block %B\n", nextsibling)); 
                   /* todo: what if the block endpc is after target? */
-                  luaM_free(fs->H, nextsibling);
+                  rembbl1(fs, nextsibling, NULL);
                   nextsibling = nextnextsibling; /* update NEXTSIBLING */
                 }
                 /* make sure none of these markings are on this pc */
