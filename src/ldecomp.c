@@ -2076,6 +2076,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                             " the parent context (%i-%i) will be ignored\n",
                             branch->midpc, branch->endpc));
                   branch->nocommit = 1;
+                  branch->firstblock = nextsibling;
                   return;
                 }
                 D(lprintf("performing context-switch and returning from context"
