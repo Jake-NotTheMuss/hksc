@@ -62,6 +62,7 @@ static void preinit_state (hksc_State *H, global_State *g) {
 #if defined(LUA_CODT6)
   H->currdebugfile = NULL;
 #endif /* defined(LUA_CODT6) */
+  H->currinputname = NULL;
 }
 
 

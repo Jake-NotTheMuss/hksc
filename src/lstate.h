@@ -72,6 +72,7 @@ struct hksc_State {
 #if defined(LUA_CODT6)
   const char *currdebugfile;
 #endif /* LUA_CODT6 */
+  const char *currinputname;
 };
 
 

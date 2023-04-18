@@ -85,6 +85,7 @@ typedef struct {
   CheckVarStartsCB varstarts;
   lua_Writer writer;
   void *data;
+  const char *name;  /* input name */
   int status;
   int usedebuginfo;  /* true if using debug info */
   int matchlineinfo;  /* true if matching statements to line info */
@@ -222,7 +223,8 @@ static void lprintf(const char *fmt, ...)
 
 static void badcode(DFuncState *fs, const char *msg)
 {
-  luaD_setferror(fs->H, "bad code in precompiled chunk: %s", msg);
+  const char *name = fs->D->name;
+  luaD_setferror(fs->H, "%s: bad code in precompiled chunk: %s", name, msg);
   luaD_throw(fs->H, LUA_ERRSYNTAX);
 }
 
@@ -3128,6 +3130,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.fs=NULL;
   D.writer=w;
   D.data=data;
+  D.name = H->currinputname;
   D.status=0;
   D.funcidx=0;
   D.indentlevel=-1;

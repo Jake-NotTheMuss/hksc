@@ -229,6 +229,7 @@ static void startcycle(hksc_State *H, const char *name) {
     return;
   }
 #endif /* LUA_DEBUG */
+  H->currinputname = name;
   lua_assert(H->last_result == NULL);
   luaC_newcycle(H); /* collect garbage while in-between cycles */
   g->midcycle = 1;
@@ -259,6 +260,7 @@ static void endcycle(hksc_State *H, const char *name) {
     /* make sure the compiler result is not collected until the cycle really
        ends */
     makelive(obj2gco(H->last_result));
+  H->currinputname = NULL;
   if (G(H)->endcycle) { /* user-defined logic */
 #ifdef LUA_DEBUG
     g->incyclecallback = 1;
