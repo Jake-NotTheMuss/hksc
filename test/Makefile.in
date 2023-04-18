@@ -113,7 +113,11 @@ PASS1_SRC=	16_fornum.lua \
 	67_while_if_false_2.lua \
 	68_iffalse_upval.lua \
 	69_iffalse_upval_nested.lua \
-	70_iffalse_upval_nested_2.lua
+	70_iffalse_upval_nested_2.lua \
+	71_erro_while.lua \
+	72_potential_doblock.lua \
+	73_iffalse_upval.lua \
+	74_iffalse_doblocks.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=	99_newtable_arg.lua
