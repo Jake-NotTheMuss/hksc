@@ -1261,6 +1261,9 @@ struct branch1 {
   int nocommit; /* this flag is used to tell the parent `bbl1' caller to delete
                    the basic block that it created before recursing into the
                    branch context */
+  int correctingwhile;  /* true if unwinding the call stack to correct an
+                           erroneous while-loop detection */
+  int correctingwhilepc;
 };
 
 
@@ -1318,6 +1321,9 @@ struct block1 {
   /*BasicBlock *firstchild;*/
   struct stat1 *outer;  /* saved values for the outer loop statement */
   int pass;  /* true if passing data to its caller/parent block */
+  int correctingwhile;  /* true if unwinding the call stack to correct an
+                           erroneous while-loop detection */
+  int correctingwhilepc;
   int reg;  /* register to close up to in OP_CLOSE */
   int seenclosure;
   int endpc;
@@ -1402,6 +1408,7 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
   branch->firstblock = NULL;
   branch->contextswitched = 0;
   branch->nocommit = 0;
+  branch->correctingwhile = 0;
   branch->if_false_root = NULL;
 }
 
@@ -1849,11 +1856,29 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                while-loop */
             else if (type == BBL_WHILE && outer.type == BBL_WHILE &&
                      target > outer.end) {
-              BasicBlock *lastsibling = nextsibling;
+              BasicBlock *lastsibling;
               BasicBlock *newblock;
-              /* todo: should this be a code check */
-              lua_assert(branch == NULL && block == NULL);
               D(lprintf("fixing erroneous while-true-loop detection\n"));
+              correctwhile1:
+              if (block != NULL) {
+                D(lprintf("returning from block context before correcting "
+                          "while-loop\n"));
+                block->firstsibling = nextsibling;
+                block->correctingwhilepc = pc;
+                block->correctingwhile = 1;
+                return;
+              }
+              if (branch != NULL) {
+                D(lprintf("returning from branch context before correcting "
+                          "while-loop\n"));
+                branch->firstblock = nextsibling;
+                if (branch->potentialblock != NULL)
+                  branch->potentialblock->firstsibling = nextsibling;
+                branch->correctingwhilepc = pc;
+                branch->correctingwhile = 1;
+                return;
+              }
+              lastsibling = nextsibling;
               D(lprintf("the while-loop thought to end at (%i) actually ends "
                         "at (%i) and is not nested\n", endpc, endpc+1));
               init_ins_property(fs, pc, INS_LOOPFAIL);
@@ -2654,7 +2679,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     block->ifblock = new_branch.if_false_root;
                   }
                   block->firstsibling = nextsibling;
+                  block->correctingwhile = new_branch.correctingwhile;
+                  block->correctingwhilepc = new_branch.correctingwhilepc;
                   return; /* return from the do-block context */
+                }
+                if (new_branch.correctingwhile) {
+                  goto correctwhile1;
                 }
               }
             }
@@ -2736,6 +2766,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             block->nextbranch = NULL;
             block->nextbranchtarget = -1;
             block->pass = 0;
+            block->correctingwhile = 0;
             block->state.startpc = pc;
             block->endpc = pc;
             block->reg = a;
@@ -2752,6 +2783,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.state.prevsibling = NULL;
             new_block.state.firstchild = NULL;
             new_block.pass = 0;
+            new_block.correctingwhile = 0;
             new_block.outer = &outer; /* keep the same loop context */
             new_block.state.startpc = pc;
             new_block.endpc = pc;
@@ -2816,6 +2848,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 block->state.firstchild = doblock;
               if (branch != NULL && branch->elseprevsibling == NULL)
                 branch->elseprevsibling = doblock;
+              if (new_block.correctingwhile) {
+                pc = new_block.correctingwhilepc;
+                D(lprintf("jumping back to while-loop correction\n"
+                          "  nextsibling = %B\n"
+                          "  pc = (%i)\n", nextsibling, pc));
+                goto correctwhile1;
+              }
             }
           }
         }
