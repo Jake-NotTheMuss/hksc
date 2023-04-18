@@ -1685,8 +1685,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   end */
             if (type == BBL_WHILE && target == startpc) {
               /* ...unless this jump is immediately before the end of the
-                 enclosing loop, in which case there is a nested while-loop,
-                 e.g.:
+                 enclosing loop, in which case there is (usually) a nested
+                 while-loop, e.g.:
                     while true do
                         while a do
                             local b = 12;
@@ -1913,7 +1913,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       branchendpc = target-1;
                     else
                       branchendpc = branch->midpc-1;
-                    /*  */
+                    /* NEXTBRANCH is used to check if this branch and the next
+                       branch have the same target and endpc, in which case they
+                       can be merged as one if-statement with multiple
+                       conditions connected with `and' or `or' */
                     if (nextbranch != NULL) {
                       BasicBlock *next = nextbranch;
                       lua_assert(nextbranchtarget != -1);
@@ -1964,9 +1967,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       nextbranchtarget = target;
                     }
                   }
+                  /* check if this single if-statement has upvalues, and make
+                     sure an extra block is not created with it */
                   else if (block != NULL && block->endpc == branchendpc) {
                     block->ifblock = new_block;
-                    return;
+                    return; /* pop the block context */
                   }
                 }
               }
@@ -2411,6 +2416,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 D(lprintf("exited block %B\n", new_block));
                 lua_assert(new_block != NULL || new_branch.nocommit);
                 if (new_block == ifblock) {
+                  /* this is ok even if NEW_BLOCK and IFBLOCK are both NULL */
                   nextbranch = ifblock;
                   D(lprintf("setting nextbranch to %B\n", ifblock));
                   nextbranchtarget = new_branch.target1;
