@@ -1612,23 +1612,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   goto markrepeatstat;
                 }
               }
-              else if (type == BBL_REPEAT) { /* inside a repeat-loop */
-                if (target == startpc) { /* jumps to the start of the loop */
-                  /* this is a new repeat-loop that starts on the same
-                     instruction as an enclosing repeat-loop, like the following
-                     example:
-                        repeat
-                            repeat
-                                ...
-                            until b
-                        until a */
-                  /* todo: should this be an assert or a code check? */
-                  lua_assert(test_ins_property(fs, target, INS_REPEATSTAT));
-                  goto markrepeatstat;
-                }
-                /* todo: what should be done in this case? */
-              }
               else { /* a repeat-loop fail-jump */
+                if (type == BBL_REPEAT && target == startpc)
+                  lua_assert(test_ins_property(fs, target, INS_REPEATSTAT));
                 markrepeatstat:
                 encountered1("repeat", target);
                 set_ins_property(fs, target, INS_REPEATSTAT);
