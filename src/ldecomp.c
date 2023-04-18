@@ -2063,6 +2063,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      sure an extra block is not created with it */
                   else if (block != NULL && block->endpc == branchendpc) {
                     block->ifblock = new_block;
+                    block->firstsibling = new_block;
                     return; /* pop the block context */
                   }
                 }
@@ -2578,6 +2579,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   else {
                     block->ifblock = new_branch.if_false_root;
                   }
+                  block->firstsibling = nextsibling;
                   return; /* return from the do-block context */
                 }
               }
@@ -2668,23 +2670,31 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             if (new_block.nextbranch != NULL) {
               nextbranch = new_block.nextbranch;
               nextbranchtarget = new_block.nextbranchtarget;
-              nextsibling = nextbranch;
+              nextsibling = new_block.firstsibling;
               /* check if the parent was also inside the else-branch */
               if (new_block.pass) { /* also pass this data to the parent */
                 lua_assert(block != NULL);
                 block->nextbranch = nextbranch;
                 block->nextbranchtarget = nextbranchtarget;
+                block->firstsibling = nextsibling;
                 return; /* return for each block that was in the else-branch */
               }
             }
             else if (new_block.ifblock != NULL) {
               BasicBlock *ifblock = new_block.ifblock;
-              ifblock->nextsibling = nextsibling;
-              nextsibling = ifblock;
+              D(lprintf("nextsibling = %B\n", new_block.nextsibling));
+              ifblock->nextsibling = new_block.nextsibling;
+              nextsibling = new_block.firstsibling;
               if (block != NULL && block->state.prevsibling == NULL)
-                block->state.prevsibling = nextsibling;
+                block->state.prevsibling = ifblock;
               if (branch != NULL && branch->elseprevsibling == NULL)
-                branch->elseprevsibling = nextsibling;
+                branch->elseprevsibling = ifblock;
+              if (new_block.pass) { /* also pass this data to the parent */
+                lua_assert(block != NULL);
+                block->ifblock = ifblock;
+                block->firstsibling = nextsibling;
+                return; /* return for each block that was in the else-branch */
+              }
               break; /* the block was actually an if-statement */
             }
             else { /* create a new basic block entry */
