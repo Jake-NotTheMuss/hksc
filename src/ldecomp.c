@@ -1276,10 +1276,12 @@ static BasicBlock *fixsiblingchain1(BasicBlock *block, BasicBlock **chain) {
   nextsibling = firstsibling = *chain;
   D(lprintf("fixing up sibling chain for %B\n", block));
   D(printf("--\n"));
+  /* if the next sibling starts before this block ends OR the next sibling is
+     empty and its startpc is 1 after the end of this block, make it a child of
+     this block */
   while (nextsibling &&
          (nextsibling->startpc <= endpc ||
-          (nextsibling->isempty && nextsibling->startpc-1 == endpc &&
-           block->type == BBL_IF && block->nextsibling == nextsibling))) {
+          (nextsibling->isempty && nextsibling->startpc-1 == endpc))) {
     lastchild = nextsibling;
     D(lprintf("found child %B\n", nextsibling)); 
     nextsibling = nextsibling->nextsibling;
@@ -1953,7 +1955,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   }
                   lua_assert(new_block != NULL);
                   D(lprintf("BRANCH BLOCK - %B\n", new_block));
-                  fixsiblingchain1(new_block, &nextsibling);
+                  if (issingle || branch == NULL ||
+                      nextsibling != branch->elseblock)
+                    fixsiblingchain1(new_block, &nextsibling);
+                  else
+                    /* connect the if and else parts, nothing else needed */
+                    new_block->nextsibling = branch->elseblock;
                   nextsibling = new_block;
                   if (branch && !issingle) {
                     if (nextbranch == NULL) {
