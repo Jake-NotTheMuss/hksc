@@ -1507,9 +1507,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               /* there can be no blocks inside a testset expression, this was
                  a false positive; unmark the target as a block-ending */
               unset_ins_property(fs, target-1, INS_BLOCKEND);
-              /* todo: should this be a code check instead? */
-              lua_assert(nextsibling == NULL ||
-                         nextsibling == fs->a->bbllist.first);
               D(lprintf("nextbranch = %B\n", nextbranch));
               D(lprintf("cleaning up testset expression from (%i-%i)\n",
                      pc, target-1));
@@ -1786,27 +1783,25 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                */
             Instruction siblingjump;
             int siblingtarget;
-            lua_assert(type != BBL_FUNCTION);
+            lua_assert(type != BBL_FUNCTION); /* pc is already checked */
             /* the current loop must have a sibling for it to be an optimized
                exit */
             if (futuresibling != NULL) {
+              /* get the pc that would be the jump - if the sibling is an ELSE
+                 block, than use the jump out of the preceding IF block */
               int siblingstartpc = futuresibling->startpc -
                                    (futuresibling->type == BBL_ELSE);
               siblingjump = code[siblingstartpc];
-              if (GET_OPCODE(siblingjump) != OP_JMP) {
-                /* todo: bad code? */
-                lua_assert(0);
-              }
-              siblingtarget = siblingstartpc+1+GETARG_sBx(siblingjump);
-              if (target == siblingtarget) { /* optimized jump? */
-                if (ca->prevTMode || pc == startpc) /* loop-exit */
-                  init_ins_property(fs, pc, INS_LOOPFAIL);
-                else /* break */
-                  init_ins_property(fs, pc, INS_BREAKSTAT);
-                break;
-              }
-              else { /* bad code? */
-                lua_assert(0);
+              if (GET_OPCODE(siblingjump) == OP_JMP) {
+                siblingtarget = siblingstartpc+1+GETARG_sBx(siblingjump);
+                if (target == siblingtarget) { /* optimized jump? */
+                  if (ca->prevTMode || (pc == startpc && type == BBL_WHILE))
+                    /* loop-exit */
+                    init_ins_property(fs, pc, INS_LOOPFAIL);
+                  else /* break */
+                    init_ins_property(fs, pc, INS_BREAKSTAT);
+                  break;
+                }
               }
             }
             /* fallthrough */
@@ -1849,55 +1844,49 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                while-loop */
             else if (type == BBL_WHILE && outer.type == BBL_WHILE &&
                      target > outer.end) {
+              BasicBlock *lastsibling = nextsibling;
+              BasicBlock *newblock;
               /* todo: should this be a code check */
               lua_assert(branch == NULL && block == NULL);
-              if (target-1 == outer.end && outer.end-1 == endpc &&
-                  futuresibling == NULL) {
-                BasicBlock *lastsibling = nextsibling;
-                BasicBlock *newblock;
-                D(lprintf("fixing erroneous while-true-loop detection\n"));
-                D(lprintf("the while-loop thought to end at (%i) actually ends "
-                          "at (%i) and is not nested\n", endpc, endpc+1));
-                init_ins_property(fs, pc, INS_LOOPFAIL);
-                /* this block is really `if false then ... end' or equivalent */
-                D(lprintf("finding the last sibling in this context: "));
-                if (lastsibling != NULL) {
-                  int newblocktype;
-                  while (lastsibling->nextsibling != NULL)
-                    lastsibling = lastsibling->nextsibling;
-                  D(lprintf("%B\n", lastsibling));
-                  lua_assert(lastsibling != NULL);
-                  if (lastsibling->type == BBL_IF &&
-                      lastsibling->endpc == endpc-1) {
-                    lastsibling->endpc++; /* if-block includes the exit-jump */
-                    newblocktype = BBL_ELSE;
-                  }
-                  else
-                    newblocktype = BBL_IF;
-                  /* insert the new block in the middle of the chain, so that
-                     NEXTSIBLING gets set correctly after returning */
-                  newblock = newbbl(fs->H, endpc+1, endpc, newblocktype);
-                  {
-                    BasicBlock *nextinchain = lastsibling->next;
-                    lastsibling->next = newblock;
-                    lastsibling->nextsibling = newblock;
-                    newblock->next = nextinchain;
-                  }
+              D(lprintf("fixing erroneous while-true-loop detection\n"));
+              D(lprintf("the while-loop thought to end at (%i) actually ends "
+                        "at (%i) and is not nested\n", endpc, endpc+1));
+              init_ins_property(fs, pc, INS_LOOPFAIL);
+              /* this block is really `if false then ... end' or equivalent */
+              D(lprintf("finding the last sibling in this context: "));
+              if (lastsibling != NULL) {
+                int newblocktype;
+                while (lastsibling->nextsibling != NULL)
+                  lastsibling = lastsibling->nextsibling;
+                D(lprintf("%B\n", lastsibling));
+                lua_assert(lastsibling != NULL);
+                if (lastsibling->type == BBL_IF &&
+                    lastsibling->endpc == endpc-1) {
+                  lastsibling->endpc++; /* if-block includes the exit-jump */
+                  newblocktype = BBL_ELSE;
                 }
-                else { /* no preceding sibling blocks */
-                  D(lprintf("(NULL)\n")); /* no last sibling */
-                  newblock = addbbl1(fs, endpc+1, endpc, BBL_IF);
+                else
+                  newblocktype = BBL_IF;
+                /* insert the new block in the middle of the chain, so that
+                   NEXTSIBLING gets set correctly after returning */
+                newblock = newbbl(fs->H, endpc+1, endpc, newblocktype);
+                {
+                  BasicBlock *nextinchain = lastsibling->next;
+                  lastsibling->next = newblock;
+                  lastsibling->nextsibling = newblock;
+                  newblock->next = nextinchain;
                 }
-                D(lprintf("created new block %B\n", newblock));
-                D(lprintf("first block in chain is %B\n",
-                          fs->a->bbllist.first));
-                ca->testset.endpc = ca->testset.reg = -1;
-                ca->curr = outer;
-                return;
               }
-              else { /* todo: when is this the case? */
-                lua_assert(0);
+              else { /* no preceding sibling blocks */
+                D(lprintf("(NULL)\n")); /* no last sibling */
+                newblock = addbbl1(fs, endpc+1, endpc, BBL_IF);
               }
+              D(lprintf("created new block %B\n", newblock));
+              D(lprintf("first block in chain is %B\n",
+                        fs->a->bbllist.first));
+              ca->testset.endpc = ca->testset.reg = -1;
+              ca->curr = outer;
+              return;
             }
             else { /* jumping inside a branch-condition */
               if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
