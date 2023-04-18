@@ -75,6 +75,7 @@ Advanced Options:
 
 Developer Options:
   --debug-pass=NUMBER      Debug decompiler pass NUMBER [1-2]
+  --test-static            Only run the tests on the static binary
 EOF
 	exit $1
 }
@@ -120,6 +121,7 @@ with_decompiler=1
 debug=0
 testing=0
 debug_pass=
+test_static=0
 compat_vararg=1
 lua_multiplat=0
 HKSC_TARGET_PLAT=
@@ -168,6 +170,7 @@ for opt; do
 		--testing) testing=1 ;;
 		--no-testing | --not-testing) testing=0 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
+		--test-static) test_static=1;;
 		*) echo "Unrecongnized option '$opt'"; exit 1;;
 	esac
 done
@@ -296,6 +299,14 @@ set10()
 	fi
 }
 
+if test x$test_static = x0; then
+	TEST_ALL_RULE=test
+	TEST_STATIC_RULE=test-static
+else
+	TEST_ALL_RULE=test-all
+	TEST_STATIC_RULE=test
+fi
+
 set10 lua_codt6 LUA_COD_YESNO yes no
 # set build compiler flags for debug or release builds
 set10 debug BUILDCONFIGTYPE TESTS RELEASE
@@ -378,6 +389,7 @@ logvar with_decompiler
 logvar debug
 logvar testing
 logvar debug_pass
+logvar test_static
 
 # Havok Script configuration
 logvar game
@@ -531,6 +543,8 @@ config_makefile()
 			s&@WITH_COD_EXT@&$LUA_COD_YESNO&;t t
 			s&@WITH_STRUCTURES@&$WITH_STRUCTURES_YESNO&;t t
 			s&@WITH_UI64@&$WITH_UI64_YESNO&;t t
+			s&@TEST_ALL_RULE@&$TEST_ALL_RULE&;t t
+			s&@TEST_STATIC_RULE@&$TEST_STATIC_RULE&;t t
 		" > $f
 	done
 }

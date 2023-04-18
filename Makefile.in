@@ -66,10 +66,14 @@ TO_LIB= src/$(STATICLIB) src/$(SHAREDLIB)
 # set prefix for the child Makefile to use with `rpath'
 all: src
 
-test: src
+@TEST_ALL_RULE@: src
 	@cd test && \
 	$(MAKE) HKSC_NAME=hksc && \
 	$(MAKE) HKSC_NAME=hkscsh
+
+@TEST_STATIC_RULE@: src
+	@cd test && \
+	$(MAKE) HKSC_NAME=hksc
 
 src:
 	@cd src && $(MAKE)
@@ -169,6 +173,6 @@ Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 
 # list targets that do not create files (but not all makes understand .PHONY)
 .PHONY: all src test clean depend distclean install local echo pecho lecho newer
-.PHONY: expectsum
+.PHONY: expectsum test-static
 
 # (end of Makefile)
