@@ -2081,28 +2081,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   goto markrepeatfail;
                 }
               }
-#if 0
-              if (pc > 3 && GET_OPCODE(code[pc-2]) == OP_JMP) {
-                if (testTMode(GET_OPCODE(code[pc-3])))
-                  goto markrepeatfail; /* fail-jump out of repeat-loop */
-                else {
-                  /* in a repeat-loop, OP_JMP at PC1 should jump to (PC+1):
-                       JMP     2 <-- PC1  (jump to PC+1)
-                       CLOSE   n <-- PC1+1 (PREVOP)
-                       JMP     2 <-- PC
-                       CLOSE   n <-- PC+1
-                       JMP     (to start of repeat-loop)
-                   */
-                  if ((pc-2 + 1 + GETARG_sBx(code[pc1])) == (pc+1)) {
-                  /*if (pc1 >= 0 && testTMode(GET_OPCODE(code[pc1])))*/
-                    /* mark this now so it doesn't get detected as something
-                       else */
-                    init_ins_property(fs, pc-2, INS_LOOPPASS);
-                    goto markrepeatfail; /* fail-jump out of repeat-loop */
-                  }
-                }
-              }
-#endif
               /* fallthrough */
             }
             if (type == BBL_REPEAT && target <= endpc &&
