@@ -490,6 +490,7 @@ static void DumpStringf(DecompState *D, const char *fmt, ...)
 }
 
 
+#ifdef HKSC_DECOMP_DEBUG_PASS1
 static void DumpIndentation(DecompState *D)
 {
   static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
@@ -507,6 +508,7 @@ static void DumpIndentation(DecompState *D)
   if (indentlevel != 0)
     DumpBlock(tabs, indentlevel, D);
 }
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
 
 
 #ifdef LUA_DEBUG
@@ -3131,7 +3133,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   status = luaD_pcall(H, f_decompiler, &sd);
   if (status) D.status = status;
   return D.status;
-  (void)DumpIndentation; /* todo: remove when this is used by pass2 */
 }
 
 #endif /* HKSC_DECOMPILER */
