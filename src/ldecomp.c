@@ -1147,12 +1147,11 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     Instruction test; /* OP_TFORLOOP at the end of the for-loop */
     lua_assert(ca->pc >= 0);
     entry = code[ca->pc];
-    lua_assert(GET_OPCODE(entry) == OP_JMP);
-    /* todo: is this an assert ot code-check */
-    lua_assert(GETARG_sBx(entry) >= 0); /* can be 0 in an empty loop */
-    lua_assert(ca->pc + 1 + GETARG_sBx(entry) == endpc);
+    lua_assert(GET_OPCODE(entry) == OP_JMP); /* checked earlier */
+    CHECK(fs, ca->pc + 1 + GETARG_sBx(entry) == endpc,
+          "bad jump target for jump instruction into for-list-loop");
     test = code[endpc];
-    lua_assert(GET_OPCODE(test) == OP_TFORLOOP);
+    lua_assert(GET_OPCODE(test) == OP_TFORLOOP); /* checked earlier */
     nvars = GETARG_C(test);
     firstreg = GETARG_A(test);
     startpc = ca->pc--;
@@ -1454,7 +1453,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     printins1(pc,i,"bbl1");
     switch (o) {
       case OP_JMP: {
-        /* todo: check that target is a valid pc */
         int target = pc + 1 + sbx; /* the jump target pc */
         int branchstartpc, branchendpc; /* these are used when creating
                                            branch BasicBlocks (BBL_IF/BBL_ELSE),
