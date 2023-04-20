@@ -550,10 +550,9 @@ static void debugbblsummary(DFuncState *fs)
 
 static void checktreevisited(BasicBlock *bbl)
 {
-  BasicBlock *child, *nextsibling;
+  BasicBlock *child;
   lua_assert(bbl != NULL);
   child = bbl->firstchild;
-  nextsibling = bbl->nextsibling;
   lua_assert(bbl->visited);
   while (child != NULL) {
     checktreevisited(child);
