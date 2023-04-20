@@ -340,7 +340,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->idx = D->funcidx++;
   fs->nlocvars = 0;
   if (D->usedebuginfo) { /* have debug info */
-    D(lprintf("using debug info for function '%s'\n", f->name ? getstr(f->name) :
+    D(lprintf("using debug info for function '%s'\n", f->name ? getstr(f->name):
              "(anonymous)"));
     fs->sizelocvars = f->sizelocvars;
     fs->locvars = f->locvars;
@@ -2397,7 +2397,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     else {
                       lua_assert(new_branch.firstblock != elseblock);
                     }
-                    D(lprintf("new_branch.firstblock = %B\n", new_branch.firstblock));
+                    D(lprintf("new_branch.firstblock = %B\n",
+                              new_branch.firstblock));
                   }
                   /* the if-block endpc may have defaulted to the pc just before
                      the original startpc of the elseblock, but now the
@@ -2432,7 +2433,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                        jump at PC, and said jump is a break (maybe?), so the
                        previous sibling of ELSEBLOCK can't contain the jump, as
                        it should be inside to ELSEBLOCK */
-                    /*lua_assert(elseprevsibling->endpc+1 < elseblock->startpc);*/
+                    /*lua_assert(elseprevsibling->endpc+1 < elseblock->startpc);
+                    */
                   }
                   /* this is the new block resulting from the branch context */
                   new_block = elseblock;
@@ -3007,7 +3009,6 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.code = f->code;
   UNUSED(D);
   bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL, NULL);
-  /*init_ins_property(fs, f->sizecode - 1, INS_BLOCKEND);*/ /* mark end of function */
   {
     BasicBlock *first = fs->a->bbllist.first;
     lua_assert(first != NULL);
