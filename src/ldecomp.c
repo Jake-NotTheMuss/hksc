@@ -3241,7 +3241,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 
 static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
 {
-  BasicBlock *func = fs->a->bbllist.first;
+  BasicBlock *functionblock = fs->a->bbllist.first;
   StackAnalyzer sa;
   sa.firstfree = 0;
   sa.pc = 0;
@@ -3249,13 +3249,13 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
   sa.sizecode = f->sizecode;
   sa.maxstacksize = f->maxstacksize;
   sa.intailemptyblock = 0;
-  lua_assert(func != NULL);
+  lua_assert(functionblock != NULL);
+  lua_assert(functionblock->type == BBL_FUNCTION);
   UNUSED(D);
-  bbl2(&sa, fs, func);
+  bbl2(&sa, fs, functionblock);
 #ifdef LUA_DEBUG
   { /* debug: make sure all instructions were visited */
     int pc;
-    BasicBlock *functionblock = fs->a->bbllist.first;
     for (pc = 0; pc < f->sizecode; pc++)
       check_ins_property(fs, pc, INS_VISITED);
     checktreevisited(functionblock);
