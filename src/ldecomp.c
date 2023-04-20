@@ -3209,6 +3209,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     /* set this directly to avoid printing debug message every time */
     fs->a->insproperties[pc] |= (1 << INS_VISITED);
 #ifdef HKSC_DECOMP_DEBUG_PASS1
+    /* make sure to run the first pass on all nested closures */
     if (o == OP_CLOSURE) { /* nested closure? */
       const Proto *f = fs->f->p[bx];
       DecompileFunction(fs->D,f);
