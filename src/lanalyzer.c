@@ -26,6 +26,9 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   luaC_link(H, obj2gco(a), LUA_TANALYZER);
   a->insproperties = NULL;
   a->sizeinsproperties = 0;
+  a->opencalls = NULL;
+  a->nopencalls = 0;
+  a->sizeopencalls = 0;
   a->regproperties = NULL;
   a->sizeregproperties = 0;
   a->lineinfo = NULL;
@@ -43,6 +46,7 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   struct BasicBlock *bbl;
   luaM_freearray(H, a->insproperties, a->sizeinsproperties, InstructionFlags);
   luaM_freearray(H, a->regproperties, a->sizeregproperties, RegisterFlags);
+  luaM_freearray(H, a->opencalls, a->sizeopencalls, struct OpenExpr);
   luaM_freearray(H, a->lineinfo, a->sizelineinfo, int);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
   luaM_freearray(H, a->upvalues, a->sizeupvalues, TString *);

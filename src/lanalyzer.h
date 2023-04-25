@@ -112,6 +112,21 @@ typedef struct BasicBlock {
 #endif
 } BasicBlock;
 
+
+typedef enum {
+  CALLPREP,  /* function-call preparation code */
+  CONCATPREP,  /* concat preparation code */
+  FORNUMPREP,  /* numeric for-loop preparation code */
+  FORLISTPREP,  /* list for-loop preparation code */
+  RETPREP  /* return statement preparation code */
+} openexptype;
+
+typedef struct OpenExpr {
+  openexptype kind;
+  int startpc;
+} OpenExpr;
+
+
 #endif /* ldecomp_c */
 
 LUAI_FUNC Analyzer *luaA_newanalyzer (hksc_State *H);

@@ -286,6 +286,7 @@ typedef struct LocVar {
 typedef lu_int32 InstructionFlags;
 typedef lu_byte RegisterFlags;
 struct BasicBlock;
+struct OpenExpr;
 
 /*
 ** Function analyzers
@@ -294,10 +295,13 @@ typedef struct Analyzer {
   CommonHeader;
   InstructionFlags *insproperties;  /* instruction flags */
   RegisterFlags *regproperties;  /* register flags */
+  struct OpenExpr *opencalls;
   int *lineinfo;  /* map from opcodes to source lines */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
   int sizeinsproperties;
+  int nopencalls;
+  int sizeopencalls;
   int sizeregproperties;
   int sizelineinfo;
   int sizelocvars;

@@ -328,6 +328,27 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
 }
 
 
+#define newopencall(fs,pc)  newopenexpr(fs,pc,CALLPREP)
+#define newopenconcat(fs,pc)  newopenexpr(fs,pc,CONCATPREP)
+
+/*
+** allocate a new open call statement
+*/
+static OpenExpr *newopenexpr(DFuncState *fs, int pc, int kind)
+{
+  OpenExpr *expr;
+  hksc_State *H = fs->H;
+  Analyzer *a = fs->a;
+  lua_assert(a->nopencalls >= 0 && a->nopencalls <= a->sizeopencalls);
+  luaM_growvector(H, a->opencalls, a->nopencalls, a->sizeopencalls, OpenExpr,
+                  MAX_INT, "too many open call or concat expressions");
+  expr = &a->opencalls[a->nopencalls++];
+  expr->kind = kind;
+  expr->startpc = pc;
+  return expr;
+}
+
+
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
@@ -895,6 +916,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markconcat:
           set_ins_property(fs, pc, INS_PRECONCAT);
+          newopenconcat(fs, pc);
           leavingstat1("concat");
           return;
         }
@@ -902,6 +924,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
     }
   }
   init_ins_property(fs, 0, INS_PRECONCAT);
+  newopenconcat(fs, 0);
 }
 
 
@@ -984,6 +1007,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
         else if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markcall:
           set_ins_property(fs, pc, INS_PRECALL);
+          newopencall(fs, pc);
           leavingstat1("call");
           return;
         }
@@ -992,6 +1016,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     }
   }
   init_ins_property(fs, 0, INS_PRECALL);
+  newopencall(fs, 0);
 }
 
 /* only put this before the default case */
@@ -1058,6 +1083,7 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markret:
           init_ins_property(fs, pc, INS_PRERETURN);
+          newopenexpr(fs, pc, RETPREP);
           leavingstat1("return");
           return;
         }
@@ -1065,8 +1091,10 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
     }
   }
   init_ins_property(fs, 0, INS_PRERETURN);
+  newopenexpr(fs, 0, RETPREP);
   return;
 }
+
 
 /*
 ** fornumprep -> ... OP_FORPREP
@@ -1110,6 +1138,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           markfornum:
           init_ins_property(fs, pc, INS_PREFORNUM);
+          newopenexpr(fs, pc, FORNUMPREP);
           leavingstat1("numeric for-loop prep");
           return;
         }
@@ -1123,6 +1152,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   */
   /*lua_assert(ca->pc < 0);*/
   init_ins_property(fs, 0, INS_PREFORNUM);
+  newopenexpr(fs, 0, FORNUMPREP);
 }
 
 /*
@@ -1169,6 +1199,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           markforlist:
           init_ins_property(fs, pc, INS_PREFORLIST);
+          newopenexpr(fs, pc, FORLISTPREP);
           leavingstat1("list for-loop prep");
           return;
         }
@@ -1182,6 +1213,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   */
   /*lua_assert(ca->pc < 0);*/
   init_ins_property(fs, 0, INS_PREFORLIST);
+  newopenexpr(fs, 0, FORLISTPREP);
 }
 
 #ifdef LUA_DEBUG
@@ -3016,6 +3048,9 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
     lua_assert(first->type == BBL_FUNCTION);
   }
   D(lprintf("ca.pc == (%d)\n", ca.pc));
+  luaM_reallocvector(fs->H, fs->a->opencalls, fs->a->sizeopencalls,
+                     fs->a->nopencalls, OpenExpr);
+  fs->a->sizeopencalls = fs->a->nopencalls;
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
 }
@@ -3260,6 +3295,21 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
     for (pc = 0; pc < f->sizecode; pc++)
       check_ins_property(fs, pc, INS_VISITED);
     checktreevisited(functionblock);
+  }
+  DumpLiteral("\n",D);
+  {
+    int i;
+    static const char *const typenames[] = {
+      "PRECALL   ",
+      "PRECONCAT ",
+      "PREFORNUM ",
+      "PREFORLIST",
+      "PRERETURN "
+    };
+    for (i = fs->a->nopencalls-1; i >= 0; i--) {
+      OpenExpr *e = &fs->a->opencalls[i];
+      DumpStringf(D, "%s %d\n", typenames[e->kind], e->startpc+1);
+    }
   }
 #endif /* LUA_DEBUG */
 }
