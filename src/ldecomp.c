@@ -16,13 +16,16 @@
 #include "hksclua.h"
 
 #include "lanalyzer.h"
+#include "lcode.h"
 #include "ldebug.h"
 #include "ldo.h"
 #include "lobject.h"
 #include "lopcodes.h"
+#include "lparser.h"
 #include "lstate.h"
 #include "lstring.h"
 #include "lundump.h"
+#include "lzio.h"
 
 #ifdef HKSC_DECOMPILER
 
@@ -83,12 +86,11 @@ static const char *const regflagnames [] = {
 
 struct DFuncState;
 
-typedef int (*CheckVarStartsCB)(struct DFuncState *fs, int pc);
+struct HoldItem; /* used in pass2 to hold onto strings before dumping them */
 
 typedef struct {
   hksc_State *H;
   struct DFuncState *fs;  /* current function state */
-  CheckVarStartsCB varstarts;
   lua_Writer writer;
   void *data;
   const char *name;  /* input name */
@@ -98,6 +100,11 @@ typedef struct {
   /* data for the current function's decompilation */
   int funcidx;  /* n for the nth function that is being decompiled */
   int indentlevel;
+  int linenumber;
+  int needspace;
+  struct HoldItem *holdfirst;
+  struct HoldItem *holdlast;
+  Mbuffer buff;  /* buffer for building strings */
 } DecompState;
 
 
@@ -108,14 +115,19 @@ typedef struct DFuncState {
   Analyzer *a;  /* function analyzer data */
   const Proto *f;  /* current function header */
   hksc_State *H;  /* copy of the Lua state */
-  int idx;  /* the nth function */
+  int idx;  /* the nth function, used for generating local variable names */
   struct LocVar *locvars;  /* information about local variables */
-  int locvaridx;
-  int nlocvars;  /* number of local variables declared so far */
+  TString **upvalues;
+  int nlocvars;  /* number of local variables created so far */
+  int nlocvarsdetected;  /* number of local variables detected so far */
   int sizelocvars;
+  int sizeupvalues;
+  int instatement;
   int pc;  /* current pc */
   int firstclob;  /* first pc that clobbers register A */
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
+  int upvalcount;  /* number of upvalues encountered so far */
+  /*upvaldesc upvalues[LUAI_MAXUPVALUES];*/  /* upvalues */
 } DFuncState;
 
 
@@ -400,6 +412,185 @@ static OpenExpr *newopenexpr(DFuncState *fs, int pc, int kind)
 }
 
 
+/*
+** return the next free expression in the expression node stack and increment
+** the number of stack elements in use
+*/
+static ExpNode *newexp(DFuncState *fs)
+{
+  hksc_State *H = fs->H;
+  Analyzer *a = fs->a;
+  lua_assert(a->expstack.used >= 0 && a->expstack.used <= a->expstack.total);
+  luaM_growvector(H, a->expstack.stk, a->expstack.used, a->expstack.total,
+                  ExpNode, MAX_INT, "too many expression nodes");
+  return &a->expstack.stk[a->expstack.used++];
+}
+
+
+static void freeexp(DFuncState *fs, ExpNode *exp)
+{
+  Analyzer *a = fs->a;
+  lua_assert(a->expstack.used > 0 && a->expstack.used <= a->expstack.total);
+  lua_assert(exp == &a->expstack.stk[a->expstack.used-1]);
+  a->expstack.used--;
+  UNUSED(exp);
+}
+
+
+#define prevexp(fs,exp) index2exp(fs, exp->previndex)
+
+static int exp2index(DFuncState *fs, ExpNode *exp)
+{
+  if (exp == NULL)
+    return 0;
+  else
+    return exp-fs->a->expstack.stk+1;
+}
+
+
+static ExpNode *index2exp(DFuncState *fs, int index)
+{
+  if (index == 0)
+    return NULL;
+  else
+    return fs->a->expstack.stk+(index-1);
+}
+
+
+#define checkfirstexp(fs) check_exp(getfirstexp(fs) != NULL, getfirstexp(fs))
+#define checktopexp(fs) check_exp(gettopexp(fs) != NULL, gettopexp(fs))
+
+static ExpNode *getfirstexp(DFuncState *fs)
+{
+  int used = fs->a->expstack.used;
+  if (used == 0)
+    return NULL;
+  else {
+    lua_assert(used > 0);
+    return &fs->a->expstack.stk[0];
+  }
+}
+
+
+static ExpNode *gettopexp(DFuncState *fs)
+{
+  int used = fs->a->expstack.used;
+  if (used == 0)
+    return NULL;
+  else {
+    lua_assert(used > 0);
+    return &fs->a->expstack.stk[used-1];
+  }
+}
+
+
+#ifdef LUA_DEBUG
+static const char *getunopstring(UnOpr op);
+static const char *getbinoprstring(BinOpr op);
+
+static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
+{
+  if (exp == NULL) {
+    lprintf("(ExpNode *)0\n");
+    return;
+  }
+  lprintf("exp: %d", exp->info);
+  if ((exp->kind == ENIL || exp->kind == EVARARG) && exp->aux != exp->info)
+    lprintf("-%d", exp->aux);
+  lprintf(" <- ");
+  switch (exp->kind) {
+    case EVOID:
+      lprintf("(void)");
+      break;
+    case ENIL:
+      lprintf("'nil'");
+      break;
+    case ETRUE:
+      lprintf("'true'");
+      break;
+    case EFALSE:
+      lprintf("'false'");
+      break;
+    case EVARARG:
+      lprintf("'...'");
+      break;
+    case ELITERAL: {
+      TValue *o = exp->u.k;
+      switch (ttype(o)) {
+        case LUA_TNIL:
+          lprintf("'nil'");
+          break;
+        case LUA_TBOOLEAN:
+          lprintf("'%s'", bvalue(o) ? "true" : "false");
+          break;
+        case LUA_TLIGHTUSERDATA: {
+          char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
+          sprintf(s, "0x%zxhi", cast(size_t, pvalue(o)));
+          lprintf("%s", s);
+          break;
+        }
+        case LUA_TNUMBER: {
+          char s[LUAI_MAXNUMBER2STR];
+          sprintf(s, "%g", nvalue(o));
+          lprintf("%s", s);
+          break;
+        }
+        case LUA_TSTRING:
+          lprintf("%s", getstr(luaO_kstring2print(fs->H, rawtsvalue(o))));
+          break;
+        case LUA_TUI64: {
+          char s[LUAI_MAXUI642STR+sizeof("0xhl")-1];
+          lua_ui642str(s+2, ui64value(o));
+          s[0] = '0'; s[1] = 'x';
+          strcat(s, "hl");
+          lprintf("%s", s);
+          break;
+        }
+        default:
+          lprintf("? type=%d", ttype(o));
+          break;
+      }
+      break;
+    }
+    case EGLOBAL:
+      lprintf("_G.%s", getstr(exp->u.name));
+      break;
+    case EBINOP:
+      lprintf("[BINOP %s  %d, %d]", getbinoprstring(exp->u.binop.op),
+              exp->u.binop.b, exp->u.binop.c);
+      break;
+    case EUNOP:
+      lprintf("[UNOP %s  %d]", getunopstring(exp->u.unop.op),
+              exp->u.unop.b);
+      break;
+    default:
+      break;
+  }
+  lprintf("\n");
+  if (prevexp(fs,exp) == NULL)
+    return;
+  indent++;
+  {
+    int i;
+    for (i = 0; i < indent; i++)
+      lprintf("  ");
+  }
+  lprintf("- ");
+  debugexp(fs, prevexp(fs,exp), indent);
+}
+#else /* LUA_DEBUG */
+#define debugexp(fs,exp,indent) ((void)(exp))
+#endif /* LUA_DEBUG */
+
+
+static SlotDesc *getslotdesc(DFuncState *fs, int reg)
+{
+  Analyzer *a = fs->a;
+  lua_assert(isregvalid(fs, reg));
+  return &a->regproperties[reg];
+}
+
+
 static void updatefirstclob1(DFuncState *fs, int pc, int reg)
 {
   fs->firstclob = pc;
@@ -418,7 +609,8 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   D->fs = fs;
   fs->f = f;
   fs->idx = D->funcidx++;
-  fs->nlocvars = 0;
+  fs->nlocvars = fs->nlocvarsdetected = 0;
+  fs->instatement = 0;
   if (f->name && getstr(f->name))
     D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
              getstr(f->name)));
@@ -429,14 +621,19 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
              "(anonymous)"));
     fs->sizelocvars = f->sizelocvars;
     fs->locvars = f->locvars;
+    fs->sizeupvalues = f->sizeupvalues;
+    fs->upvalues = f->upvalues;
   }
   else {
     fs->sizelocvars = f->maxstacksize;
     a->sizelocvars = fs->sizelocvars;
     a->locvars = luaM_newvector(H, a->sizelocvars, struct LocVar);
     fs->locvars = a->locvars;
+    fs->sizeupvalues = f->nups;
+    a->sizeupvalues = fs->sizeupvalues;
+    a->upvalues = luaM_newvector(H, a->sizeupvalues, TString *);
   }
-  fs->locvaridx = fs->sizelocvars - 1;
+  fs->upvalcount = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
   /* allocate vectors for instruction and register properties */
@@ -444,8 +641,12 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
   memset(a->insproperties, 0, f->sizecode * sizeof(InstructionFlags));
   a->sizeregproperties = f->maxstacksize; /* flags for each register */
-  a->regproperties = luaM_newvector(H, f->maxstacksize, RegisterFlags);
-  memset(a->regproperties, 0, a->sizeregproperties * sizeof(RegisterFlags));
+  a->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
+  memset(a->regproperties, 0, a->sizeregproperties * sizeof(SlotDesc));
+  /* allocate stack for expression nodes */
+  a->expstack.total = 4;
+  a->expstack.used = 0;
+  a->expstack.stk = luaM_newvector(H, a->expstack.total, ExpNode);
 }
 
 
@@ -565,6 +766,62 @@ static void DumpBlock(const void *b, size_t size, DecompState *D)
 }
 
 
+static void DumpTString(const TString *ts, DecompState *D)
+{
+  lua_assert(ts != NULL);
+  DumpBlock(getstr(ts), ts->tsv.len, D);
+}
+
+
+static void DumpTValue(const TValue *o, DecompState *D)
+{
+  switch (ttype(o))
+  {
+    case LUA_TNIL:
+      DumpLiteral("nil",D);
+      break;
+    case LUA_TBOOLEAN:
+      if (bvalue(o)) DumpLiteral("true",D);
+      else DumpLiteral("false",D);
+      break;
+    case LUA_TLIGHTUSERDATA: {
+      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
+      sprintf(s, "0x%zuhi", cast(size_t, pvalue(o)));
+      DumpString(s,D);
+      break;
+    }
+    case LUA_TNUMBER: {
+      char s[LUAI_MAXNUMBER2STR];
+      sprintf(s, "%g", nvalue(o));
+      DumpString(s,D);
+      break;
+    }
+    case LUA_TSTRING:
+      DumpTString(luaO_kstring2print(D->H, rawtsvalue(o)), D);
+      break;
+    case LUA_TUI64: {
+      char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
+      lua_ui642str(s+2, ui64value(o));
+      s[0] = '0'; s[1] = 'x';
+      strcat(s, "hl");
+      DumpString(s,D);
+      break;
+    }
+    default:
+      lua_assert(0);
+      break;
+  }
+}
+
+
+static void DumpConstant(DFuncState *fs, int index, DecompState *D)
+{
+  const Proto *f = fs->f;
+  const TValue *o = &f->k[index];
+  DumpTValue(o,D);
+}
+
+
 static void DumpStringf(DecompState *D, const char *fmt, ...)
 {
   va_list argp;
@@ -576,7 +833,34 @@ static void DumpStringf(DecompState *D, const char *fmt, ...)
 }
 
 
-#ifdef HKSC_DECOMP_DEBUG_PASS1
+static void DumpSemi(DecompState *D)
+{
+  DumpLiteral(";",D);
+  D->needspace = 1;
+}
+
+
+static void DumpComma(DecompState *D)
+{
+  DumpLiteral(",",D);
+  D->needspace = 1;
+}
+
+
+static void DumpSpace(DecompState *D)
+{
+  DumpLiteral(" ",D);
+  D->needspace = 0;
+}
+
+static void CheckSpaceNeeded(DecompState *D)
+{
+  if (D->needspace)
+    DumpSpace(D);
+}
+
+
+/*#ifdef HKSC_DECOMP_DEBUG_PASS1*/
 static void DumpIndentation(DecompState *D)
 {
   static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
@@ -594,7 +878,40 @@ static void DumpIndentation(DecompState *D)
   if (indentlevel != 0)
     DumpBlock(tabs, indentlevel, D);
 }
-#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+/*#endif*/ /* HKSC_DECOMP_DEBUG_PASS1 */
+
+#ifdef DECOMP_HAVE_PASS2
+static void beginline2(DFuncState *fs, int n, DecompState *D)
+{
+  static const char lf[] = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+  const int buffsize = cast_int(sizeof(lf)-1);
+  D->linenumber += n;
+  D(lprintf("adding %d line%s, updating D->linenumber to (%d)\n",
+            n, n == 1 ? "" : "s", D->linenumber));
+  lua_assert(n > 0);
+  while (n > buffsize) {
+    DumpBlock(lf, buffsize, D);
+    n -= buffsize;
+  }
+  lua_assert(n >= 0 && n <= buffsize);
+  if (n != 0)
+    DumpBlock(lf, n, D);
+  DumpIndentation(D);
+  D->needspace = 0;
+  UNUSED(fs);
+}
+
+
+static void maybebeginline2(DFuncState *fs, DecompState *D)
+{
+  lua_assert(fs->instatement >= 0);
+  if (fs->instatement == 0)
+    beginline2(fs, 1, D);
+}
+#endif /* DECOMP_HAVE_PASS2 */
 
 
 #ifdef LUA_DEBUG
@@ -3062,24 +3379,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 }
 
 
-#define varstartshere2(fs,pc) (*((fs)->D->varstarts))((fs),(pc))
-
-static int varstarts_nodebug(DFuncState *fs, int pc) {
-  UNUSED(fs); UNUSED(pc);
-  return 0; /* no debug info, let the analyzer guess */
-}
-
-static int varstarts_withdebug(DFuncState *fs, int pc) {
-  struct LocVar *var;
-  int idx = fs->locvaridx;
-  int n = 0;
-  while (idx < fs->sizelocvars && (var = &fs->locvars[idx])->startpc == pc) {
-    idx = ++fs->locvaridx;
-    n++;
-    lprintf("variable '%s' begins at (%d)\n",getstr(var->varname), pc+1);
-  }
-  return n;
-}
+#define BOOLBIT(name) unsigned int name : 1
 
 typedef struct StackAnalyzer {
   const Instruction *code;
@@ -3087,8 +3387,131 @@ typedef struct StackAnalyzer {
   int pc;
   int sizecode;
   int maxstacksize;
-  lu_byte intailemptyblock;
+  int nextpclimit;  /* PC limit for pending expression contexts */
+  ExpNode *lastexp;
+  BOOLBIT(intailemptyblock);
+  BOOLBIT(incallprep);  /* evaluating a function and its arguments for a call */
+  BOOLBIT(inconcatprep);  /* evaluating expressions to be concatenated */
+  BOOLBIT(inforprep);  /* evaluating for-loop control variables */
+  BOOLBIT(inretprep);  /* evaluating an expression-list to be returned */
+  BOOLBIT(inheadercondition);  /* evaluating the condition of a while-loop or 
+                                  an if-statement */
 } StackAnalyzer;
+
+#undef BOOLBIT
+
+
+#ifdef DECOMP_HAVE_PASS2
+
+
+/*
+** `varstartsatpc2' returns how many variables start at the given PC (if debug
+** info is not being used, the return value is always -1)
+*/
+static int varstartsatpc2(DFuncState *fs, int pc)
+{
+  DecompState *D = fs->D;
+  struct LocVar *var;
+  int i = fs->nlocvarsdetected;
+  int n = 0;
+  lua_assert(ispcvalid(fs, pc));
+  if (D->usedebuginfo == 0)
+    return -1;
+  while (i < fs->sizelocvars && (var = &fs->locvars[i])->startpc == pc) {
+    i = ++fs->nlocvarsdetected;
+    n++;
+    D(lprintf("variable '%s' begins at (%i)\n", getstr(var->varname), pc));
+  }
+  return n;
+}
+
+
+static LocVar *addlocvar2(DFuncState *fs, int startpc, int endpc, int param)
+{
+  struct LocVar *var;
+  int i = fs->nlocvars++;
+  lua_assert(i >= 0 && i < fs->sizelocvars);
+  var = &fs->locvars[i];
+  if (fs->D->usedebuginfo) { /* variable information already exists */
+    lua_assert(ispcvalid(fs, var->startpc));
+    lua_assert(ispcvalid(fs, var->endpc));
+    lua_assert(var->varname != NULL);
+    if (param) {
+      lua_assert(var->startpc == startpc);
+      lua_assert(var->endpc == endpc);
+    }
+    lua_assert(fs->nlocvars <= fs->nlocvarsdetected);
+  }
+  else { /* generate a variable name */
+    char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC)];
+    const char *fmt = param ? "f%d_arg%d" : "f%d_local%d";
+    var->startpc = startpc;
+    var->endpc = endpc;
+    sprintf(buff, fmt, fs->idx, i);
+    var->varname = luaS_new(fs->H, buff);
+  }
+  D(lprintf("added new %s named '%s'\n", getstr(var->varname)));
+  return var;
+}
+
+
+static void addlocvar2reg2(DFuncState *fs, int startpc, int endpc, int param,
+                           int reg)
+{
+  SlotDesc *regnode;
+  struct LocVar *var = addlocvar2(fs, startpc, endpc, param);
+  lua_assert(isregvalid(fs, reg));
+  regnode = &fs->a->regproperties[reg];
+  /* only REG_PENDING should be set */
+  lua_assert(test_reg_property(fs, reg, REG_PENDING) || regnode->flags == 0);
+  unset_reg_property(fs, reg, REG_PENDING);
+  set_reg_property(fs, reg, REG_LOCAL);
+  regnode->u.locvar = var;  /* REG holds VAR */
+}
+
+
+/*
+** find the initial first free register for a function and initialize register
+** flags for the non-free registers
+*/
+static void initfirstfree2(StackAnalyzer *sa, DFuncState *fs, const Proto *f)
+{
+  int i;
+  int firstfree;
+  int firstclobnonparam = fs->firstclobnonparam;
+  lua_assert(firstclobnonparam == -1 || ispcvalid(fs, firstclobnonparam));
+  /* in regular Lua, initial OP_LOADNILs are removed, so the real first free
+     register is whatever is clobbered first after the parameters, or the
+     number of parameters by default */
+  if (firstclobnonparam != -1)
+    firstfree = GETARG_A(f->code[firstclobnonparam]);
+  else
+    firstfree = f->numparams;
+  /* should be CHECKed earlier */
+  lua_assert(firstfree <= f->maxstacksize);
+  lua_assert(firstfree >= f->numparams);
+  /* set these explicitly to avoid a debug message for each set */
+#ifdef LUA_DEBUG
+  lprintf("marking %d parameter%s as %R\n", f->numparams, 
+            firstfree == 1 ? "" : "s", REG_LOCAL);
+  if (firstfree > f->numparams) {
+    int numlocvars = firstfree - f->numparams;
+    lprintf("marking %d more local variable%s as %R\n", numlocvars,
+            numlocvars == 1 ? "" : "s", REG_LOCAL);
+  }
+#endif /* LUA_DEBUG */
+  for (i = 0; i < f->numparams; i++)
+    addlocvar2reg2(fs, 0, f->sizecode-1, 1, i); /* add param */
+  for (; i < firstfree; i++)
+    addlocvar2reg2(fs, 0, f->sizecode-1, 0, i); /* add local variable */
+  sa->firstfree = firstfree;
+}
+
+
+#else
+#define initfirstfree2(sa,fs,f) ((sa)->firstfree = 0)
+#endif /* DECOMP_HAVE_PASS2 */
+
 
 #ifdef LUA_DEBUG
 static void debugenterblock2(StackAnalyzer *sa, BasicBlock *bbl)
@@ -3245,6 +3668,937 @@ static BasicBlock *updatenextchild2(StackAnalyzer *sa, BasicBlock *parent,
   return nextchild;
 }
 
+#ifdef DECOMP_HAVE_PASS2
+#if 0
+static void updateline2(DFuncState *fs, int pc)
+{
+  DecompState *D = fs->D;
+  int line;
+  lua_assert(ispcvalid(fs, pc));
+  line = getline(fs->f,pc);
+  D(lprintf("updating decompilation line\n"));
+  D(lprintf("  opcode line = (%d)\n"
+            "  decomp line = (%d)\n", line, D->linenumber));
+  if (line > 0 && D->matchlineinfo) {
+    int lines_needed = line - D->linenumber;
+    beginline2(fs, lines_needed, D);
+  }
+  else {
+    /* without using line info, see if a new line is needed */
+    maybebeginline2(fs, D);
+  }
+}
+#endif
+
+
+/*static struct LocVar *newlocvaratreg2(DFuncState *fs, int reg)
+{
+  ExpNode *exp;
+  struct LocVar *var;
+  lua_assert(isregvalid(fs, reg));
+  exp = getslotdesc(fs, reg)->u.exp;
+  while (exp->prev)
+    exp = exp->prev;
+
+}
+*/
+
+
+static const char *getunopstring(UnOpr op)
+{
+  static const char *const unopstrings[] = {
+    "-", "not", "#"
+  };
+  lua_assert(op != OPR_NOUNOPR);
+  return unopstrings[op];
+}
+
+
+static const char *getbinoprstring(BinOpr op)
+{
+  static const char *const binopstrings[] = { /* ORDER OPR */
+    "+", "-", "*", "/", "%", "^", "..",
+#ifdef LUA_CODT7
+    "<<", ">>", "&", "|",
+#endif /* LUA_CODT7 */
+    "~=", "==", "<", "<=", ">", ">=",
+    "and", "or"
+  };
+  lua_assert(op != OPR_NOBINOPR);
+  return binopstrings[op];
+}
+
+
+static void DumpBinOpr(BinOpr op, DecompState *D)
+{
+  DumpString(getbinoprstring(op),D);
+}
+
+
+static const struct {
+  lu_byte left;  /* left priority for each binary operator */
+  lu_byte right; /* right priority */
+} priority[] = {  /* ORDER OPR */
+   {6, 6}, {6, 6}, {7, 7}, {7, 7}, {7, 7},  /* `+' `-' `/' `%' */
+   {10, 9}, {5, 4},                 /* power and concat (right associative) */
+#ifdef LUA_CODT7 /* T7 extensions */
+   {5, 5}, {5, 5},                  /* shift left and shift right */
+   {4, 4}, {4, 4},                  /* '&' and '|' */
+#endif /* LUA_CODT7 */
+   {3, 3}, {3, 3},                  /* equality and inequality */
+   {3, 3}, {3, 3}, {3, 3}, {3, 3},  /* order */
+   {2, 2}, {1, 1}                   /* logical (and/or) */
+};
+
+#define UNARY_PRIORITY  8  /* priority for unary operators */
+
+
+static void checklineneeded2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  int line = exp->line;
+  lua_assert(line >= D->linenumber);
+  if (line > D->linenumber) {
+    int lines_needed = line - D->linenumber;
+    beginline2(fs, lines_needed, D);
+    lua_assert(D->linenumber == line);
+  }
+  (void)maybebeginline2;
+}
+
+/******************************************************************************/
+/* functions for dumping ExpNodes */
+
+/*
+** `HoldItem' stores a string that is created by a parent expression node, to
+** be printed with a child expression node. The decompiler state holds onto it
+** until the time comes to dump it.
+*/
+struct HoldItem {
+  struct HoldItem *next;
+  const char *str;
+  size_t len;
+  lu_byte addtrailingspace;
+};
+
+/*
+** `addholditem2' appends a hold item to the chain
+*/
+static void addholditem2(DecompState *D, struct HoldItem *item,
+                         const char *str, size_t len, lu_byte addtrailingspace)
+{
+  item->str = str;
+  item->len = (len != 0) ? len : strlen(str);
+  item->addtrailingspace = addtrailingspace;
+  item->next = NULL;
+  if (D->holdlast != NULL)
+    D->holdlast->next = item;
+  else
+    D->holdfirst = item;
+  D->holdlast = item;
+}
+
+
+/*
+** `dischargeholditems2' dumps all hold item strings and clears the list in the
+** DecompState
+*/
+static void dischargeholditems2(DecompState *D)
+{
+  struct HoldItem *item = D->holdfirst;
+  while (item != NULL) {
+    CheckSpaceNeeded(D);
+    DumpBlock(item->str, item->len, D);
+    if (item->addtrailingspace)
+      D->needspace = 1;
+    item = item->next;
+  }
+  D->holdfirst = D->holdlast = NULL;
+}
+
+
+/*
+**
+*/
+#ifdef LUA_DEBUG
+static int holdchainempty2(DecompState *D)
+{
+  return (D->holdfirst == NULL && D->holdlast == NULL);
+}
+#endif /* LUA_DEBUG */
+
+
+/*
+** `predumpexp2' - all expression dump functions call this before dumping
+*/
+static void predumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  /* add new lines if needed */
+  checklineneeded2(D,fs,exp);
+  /* dump all strings that were held until the line was updated */
+  dischargeholditems2(D);
+  CheckSpaceNeeded(D);
+}
+
+
+/*
+** `postdumpexp2' - all expression dump functions call this after dumping
+*/
+static void postdumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  D->needspace = 1;
+  UNUSED(fs); UNUSED(exp);
+}
+
+
+/* dump a constant (literal) expression */
+static void dumpexpk2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  predumpexp2(D,fs,exp);
+  DumpTValue(exp->u.k,D);
+  postdumpexp2(D,fs,exp);
+}
+
+
+/* dump a global or upvalue name as an R-value */
+static void dumpexpvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  predumpexp2(D,fs,exp);
+  DumpTString(exp->u.name, D);
+  postdumpexp2(D,fs,exp);
+}
+
+
+static void dumplocvar2(DecompState *D, DFuncState *fs, int reg);
+
+
+/* dump a local variable name as an R-value */
+static void dumpexplocvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  predumpexp2(D,fs,exp);
+  dumplocvar2(D,fs,exp->aux); /* aux is the source register in OP_MOVE */
+  postdumpexp2(D,fs,exp);
+}
+
+
+/* dump `nil' */
+static void dumpexpnil2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  predumpexp2(D,fs,exp);
+  DumpLiteral("nil",D);
+  postdumpexp2(D,fs,exp);
+}
+
+
+/* dump `...' */
+static void dumpexpva2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  predumpexp2(D,fs,exp);
+  DumpLiteral("...",D);
+  postdumpexp2(D,fs,exp);
+}
+
+
+#define checkexpinreg2(fs,reg)  \
+  check_exp(getexpinreg2(fs,reg) != NULL, getexpinreg2(fs,reg))
+
+/*
+** `getexpinreg2' returns the expression node that is currently stored in REG.
+** If REG contains an active local varible or REG is encoded as a K-index, NULL
+** is returned
+*/
+static ExpNode *getexpinreg2(DFuncState *fs, int reg)
+{
+  if (ISK(reg))
+    return NULL;
+  lua_assert(isregvalid(fs, reg));
+  if (test_reg_property(fs, reg, REG_LOCAL))
+    return NULL;
+  return index2exp(fs, getslotdesc(fs, reg)->u.expindex);
+}
+
+
+/*
+** append a new expression node to a slot descriptor chain
+*/
+static void pushexp2(DFuncState *fs, int reg, ExpNode *exp)
+{
+  lua_assert(isregvalid(fs, reg));
+  lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
+  exp->previndex = getslotdesc(fs, reg)->u.expindex;
+  getslotdesc(fs, reg)->u.expindex = exp2index(fs, exp);
+}
+
+
+static void flushpendingexp2(DFuncState *fs)
+{
+  fs->a->expstack.used = 0;
+}
+
+static ExpNode *popexp2(DFuncState *fs, int reg)
+{
+  ExpNode *exp;
+  lua_assert(isregvalid(fs, reg));
+  lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
+  exp = index2exp(fs, getslotdesc(fs, reg)->u.expindex);
+  getslotdesc(fs, reg)->u.expindex = exp->previndex;
+  return exp;
+}
+
+
+/*
+** `dumplocvar2' dumps the name of the local variable in REG
+*/
+static void dumplocvar2(DecompState *D, DFuncState *fs, int reg)
+{
+  lua_assert(holdchainempty2(D));
+  lua_assert(isregvalid(fs, reg));
+  lua_assert(test_reg_property(fs, reg, REG_LOCAL));
+  CheckSpaceNeeded(D); /* print leading space if needed */
+  DumpTString(getslotdesc(fs, reg)->u.locvar->varname, D);
+  D->needspace = 1;
+}
+
+
+/*
+** `dumpRK2' dumps either the local variable in REG or the constant value
+** indexed by INDEXK(REG). Do not call this function before making sure REG
+** does not hold a pending expression
+*/
+static void dumpRK2(DecompState *D, DFuncState *fs, int reg, ExpNode *op)
+{
+  if (op != NULL)
+    predumpexp2(D,fs,op);
+  if (ISK(reg)) {
+    CheckSpaceNeeded(D);
+    DumpConstant(fs, INDEXK(reg), D);
+  }
+  else {
+    lua_assert(test_reg_property(fs, reg, REG_LOCAL));
+    dumplocvar2(D, fs, reg);
+  }
+  if (op != NULL)
+    postdumpexp2(D,fs,op);
+}
+
+
+static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
+                     unsigned int limit);
+
+
+/*
+** dumps an operand for a pending binary or unary operation
+*/
+static void dumpexpoperand2(DecompState *D, DFuncState *fs, ExpNode *operand,
+                            ExpNode *op, unsigned int limit)
+{
+  lua_assert(op != NULL);
+  /* The operand can be NULL if the operation is the first code in the program,
+     for example:
+        local a = -nil;
+     The code above produces OP_UNM as the first instruction */
+  if (operand == NULL) {
+    ExpNode dummy;
+    dummy.kind = ENIL;
+    dummy.line = op->line;
+    dumpexpnil2(D, fs, &dummy);
+  }
+  else {
+    dumpexp2(D, fs, operand, limit);
+  }
+}
+
+
+/*
+** dumps an expression node to the output
+*/
+static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
+                     unsigned int limit)
+{
+  lua_assert(exp != NULL);
+  lua_assert(exp->pending);
+  exp->pending = 0;
+  switch (exp->kind) {
+    case EUNOP: { /* unary operation */
+      ExpNode *o; /* the operand if it is a pending expression */
+      UnOpr op = exp->u.unop.op;
+      int b = exp->u.unop.b; /* arg B from the instruction */
+      struct HoldItem holdop;
+      addholditem2(D, &holdop, getunopstring(op), 0, op == OPR_NOT);
+      /* b is set to (-1) to tell this function to use `bindex' instead to index
+         the pending expression in the expression stack */
+      o = (b == -1) ? index2exp(fs, exp->u.unop.bindex) : NULL;
+      /* see explanation `case EBINOP' */
+      if (o != NULL && o->line != exp->line)
+        o->closeparenline = exp->line;
+      /* dump operand */
+      if (b == -1) /* dump pending expressions */
+        dumpexpoperand2(D, fs, o, exp, UNARY_PRIORITY);
+      else /* dump constant or local variable name */
+        dumpRK2(D, fs, b, exp);
+      D->needspace = 1;
+      break;
+    }
+    case EBINOP: { /* binary operation */
+      ExpNode *o1, *o2;
+      BinOpr op = exp->u.binop.op;
+      int b = exp->u.binop.b;
+      int c = exp->u.binop.c;
+      /* NEEDPAREN is for preserving order of operations */
+      int needparen;
+      /* NEEDPARENFORLINEINFO is for using extra parens to preserve line info */
+      int needparenforlineinfo; /* if matching line information */
+      struct HoldItem holdparen;
+      if (exp->leftside)
+        needparen = (priority[op].right < limit);
+      else
+        needparen = (priority[op].left <= limit);
+      o1 = (b == -1) ? index2exp(fs, exp->u.binop.bindex) : NULL;
+      o2 = (c == -1) ? index2exp(fs, exp->u.binop.cindex) : NULL;
+      if (o1 != NULL)
+        o1->leftside = 1;
+      /* If the second operand's code does not map to the same line as this
+         expression's code, parens need to wrap around this binary operation,
+         with the close paren emitted on a later line than the second operand to
+         preserve line mappings when recompiling the output. Here is an example
+         of what I'm talking about:
+            [1] local a = (a + 12) * (b + 12
+            [2] )
+         This generates the following code and line info:
+            1 [1] GETGLOBAL 0 -1  ; a
+            2 [1] ADD       0 0 -2  ; - 12
+            3 [1] GETGLOBAL 1 -3  ; b
+            4 [1] ADD       1 1 -2  ; - 12
+            5 [2] MUL       0 0 1
+            6 [2] RETURN    0 1
+         Notice how OP_MUL is mapped to line 2; this is because the last paren
+         is on line 2 */
+      if (o2 != NULL && o2->line != exp->line)
+        o2->closeparenline = exp->line;
+      /* check if you need to augment extra parens to match line info */
+      needparenforlineinfo = (exp->line != exp->closeparenline);
+      if (needparen || needparenforlineinfo)
+        addholditem2(D, &holdparen, "(", 0, 0);
+      if (b == -1)
+        /* discharge pending expression in B */
+        dumpexpoperand2(D, fs, o1, exp, priority[op].left);
+      else
+        /* dump constant INDEXK(B) or local variable in B */
+        dumpRK2(D, fs, b, exp); /* first operand */
+      DumpSpace(D);
+      DumpBinOpr(op,D); /* operator */
+      D->needspace = 1;
+      if (c == -1)
+        /* discharge pending expression in C */
+        dumpexpoperand2(D, fs, o2, exp, priority[op].right);
+      else
+        /* dump constant INDEXK(C) or local variable in C */
+        dumpRK2(D, fs, c, exp); /* second operand */
+      if (needparen || needparenforlineinfo) {
+        int saveline = exp->line;
+        lua_assert(exp->line <= exp->closeparenline);
+        exp->line = exp->closeparenline;
+        /* the line that the closing paren is on matters when matching */
+        checklineneeded2(D,fs,exp);
+        exp->line = saveline;
+        DumpLiteral(")",D);
+      }
+      D->needspace = 1;
+      break;
+    }
+    case EUPVAL:
+    case EGLOBAL:
+      dumpexpvar2(D,fs,exp);
+      break;
+    case ELOCAL:
+      lua_assert(isregvalid(fs, exp->aux));
+      if (test_reg_property(fs, exp->aux, REG_LOCAL))
+        /* source is a local variable */
+        dumpexplocvar2(D,fs,exp);
+      else { /* source is a pending expression */
+        ExpNode *exp2 = index2exp(fs, getslotdesc(fs, exp->aux)->u.expindex);
+        dumpexpoperand2(D, fs, exp2, exp, 0);
+      }
+      break;
+    case ELITERAL:
+      dumpexpk2(D,fs,exp);
+      break;
+    case ENIL:
+      dumpexpnil2(D,fs,exp);
+      break;
+    case EVARARG:
+      dumpexpva2(D,fs,exp);
+      break;
+    default:
+      DumpLiteral("[UNHANDLED EXP KIND]",D);
+      break;
+  }
+}
+
+
+/* discharge whatever is in REG, writing its printable form to the output */
+static void dischargefromreg2(DFuncState *fs, int reg)
+{
+  DecompState *D = fs->D;
+  SlotDesc *node;
+  lua_assert(isregvalid(fs, reg));
+  node = getslotdesc(fs, reg);
+  if (test_reg_property(fs, reg, REG_LOCAL)) { /* dump local variable name */
+    dumplocvar2(D, fs, reg);
+  }
+  else { /* dump pending expression in REG */
+    dumpexp2(D, fs, index2exp(fs, getslotdesc(fs, reg)->u.expindex), 0);
+  }
+  (void)freeexp;
+  (void)popexp2;
+}
+
+
+static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp,
+                             ExpNode *limit)
+{
+  ExpNode *firstexp = lastexp;
+  DecompState *D = fs->D;
+  int i = reg;
+  lua_assert(lastexp != NULL);
+  /* dump any extra expressions that won't be assigned to anything; this is
+     needed an a case such as the following example:
+        [1] local e;
+        [2] e = 1, (a * 3 / (b+4)
+        [3] );
+     which produces the following code:
+        1 [1] LOADNIL   0 0
+        2 [2] LOADK     1 -1  ; 1
+        3 [2] GETGLOBAL 2 -2  ; a
+        4 [2] MUL       2 2 -3  ; - 3
+        5 [2] GETGLOBAL 3 -4  ; b
+        6 [2] ADD       3 3 -5  ; - 4
+        7 [2] DIV       2 2 3
+        8 [3] MOVE      0 1
+        9 [3] RETURN    0 1
+     This specific example also explains the need for a LIMIT, so that the last
+     expression can be known before it is dumped. This is necessary for
+     preserving line info: notice the OP_MOVE is mapped to line 3 because of the
+     final close paren being on that line. Because the expression generated from
+     OP_MOVE and the expression generated from OP_DIV are not related to each
+     other, the line-mapping differences have to be accounted for here, and
+     handled before dumping the final expression */
+  for (; isregvalid(fs, i); i++) {
+    ExpNode *exp = getexpinreg2(fs, i);
+    if (exp == NULL) {
+      if (lastexp->kind == ENIL && lastexp->aux >= i) {
+        exp = lastexp;
+        goto dumpresidual;
+      }
+      break; /* todo: is there any other case where EXP can be NULL? */
+    }
+    else if (exp->pending) {
+      dumpresidual:
+      if (exp == limit) { /* this is the last expression */
+        /* this is the last expression, check if parens need to be added to
+           preserve line info */
+        if (firstexp->line != exp->line)
+          exp->closeparenline = firstexp->line;
+      }
+      DumpComma(D);
+      dumpexp2(D, fs, exp, 0);
+      lastexp = exp;
+    }
+  }
+#if 0
+  if (currexp != NULL) {
+    lua_assert(currexp->pending);
+    /* this is the last expression, check if parens need to be added to preserve
+       line info */
+    printf("currexp->pending = %d\n", currexp->pending);
+    if (firstexp->line != currexp->line)
+      currexp->closeparenline = firstexp->line;
+    DumpComma(D);
+    dumpexp2(D, fs, currexp, 0);
+  }
+#endif
+}
+
+
+static void assignexptolocvar2(DFuncState *fs, int reg, ExpNode *exp)
+{
+  struct LocVar *var;
+  struct HoldItem lhs, eq;
+  lua_assert(isregvalid(fs, reg));
+  check_reg_property(fs, reg, REG_LOCAL);
+  var = getslotdesc(fs, reg)->u.locvar;
+  addholditem2(fs->D, &lhs, getstr(var->varname), var->varname->tsv.len, 0);
+  addholditem2(fs->D, &eq, " = ", 0, 0);
+  dumpexp2(fs->D, fs, exp, 0);
+  emitresidualexp2(fs, exp->info+1, exp, gettopexp(fs)-1);
+  DumpSemi(fs->D);
+  flushpendingexp2(fs);
+}
+
+
+/*
+** marks a register REG as holding an active local variable, pointed to by VAR
+*/
+static void setreglocal2(DFuncState *fs, int reg, struct LocVar *var)
+{
+  lua_assert(isregvalid(fs, reg));
+  lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
+  unset_reg_property(fs, reg, REG_PENDING);
+  set_reg_property(fs, reg, REG_LOCAL);
+  getslotdesc(fs, reg)->u.locvar = var;
+}
+
+
+#define addliteral2buff(H,b,str) addstring2buff(H,b,"" str, sizeof(str)-1)
+
+static void addstring2buff(hksc_State *H, Mbuffer *b, const char *str,
+                           size_t len)
+{
+  size_t size = luaZ_sizebuffer(b);
+  size_t pos = luaZ_bufflen(b);
+  if (pos + len > size) {
+    size = pos + len;
+    luaZ_resizebuffer(H, b, size);
+  }
+  memcpy(luaZ_buffer(b)+pos, str, len);
+  pos += len;
+  luaZ_bufflen(b) = pos;
+}
+
+
+/*
+** activates new local variables and emits a declaration/initialization
+** statement for them
+*/
+static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
+{
+  ExpNode *firstexp, *lastexp;
+  hksc_State *H = fs->H;
+  DecompState *D = fs->D;
+  int i, lastreg;
+  int seenfirstexp = 0;
+  Mbuffer *b;
+  struct HoldItem lhs;
+  printf("firstreg = %d\n", firstreg);
+  lua_assert(isregvalid(fs, firstreg));
+  lua_assert(isregvalid(fs, firstreg+nvars-1));
+  lua_assert(nvars > 0);
+  b = &D->buff;
+  luaZ_resetbuffer(b);
+  addliteral2buff(H, b, "local ");
+  lastreg = firstreg+nvars-1;
+  for (i = firstreg; i <= lastreg; i++) {
+    struct LocVar *var;
+    size_t len;
+    lua_assert(fs->nlocvars < fs->sizelocvars);
+    var = &fs->locvars[fs->nlocvars+(i-firstreg)];
+    lua_assert(var->varname != NULL);
+    len = var->varname->tsv.len;
+    addstring2buff(H, b, getstr(var->varname), len);
+    if (i != lastreg)
+      addliteral2buff(H, b, ", ");
+  }
+  firstexp = checkexpinreg2(fs, firstreg);
+  lastexp = NULL;
+  /*lua_assert(firstexp == checkexpinreg2(fs, firstreg));*/
+  lua_assert(firstexp->info == firstreg);
+  /* if only assigning nil's, avoid writing the RHS altogether, unless it is
+     just one variable */
+  if (nvars == 1 || firstexp->kind != ENIL || firstexp->aux != lastreg)
+    addliteral2buff(H, b, " = ");
+  addholditem2(D, &lhs, luaZ_buffer(b), luaZ_bufflen(b), 0);
+  D(printf("added hold item for decl: `%.*s'\n", cast_int(luaZ_bufflen(b)),
+           luaZ_buffer(b)));
+  for (i = firstreg; i <= lastreg; i++) {
+    ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
+    setreglocal2(fs, i, &fs->locvars[fs->nlocvars++]);
+    if (nvars > 1 && firstexp->kind == ENIL && firstexp->aux == lastreg)
+      continue; /* don't write  */
+    else if (exp != NULL) {
+      if (nvars == 1 || exp->kind != ENIL || exp->aux != lastreg) {
+        if (seenfirstexp)
+          DumpComma(D);
+        dumpexp2(D, fs, exp, 0);
+        seenfirstexp = 1;
+      }
+      lastexp = exp;
+    }
+    else {
+      lua_assert(lastexp != NULL);
+      if (lastexp->kind == EVARARG &&
+          (lastexp->info+lastexp->aux-1) >= i) {
+        /*int lastvareg = lastexp->info+lastexp->aux-1;
+        CHECK(fs, lastvareg >= i, "")*/
+        continue; /* vararg has already been emitted */
+      }
+      else if (nvars > 1 && lastexp->kind == ENIL && lastexp->aux == lastreg) {
+        continue; /* only nil's remain; don't print them */
+      }
+      else if (lastexp->kind == ENIL) {
+        /*CHECK(fs, lastexp->aux >= i, "");*/
+        lua_assert(seenfirstexp);
+        DumpComma(D);
+        dumpexp2(D, fs, lastexp, 0);
+      }
+      else {
+        DumpLiteral("UNHANDLED CASE in initlocvar2\n",D);
+      }
+    }
+    /*needc initlocvar2(fs, i, &fs->locvars[fs->nlocvars++]);*/
+  }
+  if (seenfirstexp == 0) {
+    /* no expressions have been dumped, but the items in the hold need to be
+       discharged and the line needs to be updated */
+    predumpexp2(D,fs,firstexp);
+    postdumpexp2(D,fs,firstexp);
+  }
+  else {
+    lua_assert(lastexp != NULL);
+    /* dump any extra expressions that won't be assigned to anything; this is
+       needed an a case such as the following example:
+          local a, b, c = 1, 2, 3, 4;
+       which produces the following code:
+          1 [1]  LOADK     0 -1  ; 1
+          2 [1]  LOADK     1 -2  ; 2
+          3 [1]  LOADK     2 -3  ; 3
+          4 [1]  LOADK     3 -4  ; 4
+          5 [1]  RETURN    0 1
+       The fourth OP_LOADK is still generated, and needs to be reflected in the
+       decomp */
+    for (; isregvalid(fs, i); i++) {
+      ExpNode *exp = getexpinreg2(fs, i);
+      if (exp == NULL) {
+        if (lastexp->kind == ENIL && lastexp->aux >= i) {
+          exp = lastexp;
+          goto dumpresidual;
+        }
+        break; /* todo: is there any other case where EXP can be NULL? */
+      }
+      else if (exp->pending) {
+        dumpresidual:
+        DumpComma(D);
+        dumpexp2(D, fs, exp, 0);
+        lastexp = exp;
+      }
+    }
+  }
+  DumpSemi(D); /* `;' */
+  flushpendingexp2(fs); /* discharge everything */
+}
+
+
+/*
+** commits an expression to slot REG, either emitting an assignment if REG
+** holds an active local variable or appending the new expression to the pending
+** chain
+*/
+static ExpNode *addexptoreg2(DFuncState *fs, int reg, ExpNode *exp)
+{
+  lua_assert(isregvalid(fs, reg));
+  if (!test_reg_property(fs, reg, REG_LOCAL)) {
+    pushexp2(fs, reg, exp);
+    return exp;
+  }
+  else {
+    assignexptolocvar2(fs, reg, exp);
+    /*freeexp(fs, exp);*/
+    return NULL;
+  }
+}
+
+
+static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
+                        int a, int b, int c, int bx)
+{
+  ExpNode node;
+  ExpNode *exp = &node;
+  const Proto *f = fs->f;
+  lua_assert(ispcvalid(fs, pc));
+  UNUSED(sa);
+  (void)DumpStringf;
+  exp->info = a;
+  exp->previndex = exp2index(fs, NULL);
+  exp->line = getline(f,pc);
+  exp->closeparenline = exp->line;
+  exp->leftside = 0;
+  exp->pending = 1;
+  switch (o) {
+    case OP_GETGLOBAL:
+      exp->kind = EGLOBAL;
+      /* todo: if generating variable names, make sure this global name doesnt
+         conflict with any of the variable names generated so far, create a test
+         like the following and do a no-debug test:
+            local a = 12;  -- will generate `local f0_local0 = 12;'
+            local b = f0_local0; -- needs to generate OP_GETGLOBAL
+
+            local function c()
+                return f0_local0; -- needs to generate OP_GETGLOBAL
+            end
+         */
+      exp->u.name = rawtsvalue(&f->k[bx]);
+      break;
+    case OP_LOADBOOL:
+      exp->kind = b ? ETRUE : EFALSE;
+      exp->aux = c;
+      break;
+    case OP_LOADK:
+      exp->kind = ELITERAL;
+      exp->u.k = &f->k[bx];
+      break;
+    case OP_LOADNIL:
+      exp->kind = ENIL;
+      exp->aux = b;
+      break;
+    case OP_GETUPVAL:
+      exp->kind = EUPVAL;
+      lua_assert(b >= 0 && b < f->nups);
+      lua_assert(fs->upvalues[b] != NULL);
+      exp->u.name = fs->upvalues[b];
+      break;
+    case OP_NEWTABLE:
+      exp->kind = ECON;
+      exp->u.con.arrsize = b;
+      exp->u.con.hashsize = c;
+      break;
+    case OP_CLOSURE:
+      break; /* todo */
+    case OP_VARARG:
+      exp->kind = EVARARG;
+      exp->aux = b;
+      break;
+    case OP_GETFIELD: case OP_GETFIELD_R1:
+      break; /* todo */
+    case OP_MOVE:
+      exp->kind = ELOCAL;
+      exp->aux = b;  /* source register */
+      break;
+    case OP_UNM:
+      exp->kind = EUNOP;
+      exp->u.unop.b = b;
+      exp->u.unop.op = OPR_MINUS;
+      break;
+    case OP_NOT: case OP_NOT_R1:
+      exp->kind = EUNOP;
+      exp->u.unop.b = b;
+      exp->u.unop.op = OPR_NOT;
+      break;
+    case OP_LEN:
+      exp->kind = EUNOP;
+      exp->u.unop.b = b;
+      exp->u.unop.op = OPR_LEN;
+      break;
+    case OP_TESTSET:
+      /* todo */
+      break;
+    case OP_SELF:
+      /* todo */
+      break;
+    case OP_GETTABLE_S:
+    case OP_GETTABLE_N:
+    case OP_GETTABLE:
+      /* todo */
+      break;
+    case OP_CONCAT:
+      /* todo */
+      break;
+    /* arithmetic operations */
+    case OP_ADD: case OP_ADD_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_ADD;
+      break;
+    case OP_SUB: case OP_SUB_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_SUB;
+      break;
+    case OP_MUL: case OP_MUL_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_MUL;
+      break;
+    case OP_DIV: case OP_DIV_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_DIV;
+      break;
+    case OP_MOD: case OP_MOD_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_MOD;
+      break;
+    case OP_POW: case OP_POW_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_POW;
+      break;
+#ifdef LUA_CODT7
+    case OP_LEFT_SHIFT: case OP_LEFT_SHIFT_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_LEFT_SHIFT;
+      break;
+    case OP_RIGHT_SHIFT: case OP_RIGHT_SHIFT_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_RIGHT_SHIFT;
+      break;
+    case OP_BIT_AND: case OP_BIT_AND_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_BIT_AND;
+      break;
+    case OP_BIT_OR: case OP_BIT_OR_BK:
+      exp->kind = EBINOP;
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = OPR_BIT_OR;
+      break;
+#endif /* LUA_CODT7 */
+    /* the remaining operations do not clobber A */
+    default:
+      return NULL;
+  }
+  if (exp->kind == EBINOP) {
+    exp->dependondest = (a == b || a == c);
+    if (!ISK(b) && !test_reg_property(fs, b, REG_LOCAL)) {
+      /* B references a pending expression in register B, save the index of the
+         current expression in B */
+      exp->u.binop.b = -1; /* put an invalid value */
+      exp->u.binop.bindex = getslotdesc(fs, b)->u.expindex;
+    }
+    if (!ISK(c) && !test_reg_property(fs, c, REG_LOCAL)) {
+      /* C references a pending expression in register C, save the index of the
+         current expression in C */
+      exp->u.binop.c = -1; /* put an invalid value */
+      exp->u.binop.cindex = getslotdesc(fs, c)->u.expindex;
+    }
+  }
+  else if (exp->kind == EUNOP) {
+    exp->dependondest = (a == b);
+    /* B must be a register */
+    if (!test_reg_property(fs, b, REG_LOCAL)) {
+      exp->u.unop.b = -1;
+      exp->u.unop.bindex = getslotdesc(fs, b)->u.expindex;
+    }
+  }
+  else
+    exp->dependondest = 0;
+  exp = newexp(fs);
+  *exp = node;
+  return exp;
+}
+#endif /* DECOMP_HAVE_PASS2 */
+
+
 /*
 ** Second pass `basic block' handler - the function's registers and stack are
 ** analyzed and local variables are detected. With information about the local
@@ -3277,6 +4631,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     int pc, a, b, c, bx, sbx;
     Instruction i;
     OpCode o;
+    int numvars; /* number of variables which start at PC+1 */
     /* check if the next child starts here */
     if (sa->pc == nextchildstartpc) {
       /* save NEXTCHILD->ISEMPTY to use after updating NEXTCHILD */
@@ -3309,12 +4664,86 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     c = GETARG_C(i);
     bx = GETARG_Bx(i);
     sbx = GETARG_sBx(i);
+    numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
     visitinsn2(fs, bbl, pc, i); /* visit this instruction */
 #ifdef HKSC_DECOMP_DEBUG_PASS1
     /* make sure to run the first pass on all nested closures */
     if (o == OP_CLOSURE) { /* nested closure? */
       const Proto *f = fs->f->p[bx];
       DecompileFunction(D,f);
+    }
+#else /* !HKSC_DECOMP_DEBUG_PASS1 */
+    /* todo: make the line number of OP_CLOSURE will be the last line of the
+       closure, so make sure that is handled correctly when updating the line */
+    if (o == OP_CLOSURE) { /* nested closure? */
+      const Proto *f = fs->f->p[bx];
+      int nup = f->nups;
+      int nupn = 0;
+      lua_assert(pc + nup < sa->sizecode);
+      for (; nupn<nup; nupn++) {
+        int upvaltype = GETARG_A(code[pc+nupn]);
+        int upvalinfo = GETARG_Bx(code[pc+nupn]);
+        lua_assert(GET_OPCODE(code[pc+nupn]) == OP_DATA);
+        lua_assert(upvaltype == 1 || upvaltype == 2);
+        lua_assert(fs->upvalcount < fs->sizeupvalues);
+        if (upvaltype == 1) {
+          /* UPVALINFO is the register of the local variable */
+          unset_reg_property(fs, upvalinfo, REG_UPVAL);
+          set_reg_property(fs, upvalinfo, REG_UPVAL);
+          test_reg_property(fs, upvalinfo, REG_UPVAL);
+        }
+        fs->upvalcount++;
+      }
+      DecompileFunction(D,f);
+      /*pc += nup;*/ /* skip over data instructions */
+      lua_assert(nextchildstartpc == -1 || pc < nextchildstartpc);
+      lua_assert(pc < endpc);
+      /*continue;*/
+    }
+    /*updateline2(fs, pc);*/
+    /* todo: need to check if this instruction begins preparation code:
+       the following properties need to be checked:
+       INS_PRECALL
+       INS_PRECONCAT
+       INS_PREFORLIST
+       INS_PREFORNUM
+       INS_PRERETURN
+       INS_PRERETURN1 */
+    if (testAMode(o)) { /* A is a register */
+      ExpNode *exp;
+      lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
+      /* update first free */
+      if (a >= sa->firstfree) {
+        D(lprintf("updating sa->firstfree to register (%d)\n", a+1));
+        sa->firstfree = a+1;
+      }
+      exp = addexp2(sa, fs, pc, o, a, b, c, bx);
+      if (exp != NULL) {
+        addexptoreg2(fs, a, exp);
+        D(lprintf("created new expression node\n"));
+        D(lprintf("---------------------------\n"));
+        debugexp(fs, exp,0);
+        D(lprintf("---------------------------\n"));
+        if (numvars > 0) {
+          D(lprintf("NEW LOCAL VARIABLE\n"));
+          /* if the final return the next code and it is mapped to a different
+             line than this expression, wrap this expression in parens and put
+             the closing paren on the line that the return is mapped to; this
+             preserves line info when recompiling */
+          if (D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
+            int retline = getline(fs->f, pc+1);
+            lua_assert(GET_OPCODE(code[pc+1]) == OP_RETURN);
+            if (retline != exp->line)
+              exp->closeparenline = retline;
+          }
+          initlocvars2(fs, checkfirstexp(fs)->info, numvars);
+          /*dischargefromreg2(fs, a);*/ (void)dischargefromreg2;
+        }
+      }
+    }
+    else if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
+      lua_assert(o == OP_JMP);
+      /* todo: emit break statement */
     }
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
     if (pc == endpc)
@@ -3341,15 +4770,20 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
 {
   BasicBlock *functionblock = fs->a->bbllist.first;
   StackAnalyzer sa;
-  sa.firstfree = 0;
   sa.pc = 0;
   sa.code = f->code;
   sa.sizecode = f->sizecode;
   sa.maxstacksize = f->maxstacksize;
   sa.intailemptyblock = 0;
+  sa.incallprep = 0;
+  sa.inconcatprep = 0;
+  sa.inforprep = 0;
+  sa.inretprep = 0;
+  sa.inheadercondition = 0;
+  sa.lastexp = NULL;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BBL_FUNCTION);
-  UNUSED(D);
+  initfirstfree2(&sa, fs, f); /* set the first free reg for this function */
   bbl2(&sa, fs, functionblock);
 #ifdef LUA_DEBUG
   { /* debug: make sure all instructions were visited */
@@ -3374,6 +4808,7 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
     }
   }
 #endif /* LUA_DEBUG */
+  UNUSED(D);
 }
 
 
@@ -3417,15 +4852,18 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.status=0;
   D.funcidx=0;
   D.indentlevel=-1;
+  D.linenumber=1;
+  D.needspace=0;
+  D.holdfirst = NULL;
+  D.holdlast = NULL;
   D.usedebuginfo = (!Settings(H).ignore_debug && f->sizelineinfo > 0);
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
-  if (D.usedebuginfo)
-    D.varstarts = varstarts_withdebug;
-  else
-    D.varstarts = varstarts_nodebug;
+  luaZ_initbuffer(H, &D.buff);
+  luaZ_resetbuffer(&D.buff);
   sd.D=&D;
   sd.f=f;
   status = luaD_pcall(H, f_decompiler, &sd);
+  luaZ_freebuffer(H, &D.buff);
   if (status) D.status = status;
   return D.status;
 }

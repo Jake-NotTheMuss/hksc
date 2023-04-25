@@ -18,6 +18,7 @@
 #include "lobject.h"
 #include "lstate.h"
 #include "lstring.h"
+#include "lzio.h"
 
 #ifdef HKSC_DECOMPILER
 
@@ -38,6 +39,9 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->upvalues = NULL;
   a->sizeupvalues = 0;
   a->bbllist.first = a->bbllist.last = NULL;
+  a->expstack.stk = NULL;
+  a->expstack.total = 0;
+  a->expstack.used = 0;
   return a;
 }
 
@@ -45,8 +49,8 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
 void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   struct BasicBlock *bbl;
   luaM_freearray(H, a->insproperties, a->sizeinsproperties, InstructionFlags);
-  luaM_freearray(H, a->regproperties, a->sizeregproperties, RegisterFlags);
   luaM_freearray(H, a->opencalls, a->sizeopencalls, struct OpenExpr);
+  luaM_freearray(H, a->regproperties, a->sizeregproperties, SlotDesc);
   luaM_freearray(H, a->lineinfo, a->sizelineinfo, int);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
   luaM_freearray(H, a->upvalues, a->sizeupvalues, TString *);
@@ -56,7 +60,9 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
     luaM_free(H, bbl);
     bbl = next;
   }
+  luaM_freearray(H, a->expstack.stk, a->expstack.total, ExpNode);
   luaM_free(H, a);
 }
+
 
 #endif /* HKSC_DECOMPILER */

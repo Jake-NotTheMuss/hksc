@@ -284,8 +284,9 @@ typedef struct LocVar {
 
 /* flags defined in lanalyzer.h */
 typedef lu_int32 InstructionFlags;
-typedef lu_byte RegisterFlags;
+struct SlotDesc;
 struct BasicBlock;
+struct ExpNode;
 struct OpenExpr;
 
 /*
@@ -294,8 +295,8 @@ struct OpenExpr;
 typedef struct Analyzer {
   CommonHeader;
   InstructionFlags *insproperties;  /* instruction flags */
-  RegisterFlags *regproperties;  /* register flags */
   struct OpenExpr *opencalls;
+  struct SlotDesc *regproperties;  /* register properties */
   int *lineinfo;  /* map from opcodes to source lines */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
@@ -309,6 +310,11 @@ typedef struct Analyzer {
   struct {
     struct BasicBlock *first, *last;
   } bbllist;
+  struct {
+    struct ExpNode *stk;  /* base stack pointer */
+    int total;  /* total number of elements in the stack */
+    int used;  /* number of used elements in the stack */
+  } expstack;
 } Analyzer;
 
 #endif /* HKSC_DECOMPILER */

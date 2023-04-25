@@ -9,6 +9,7 @@
 
 #ifdef HKSC_DECOMPILER
 
+#include "lcode.h"
 #include "lobject.h"
 
 #if defined(ldecomp_c) || defined(lanalyzer_c)
@@ -85,8 +86,7 @@ enum INSFLAG {
 ** register properties
 */
 #define REGFLAG_TABLE \
-  DEFREGFLAG(FREE)      /* a free register */ \
-  DEFREGFLAG(RESERVED)  /* a register being used in a temporary expression */ \
+  DEFREGFLAG(PENDING)  /* a register being used in a temporary expression */ \
   DEFREGFLAG(LOCAL)     /* a register which holds an active local variable */ \
   DEFREGFLAG(CONTROL)   /* a register which holds a loop control variable */ \
   DEFREGFLAG(UPVAL)     /* a register used as an upvalue */
@@ -126,6 +126,89 @@ typedef struct OpenExpr {
   int startpc;
 } OpenExpr;
 
+
+/*
+** Expression descriptor
+*/
+
+typedef enum {
+  EVOID,  /* no value */
+  ENIL,  /* `nil' */
+  ETRUE,  /* `true' */
+  EFALSE,  /* `false' */
+  EVARARG,  /* `...' */
+  ELITERAL,  /* a constant number or string */
+  ECON,  /* a table constructor */
+  ELOCAL,  /* a local variable */
+  EUPVAL,  /* an upvalue */
+  EGLOBAL,  /* a global variable */
+  EINDEXED,  /* a table index */
+  EBINOP,  /* a binary operation */
+  EUNOP,  /* a unary operation */
+
+  EDUMMY
+#if 0
+  VVOID,  /* no value */
+  VNIL,
+  VTRUE,
+  VFALSE,
+  VK,   /* info = index of constant in `k' */
+  VKNUM,  /* nval = numerical value */
+  VLOCAL, /* info = local register */
+  VUPVAL,       /* info = index of upvalue in `upvalues' */
+  VGLOBAL,  /* info = index of table; aux = index of global name in `k' */
+  VSLOT,  /* ??? */
+  VINDEXED, /* info = table register; aux = index register (or `k') */
+  VJMP,   /* info = instruction pc */
+  VRELOCABLE, /* info = instruction pc */
+  VNONRELOC,  /* info = result register */
+  VCALL,  /* info = instruction pc */
+  VVARARG,  /* info = instruction pc */
+  VINTRINSIC  /* ??? */
+#endif
+} expnodekind;
+
+
+typedef struct ExpNode {
+  expnodekind kind;
+  union {
+    TValue *k;  /* constant value */
+    TString *name;  /* variable name */
+    int token;  /* token ID, e.g. TK_TRUE for `true' */
+    struct { int arrsize, hashsize; } con;
+    struct {
+      int b, c;  /* B and C operands from the instruction */
+      /* these 2 fields are needed if B and/or C reference a pending expression
+         in a register, rather than an local variable or a constant */
+      int bindex, cindex;  /* saved handles to the pending expressions that were
+                              in these registers */
+      BinOpr op; 
+    } binop;
+    struct {
+      int b;  /* B operand from the instruction */
+      int bindex;
+      UnOpr op;
+    } unop;
+  } u;
+  int previndex;  /* stack index of previous ExpNode for its register */
+  /*int type_checked;*/  /* if type-checked, which type */
+  int info;
+  int aux;
+  int line;  /* which line is this on */
+  int closeparenline;
+  lu_byte dependondest; /* does this node use its destination as a source */
+  lu_byte leftside; /* is this node the left operand in a binary operation */
+  lu_byte pending;  /* true if this expression has not yet been emitted */
+} ExpNode;
+
+
+typedef struct SlotDesc {
+  lu_byte flags;
+  union {
+    struct LocVar *locvar;  /* the local variable that is in this register */
+    int expindex;  /* if pending, the ExpNode that is in this register */
+  } u;
+} SlotDesc;
 
 #endif /* ldecomp_c */
 
