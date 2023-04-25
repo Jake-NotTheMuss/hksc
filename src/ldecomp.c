@@ -419,6 +419,11 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->f = f;
   fs->idx = D->funcidx++;
   fs->nlocvars = 0;
+  if (f->name && getstr(f->name))
+    D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
+             getstr(f->name)));
+  else
+    D(lprintf("-- Decompiling anonymous function (%d)\n", D->funcidx));
   if (D->usedebuginfo) { /* have debug info */
     D(lprintf("using debug info for function '%s'\n", f->name ? getstr(f->name):
              "(anonymous)"));
@@ -648,80 +653,6 @@ static void checktreevisited(BasicBlock *bbl)
 #define checktreevisited(bbl)  ((void)(bbl))
 
 #endif /* LUA_DEBUG */
-
-
-static void dumploopinfo(const Proto *f, DFuncState *fs, DecompState *D)
-{
-  int pc;
-  const Instruction *code = f->code;
-  int sizecode = f->sizecode;
-  for (pc = 0; pc < sizecode; pc++) {
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    if (test_ins_property(fs, pc, INS_REPEATSTAT))
-      DumpLiteral("BEGIN REPEAT\n", D);
-    if (test_ins_property(fs, pc, INS_WHILESTAT))
-      DumpLiteral("BEGIN WHILE\n", D);
-    if (test_ins_property(fs, pc, INS_PREFORLIST))
-      DumpLiteral("PRE FORLIST\n", D);
-    if (test_ins_property(fs, pc, INS_FORLIST))
-      DumpLiteral("BEGIN FORLIST\n", D);
-    if (test_ins_property(fs, pc, INS_PREFORNUM))
-      DumpLiteral("PRE FORNUM\n", D);
-    if (test_ins_property(fs, pc, INS_FORNUM))
-      DumpLiteral("BEGIN FORNUM\n", D);
-    if (test_ins_property(fs, pc, INS_BRANCHFAIL)) {
-      lua_assert(!test_ins_property(fs, pc, INS_BLOCKEND));
-      lua_assert(!test_ins_property(fs, pc, INS_BRANCHPASS));
-      DumpLiteral("BRANCH FAIL\n", D);
-    }
-    else if (test_ins_property(fs, pc, INS_BRANCHPASS)) {
-      lua_assert(!test_ins_property(fs, pc, INS_BLOCKEND));
-      DumpLiteral("BRANCH PASS\n", D);
-    }
-    if (test_ins_property(fs, pc, INS_BRANCHBEGIN))
-      DumpLiteral("BEGIN BRANCH\n", D);
-    if (test_ins_property(fs, pc, INS_LOOPFAIL)) {
-      lua_assert(!test_ins_property(fs, pc, INS_LOOPPASS));
-      lua_assert(!test_ins_property(fs, pc, INS_LOOPEND));
-      DumpLiteral("LOOP FAIL\n", D);
-    }
-    else if (test_ins_property(fs, pc, INS_LOOPPASS))
-      DumpLiteral("LOOP PASS\n", D);
-    if (test_ins_property(fs, pc, INS_PRECALL))
-      DumpLiteral("PRE FUNCTION CALL\n", D);
-    if (test_ins_property(fs, pc, INS_PRECONCAT))
-      DumpLiteral("PRE CONCAT\n", D);
-    if (test_ins_property(fs, pc, INS_PRERETURN))
-      DumpLiteral("PRE RETURN\n", D);
-    else if (test_ins_property(fs, pc, INS_PRERETURN1))
-      DumpLiteral("PRE RETURN 1\n", D);
-    if (test_ins_property(fs, pc, INS_PREBRANCHTEST))
-      DumpLiteral("PRE BRANCH TEST\n", D);
-    else if (test_ins_property(fs, pc, INS_PREBRANCHTEST1))
-      DumpLiteral("PRE BRANCH TEST 1\n", D);
-    else if (test_ins_property(fs, pc, INS_PRELOOPTEST))
-      DumpLiteral("PRE LOOP TEST\n", D);
-    else if (test_ins_property(fs, pc, INS_PRELOOPTEST1))
-      DumpLiteral("PRE LOOP TEST 1\n", D);
-    if (test_ins_property(fs, pc, INS_BREAKSTAT))
-      DumpLiteral("BREAK\n", D);
-    if (test_ins_property(fs, pc, INS_DOSTAT))
-      DumpLiteral("BEGIN DO\n", D);
-    if (test_ins_property(fs, pc, INS_BLOCKEND)) {
-      lua_assert(!test_ins_property(fs, pc, INS_BRANCHFAIL));
-      lua_assert(!test_ins_property(fs, pc, INS_BRANCHPASS));
-      DumpLiteral("END BLOCK\n", D);
-    }
-    else if (test_ins_property(fs, pc, INS_TESTSETEND))
-      DumpLiteral("END TESTSET\n", D);
-    if (test_ins_property(fs, pc, INS_EMPTYBLOCK))
-      DumpLiteral("EMPTY BLOCK\n", D);
-    if (test_ins_property(fs, pc, INS_LOOPEND))
-      DumpLiteral("END LOOP\n", D);
-    DumpStringf(D, "\t%d\t%s\n", pc+1, luaP_opnames[o]);
-  }
-}
 
 
 /*
@@ -3394,22 +3325,9 @@ static void DecompileFunction(DecompState *D, const Proto *f)
 {
   DFuncState new_fs;
   open_func(&new_fs, D, f);
-  if (f->name && getstr(f->name))
-    D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
-             getstr(f->name)));
-  else
-    D(lprintf("-- Decompiling anonymous function (%d)\n", D->funcidx));
   pass1(f,&new_fs,D);
-  (void)dumploopinfo;
-  D(lprintf("new_fs.firstclob = (%d)", new_fs.firstclob+1));
-  if (new_fs.firstclob != -1)
-    D(lprintf(", a = (%d)",GETARG_A(f->code[new_fs.firstclob])));
-  D(lprintf("\n"));
   debugbblsummary(&new_fs);
-  /*dumploopinfo(f, &new_fs, D);*/ (void)dumploopinfo;
-  /*DumpLiteral("\n\n", D);*/
   pass2(f,&new_fs,D);
-  /*DecompileCode(f,&new_fs,D);*/
   close_func(D);
 }
 
