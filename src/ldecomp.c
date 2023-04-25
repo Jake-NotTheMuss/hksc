@@ -927,8 +927,6 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
         if (GETARG_B(code[pc]) <= firstreg) lua_assert(0);
         concat1(ca, fs);
         break;
-      case OP_RETURN:
-        lua_assert(0);
       default:
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markconcat:
@@ -978,9 +976,6 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     int c = GETARG_C(i);
     printinsn1(pc,i,"callstat1");
     switch (o) {
-      /*case OP_SELF:
-        lua_assert(a == firstreg);
-        break;*/
       case OP_CONCAT:
         concat1(ca, fs);
         /* The beginnig of the concat expression may already have been marked
@@ -990,17 +985,9 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
            In this case, mark the pc of OP_CONCAT with INS_PRECALL. Like OP_CALL
            and its variants, OP_CONCAT cannot start a call expression, so this
            is safe to use as a marker for this special case. */
-/*        if (a == firstreg && test_ins_property(fs, ca->pc, INS_PRECALL)) {
-          init_ins_property(fs, pc, INS_PRECALL);
-          leavingstat1("call");
-          return;
-        }*/
-        if (a == firstreg) {
-          if (!test_ins_property(fs, ca->pc, INS_PRECALL))
-            pc = ca->pc; /* mark actual startpc */
-          goto markcall;
-        }
         pc = ca->pc;
+        if (a == firstreg)
+          goto markcall;
         i = code[pc];
         o = GET_OPCODE(i);
         a = GETARG_A(i);
@@ -1018,6 +1005,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
              start of multiple calls that each call the return value of the
              previous call). */
           if (a == firstreg && c > 1) {
+            pc = ca->pc;
             goto markcall;
           }
         }
@@ -1032,7 +1020,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
       }
     }
   }
-  init_ins_property(fs, 0, INS_PRECALL);
+  set_ins_property(fs, 0, INS_PRECALL);
   newopencall(fs, 0);
 }
 
