@@ -3090,9 +3090,28 @@ typedef struct StackAnalyzer {
   lu_byte intailemptyblock;
 } StackAnalyzer;
 
+#ifdef LUA_DEBUG
+static void debugenterblock2(StackAnalyzer *sa, BasicBlock *bbl)
+{
+  D(lprintf("pass2: entered %sblock %b (%i-%i) at pc (%i)\n", 
+       bbl->isempty ? (sa->intailemptyblock ? "tail-empty " : "empty ") : "",
+       bbl, bbl->startpc, bbl->endpc, sa->pc));
+}
+
+static void debugleaveblock2(StackAnalyzer *sa, BasicBlock *bbl)
+{
+D(lprintf("pass2: leaving %sblock %b (%i-%i) at pc (%i)\n", bbl->isempty ?
+          (sa->intailemptyblock ? "tail-empty " : "empty") : "", bbl,
+          bbl->startpc, bbl->endpc, sa->pc));
+}
+#else /* !LUA_DEBUG */
+#define debugenterblock2(sa,bbl) ((void)0)
+#define debugleaveblock2(sa,bbl) ((void)0)
+#endif /* LUA_DEBUG */
+
 
 #ifdef HKSC_DECOMP_DEBUG_PASS1
-static void enterblock2(DFuncState *fs, BasicBlock *bbl)
+static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 {
   if (bbl->type == BBL_FUNCTION && fs->prev == NULL) { /* top-level function */
     lua_assert(fs->D->indentlevel == -1);
@@ -3105,7 +3124,7 @@ static void enterblock2(DFuncState *fs, BasicBlock *bbl)
 }
 
 
-static void leaveblock2(DFuncState *fs, BasicBlock *bbl)
+static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 {
   if (bbl->type == BBL_FUNCTION && fs->prev == NULL) { /* top-level function */
     lua_assert(fs->D->indentlevel == -1);
@@ -3120,13 +3139,13 @@ static void leaveblock2(DFuncState *fs, BasicBlock *bbl)
 }
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
 
-#define enterblock2(fs,bbl) (void)0
-#define leaveblock2(fs,bbl) (void)0
+#define enterblock2(sa,fs,bbl) (void)0
+#define leaveblock2(sa,fs,bbl) (void)0
 
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
 
 #ifdef LUA_DEBUG
-static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
+static void assertbblvalid(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 {
   int startpc = bbl->startpc;
   int endpc = bbl->endpc;
@@ -3134,6 +3153,16 @@ static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
   BasicBlock *nextsibling = bbl->nextsibling;
   lua_assert(startpc <= endpc || bbl->isempty);
   lua_assert(type >= 0 && type < MAX_BBLTYPE);
+  if (sa->intailemptyblock) {
+    lua_assert(sa->pc+1 == startpc);
+    lua_assert(bbl->nextsibling == NULL);
+  }
+  else
+    lua_assert(sa->pc == startpc);
+  if (type == BBL_FUNCTION) {
+    lua_assert(sa->pc == 0);
+    lua_assert(endpc == sa->sizecode-1);
+  }
   if (type < BBL_DO && type != BBL_FUNCTION) {
     check_ins_property(fs, endpc, INS_LOOPEND);
     if (type == BBL_WHILE)
@@ -3155,28 +3184,66 @@ static void assertbblvalid(DFuncState *fs, BasicBlock *bbl)
   }
 }
 
-static void printins2(DFuncState *fs, BasicBlock *bbl, int pc, OpCode op)
+static void printinsn2(DFuncState *fs, BasicBlock *bbl, int pc, Instruction i)
 {
-  const char *opname;
   int type = bbl->type;
-  char spaces[] = "                  ";
-  int numspaces;
-  opname = getOpName(op);
-  numspaces = cast_int(sizeof(spaces)-1-strlen(opname));
-  if (numspaces <= 0) numspaces = 1;
-  lua_assert(numspaces < cast_int(sizeof(spaces)));
-  spaces[numspaces] = '\0';
-  lprintf("pc = (%d), OP_%s%s%s\n", pc+1, opname, spaces, bbltypename(type));
+  lprintf("pc = (%i), %O    %s\n", pc, i, bbltypename(type));
   UNUSED(fs);
 }
 #else /* !LUA_DEBUG */
-#define assertbblvalid(fs,bbl) ((void)(fs),(void)(bbl))
-#define printins2(fs,bbl,pc,op) ((void)(fs),(void)(bbl),(void)(pc),(void)(op))
+#define assertbblvalid(sa,fs,bbl) ((void)(sa),(void)(fs),(void)(bbl))
+#define printinsn2(fs,bbl,pc,i) ((void)(fs),(void)(bbl),(void)(pc),(void)(i))
 #endif /* LUA_DEBUG */
 
 
 static void DecompileFunction(DecompState *D, const Proto *f);
 
+
+static void visitinsn2(DFuncState *fs, BasicBlock *bbl, int pc, Instruction i)
+{
+#ifdef LUA_DEBUG
+  printinsn2(fs, bbl, pc, i);
+  printinsflags(fs, pc, "  flags for ");
+  /* make sure this instruction hasn't already been visited */
+  lua_assert(!test_ins_property(fs, pc, INS_VISITED));
+  /* set this directly to avoid printing debug message every time */
+  fs->a->insproperties[pc] |= (1 << INS_VISITED);
+#endif /* LUA_DEBUG */
+  UNUSED(fs); UNUSED(bbl); UNUSED(pc); UNUSED(i);
+}
+
+
+/*
+** update pc variables based on CHILD; if it is not NULL, update
+** NEXTCHILDSTARTPC to its startpc and NEXTPCLIMIT to 1 before its startpc,
+** otherwise, set NEXTCHILDSTARTPC to (-1) and NEXTPCLIMIT to 1 before the endpc
+** of PARENT
+*/
+static void initnextchild2(StackAnalyzer *sa, BasicBlock *parent,
+                           BasicBlock *child, int *childstartpc)
+{
+  lua_assert(parent != NULL);
+  lua_assert(childstartpc != NULL);
+  if (child != NULL) {
+    *childstartpc = child->startpc;
+    sa->nextpclimit = child->startpc-1;
+  }
+  else {
+    *childstartpc = -1;
+    sa->nextpclimit = parent->endpc-1;
+  }
+}
+
+
+static BasicBlock *updatenextchild2(StackAnalyzer *sa, BasicBlock *parent,
+                                    BasicBlock *child, int *childstartpc)
+{
+  BasicBlock *nextchild;
+  lua_assert(child != NULL);
+  nextchild = child->nextsibling;
+  initnextchild2(sa, parent, nextchild, childstartpc);
+  return nextchild;
+}
 
 /*
 ** Second pass `basic block' handler - the function's registers and stack are
@@ -3185,48 +3252,45 @@ static void DecompileFunction(DecompState *D, const Proto *f);
 */
 static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 {
+  DecompState *D = fs->D;
   const Instruction *code = sa->code;
   BasicBlock *nextchild = bbl->firstchild;
-  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  int startpc = bbl->startpc;
+  int nextchildstartpc;
+  /*int startpc = bbl->startpc;*/
   int endpc = bbl->endpc;
-  int type = bbl->type;
-  if (sa->intailemptyblock) {
-    lua_assert(sa->pc+1 == startpc);
-    lua_assert(bbl->nextsibling == NULL);
-  }
-  else
-    lua_assert(sa->pc == startpc);
-  if (type == BBL_FUNCTION) {
-    lua_assert(sa->pc == 0);
-    lua_assert(endpc == sa->sizecode-1);
-  }
-  assertbblvalid(fs,bbl);
-  D(lprintf("pass2: entered %sblock %b (%i-%i) at pc (%i)\n", 
-         bbl->isempty ? (sa->intailemptyblock ? "tail-empty " : "empty") : "",
-         bbl, startpc, endpc, sa->pc));
-  enterblock2(fs, bbl);
+  /*int type = bbl->type;*/
+  /* the first free register at the start of this block */
+  int firstfree = sa->firstfree; (void)firstfree;
+  assertbblvalid(sa,fs,bbl);
+  debugenterblock2(sa, bbl);
+  enterblock2(sa, fs, bbl);
+  /* mark this block as visited */
   lua_assert(bbl->visited == 0);
   D(bbl->visited = 1);
-  if (bbl->isempty) goto block2finished;
+  if (bbl->isempty) /* block has no instructions */
+    goto block2finished;
   fs->D->indentlevel++;
+  /* initialize NEXTCHILDSTARTPC and NEXTPCLIMIT */
+  initnextchild2(sa, bbl, nextchild, &nextchildstartpc);
+  /* main instruction loop */
   for (; sa->pc < sa->sizecode; sa->pc++) {
-    int pc, a, b, c, bx;
+    int pc, a, b, c, bx, sbx;
     Instruction i;
     OpCode o;
+    /* check if the next child starts here */
     if (sa->pc == nextchildstartpc) {
-      int ischildempty;
+      /* save NEXTCHILD->ISEMPTY to use after updating NEXTCHILD */
+      int waschildempty;
       processnextchild:
       lua_assert(nextchild != NULL);
-      ischildempty = nextchild->isempty;
+      waschildempty = nextchild->isempty;
       bbl2(sa, fs, nextchild);
-      nextchild = nextchild->nextsibling;
-      nextchildstartpc = nextchild ? nextchild->startpc : -1;
+      nextchild = updatenextchild2(sa, bbl, nextchild, &nextchildstartpc);
       if (sa->intailemptyblock) {
         sa->intailemptyblock = 0;
         goto loopfinished;
       }
-      else if (!ischildempty) {
+      else if (!waschildempty) {
         /* multiple blocks can end on the same instruction, so make sure not to
            process the last instruction more than once */
         if (sa->pc == endpc)
@@ -3244,23 +3308,17 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     b = GETARG_B(i);
     c = GETARG_C(i);
     bx = GETARG_Bx(i);
-    printins2(fs, bbl, pc, o);
-#ifdef LUA_DEBUG
-    /* make sure this instruction hasn't already been visited */
-    lua_assert(!test_ins_property(fs, pc, INS_VISITED));
-    /* set this directly to avoid printing debug message every time */
-    fs->a->insproperties[pc] |= (1 << INS_VISITED);
+    sbx = GETARG_sBx(i);
+    visitinsn2(fs, bbl, pc, i); /* visit this instruction */
 #ifdef HKSC_DECOMP_DEBUG_PASS1
     /* make sure to run the first pass on all nested closures */
     if (o == OP_CLOSURE) { /* nested closure? */
       const Proto *f = fs->f->p[bx];
-      DecompileFunction(fs->D,f);
+      DecompileFunction(D,f);
     }
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
-#endif /* LUA_DEBUG */
     if (pc == endpc)
       break;
-    (void)a; (void)b; (void)c; (void)bx;
   }
   /* check for an empty child block at the end of this block */
   if (nextchildstartpc != -1) {
@@ -3274,10 +3332,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   loopfinished:
   fs->D->indentlevel--;
   block2finished:
-  leaveblock2(fs, bbl);
-  D(lprintf("pass2: leaving %sblock %b (%i-%i) at pc (%i)\n", bbl->isempty ?
-            (sa->intailemptyblock ? "tail-empty " : "empty") : "", bbl,
-            startpc, endpc, sa->pc));
+  leaveblock2(sa, fs, bbl);
+  debugleaveblock2(sa, bbl);
 }
 
 
