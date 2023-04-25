@@ -115,6 +115,7 @@ typedef struct DFuncState {
   int sizelocvars;
   int pc;  /* current pc */
   int firstclob;  /* first pc that clobbers register A */
+  int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
 } DFuncState;
 
 
@@ -399,6 +400,14 @@ static OpenExpr *newopenexpr(DFuncState *fs, int pc, int kind)
 }
 
 
+static void updatefirstclob1(DFuncState *fs, int pc, int reg)
+{
+  fs->firstclob = pc;
+  if (reg >= fs->f->numparams)
+    fs->firstclobnonparam = pc;
+}
+
+
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
@@ -424,6 +433,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   }
   fs->locvaridx = fs->sizelocvars - 1;
   fs->firstclob = -1;
+  fs->firstclobnonparam = -1;
   /* allocate vectors for instruction and register properties */
   a->sizeinsproperties = f->sizecode; /* flags for each instruction */
   a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
@@ -2967,7 +2977,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             /* bad code */
           }
         }
-        fs->firstclob = pc;
+        updatefirstclob1(fs, pc, a);
         break;
       poststat: /* update variables after calls which change the pc */
         pc = ca->pc;
@@ -2981,7 +2991,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           int stateunsure;
           struct block1 *bl;
           struct blockstate1 *blstate;
-          fs->firstclob = pc; /* update first unstruction that clobbers A */
+          updatefirstclob1(fs, pc, a);
           if (branch != NULL && branch->parentblock != NULL) {
             bl = branch->parentblock;
             blstate = &bl->possiblestate;
