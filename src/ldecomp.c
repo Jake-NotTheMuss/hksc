@@ -26,6 +26,12 @@
 
 #ifdef HKSC_DECOMPILER
 
+#ifdef HKSC_DECOMP_DEBUG_PASS1
+#undef DECOMP_HAVE_PASS2
+#else /* !HKSC_DECOMP_DEBUG_PASS1 */
+#define DECOMP_HAVE_PASS2
+#endif /* HKSC_DECOMP_DEBUG_PASS1 */
+
 /*
 ** Check whether an op loads a constant into register A. Helps determine if a
 ** tested expression starts evaluating at an instruction. Ops that load
@@ -50,14 +56,14 @@ static const char *const insflagnames [] = {
 };
 #undef DEFINSFLAG
 
-#if 0
+#ifdef DECOMP_HAVE_PASS2
 #define DEFREGFLAG(e)  "REG_" #e,
 static const char *const regflagnames [] = {
   REGFLAG_TABLE
   "MAX_REGFLAG"
 };
 #undef DEFREGFLAG
-#endif
+#endif /* DECOMP_HAVE_PASS2 */
 
 #define bbltypename(v) (bbltypenames[v])
 #define insflagname(v) (insflagnames[v])
@@ -130,8 +136,11 @@ static void lprintf(const char *fmt, ...)
         fputs(s, stdout);
         break;
       }
+      case 'R': /* register flag */
+        printf("%s", regflagname(va_arg(argp, int)));
+        break;
       case 'I': /* instruction flag */
-        fputs(insflagname(va_arg(argp, int)), stdout);
+        printf("%s", insflagname(va_arg(argp, int)));
         break;
       case 'i': /* pc */
         printf("%d", va_arg(argp, int)+1);
@@ -214,8 +223,32 @@ static void lprintf(const char *fmt, ...)
   va_end(argp);
 }
 
+static void printinsflags(DFuncState *fs, int pc, const char *preamble)
+{
+  int i;
+  lprintf("%spc (%i):", preamble, pc);
+  for (i = 0; i < MAX_INSFLAG; i++) {
+    if (fs->a->insproperties[pc] & (1 << i))
+      lprintf("  %I", i);
+  }
+  lprintf("\n");
+}
+
+static void printregflags(DFuncState *fs, int reg, const char *preamble)
+{
+  int i;
+  lprintf("%sreg (%d):", preamble, reg);
+  for (i = 0; i < MAX_REGFLAG; i++) {
+    if (fs->a->insproperties[reg] & (1 << i))
+      lprintf("  %R", i);
+  }
+  lprintf("\n");
+}
+
+
 #else /* !LUA_DEBUG */
 #define D(x) ((void)0)
+#define printinsflags(fs,pc,preamble) ((void)0)
 #endif /* LUA_DEBUG */
 
 
@@ -229,89 +262,103 @@ static void badcode(DFuncState *fs, const char *msg)
 }
 
 
+static int ispcvalid(DFuncState *fs, int pc)
+{
+  return (pc >= 0 && pc < fs->f->sizecode);
+}
+
+
+static int isregvalid(DFuncState *fs, int reg)
+{
+  return (reg >= 0 && reg < fs->f->maxstacksize);
+}
+
+
 /*
-** test_ins_property - check if flag VAL is set on the instruction at PC
+** test_ins_property - check if flag PROP is set on the instruction at PC
 */
-#define test_ins_property(fs,pc,val) test_ins_property_(fs,pc,1<<(val))
-
-static int test_ins_property_(DFuncState *fs, int pc, int mask)
+static int test_ins_property(DFuncState *fs, int pc, int prop)
 {
-  lua_assert(pc >= 0 && pc < fs->f->sizecode);
-  return ((fs->a->insproperties[pc] & mask) != 0);
+  lua_assert(ispcvalid(fs, pc));
+  return ((fs->a->insproperties[pc] & (1 << prop)) != 0);
 }
 
-#ifdef LUA_DEBUG
-#define check_ins_property(fs,pc,val) \
-  lua_assert(test_ins_property(fs, pc, val))
-#else /* !LUA_DEBUG */
-#define check_ins_property(fs,pc,val) ((void)0)
-#endif /* LUA_DEBUG */
+#define check_ins_property(fs,pc,prop) lua_assert(test_ins_property(fs,pc,prop))
 
 
 /*
-** set_ins_property - set flag VAL for the instruction at PC
+** set_ins_property - set flag PROP for the instruction at PC
 */
-static void set_ins_property_(DFuncState *fs, int pc, int mask)
+static void set_ins_property(DFuncState *fs, int pc, int prop)
 {
-  fs->a->insproperties[pc] |= mask;
-}
-
+  lua_assert(ispcvalid(fs, pc));
 #ifdef LUA_DEBUG
-
-#define set_ins_property(fs,pc,val) \
-  set_ins_property_debug((fs),(pc),1<<(val),(val))
-
-static void set_ins_property_debug(DFuncState *fs, int pc, int mask, int idx)
-{
-  int i;
-  lprintf("  marking pc (%i) as %I\n", pc, idx);
+  lprintf("  marking pc (%i) as %I\n", pc, prop);
   lua_assert(pc >= 0 && pc < fs->f->sizecode);
-  lprintf("  previous flags for pc (%i):", pc);
-  for (i = 0; i < MAX_INSFLAG; i++) {
-    if (fs->a->insproperties[pc] & (1 << i))
-      lprintf("  %I", i);
-  }
-  lprintf("\n");
-  set_ins_property_(fs, pc, mask);
-}
-#else /* !LUA_DEBUG */
-#define set_ins_property(fs,pc,val) set_ins_property_(fs,pc,1<<(val))
+  printinsflags(fs, pc, "  previous flags for ");
 #endif /* LUA_DEBUG */
+  fs->a->insproperties[pc] |= (1 << prop);
+}
 
 
 /*
-** unset_ins_property - clear flag VAL for the instruction at PC
+** unset_ins_property - clear flag PROP for the instruction at PC
 */
-static void unset_ins_property_(DFuncState *fs, int pc, int mask)
+static void unset_ins_property(DFuncState *fs, int pc, int prop)
 {
-  fs->a->insproperties[pc] &= ~mask;
-}
-
+  lua_assert(ispcvalid(fs, pc));
 #ifdef LUA_DEBUG
-
-#define unset_ins_property(fs,pc,val) \
-  unset_ins_property_debug((fs),(pc),1<<(val),(val))
-
-static void unset_ins_property_debug(DFuncState *fs, int pc, int mask, int idx)
-{
-  lprintf("  clearing flag %I for pc (%i)\n", idx, pc);
-  lua_assert(pc >= 0 && pc < fs->f->sizecode);
-  unset_ins_property_(fs, pc, mask);
-}
-#else /* !LUA_DEBUG */
-#define unset_ins_property(fs,pc,val) unset_ins_property_(fs,pc,1<<(val))
+  lprintf("  clearing flag %I for pc (%i)\n", prop, pc);
 #endif /* LUA_DEBUG */
+  fs->a->insproperties[pc] &= ~(1 << prop);
+}
+
 
 /*
-** init_ins_property - set flag VAL on the instruction at PC, assert the flag
+** init_ins_property - set flag PROP on the instruction at PC, assert the flag
 ** was not previously set
 */
+#define init_ins_property(fs,pc,prop) \
+  (lua_assert(!test_ins_property(fs,pc,prop)), set_ins_property(fs,pc,prop))
+
+
+#ifdef DECOMP_HAVE_PASS2
+/*
+** set_reg_property - set flag PROP for register REG
+*/
+static void set_reg_property(DFuncState *fs, int reg, int prop)
+{
+  lua_assert(isregvalid(fs, reg));
 #ifdef LUA_DEBUG
-#define init_ins_property(fs,pc,val) \
-  (lua_assert(!test_ins_property(fs,pc,val)), set_ins_property(fs,pc,val))
-#else /* !LUA_DEBUG */
-#define init_ins_property(fs,pc,val) set_ins_property(fs,pc,val)
+  lprintf("  marking register (%d) as %R\n", reg, prop);
+  printregflags(fs, reg, "  previous flags for ");
 #endif /* LUA_DEBUG */
+  fs->a->regproperties[reg].flags |= (1 << prop);
+}
+
+/*
+** unset_reg_property - clear flag PROP for register REG
+*/
+static void unset_reg_property(DFuncState *fs, int reg, int prop)
+{
+  lua_assert(isregvalid(fs, reg));
+#ifdef LUA_DEBUG
+  lprintf("  clearing flag %R for register (%d)\n", prop, reg);
+#endif /* LUA_DEBUG */
+  fs->a->regproperties[reg].flags &= ~(1 << prop);
+}
+
+/*
+** test_reg_property - test flag PROP for register REG
+*/
+static int test_reg_property(DFuncState *fs, int reg, int prop)
+{
+  lua_assert(isregvalid(fs, reg));
+  return ((fs->a->regproperties[reg].flags & (1 << prop)) != 0);
+}
+
+#define check_reg_property(fs,reg,val) lua_assert(test_reg_property(fs,reg,val))
+#endif /* DECOMP_HAVE_PASS2 */
 
 
 static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
@@ -1517,8 +1564,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                  different control path than the one which
                                  handles branch constructs */
         OpCode prevop; /* previous opcode to see if it is a test instruction */
-        CHECK(fs, target >= 0 && target < fs->f->sizecode, "jump target pc is "
-              "invalid");
+        CHECK(fs, ispcvalid(fs, target), "jump target pc is invalid");
         if (test_ins_property(fs, pc+1, INS_FORLIST)) {
           forlistprep1(ca, fs, target);
           break;
