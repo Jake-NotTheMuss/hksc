@@ -361,6 +361,9 @@ static int test_reg_property(DFuncState *fs, int reg, int prop)
 #endif /* DECOMP_HAVE_PASS2 */
 
 
+/*
+** allocate a new block structure and return it
+*/
 static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
   BasicBlock *bbl = luaM_new(H, BasicBlock);
   bbl->next = NULL;
