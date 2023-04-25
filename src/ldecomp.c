@@ -853,7 +853,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs);
 
 #ifdef LUA_DEBUG
 
-#define printins1(pc,i,func) lprintf("pc %i: %O (" func ")\n",pc,i)
+#define printinsn1(pc,i,func) lprintf("pc %i: %O (" func ")\n",pc,i)
 
 #define encounteredstat1(what) \
   lprintf("  encountered " what " ending at (%i)\n", endpc)
@@ -862,7 +862,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs);
   lprintf("  leaving " what " ending at (%i), (%i-%i)\n", endpc,ca->pc,endpc)
 
 #else /* !LUA_DEBUG */
-#define printins1(pc,i,func) ((void)0)
+#define printinsn1(pc,i,func) ((void)0)
 #define encounteredstat1(what) ((void)0)
 #define leavingstat1(what) ((void)0)
 #endif /* LUA_DEBUG */
@@ -896,7 +896,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
-    printins1(pc,i,"concat1");
+    printinsn1(pc,i,"concat1");
     switch (o) {
       CASE_OP_CALL:
         callstat1(ca, fs);
@@ -959,7 +959,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
     int c = GETARG_C(i);
-    printins1(pc,i,"callstat1");
+    printinsn1(pc,i,"callstat1");
     switch (o) {
       /*case OP_SELF:
         lua_assert(a == firstreg);
@@ -1074,7 +1074,7 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
-    printins1(pc,i,"retstat1");
+    printinsn1(pc,i,"retstat1");
     switch (o) {
       STAT1_CASE_CALL(markret)
       STAT1_CASE_CONCAT
@@ -1130,7 +1130,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
-    printins1(pc,i,"fornumprep1");
+    printinsn1(pc,i,"fornumprep1");
     switch (o) {
       STAT1_CASE_CALL(markfornum)
       STAT1_CASE_CONCAT
@@ -1191,7 +1191,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
-    printins1(pc,i,"forlistprep1");
+    printinsn1(pc,i,"forlistprep1");
     switch (o) {
       STAT1_CASE_CALL(markforlist)
       STAT1_CASE_CONCAT
@@ -1492,7 +1492,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     int b = GETARG_B(i);
     int c = GETARG_C(i);
     int sbx = GETARG_sBx(i);
-    printins1(pc,i,"bbl1");
+    printinsn1(pc,i,"bbl1");
     switch (o) {
       case OP_JMP: {
         int target = pc + 1 + sbx; /* the jump target pc */
