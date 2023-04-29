@@ -301,7 +301,6 @@ typedef struct Analyzer {
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
   int sizeinsproperties;
-  int nopencalls;
   int sizeopencalls;
   int sizeregproperties;
   int sizelineinfo;

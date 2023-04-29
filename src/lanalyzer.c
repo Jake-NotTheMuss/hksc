@@ -28,7 +28,6 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->insproperties = NULL;
   a->sizeinsproperties = 0;
   a->opencalls = NULL;
-  a->nopencalls = 0;
   a->sizeopencalls = 0;
   a->regproperties = NULL;
   a->sizeregproperties = 0;

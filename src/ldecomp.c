@@ -127,6 +127,7 @@ typedef struct DFuncState {
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int upvalcount;  /* number of upvalues encountered so far */
   /*upvaldesc upvalues[LUAI_MAXUPVALUES];*/  /* upvalues */
+  int nopencalls;  /* number of OpenExpr entries created */
 } DFuncState;
 
 
@@ -401,10 +402,10 @@ static OpenExpr *newopenexpr(DFuncState *fs, int pc, int kind)
   OpenExpr *expr;
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
-  lua_assert(a->nopencalls >= 0 && a->nopencalls <= a->sizeopencalls);
-  luaM_growvector(H, a->opencalls, a->nopencalls, a->sizeopencalls, OpenExpr,
-                  MAX_INT, "too many open call or concat expressions");
-  expr = &a->opencalls[a->nopencalls++];
+  lua_assert(fs->nopencalls >= 0 && fs->nopencalls <= a->sizeopencalls);
+  luaM_growvector(H, a->opencalls, fs->nopencalls, a->sizeopencalls, OpenExpr,
+                  MAX_INT, "too many OpenExpr entries");
+  expr = &a->opencalls[fs->nopencalls++];
   expr->kind = kind;
   expr->startpc = pc;
   return expr;
@@ -633,6 +634,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
     a->upvalues = luaM_newvector(H, a->sizeupvalues, TString *);
   }
   fs->upvalcount = 0;
+  fs->nopencalls = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
   /* allocate vectors for instruction and register properties */
@@ -3370,8 +3372,8 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   }
   D(lprintf("ca.pc == (%d)\n", ca.pc));
   luaM_reallocvector(fs->H, fs->a->opencalls, fs->a->sizeopencalls,
-                     fs->a->nopencalls, OpenExpr);
-  fs->a->sizeopencalls = fs->a->nopencalls;
+                     fs->nopencalls, OpenExpr);
+  fs->a->sizeopencalls = fs->nopencalls;
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
   lua_assert(ca.retpending.endpc == -1 && ca.retpending.reg == -1);
