@@ -3667,6 +3667,7 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
     lua_assert(first->nextsibling == NULL);
     lua_assert(first->type == BBL_FUNCTION);
   }
+  set_ins_property(fs, f->sizecode-2, INS_BLOCKEND);
   D(lprintf("ca.pc == (%d)\n", ca.pc));
   luaM_reallocvector(fs->H, fs->a->opencalls, fs->a->sizeopencalls,
                      fs->nopencalls, OpenExpr);
