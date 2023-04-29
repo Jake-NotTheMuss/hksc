@@ -197,7 +197,7 @@ typedef struct ExpNode {
     TValue *k;  /* constant value */
     TString *name;  /* variable name */
     int token;  /* token ID, e.g. TK_TRUE for `true' */
-    struct { int arrsize, hashsize; } con;
+    struct { int arrsize, hashsize; int est; } con;
     struct {
       int b, c;  /* B and C operands from the instruction */
       /* these 2 fields are needed if B and/or C reference a pending expression

@@ -4772,8 +4772,9 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       break;
     case OP_NEWTABLE:
       exp->kind = ECON;
-      exp->u.con.arrsize = b;
-      exp->u.con.hashsize = c;
+      exp->u.con.arrsize = luaO_fb2int(b);
+      exp->u.con.hashsize = luaO_fb2int(c);
+      exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16);
       break;
     case OP_CLOSURE:
       break; /* todo */
