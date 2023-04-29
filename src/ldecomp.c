@@ -4965,7 +4965,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   D(bbl->visited = 1);
   if (bbl->isempty) /* block has no instructions */
     goto block2finished;
-  fs->D->indentlevel++;
+  D->indentlevel++;
   /* initialize NEXTCHILDSTARTPC and NEXTPCLIMIT */
   initnextchild2(sa, bbl, nextchild, &nextchildstartpc);
   /* main instruction loop */
@@ -5117,7 +5117,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     goto processnextchild;
   }
   loopfinished:
-  fs->D->indentlevel--;
+  D->indentlevel--;
   block2finished:
   leaveblock2(sa, fs, bbl);
   debugleaveblock2(sa, bbl);
