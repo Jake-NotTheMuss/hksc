@@ -4333,6 +4333,10 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
   lua_assert(exp != NULL);
   lua_assert(exp->pending);
   exp->pending = 0;
+  if (index2exp(fs, exp->prevregindex))
+    index2exp(fs, exp->prevregindex)->nextregindex = exp->previndex;
+  if (index2exp(fs, exp->nextregindex))
+    index2exp(fs, exp->nextregindex)->prevregindex = exp->previndex;
   switch (exp->kind) {
     case EUNOP: { /* unary operation */
       ExpNode *o; /* the operand if it is a pending expression */
