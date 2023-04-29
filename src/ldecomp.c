@@ -1033,6 +1033,16 @@ static void beginline2(DFuncState *fs, int n, DecompState *D)
 }
 
 
+static void updateline2(DFuncState *fs, int line, DecompState *D)
+{
+  if (line > D->linenumber) {
+    int lines_needed = line - D->linenumber;
+    beginline2(fs, lines_needed, D);
+    lua_assert(D->linenumber == line);
+  }
+}
+
+
 static void maybebeginline2(DFuncState *fs, DecompState *D)
 {
   lua_assert(fs->instatement >= 0);
@@ -4073,11 +4083,7 @@ static void checklineneeded2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
   int line = exp->line;
   lua_assert(line >= D->linenumber);
-  if (line > D->linenumber) {
-    int lines_needed = line - D->linenumber;
-    beginline2(fs, lines_needed, D);
-    lua_assert(D->linenumber == line);
-  }
+  updateline2(fs, line, D);
   (void)maybebeginline2;
 }
 
@@ -4628,6 +4634,93 @@ static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
   }
   (void)freeexp;
   (void)popexp2;
+}
+
+
+/*
+** emits a function call as a statement
+*/
+static void emitcallstat2(DFuncState *fs, ExpNode *call)
+{
+  DecompState *D = fs->D;
+  lua_assert(call != NULL);
+  lua_assert(call->kind == ECALL);
+  lua_assert(call->u.call.nret == 0);
+  dumpexp2(D, fs, call, 0);
+  DumpSemi(D);
+  flushpendingexp2(fs);
+}
+
+
+/*
+** emits a break statement
+*/
+static void emitbreakstat2(DFuncState *fs, int pc)
+{
+  DecompState *D = fs->D;
+  int line = getline(fs->f, pc);
+  int needblock = (test_ins_property(fs, pc, INS_BLOCKEND) == 0);
+  updateline2(fs, line, D);
+  CheckSpaceNeeded(D);
+  if (needblock) DumpLiteral("do ",D);
+  DumpLiteral("break",D);
+  DumpSemi(D);
+  if (needblock) DumpLiteral(" end",D);
+}
+
+
+/*
+** emits a return statement if necessary (the return won't be emitted if it is
+** the final augmented return)
+*/
+static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
+{
+  DecompState *D = fs->D;
+  int line = getline(fs->f, pc);
+  int needblock;
+  lua_assert(isregvalid(fs, reg));
+  if (D->matchlineinfo && nret != 0) {
+    ExpNode *top = gettopexp(fs);
+    /* if this return code is mapped to a different line than the last
+       expression to be returned, wrap that expression in parens and put the
+       closing paren on the line that the return is mapped to; this preserves
+       line info when recompiling */
+    if (top != NULL && line != top->line)
+      top->closeparenline = line;
+  }
+  needblock = (test_ins_property(fs, pc, INS_BLOCKEND) == 0);
+  if (pc == fs->f->sizecode-1)
+    return;  /* final return is augmented */
+  if (nret == 0) {
+    updateline2(fs, line, D);
+    CheckSpaceNeeded(D);
+    if (needblock) DumpLiteral("do ",D);
+    DumpLiteral("return",D);
+  }
+  else {
+    int i;
+    ExpNode *firstexp, *nextexp;
+    struct HoldItem holdreturn;
+    if (needblock)
+      addliteralholditem2(D, &holdreturn, "do return", 1);
+    else
+      addliteralholditem2(D, &holdreturn, "return", 1);
+    firstexp = getexpinreg2(fs, reg);  /* first expression to return */
+    lua_assert(firstexp != NULL);
+    dumpexp2(D, fs, firstexp, 0);
+    nextexp = firstexp;
+    for (i = 1; i < nret; i++) {
+      DumpLiteral(",",D);
+      nextexp = index2exp(fs, nextexp->nextregindex);
+      if (nextexp == NULL)
+        break;
+      dumpexp2(D, fs, nextexp, 0);
+    }
+  }
+  DumpSemi(D);
+  if (needblock)
+    DumpLiteral(" end",D);
+  flushpendingexp2(fs);
 }
 
 
@@ -5788,6 +5881,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
         D(lprintf("---------------------------\n"));
         if (exp->kind != ESTORE)
           addexptoreg2(sa, fs, a, exp);
+        if (exp->kind == ECALL && exp->u.call.nret == 0)
+          emitcallstat2(fs, exp);
           /* if the final return the next code and it is mapped to a different
              line than this expression, wrap this expression in parens and put
              the closing paren on the line that the return is mapped to; this
@@ -5808,12 +5903,19 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
         if (addstore2(sa, fs, pc, o, a, b, c, bx) == 0) {
           /* not a store instruction */
           checkdischargestores2(sa, fs);
+          if (o == OP_RETURN) {
+            emitretstat2(fs, pc, a, b-1);
+          }
         }
       }
     }
-    else if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
-      lua_assert(o == OP_JMP);
-      /* todo: emit break statement */
+    else {
+      checkdischargestores2(sa, fs);
+      if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
+        lua_assert(o == OP_JMP);
+        lua_assert(bbl->type >= BBL_WHILE && bbl->type <= BBL_FORLIST);
+        emitbreakstat2(fs, pc);
+      }
     }
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
     if (pc == endpc)
