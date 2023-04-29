@@ -502,8 +502,11 @@ static int exp2index(DFuncState *fs, ExpNode *exp)
 {
   if (exp == NULL)
     return 0;
-  else
+  else {
+    lua_assert(exp >= fs->a->expstack.stk &&
+               exp < fs->a->expstack.stk+fs->a->expstack.used);
     return exp-fs->a->expstack.stk+1;
+  }
 }
 
 
@@ -644,9 +647,11 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
 
 static SlotDesc *getslotdesc(DFuncState *fs, int reg)
 {
+  SlotDesc *slot;
   Analyzer *a = fs->a;
   lua_assert(isregvalid(fs, reg));
-  return &a->regproperties[reg];
+  slot = &a->regproperties[reg];
+  return slot;
 }
 
 
@@ -3733,15 +3738,14 @@ static LocVar *addlocvar2(DFuncState *fs, int startpc, int endpc, int param)
 static void addlocvar2reg2(DFuncState *fs, int startpc, int endpc, int param,
                            int reg)
 {
-  SlotDesc *regnode;
   struct LocVar *var = addlocvar2(fs, startpc, endpc, param);
   lua_assert(isregvalid(fs, reg));
-  regnode = &fs->a->regproperties[reg];
   /* only REG_PENDING should be set */
-  lua_assert(test_reg_property(fs, reg, REG_PENDING) || regnode->flags == 0);
+  lua_assert(test_reg_property(fs, reg, REG_PENDING) ||
+             getslotdesc(fs, reg)->flags == 0);
   unset_reg_property(fs, reg, REG_PENDING);
   set_reg_property(fs, reg, REG_LOCAL);
-  regnode->u.locvar = var;  /* REG holds VAR */
+  getslotdesc(fs, reg)->u.locvar = var;  /* REG holds VAR */
 }
 
 
@@ -4046,6 +4050,7 @@ static const struct {
 };
 
 #define UNARY_PRIORITY  8  /* priority for unary operators */
+#define SUBEXPR_PRIORITY  11  /* priority for called value */
 
 
 static void checklineneeded2(DecompState *D, DFuncState *fs, ExpNode *exp)
@@ -4221,11 +4226,15 @@ static ExpNode *getexpinreg2(DFuncState *fs, int reg)
 /*
 ** append a new expression node to a slot descriptor chain
 */
-static void pushexp2(DFuncState *fs, int reg, ExpNode *exp)
+static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
 {
   lua_assert(isregvalid(fs, reg));
   lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
-  exp->previndex = getslotdesc(fs, reg)->u.expindex;
+  lua_assert(exp->previndex == 0);
+  if (linkprev) {
+    lua_assert(getslotdesc(fs, reg)->u.expindex != exp2index(fs, exp));
+    exp->previndex = getslotdesc(fs, reg)->u.expindex;
+  }
   getslotdesc(fs, reg)->u.expindex = exp2index(fs, exp);
 }
 
@@ -4233,6 +4242,9 @@ static void pushexp2(DFuncState *fs, int reg, ExpNode *exp)
 static void flushpendingexp2(DFuncState *fs)
 {
   fs->a->expstack.used = 0;
+  D(lprintf("updating fs->firstfree from %d to %d\n", fs->firstfree,
+            fs->nlocvars));
+  fs->firstfree = newfirstfree;
 }
 
 static ExpNode *popexp2(DFuncState *fs, int reg)
@@ -4530,17 +4542,15 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
 
 
 /* discharge whatever is in REG, writing its printable form to the output */
-static void dischargefromreg2(DFuncState *fs, int reg)
+static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
 {
   DecompState *D = fs->D;
-  SlotDesc *node;
   lua_assert(isregvalid(fs, reg));
-  node = getslotdesc(fs, reg);
   if (test_reg_property(fs, reg, REG_LOCAL)) { /* dump local variable name */
     dumplocvar2(D, fs, reg);
   }
   else { /* dump pending expression in REG */
-    dumpexp2(D, fs, index2exp(fs, getslotdesc(fs, reg)->u.expindex), 0);
+    dumpexp2(D, fs, checkexpinreg2(fs, reg), priority);
   }
   (void)freeexp;
   (void)popexp2;
@@ -4664,6 +4674,335 @@ static void addstr2buff(hksc_State *H, Mbuffer *b, const char *str, size_t len)
   memcpy(luaZ_buffer(b)+pos, str, len);
   pos += len;
   luaZ_bufflen(b) = pos;
+}
+
+
+static void addkvalue2buff(hksc_State *H, Mbuffer *b, TValue *o)
+{
+  switch (ttype(o))
+  {
+    case LUA_TNIL:
+      addliteral2buff(H, b, "nil");
+      break;
+    case LUA_TBOOLEAN:
+      if (bvalue(o)) addliteral2buff(H, b,"true");
+      else addliteral2buff(H, b,"false");
+      break;
+    case LUA_TLIGHTUSERDATA: {
+      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
+      sprintf(s, "0x%zuhi", cast(size_t, pvalue(o)));
+      addstr2buff(H,b,s,strlen(s));
+      break;
+    }
+    case LUA_TNUMBER: {
+      char s[LUAI_MAXNUMBER2STR];
+      sprintf(s, "%g", nvalue(o));
+      addstr2buff(H,b,s,strlen(s));
+      break;
+    }
+    case LUA_TSTRING: {
+      TString *str = luaO_kstring2print(H, rawtsvalue(o));
+      addstr2buff(H,b,getstr(str),str->tsv.len);
+      break;
+    }
+    case LUA_TUI64: {
+      char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
+      lua_ui642str(s+2, ui64value(o));
+      s[0] = '0'; s[1] = 'x';
+      strcat(s, "hl");
+      addstr2buff(H,b,s,strlen(s));
+      break;
+    }
+    default:
+      lua_assert(0);
+      break;
+  }
+}
+
+
+/*
+** `LHSStringBuilder' is an auxiliary structure used by `dischargestores2' to
+** ensure all L-values are emitted in the correct order and with even spacing
+** between items
+*/
+struct LHSStringBuilder {
+  hksc_State *H;
+  DFuncState *fs;
+  DecompState *D;
+  Mbuffer *buff;
+  int nvars;  /* number of LHS items processed so far */
+  int needspace;
+  unsigned int currpriority;
+  lu_byte empty;
+};
+
+
+static void initstringbuilder2(struct LHSStringBuilder *sb, DecompState *D)
+{
+  sb->H = D->H;
+  sb->fs = D->fs;
+  sb->D = D;
+  sb->buff = &D->buff;
+  sb->nvars = 0;
+  sb->needspace = 0;
+  sb->currpriority = 0;
+  sb->empty = 1;
+  luaZ_resetbuffer(sb->buff);
+}
+
+
+static void addtolhsbuff2(struct LHSStringBuilder *sb, const char *str,
+                         size_t len)
+{
+  lua_assert(len != 0);
+  if (sb->needspace)
+    addliteral2buff(sb->H, sb->buff, " ");
+  addstr2buff(sb->H, sb->buff, str, len);
+  sb->needspace = 1;
+  sb->empty = 0;
+}
+
+
+static void flushlhsbuff2(struct LHSStringBuilder *sb)
+{
+  luaZ_resetbuffer(sb->buff);
+  sb->needspace = 0;
+  sb->empty = 1;
+}
+
+
+static void addkvalue2lhs(struct LHSStringBuilder *sb, TValue *o)
+{
+  if (sb->empty == 0 && sb->needspace)
+    addliteral2buff(sb->H, sb->buff, " ");
+  addkvalue2buff(sb->H, sb->buff, o);
+  sb->needspace = 1;
+  sb->empty = 0;
+}
+
+
+static void addchartolhs2(struct LHSStringBuilder *sb, int c)
+{
+  char x = (char)c;
+  lua_assert(c != 0);
+  addtolhsbuff2(sb, &x, 1);
+}
+
+#define addvarnametolhs2(sb,name) addtstolhs2(sb,name)
+static void addtstolhs2(struct LHSStringBuilder *sb, TString *ts)
+{
+  lua_assert(ts != NULL);
+  addtolhsbuff2(sb, getstr(ts), ts->tsv.len);
+}
+
+
+static void addcommatolhs2(struct LHSStringBuilder *sb)
+{
+  sb->needspace = 0;
+  if (sb->empty) {
+    /* no spaces before commas */
+    sb->D->needspace = 0;
+    DumpComma(sb->D);
+    sb->D->needspace = 1;
+  }
+  else
+    addchartolhs2(sb, ',');
+}
+
+
+static void completelhsbuilder2(struct LHSStringBuilder *sb)
+{
+  DecompState *D = sb->D;
+  if (sb->empty) {
+    CheckSpaceNeeded(D);
+    DumpLiteral("=",D);
+    D->needspace = 1;
+    sb->needspace = 0;
+  }
+  else {
+    addchartolhs2(sb, '=');
+  }
+}
+
+
+static void addregtolhs2(struct LHSStringBuilder *sb, int reg)
+{
+  lua_assert(isregvalid(sb->fs, reg));
+  if (test_reg_property(sb->fs, reg, REG_LOCAL)) {
+    struct LocVar *var = getslotdesc(sb->fs, reg)->u.locvar;
+    lua_assert(var != NULL && var->varname != NULL);
+    /* add local variable name */
+    addvarnametolhs2(sb, var->varname);
+  }
+  else {  /* a temporary expression */
+    struct HoldItem holdcurr;
+    addholditem2(sb->D, &holdcurr, luaZ_buffer(sb->buff),
+                 luaZ_bufflen(sb->buff), sb->needspace);
+    dischargefromreg2(sb->fs, reg, sb->currpriority);
+    flushlhsbuff2(sb);
+  }
+}
+
+
+static void addktolhs2(struct LHSStringBuilder *sb, int k)
+{
+  lua_assert(ISK(k));
+  addkvalue2lhs(sb,&sb->fs->f->k[INDEXK(k)]);
+}
+
+
+static void addindextolhs2(struct LHSStringBuilder *sb, int reg, int isfield)
+{
+  DecompState *D = sb->D;
+  int wasempty = sb->empty;
+  int needspace = sb->needspace;
+  if (wasempty) {
+    D->needspace = needspace;
+    CheckSpaceNeeded(D);
+    if (isfield) DumpLiteral(".",D);
+    else DumpLiteral("[",D);
+  }
+  else {
+    addchartolhs2(sb, isfield ? '.' : '[');
+  }
+  if (ISK(reg)) {
+    if (isfield)
+      addtstolhs2(sb, rawtsvalue(&sb->fs->f->k[INDEXK(reg)]));
+    else
+      addktolhs2(sb, reg);
+  }
+  else {
+    addregtolhs2(sb, reg);
+  }
+  if (!isfield) {
+    sb->needspace = needspace;
+    addchartolhs2(sb, ']');
+  }
+  if (wasempty) {
+    DumpBlock(luaZ_buffer(sb->buff), luaZ_bufflen(sb->buff), D);
+    flushlhsbuff2(sb);
+    D->needspace = 1;
+  }
+}
+
+
+#define checkdischargestores2(sa,fs) if((sa)->laststore)dischargestores2(sa,fs)
+
+
+/*
+** dumps the pending assignment list (check if there are pending stores before
+** calling)
+*/
+static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
+{
+  DecompState *D = fs->D;
+  struct LHSStringBuilder sb;
+  struct HoldItem lhs;  /* LHS names */
+  ExpNode *exp;  /* iterator for traversing the store-chain */
+  ExpNode *lastsrc;  /* last source expression */
+  int lastsrcreg;  /* greatest source register that is referenced in a store */
+  int i = 0;
+  exp = index2exp(fs, sa->laststore);
+  lua_assert(exp != NULL);
+  initstringbuilder2(&sb, D);
+  while (1) {
+    OpCode rootop;  /* opcode family for the current store */
+    ExpNode *prev;
+    /*lua_assert(exp->kind == ESTORE);*/
+    rootop = exp->u.store.rootop;
+    if (exp->kind != ESTORE || rootop == OP_MOVE) {
+      /* assigning to local variable */
+      D(lprintf("OP_MOVE from reg %d\n", exp->info));
+      addregtolhs2(&sb, exp->info);
+    }
+    else if (rootop == OP_SETFIELD || rootop == OP_SETTABLE) {
+      /*int tabreg = exp->u.store.aux1;*/
+      /*int key = exp->u.store.aux2;*/
+      sb.currpriority = SUBEXPR_PRIORITY;
+      addregtolhs2(&sb, exp->u.store.aux1);  /* add table variable */
+      sb.needspace = 0;  /* no space between table and `[' */
+      sb.currpriority = 0;
+      /* add index */
+      addindextolhs2(&sb, exp->u.store.aux2, rootop == OP_SETFIELD);
+    }
+    else if (rootop == OP_SETGLOBAL || rootop == OP_SETUPVAL) {
+      TString *varname = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
+      addvarnametolhs2(&sb, varname);
+    }
+    else
+      lua_assert(0);
+    if (exp->kind == ESTORE)
+      prev = index2exp(fs, exp->u.store.prevstore);  /* get previous in chain */
+    else
+      prev = index2exp(fs, exp->previndex);
+    if (prev == NULL) { /* end of chain */
+      /* LASTSRCREG can be a K value */
+      lastsrcreg = exp->u.store.srcreg;
+      break;
+    }
+    addcommatolhs2(&sb);  /* add comma before next variable */
+    exp = prev;
+  }
+  completelhsbuilder2(&sb);
+  addholditem2(D, &lhs, luaZ_buffer(sb.buff), luaZ_bufflen(sb.buff),
+               sb.needspace);
+  i = 0; /* reset counter */
+  exp = index2exp(fs, sa->laststore);  /* go back to begining of chain */
+  lastsrc = NULL;
+  D(lprintf("lastsrcreg = %d\n", lastsrcreg));
+  while (1) { /* tarverse the chain to dump RHS values */
+    /* get expression to assigm */
+    ExpNode *src = (exp->kind == ESTORE) ? index2exp(fs, exp->aux) : exp;
+    if (exp->u.store.srcreg == -1)
+      lua_assert(src != NULL);
+    if (src != NULL) {
+      /* for N remaining variables, if there are exactly N expressions
+         remaining and they are all nil, do not write them, the entire
+         assignment is just one `nil', which needs to be written */
+      if (i == 0 || src->kind != ENIL || src->aux != lastsrcreg) {
+        if (i != 0)
+          DumpComma(D);
+        dumpexp2(D, fs, src, 0);
+      }
+      lastsrc = src;
+    }
+    else if (ISK(exp->u.store.srcreg)) {
+      if (i != 0)
+        DumpComma(D);
+      dumpRK2(D, fs, exp->u.store.srcreg, exp);
+    }
+    else if (exp->u.store.srcreg != -1 &&
+             test_reg_property(fs, exp->u.store.srcreg, REG_LOCAL)) {
+      if (i != 0)
+        DumpComma(D);
+      dumplocvar2(D,fs,exp->u.store.srcreg);
+    }
+    else {
+      lua_assert(lastsrc != NULL);
+      lua_assert(i > 0);
+      if (lastsrc->kind == EVARARG && lastsrc->info+lastsrc->aux-1 >= i)
+        ; /* vararg has already been emitted */
+      else if (lastsrc->kind == ENIL && lastsrc->aux == lastsrcreg)
+        ; /* invisible nil's */
+      else if (lastsrc->kind == ENIL) {
+        lastsrc->pending = 1;
+        DumpComma(D);
+        dumpexp2(D, fs, lastsrc, 0);
+      }
+    }
+    if (exp->kind == ESTORE)
+      exp = index2exp(fs, exp->u.store.prevstore);
+    else
+      exp = index2exp(fs, exp->previndex);
+    if (exp == NULL) /* end of chain */
+      break;
+    i++;
+  }
+  if (!ISK(lastsrcreg))
+    emitresidualexp2(fs, lastsrcreg+1, lastsrc);
+  DumpSemi(D); /* `;' */
+  flushpendingexp2(fs); /* flush everything */
+  sa->laststore = 0;
 }
 
 
@@ -4793,16 +5132,34 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
 ** holds an active local variable or appending the new expression to the pending
 ** chain
 */
-static ExpNode *addexptoreg2(DFuncState *fs, int reg, ExpNode *exp)
+static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
+                             ExpNode *exp)
 {
   lua_assert(isregvalid(fs, reg));
+  lua_assert(exp->kind != ESTORE);
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
-    pushexp2(fs, reg, exp);
+    int link, lastreg;
+    if (exp->kind == ENIL)
+      lastreg = exp->aux;
+    else if (exp->kind == EVARARG && exp->aux > 1)
+      lastreg = exp->info + exp->aux-2;
+    else
+      lastreg = reg;
+    link = fs->firstfree <= lastreg;
+    if (link) {
+      D(lprintf("updating fs->firstfree from %d to %d\n",
+                fs->firstfree, reg+1));
+      fs->firstfree = lastreg+1;
+    }
+    if (exp->kind == ECALL || exp->kind == ETAILCALL)
+      link = 1;  /* linking is needed to access the called expression */
+    pushexp2(fs, reg, exp, link);
     return exp;
   }
   else {
-    assignexptolocvar2(fs, reg, exp);
-    /*freeexp(fs, exp);*/
+    exp->previndex = sa->laststore;
+    sa->laststore = exp2index(fs, exp);
+    (void)assignexptolocvar2;
     return NULL;
   }
 }
@@ -4874,8 +5231,18 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->aux = b;
       break;
     case OP_MOVE:
-      exp->kind = ELOCAL;
-      exp->aux = b;  /* source register */
+      if (!test_reg_property(fs, b, REG_LOCAL)) {
+        CHECK(fs, sa->openexprkind == -1, "unexpected OP_MOVE that uses a "
+              "temporary register as its source in an open expression");
+        exp->kind = ESTORE;
+        exp->aux = getslotdesc(fs, b)->u.expindex;
+        exp->u.store.rootop = OP_MOVE;
+        exp->u.store.srcreg = b;
+      }
+      else {
+        exp->kind = ELOCAL;
+        exp->aux = b; /* source register */
+      }
       break;
     case OP_UNM:
       exp->kind = EUNOP;
@@ -5057,9 +5424,95 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   }
   else
     exp->dependondest = 0;
+  /* discharge stores now before pushing a new expression node */
+  if (exp->kind != ESTORE)
+    checkdischargestores2(sa,fs);
   exp = newexp(fs);
   *exp = node;
+  sa->lastexpindex = exp2index(fs, exp);
+  if (index2exp(fs, exp->prevregindex))
+    index2exp(fs, exp->prevregindex)->nextregindex = sa->lastexpindex;
+  if (exp->kind == ESTORE) {
+    exp->pending = 0;
+    exp->u.store.prevstore = sa->laststore;
+    sa->laststore = exp2index(fs, exp);
+  }
+  else if (exp->kind == ECALL || exp->kind == ETAILCALL)
+    sa->lastcall = exp2index(fs, exp);  /* update last call node */
   return exp;
+}
+
+
+static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
+                     int b, int c, int bx)
+{
+  ExpNode *exp;
+  int srcreg;
+  int info;
+  switch (o) {
+    case OP_SETFIELD: case OP_SETFIELD_R1:
+      exp = newexp(fs);
+      /* OP_SETFIELD is used as the root if it should be written as a field */
+      if (rawtsvalue(&fs->f->k[b])->tsv.reserved > 0)
+        exp->u.store.rootop = OP_SETTABLE;
+      else
+        exp->u.store.rootop = OP_SETFIELD;
+      b = RKASK(b);
+      goto addstoretable;
+    case OP_SETTABLE:
+    case OP_SETTABLE_BK:
+    case OP_SETTABLE_S:
+    case OP_SETTABLE_S_BK:
+    case OP_SETTABLE_N:
+    case OP_SETTABLE_N_BK:
+      exp = newexp(fs);
+      exp->u.store.rootop = OP_SETTABLE;
+      addstoretable:
+      srcreg = c;
+      info = a;
+      exp->u.store.aux1 = a;  /* table register */
+      exp->u.store.aux2 = b;  /* index register */
+      break;
+    case OP_SETGLOBAL:
+      CHECK(fs, isregvalid(fs, a),
+            "invalid register referenced in OP_SETGLOBAL");
+      exp = newexp(fs);
+      srcreg = a;
+      info = -1;
+      exp->u.store.rootop = OP_SETGLOBAL;
+      exp->u.store.aux1 = bx;
+      exp->u.store.aux2 = 0;
+      break;
+    case OP_SETUPVAL:
+    case OP_SETUPVAL_R1:
+      CHECK(fs, isregvalid(fs, a),
+            "invalid register referenced in OP_SETUPVAL");
+      exp = newexp(fs);
+      srcreg = a;
+      info = -1;
+      exp->u.store.rootop = OP_SETUPVAL;
+      exp->u.store.aux1 = b;
+      exp->u.store.aux2 = 0;
+      break;
+    default:
+      return 0;
+  }
+  exp->kind = ESTORE;
+  exp->info = info;
+  if (ISK(srcreg) || test_reg_property(fs, srcreg, REG_LOCAL))
+    exp->aux = 0;
+  else
+    exp->aux = getslotdesc(fs, srcreg)->u.expindex;
+  exp->line = getline(fs->f, pc);
+  exp->closeparenline = exp->line;
+  exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+  exp->dependondest = 0;
+  exp->leftside = 0;
+  exp->pending = 0;
+  exp->u.store.srcreg = srcreg;
+  exp->u.store.prevstore = sa->laststore;
+  sa->laststore = exp2index(fs, exp);
+  return 1;
 }
 
 
@@ -5239,20 +5692,14 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     if (testAMode(o)) { /* A is a register */
       ExpNode *exp;
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
-      /* update first free */
-      if (a >= sa->firstfree) {
-        D(lprintf("updating sa->firstfree to register (%d)\n", a+1));
-        sa->firstfree = a+1;
-      }
       exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
-        addexptoreg2(fs, a, exp);
         D(lprintf("created new expression node\n"));
         D(lprintf("---------------------------\n"));
         debugexp(fs, exp,0);
         D(lprintf("---------------------------\n"));
-        if (numvars > 0) {
-          D(lprintf("NEW LOCAL VARIABLE\n"));
+        if (exp->kind != ESTORE)
+          addexptoreg2(sa, fs, a, exp);
           /* if the final return the next code and it is mapped to a different
              line than this expression, wrap this expression in parens and put
              the closing paren on the line that the return is mapped to; this
@@ -5263,8 +5710,16 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
             if (retline != exp->line)
               exp->closeparenline = retline;
           }
+        if (numvars > 0) {
+          D(lprintf("NEW LOCAL VARIABLE\n"));
           initlocvars2(fs, checkfirstexp(fs)->info, numvars);
           /*dischargefromreg2(fs, a);*/ (void)dischargefromreg2;
+        }
+      }
+      else {  /* an A-mode instruction that doesn't clobber A */
+        if (addstore2(sa, fs, pc, o, a, b, c, bx) == 0) {
+          /* not a store instruction */
+          checkdischargestores2(sa, fs);
         }
       }
     }

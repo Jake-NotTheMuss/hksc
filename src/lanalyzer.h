@@ -208,6 +208,18 @@ typedef struct ExpNode {
       int bindex, cindex;
       int isfield;  /* true if the emitter should write it as a field */
     } indexed;
+    struct {
+      OpCode rootop;  /* the `root' opcode (without R1, BK, S or N suffixes)
+                         ROOTOP serves as a subtype for ESTORE */
+      int prevstore;  /* exp index of previous L-value in the assignment list */
+      int srcreg;  /* the source register to store (because the source
+                      expression may be NULL in the case of OP_LOADNIL or 
+                      OP_VARARG) */
+      int aux1;  /* table register for OP_SETTABLE family
+                    upvalue index for OP_SETUPVAL
+                    K index for OP_SETGLOBAL */
+      int aux2;  /* key RK operand for OP_SETTABLE family */
+    } store;
   } u;
   int previndex;  /* stack index of previous ExpNode for its own register */
   int prevregindex;  /* stack index of ExpNode in the previous register */
