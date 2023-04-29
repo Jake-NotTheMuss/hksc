@@ -4667,6 +4667,7 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
     if (exp == NULL) {
       if (lastexp->kind == ENIL && lastexp->aux >= i) {
         exp = lastexp;
+        exp->pending = 1;
         goto dumpresidual;
       }
       break; /* todo: is there any other case where EXP can be NULL? */
@@ -5167,6 +5168,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   if (seenfirstexp == 0) {
     /* no expressions have been dumped, but the items in the hold need to be
        discharged and the line needs to be updated */
+    firstexp->pending = 0;
     predumpexp2(D,fs,firstexp);
     postdumpexp2(D,fs,firstexp);
   }
@@ -5189,6 +5191,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
       if (exp == NULL) {
         if (lastexp->kind == ENIL && lastexp->aux >= i) {
           exp = lastexp;
+          exp->pending = 1;
           goto dumpresidual;
         }
         break; /* todo: is there any other case where EXP can be NULL? */
