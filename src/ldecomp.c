@@ -5015,6 +5015,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
       DecompileFunction(D,f);
     }
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
+#if 0
     /* todo: make the line number of OP_CLOSURE will be the last line of the
        closure, so make sure that is handled correctly when updating the line */
     if (o == OP_CLOSURE) { /* nested closure? */
@@ -5042,7 +5043,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
       lua_assert(pc < endpc);
       /*continue;*/
     }
-    /*updateline2(fs, pc);*/
+#endif
     /* todo: need to check if this instruction begins preparation code:
        the following properties need to be checked:
        INS_PRECALL
