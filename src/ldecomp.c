@@ -1640,6 +1640,102 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   newopenexpr1(fs, 0, FORLISTPREP);
 }
 
+
+/*
+** setlistprep -> OP_NEWTABLE ... OP_SETLIST
+** Marks the start of for-list-loop preparation code.
+*/
+static void setlistprep1(CodeAnalyzer *ca, DFuncState *fs)
+{
+  const Instruction *code = ca->code;
+  int firstreg; /* first register used in OP_SETLIST */
+  int endpc;
+  stat1commondecl(fs);
+  {
+    Instruction setlist;
+    lua_assert(ca->pc >= 0);
+    setlist = code[ca->pc];
+    lua_assert(GET_OPCODE(setlist) == OP_SETLIST);
+    firstreg = GETARG_A(setlist);
+    endpc = ca->pc--;
+  }
+  encounteredstat1("setlist prep");
+  for (; ca->pc > 0; ca->pc--) {
+    int pc = ca->pc;
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    printinsn1(pc,i,"setlistprep1");
+    switch (o) {
+      STAT1_CASE_CALL(marksetlist)
+      STAT1_CASE_CONCAT
+      case OP_NEWTABLE:
+        if (a == firstreg) {
+          marksetlist:
+          newopenexpr1(fs, pc, SETLISTPREP);
+          leavingstat1("setlist prep");
+          return;
+        }
+        break;
+      default:
+      poststat:
+        break;
+    }
+  }
+  newopenexpr1(fs, 0, SETLISTPREP);
+  leavingstat1("setlist prep");
+}
+
+
+/*
+** finds the earliest possible endpc for a SETLIST open expression with only
+** hash items (the exact number cannot be known if operand C is graeter than 16
+** due to the conversion with `luaO_fb2int')
+*/
+static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
+                              int minhashsize, int reg)
+{
+  OpenExpr dummy;
+  const Instruction *code = ca->code;
+  int pc;  /* iterator */
+  int numchildren = 0;  /* number of child OpenExprs found so far */
+  int numhashitems = 0;  /* number of hash items found so far */
+  int openexpridx = fs->nopencalls-2; /* -2 to skip E */
+  OpenExpr *next = (openexpridx >= 0) ? &fs->a->opencalls[openexpridx] : &dummy;
+  dummy.startpc = -1;
+  dummy.endpc = -1;
+  lua_assert(minhashsize > 0);
+  lua_assert(e != NULL);
+  lua_assert(ispcvalid(fs, e->startpc));
+  lua_assert(GET_OPCODE(code[e->startpc]) == OP_NEWTABLE);
+  lua_assert(GETARG_B(code[e->startpc]) == 0);
+  for (pc = e->startpc+1; pc < fs->f->sizecode-1; pc++) {
+    Instruction i;
+    OpCode o;
+    int a;
+    if (pc == next->startpc) { /* skip children */
+      numchildren+= next->numchildren+1;
+      pc = next->endpc;
+      openexpridx--;
+      next = (openexpridx >= 0) ? &fs->a->opencalls[openexpridx] : &dummy;
+      continue;
+    }
+    i = code[pc];
+    o = GET_OPCODE(i);
+    a = GETARG_A(i);
+    if ((o == OP_SETFIELD || o == OP_SETFIELD_R1) && a == reg) {
+      numhashitems++;
+      if (numhashitems == minhashsize)
+        break;
+    }
+    else if (o == OP_MOVE)
+      newregnote(fs, REG_NOTE_NONRELOC, pc, GETARG_B(i));
+  }
+  e->endpc = pc;
+  e->numchildren = numchildren;
+}
+
+
 #ifdef LUA_DEBUG
 #define encountered1(what,pc) lprintf("  encountered a " what " loop starting" \
 " at (%d)\n", (pc)+1)
@@ -3326,6 +3422,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_RETURN: /* a return expression */
         retstat1(ca, fs);
         goto poststat;
+      case OP_SETLIST:
+        setlistprep1(ca, fs);
+        goto poststat;
       case OP_TESTSET: /* a testset expression */
         if (ca->testset.reg == -1)
           ca->testset.reg = b;
@@ -3345,6 +3444,17 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           CHECK(fs, bx >= 0 && bx < fs->f->nups, "OP_DATA indexes invalid "
                 "upvalue");
         break;
+      case OP_NEWTABLE:
+        /* table constructors with only hash-items will not emit OP_SETLIST, nor
+           empty table constructors, so they are detected here */
+        CHECK(fs, b == 0, "no OP_SETLIST found for OP_NEWTABLE even though "
+                "OP_NEWTABLE has non-zero amount of list items");
+        if (c)
+          scanforhashitems1(ca, fs, newopenexpr(fs, pc, -1, SETLISTPREP, -1),
+                            luaO_fb2int(c-1)+1, a);
+        else
+          newopenexpr(fs, pc, pc, EMPTYTABLE, 0);
+        /* fallthrough */
       poststat: /* update variables after calls which change the pc */
         pc = ca->pc;
         i = code[pc];

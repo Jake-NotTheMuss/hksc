@@ -118,6 +118,9 @@ typedef enum {
   CONCATPREP,  /* concat preparation code */
   FORNUMPREP,  /* numeric for-loop preparation code */
   FORLISTPREP,  /* list for-loop preparation code */
+  SETLISTPREP,  /* code evaluating items in a table constructor */
+  EMPTYTABLE,  /* empty table constructors are their own category because they
+                  may or may not clobber an open register */
   RETPREP  /* return statement preparation code */
 } openexptype;
 
