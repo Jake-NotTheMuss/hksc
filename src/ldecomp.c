@@ -122,7 +122,7 @@ typedef struct DFuncState {
   int sizelocvars;
   int sizeupvalues;
   int instatement;
-  int pc;  /* current pc */
+  int lastclosurepc;  /* PC of last OP_CLOSURE */
   int firstclob;  /* first pc that clobbers register A */
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int upvalcount;  /* number of upvalues encountered so far */
@@ -656,6 +656,42 @@ static void updatefirstclob1(DFuncState *fs, int pc, int reg)
 }
 
 
+static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
+{
+  const Instruction *code;
+  int i, pc;
+  lua_assert(parent != NULL && parent->f != NULL);
+  code = parent->f->code;
+  lua_assert(ispcvalid(parent, parent->lastclosurepc));
+  lua_assert(GET_OPCODE(code[parent->lastclosurepc]) == OP_CLOSURE);
+  pc = parent->lastclosurepc+1;
+  i = 0;
+  while (1) {
+    TString *upvalue;
+    int a, bx;
+    Instruction insn = code[pc++];
+    OpCode op = GET_OPCODE(insn);
+    if (op != OP_DATA)
+      break;
+    lua_assert(i < fs->sizeupvalues);
+    a = GETARG_A(insn);
+    bx = GETARG_Bx(insn);
+    if (a == 1) {
+      lua_assert(isregvalid(parent, bx));
+      lua_assert(test_reg_property(parent, bx, REG_LOCAL));
+      upvalue = getslotdesc(parent, bx)->u.locvar->varname;
+    }
+    else {
+      lua_assert(bx < parent->sizeupvalues);
+      upvalue = parent->upvalues[bx];
+    }
+    fs->upvalues[i++] = upvalue;
+  }
+  CHECK(fs, i == fs->sizeupvalues, "not enough OP_DATA codes for number of "
+        "upvalues");
+}
+
+
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
@@ -685,10 +721,14 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
     fs->sizelocvars = f->maxstacksize;
     a->sizelocvars = fs->sizelocvars;
     a->locvars = luaM_newvector(H, a->sizelocvars, struct LocVar);
+    memset(a->locvars, 0, a->sizelocvars * sizeof(struct LocVar));
     fs->locvars = a->locvars;
     fs->sizeupvalues = f->nups;
     a->sizeupvalues = fs->sizeupvalues;
     a->upvalues = luaM_newvector(H, a->sizeupvalues, TString *);
+    memset(a->upvalues, 0, a->sizeupvalues * sizeof(TString *));
+    fs->upvalues = a->upvalues;
+    fs->sizeupvalues = a->sizeupvalues;
   }
   fs->upvalcount = 0;
   fs->nopencalls = 0;
@@ -706,6 +746,8 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->expstack.total = 4;
   a->expstack.used = 0;
   a->expstack.stk = luaM_newvector(H, a->expstack.total, ExpNode);
+  if (fs->prev != NULL)
+    getupvaluesfromparent(fs, fs->prev);
 }
 
 
