@@ -4075,6 +4075,8 @@ struct HoldItem {
   lu_byte addtrailingspace;
 };
 
+
+#define addliteralholditem2(D,i,s,a) addholditem2(D,i,"" s,sizeof(s)-1,a)
 /*
 ** `addholditem2' appends a hold item to the chain
 */
@@ -4082,7 +4084,10 @@ static void addholditem2(DecompState *D, struct HoldItem *item,
                          const char *str, size_t len, lu_byte addtrailingspace)
 {
   item->str = str;
-  item->len = (len != 0) ? len : strlen(str);
+  if (len == 0)
+    return;  /* don't add the string if it is empty */
+  lua_assert(str != NULL);
+  item->len = len;
   item->addtrailingspace = addtrailingspace;
   item->next = NULL;
   if (D->holdlast != NULL)
@@ -4103,8 +4108,7 @@ static void dischargeholditems2(DecompState *D)
   while (item != NULL) {
     CheckSpaceNeeded(D);
     DumpBlock(item->str, item->len, D);
-    if (item->addtrailingspace)
-      D->needspace = 1;
+    D->needspace = item->addtrailingspace;
     item = item->next;
   }
   D->holdfirst = D->holdlast = NULL;
@@ -4384,7 +4388,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       if (o2 != NULL && o2->line != exp->line)
         o2->closeparenline = exp->line;
       if (needparen || needparenforlineinfo)
-        addholditem2(D, &holdparen, "(", 0, 0);
+        addliteralholditem2(D, &holdparen, "(", 0);
       if (b == -1)
         /* discharge pending expression in B */
         dumpexpoperand2(D, fs, o1, exp, priority[op].left);
@@ -4527,7 +4531,7 @@ static void assignexptolocvar2(DFuncState *fs, int reg, ExpNode *exp)
   check_reg_property(fs, reg, REG_LOCAL);
   var = getslotdesc(fs, reg)->u.locvar;
   addholditem2(fs->D, &lhs, getstr(var->varname), var->varname->tsv.len, 0);
-  addholditem2(fs->D, &eq, " = ", 0, 0);
+  addliteralholditem2(fs->D, &eq, " = ", 0);
   dumpexp2(fs->D, fs, exp, 0);
   emitresidualexp2(fs, exp->info+1, exp, gettopexp(fs)-1);
   DumpSemi(fs->D);
