@@ -4552,17 +4552,25 @@ static void setreglocal2(DFuncState *fs, int reg, struct LocVar *var)
 }
 
 
-#define addliteral2buff(H,b,str) addstring2buff(H,b,"" str, sizeof(str)-1)
+#define addliteral2buff(H,b,str) addstr2buff(H,b,"" str, sizeof(str)-1)
+#define addspace2buff(H,b,D)  \
+  if ((D)->needspace && luaZ_bufflen(b)) addliteral2buff(H,b," ")
 
-static void addstring2buff(hksc_State *H, Mbuffer *b, const char *str,
-                           size_t len)
+static void addstr2buff(hksc_State *H, Mbuffer *b, const char *str, size_t len)
 {
   size_t size = luaZ_sizebuffer(b);
   size_t pos = luaZ_bufflen(b);
+#ifdef LUA_DEBUG
+  len++;  /* add NULL if debugging to the read contents of the buffer easier */
+#endif /* LUA_DEBUG */
   if (pos + len > size) {
     size = pos + len;
     luaZ_resizebuffer(H, b, size);
   }
+#ifdef LUA_DEBUG
+  len--;
+  *(luaZ_buffer(b)+pos+len) = '\0';
+#endif /* LUA_DEBUG */
   memcpy(luaZ_buffer(b)+pos, str, len);
   pos += len;
   luaZ_bufflen(b) = pos;
@@ -4597,7 +4605,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
     var = &fs->locvars[fs->nlocvars+(i-firstreg)];
     lua_assert(var->varname != NULL);
     len = var->varname->tsv.len;
-    addstring2buff(H, b, getstr(var->varname), len);
+    addstr2buff(H, b, getstr(var->varname), len);
     if (i != lastreg)
       addliteral2buff(H, b, ", ");
   }
