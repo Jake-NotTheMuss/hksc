@@ -122,8 +122,13 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
 }
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
+  size_t n;
   (void)H;
-  return (fwrite(p,size,1,(FILE*)u)!=1) && (size!=0);
+  n = fwrite(p,size,1,(FILE*)u);
+#ifdef LUA_DEBUG
+  fflush((FILE*)u);
+#endif /* LUA_DEBUG */
+  return (n!=1) && (size!=0);
 }
 
 /* push error string "cannot <what> <filename>" */
