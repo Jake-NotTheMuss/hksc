@@ -27,7 +27,7 @@ typedef enum {
   VLOCAL,	/* info = local register */
   VUPVAL,       /* info = index of upvalue in `upvalues' */
   VGLOBAL,	/* info = index of table; aux = index of global name in `k' */
-  VSLOT,  /* ??? */
+  VSLOT,  /* info = struct register */
   VINDEXED,	/* info = table register; aux = index register (or `k') */
   VJMP,		/* info = instruction pc */
   VRELOCABLE,	/* info = instruction pc */

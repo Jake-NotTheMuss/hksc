@@ -1125,6 +1125,12 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
         lh->v.u.s.aux = extra;  /* previous assignment will use safe copy */
       }
     }
+    else if (lh->v.k == VSLOT) {
+      if (lh->v.u.s.info == v->u.s.info) {  /* conflict? */
+        conflict = 1;
+        lh->v.u.s.info = extra;  /* previous assignment will use safe copy */
+      }
+    }
   }
   if (conflict) {
     luaK_codeABC(fs, OP_MOVE, fs->freereg, v->u.s.info, 0);  /* make copy */
