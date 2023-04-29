@@ -4241,11 +4241,28 @@ static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
 
 static void flushpendingexp2(DFuncState *fs)
 {
+  int oldfirstfree = fs->firstfree;
+  int newfirstfree = fs->nlocvars;
+#ifdef LUA_DEBUG
+  int i;
+  for (i = 0; i < fs->a->expstack.used; i++) {
+    ExpNode *exp = &fs->a->expstack.stk[i];
+    lua_assert(exp->pending == 0);
+  }
+#endif /* LUA_DEBUG */
   fs->a->expstack.used = 0;
   D(lprintf("updating fs->firstfree from %d to %d\n", fs->firstfree,
             fs->nlocvars));
+  lua_assert(oldfirstfree >= newfirstfree);
+  /* firstfree does not need to be an accessible slot as it can be equal to
+     maxstacksize */
+  if (isregvalid(fs, newfirstfree))
+  /* clear all pending data */
+  memset(getslotdesc(fs, newfirstfree), 0,
+         (oldfirstfree-newfirstfree) * sizeof(SlotDesc));
   fs->firstfree = newfirstfree;
 }
+
 
 static ExpNode *popexp2(DFuncState *fs, int reg)
 {
@@ -4281,6 +4298,8 @@ static void dumpRK2(DecompState *D, DFuncState *fs, int reg, ExpNode *op)
 {
   if (op != NULL)
     predumpexp2(D,fs,op);
+  else
+    dischargeholditems2(D);
   if (ISK(reg)) {
     CheckSpaceNeeded(D);
     DumpConstant(fs, INDEXK(reg), D);
@@ -4557,11 +4576,14 @@ static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
 }
 
 
-static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp,
-                             ExpNode *limit)
+/*
+** emits extra values in an assigned expression list
+*/
+static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
 {
   ExpNode *firstexp = lastexp;
   DecompState *D = fs->D;
+  int firstfree = fs->firstfree;
   int i = reg;
   lua_assert(lastexp != NULL);
   /* dump any extra expressions that won't be assigned to anything; this is
@@ -4586,7 +4608,7 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp,
      OP_MOVE and the expression generated from OP_DIV are not related to each
      other, the line-mapping differences have to be accounted for here, and
      handled before dumping the final expression */
-  for (; isregvalid(fs, i); i++) {
+  for (; i < firstfree; i++) {
     ExpNode *exp = getexpinreg2(fs, i);
     if (exp == NULL) {
       if (lastexp->kind == ENIL && lastexp->aux >= i) {
@@ -4597,9 +4619,10 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp,
     }
     else if (exp->pending) {
       dumpresidual:
-      if (exp == limit) { /* this is the last expression */
+      if (i+1 == firstfree) { /* this is the last expression */
         /* this is the last expression, check if parens need to be added to
            preserve line info */
+        lua_assert(firstexp != NULL && exp != NULL);
         if (firstexp->line != exp->line)
           exp->closeparenline = firstexp->line;
       }
@@ -4633,10 +4656,11 @@ static void assignexptolocvar2(DFuncState *fs, int reg, ExpNode *exp)
   addholditem2(fs->D, &lhs, getstr(var->varname), var->varname->tsv.len, 0);
   addliteralholditem2(fs->D, &eq, " = ", 0);
   dumpexp2(fs->D, fs, exp, 0);
-  emitresidualexp2(fs, exp->info+1, exp, gettopexp(fs)-1);
+  emitresidualexp2(fs, exp->info+1, exp);
   DumpSemi(fs->D);
   flushpendingexp2(fs);
 }
+
 
 
 /*
@@ -5093,6 +5117,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
     postdumpexp2(D,fs,firstexp);
   }
   else {
+    int firstfree = fs->firstfree;
     lua_assert(lastexp != NULL);
     /* dump any extra expressions that won't be assigned to anything; this is
        needed an a case such as the following example:
@@ -5105,7 +5130,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
           5 [1]  RETURN    0 1
        The fourth OP_LOADK is still generated, and needs to be reflected in the
        decomp */
-    for (; isregvalid(fs, i); i++) {
+    for (; i < firstfree; i++) {
       ExpNode *exp = getexpinreg2(fs, i);
       if (exp == NULL) {
         if (lastexp->kind == ENIL && lastexp->aux >= i) {
@@ -5119,6 +5144,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
         DumpComma(D);
         dumpexp2(D, fs, exp, 0);
         lastexp = exp;
+
       }
     }
   }
