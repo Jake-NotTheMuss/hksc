@@ -4373,13 +4373,20 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       ExpNode *o; /* the operand if it is a pending expression */
       UnOpr op = exp->u.unop.op;
       int b = exp->u.unop.b; /* arg B from the instruction */
+      int needparen = (UNARY_PRIORITY < limit) || exp->u.unop.needinnerparen ||
+                      needparenforlineinfo;
       struct HoldItem holdop;
       const char *unopstring = getunoprstring(op);
+      if (needparen)
+        addliteralholditem2(D, &holdparen, "(", 0);
       addholditem2(D, &holdop, unopstring, strlen(unopstring), op == OPR_NOT);
       /* b is set to (-1) to tell this function to use `bindex' instead to index
          the pending expression in the expression stack */
       o = (b == -1) ? index2exp(fs, exp->u.unop.bindex) : NULL;
       /* see explanation `case EBINOP' */
+      if (op == OPR_MINUS && o != NULL && o->kind == EUNOP &&
+          o->u.unop.op == OPR_MINUS)
+        o->u.unop.needinnerparen = 1;
       if (o != NULL && o->line != exp->line)
         o->closeparenline = exp->line;
       /* dump operand */
@@ -4387,6 +4394,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         dumpexpoperand2(D, fs, o, exp, UNARY_PRIORITY);
       else /* dump constant or local variable name */
         dumpRK2(D, fs, b, exp);
+      if (needparen)
+        DumpLiteral(")",D);
       D->needspace = 1;
       break;
     }
@@ -5427,6 +5436,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   }
   else if (exp->kind == EUNOP) {
     exp->dependondest = (a == b);
+    exp->u.unop.needinnerparen = 0;
     /* B must be a register */
     if (!test_reg_property(fs, b, REG_LOCAL)) {
       exp->u.unop.b = -1;

@@ -192,6 +192,7 @@ typedef struct ExpNode {
     struct {
       int b;  /* B operand from the instruction */
       int bindex;
+      int needinnerparen;
       UnOpr op;
     } unop;
     struct {
