@@ -544,7 +544,7 @@ static ExpNode *gettopexp(DFuncState *fs)
 
 
 #ifdef LUA_DEBUG
-static const char *getunopstring(UnOpr op);
+static const char *getunoprstring(UnOpr op);
 static const char *getbinoprstring(BinOpr op);
 
 static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
@@ -619,7 +619,7 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
               exp->u.binop.b, exp->u.binop.c);
       break;
     case EUNOP:
-      lprintf("[UNOP %s  %d]", getunopstring(exp->u.unop.op),
+      lprintf("[UNOP %s  %d]", getunoprstring(exp->u.unop.op),
               exp->u.unop.b);
       break;
     default:
@@ -3999,19 +3999,19 @@ static void updateline2(DFuncState *fs, int pc)
 */
 
 
-static const char *getunopstring(UnOpr op)
+static const char *getunoprstring(UnOpr op)
 {
-  static const char *const unopstrings[] = {
+  static const char *const unoprstrings[] = {
     "-", "not", "#"
   };
   lua_assert(op != OPR_NOUNOPR);
-  return unopstrings[op];
+  return unoprstrings[op];
 }
 
 
 static const char *getbinoprstring(BinOpr op)
 {
-  static const char *const binopstrings[] = { /* ORDER OPR */
+  static const char *const binoprstrings[] = { /* ORDER OPR */
     "+", "-", "*", "/", "%", "^", "..",
 #ifdef LUA_CODT7
     "<<", ">>", "&", "|",
@@ -4020,7 +4020,7 @@ static const char *getbinoprstring(BinOpr op)
     "and", "or"
   };
   lua_assert(op != OPR_NOBINOPR);
-  return binopstrings[op];
+  return binoprstrings[op];
 }
 
 
@@ -4318,7 +4318,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       UnOpr op = exp->u.unop.op;
       int b = exp->u.unop.b; /* arg B from the instruction */
       struct HoldItem holdop;
-      addholditem2(D, &holdop, getunopstring(op), 0, op == OPR_NOT);
+      const char *unopstring = getunoprstring(op);
+      addholditem2(D, &holdop, unopstring, strlen(unopstring), op == OPR_NOT);
       /* b is set to (-1) to tell this function to use `bindex' instead to index
          the pending expression in the expression stack */
       o = (b == -1) ? index2exp(fs, exp->u.unop.bindex) : NULL;
