@@ -125,6 +125,8 @@ typedef struct DFuncState {
   int lastclosurepc;  /* PC of last OP_CLOSURE */
   int firstclob;  /* first pc that clobbers register A */
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
+  int firstfree;
+  int lastfirstfree;
   int upvalcount;  /* number of upvalues encountered so far */
   int nopencalls;  /* number of OpenExpr entries created */
   int nregnotes;  /* number of RegNote entries created */
@@ -735,6 +737,8 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->nregnotes = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
+  fs->firstfree = -1;
+  fs->lastfirstfree = -1;
   /* allocate vectors for instruction and register properties */
   a->sizeinsproperties = f->sizecode; /* flags for each instruction */
   a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
@@ -3657,7 +3661,6 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 
 typedef struct StackAnalyzer {
   const Instruction *code;
-  int firstfree;
   int pc;
   int sizecode;
   int maxstacksize;
@@ -3748,7 +3751,7 @@ static void addlocvar2reg2(DFuncState *fs, int startpc, int endpc, int param,
 ** find the initial first free register for a function and initialize register
 ** flags for the non-free registers
 */
-static void initfirstfree2(StackAnalyzer *sa, DFuncState *fs, const Proto *f)
+static void initfirstfree2(DFuncState *fs, const Proto *f)
 {
   int i;
   int firstfree;
@@ -3778,12 +3781,12 @@ static void initfirstfree2(StackAnalyzer *sa, DFuncState *fs, const Proto *f)
     addlocvar2reg2(fs, 0, f->sizecode-1, 1, i); /* add param */
   for (; i < firstfree; i++)
     addlocvar2reg2(fs, 0, f->sizecode-1, 0, i); /* add local variable */
-  sa->firstfree = firstfree;
+  fs->firstfree = firstfree;
 }
 
 
 #else
-#define initfirstfree2(sa,fs,f) ((sa)->firstfree = 0)
+#define initfirstfree2(fs,f) ((fs)->firstfree = 0)
 #endif /* DECOMP_HAVE_PASS2 */
 
 
@@ -5057,7 +5060,8 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
   sa.lastexp = NULL;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BBL_FUNCTION);
-  initfirstfree2(&sa, fs, f); /* set the first free reg for this function */
+  initfirstfree2(fs, f); /* set the first free reg for this function */
+  fs->lastfirstfree = fs->firstfree;
   bbl2(&sa, fs, functionblock);
 #ifdef LUA_DEBUG
   { /* debug: make sure all instructions were visited */
