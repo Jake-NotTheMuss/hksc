@@ -4413,6 +4413,92 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       D->needspace = 1;
       break;
     }
+    case EINDEXED: {
+      ExpNode *tab, *key;
+      int b = exp->u.indexed.b;
+      int c = exp->u.indexed.c;
+      struct HoldItem holditem; /* dot or open-brace */
+      tab = (b == -1) ? index2exp(fs, exp->u.indexed.bindex) : NULL;
+      key = (c == -1) ? index2exp(fs, exp->u.indexed.cindex) : NULL;
+      if (needparenforlineinfo)
+        addliteralholditem2(D, &holdparen, "(", 0);
+      if (b == -1)
+        dumpexpoperand2(D, fs, tab, exp, SUBEXPR_PRIORITY);
+      else
+        dumpRK2(D, fs, b, exp);
+      if (exp->u.indexed.isfield)
+        addliteralholditem2(D, &holditem, ".", 0);
+      else
+        addliteralholditem2(D, &holditem, "[", 0);
+      D->needspace = 0;
+      if (c == -1)
+        dumpexpoperand2(D, fs, key, exp, 0);
+      else
+        dumpRK2(D, fs, c, exp);
+      if (exp->u.indexed.isfield == 0)
+        DumpLiteral("]",D);
+      if (needparenforlineinfo)
+        dumpcloseparen2(D, fs, exp);
+      break;
+    }
+    case ECALL: {
+      ExpNode *firstexp;
+      ExpNode *nextexp, *lastexp;
+      int funcreg = exp->info;
+      int narg = exp->u.call.narg;
+      int i;
+      firstexp = index2exp(fs, exp->previndex);
+      lastexp = index2exp(fs, exp->aux);
+      printf("funcreg = %d\n", funcreg);
+      printf("nargs = %d\n", narg);
+      lua_assert(firstexp != NULL);  /* there must be an expression to call */
+      if (needparenforlineinfo)
+        addliteralholditem2(D, &holdparen, "(", 0);
+      dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);
+      DumpLiteral("(",D);
+      D->needspace = 0;
+      nextexp = firstexp;
+      for (i = 0; i < narg; i++) {
+        if (i != 0)
+          DumpLiteral(",",D);
+        nextexp = index2exp(fs, nextexp->nextregindex);
+        if (nextexp == NULL)
+          break;
+        dumpexp2(D, fs, nextexp, 0);
+      }
+      DumpLiteral(")",D);
+      if (needparenforlineinfo)
+        dumpcloseparen2(D, fs, exp);
+      D->needspace = 1;  /* will not always be set */
+      break;
+    }
+    case ECONCAT: {
+      ExpNode *nextexp, *lastexp;
+      int firstindex = exp->u.concat.firstindex;
+      int lastindex = exp->u.concat.lastindex;
+      int needparen;
+      if (exp->leftside)
+        needparen = (priority[OPR_CONCAT].right < limit);
+      else
+        needparen = (priority[OPR_CONCAT].left <= limit);
+      needparen = (needparen || needparenforlineinfo);
+      nextexp = index2exp(fs, firstindex);
+      lastexp = index2exp(fs, lastindex);
+      if (needparen)
+        addliteralholditem2(D, &holdparen, "(", 0);
+      dumpexp2(D, fs, nextexp, priority[OPR_CONCAT].left);
+      while (nextexp != lastexp) {
+        nextexp = index2exp(fs, nextexp->nextregindex);
+        lua_assert(nextexp != NULL);
+        CheckSpaceNeeded(D);
+        DumpBinOpr(OPR_CONCAT,D);
+        D->needspace = 1;
+        dumpexp2(D, fs, nextexp, priority[OPR_CONCAT].left);
+      }
+      if (needparen)
+        dumpcloseparen2(D, fs, exp);
+      break;
+    }
     case EUPVAL:
     case EGLOBAL:
       dumpexpvar2(D,fs,exp);
@@ -4729,10 +4815,15 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   ExpNode *exp = &node;
   const Proto *f = fs->f;
   lua_assert(ispcvalid(fs, pc));
-  UNUSED(sa);
   (void)DumpStringf;
   exp->info = a;
+  exp->aux = 0;
   exp->previndex = exp2index(fs, NULL);
+  if (a == 0)
+    exp->prevregindex = exp2index(fs, NULL);
+  else
+    exp->prevregindex = exp2index(fs, getexpinreg2(fs, a-1));
+  exp->nextregindex = exp2index(fs, NULL);
   exp->line = getline(f,pc);
   exp->closeparenline = exp->line;
   exp->leftside = 0;
@@ -4782,8 +4873,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->kind = EVARARG;
       exp->aux = b;
       break;
-    case OP_GETFIELD: case OP_GETFIELD_R1:
-      break; /* todo */
     case OP_MOVE:
       exp->kind = ELOCAL;
       exp->aux = b;  /* source register */
@@ -4809,13 +4898,57 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     case OP_SELF:
       /* todo */
       break;
+    case OP_GETFIELD: case OP_GETFIELD_R1:
+      exp->kind = EINDEXED;
+      exp->u.indexed.b = RKASK(b);
+      exp->u.indexed.c = c;
+      /* write as a field unless the field is a reserved word */
+      exp->u.indexed.isfield = (rawtsvalue(&fs->f->k[c])->tsv.reserved == 0);
+      break;
     case OP_GETTABLE_S:
     case OP_GETTABLE_N:
     case OP_GETTABLE:
-      /* todo */
+      exp->kind = EINDEXED;
+      exp->u.indexed.b = b;
+      exp->u.indexed.c = c;
+      exp->u.indexed.isfield = 0;
+      break;
+    case OP_CALL:
+    case OP_CALL_I:
+    case OP_CALL_I_R1:
+    case OP_CALL_C:
+    case OP_CALL_M:
+      exp->kind = ECALL;
+      goto setcallinfo;
+    case OP_TAILCALL:
+    case OP_TAILCALL_I:
+    case OP_TAILCALL_I_R1:
+    case OP_TAILCALL_C:
+    case OP_TAILCALL_M:
+      exp->kind = ETAILCALL;
+      CHECK(fs, sa->openexprkind == -1, "unexpected OP_TAILCALL in open "
+            " expression");
+      setcallinfo:
+      exp->u.call.op = o;
+      exp->u.call.nret = c-1;
+      exp->u.call.narg = b-1;
+      if (exp->u.call.narg == -1) {
+        ExpNode *lastexp = index2exp(fs, sa->lastexpindex);
+        if (lastexp == NULL)
+          exp->u.call.narg = 0;
+        else
+          exp->u.call.narg = lastexp->info-a;
+      }
+      if (exp->u.call.nret == 0) {
+        CHECK(fs, sa->openexprkind == -1, "unexpected call statement in open "
+              "expression (call returns 0 values)");
+      }
+      exp->aux = exp2index(fs, getexpinreg2(fs, a+exp->u.call.narg));
       break;
     case OP_CONCAT:
-      /* todo */
+      exp->kind = ECONCAT;
+      exp->u.concat.firstindex = exp2index(fs, getexpinreg2(fs, b));
+      exp->u.concat.lastindex =exp2index(fs, getexpinreg2(fs, c));
       break;
     /* arithmetic operations */
     case OP_ADD: case OP_ADD_BK:
@@ -4905,6 +5038,21 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     if (!test_reg_property(fs, b, REG_LOCAL)) {
       exp->u.unop.b = -1;
       exp->u.unop.bindex = getslotdesc(fs, b)->u.expindex;
+    }
+  }
+  else if (exp->kind == EINDEXED) {
+    exp->dependondest = (a == b || a == c);
+    CHECK(fs, isregvalid(fs, b), "invalid register operand indexed table");
+    if (!test_reg_property(fs, b, REG_LOCAL)) {
+      ExpNode *o;
+      exp->u.indexed.b = -1;
+      exp->u.indexed.bindex = getslotdesc(fs, b)->u.expindex;
+      o = index2exp(fs, exp->u.indexed.bindex);
+      /*if (o) o->isreferenced = 1;*/
+    }
+    if (!ISK(c) && !test_reg_property(fs, c, REG_LOCAL)) {
+      exp->u.indexed.c = -1;
+      exp->u.indexed.cindex = getslotdesc(fs, c)->u.expindex;
     }
   }
   else

@@ -167,27 +167,10 @@ typedef enum {
   EINDEXED,  /* a table index */
   EBINOP,  /* a binary operation */
   EUNOP,  /* a unary operation */
-
-  EDUMMY
-#if 0
-  VVOID,  /* no value */
-  VNIL,
-  VTRUE,
-  VFALSE,
-  VK,   /* info = index of constant in `k' */
-  VKNUM,  /* nval = numerical value */
-  VLOCAL, /* info = local register */
-  VUPVAL,       /* info = index of upvalue in `upvalues' */
-  VGLOBAL,  /* info = index of table; aux = index of global name in `k' */
-  VSLOT,  /* ??? */
-  VINDEXED, /* info = table register; aux = index register (or `k') */
-  VJMP,   /* info = instruction pc */
-  VRELOCABLE, /* info = instruction pc */
-  VNONRELOC,  /* info = result register */
-  VCALL,  /* info = instruction pc */
-  VVARARG,  /* info = instruction pc */
-  VINTRINSIC  /* ??? */
-#endif
+  ECALL,  /* a function call */
+  ETAILCALL,  /* a tail function call */
+  ECONCAT,  /* a concatenation */
+  ESTORE  /* encodes an L-value in an assignment list */
 } expnodekind;
 
 
@@ -211,8 +194,24 @@ typedef struct ExpNode {
       int bindex;
       UnOpr op;
     } unop;
+    struct {
+      OpCode op;  /* which call opcode */
+      int nret;  /* number of return values to use */
+      int narg;  /* number of arguments passed */
+    } call;
+    struct {
+      /* concatenations always push operands to the stack */
+      int firstindex, lastindex;  /* index of first and last expression */
+    } concat;
+    struct {
+      int b, c;  /* B is the table, C is the key */
+      int bindex, cindex;
+      int isfield;  /* true if the emitter should write it as a field */
+    } indexed;
   } u;
-  int previndex;  /* stack index of previous ExpNode for its register */
+  int previndex;  /* stack index of previous ExpNode for its own register */
+  int prevregindex;  /* stack index of ExpNode in the previous register */
+  int nextregindex;  /* stack index of ExpNode in the next register */
   /*int type_checked;*/  /* if type-checked, which type */
   int info;
   int aux;
