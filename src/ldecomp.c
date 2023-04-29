@@ -3657,25 +3657,23 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
 }
 
 
-#define BOOLBIT(name) unsigned int name : 1
-
 typedef struct StackAnalyzer {
   const Instruction *code;
+  BasicBlock *currbbl;
+  int laststore;  /* exp index of last store node */
+  int lastcall;  /* exp index of last function call node */
   int pc;
   int sizecode;
   int maxstacksize;
-  int nextpclimit;  /* PC limit for pending expression contexts */
-  ExpNode *lastexp;
-  BOOLBIT(intailemptyblock);
-  BOOLBIT(incallprep);  /* evaluating a function and its arguments for a call */
-  BOOLBIT(inconcatprep);  /* evaluating expressions to be concatenated */
-  BOOLBIT(inforprep);  /* evaluating for-loop control variables */
-  BOOLBIT(inretprep);  /* evaluating an expression-list to be returned */
-  BOOLBIT(inheadercondition);  /* evaluating the condition of a while-loop or 
+  int nextpclimit;  /* the next PC that causes the current block to change */
+  int openexprkind;
+  OpenExpr *nextopenexpr;  /* next open expression */
+  int nextopenreg;  /* first register of next open expression */
+  int lastexpindex;
+  lu_byte intailemptyblock;
+  lu_byte inheadercondition;  /* evaluating the condition of a while-loop or 
                                   an if-statement */
 } StackAnalyzer;
-
-#undef BOOLBIT
 
 
 #ifdef DECOMP_HAVE_PASS2
@@ -3785,8 +3783,28 @@ static void initfirstfree2(DFuncState *fs, const Proto *f)
 }
 
 
+static void updatenextopenexpr2(StackAnalyzer *sa, DFuncState *fs)
+{
+  OpenExpr *next;
+  lua_assert(fs->nopencalls >= 0);
+  if (fs->nopencalls == 0) {
+    sa->nextopenexpr = NULL;
+    sa->nextopenreg = -1;
+    return;
+  }
+  next = &fs->a->opencalls[--fs->nopencalls];
+  sa->nextopenexpr = next;
+  lua_assert(ispcvalid(fs, sa->nextopenexpr->startpc));
+  lua_assert(ispcvalid(fs, sa->nextopenexpr->endpc));
+  sa->nextopenreg = GETARG_A(sa->code[next->startpc]);
+  lua_assert(isregvalid(fs, sa->nextopenreg));
+}
+
+
 #else
 #define initfirstfree2(fs,f) ((fs)->firstfree = 0)
+#define updatenextopenexpr2(sa,fs)  \
+  ((sa)->nextopenexpr = NULL, (sa)->nextopenreg = -1)
 #endif /* DECOMP_HAVE_PASS2 */
 
 
@@ -4873,6 +4891,52 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   *exp = node;
   return exp;
 }
+
+
+static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
+{
+  const OpenExpr *e = sa->nextopenexpr;
+  lua_assert(e != NULL);
+  lua_assert(sa->nextopenreg != -1);
+  lua_assert(e->endpc >= sa->pc);
+  lua_assert(ispcvalid(fs, e->endpc));
+  updatenextopenexpr2(sa, fs);  /* discharge this one now */
+  sa->openexprkind = e->kind;
+  for (; sa->pc < e->endpc; sa->pc++) {
+    int pc = sa->pc;
+    Instruction i = sa->code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    int b = GETARG_B(i);
+    int c = GETARG_C(i);
+    int bx = GETARG_Bx(i);
+    int sbx = GETARG_sBx(i);
+    if (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
+      /* there is no need to recrusively call itself; just upfate the next
+         OpenExpr entry so it is not a child of this one */
+      /*openexpr2(sa, fs);*/
+      updatenextopenexpr2(sa, fs);
+    }
+    visitinsn2(fs, sa->currbbl, pc, i);
+    /* todo: may want to check for unexpected opcodes such as OP_RETURN, but
+       I only want to do that if it would prevent a crash, otherwise I won't
+       bother */
+    if (testAMode(o)) { /* A is a register */
+      ExpNode *exp = addexp2(sa, fs, pc, o, a, b, c, bx);
+      if (exp != NULL) {
+        D(lprintf("created new expression node\n"));
+        D(lprintf("---------------------------\n"));
+        debugexp(fs, exp,0);
+        D(lprintf("---------------------------\n"));
+        addexptoreg2(sa, fs, a, exp);
+      }
+    }
+    UNUSED(sbx);
+  }
+  sa->openexprkind = -1;
+}
+
+
 #endif /* DECOMP_HAVE_PASS2 */
 
 
@@ -4942,8 +5006,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     bx = GETARG_Bx(i);
     sbx = GETARG_sBx(i);
     numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
-    visitinsn2(fs, bbl, pc, i); /* visit this instruction */
 #ifdef HKSC_DECOMP_DEBUG_PASS1
+    visitinsn2(fs, bbl, pc, i); /* visit this instruction */
     /* make sure to run the first pass on all nested closures */
     if (o == OP_CLOSURE) { /* nested closure? */
       const Proto *f = fs->f->p[bx];
@@ -4986,6 +5050,21 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
        INS_PREFORNUM
        INS_PRERETURN
        INS_PRERETURN1 */
+    /*if (test_ins_property(fs, pc, INS_PRECALL))*/
+    if (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
+      sa->currbbl = bbl;
+      openexpr2(sa, fs);
+      pc = sa->pc;
+      i = code[pc];
+      o = GET_OPCODE(i);
+      a = GETARG_A(i);
+      b = GETARG_B(i);
+      c = GETARG_C(i);
+      bx = GETARG_Bx(i);
+      sbx = GETARG_sBx(i);
+      numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
+    }
+    visitinsn2(fs, bbl, pc, i); /* visit this instruction */
     if (testAMode(o)) { /* A is a register */
       ExpNode *exp;
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
@@ -5052,16 +5131,16 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
   sa.sizecode = f->sizecode;
   sa.maxstacksize = f->maxstacksize;
   sa.intailemptyblock = 0;
-  sa.incallprep = 0;
-  sa.inconcatprep = 0;
-  sa.inforprep = 0;
-  sa.inretprep = 0;
   sa.inheadercondition = 0;
-  sa.lastexp = NULL;
+  sa.lastexpindex = exp2index(fs, NULL);
+  sa.laststore = exp2index(fs, NULL);
+  sa.lastcall = exp2index(fs, NULL);
+  sa.openexprkind = -1;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BBL_FUNCTION);
   initfirstfree2(fs, f); /* set the first free reg for this function */
   fs->lastfirstfree = fs->firstfree;
+  updatenextopenexpr2(&sa, fs);
   bbl2(&sa, fs, functionblock);
 #ifdef LUA_DEBUG
   { /* debug: make sure all instructions were visited */
