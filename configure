@@ -323,7 +323,7 @@ else
 			TESTS_SRC_VAR=PASS1_SRC
 			EXTRA_TESTS_VAR='#';;
 		2)
-			TESTSUFFIX=.p2test
+			TESTSUFFIX=.dtest
 			TESTS_SRC_VAR=PASS2_SRC
 			EXTRA_TESTS_VAR='#';;
 		*)
