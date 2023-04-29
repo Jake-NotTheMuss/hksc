@@ -5758,8 +5758,6 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   /*int startpc = bbl->startpc;*/
   int endpc = bbl->endpc;
   /*int type = bbl->type;*/
-  /* the first free register at the start of this block */
-  int firstfree = sa->firstfree; (void)firstfree;
   assertbblvalid(sa,fs,bbl);
   debugenterblock2(sa, bbl);
   enterblock2(sa, fs, bbl);
