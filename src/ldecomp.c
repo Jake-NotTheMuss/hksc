@@ -126,7 +126,6 @@ typedef struct DFuncState {
   int firstclob;  /* first pc that clobbers register A */
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int upvalcount;  /* number of upvalues encountered so far */
-  /*upvaldesc upvalues[LUAI_MAXUPVALUES];*/  /* upvalues */
   int nopencalls;  /* number of OpenExpr entries created */
 } DFuncState;
 
@@ -1241,12 +1240,6 @@ static void dischargeretpending1(CodeAnalyzer *ca, DFuncState *fs, int pc)
 
 /*
 ** concat -> ... OP_CONCAT
-** ============================ NESTED CONSTRUCTS ==============================
-** Call Statements: Yes
-** Return Statements: No
-** New Variables: No
-** New Blocks: No
-** =============================================================================
 ** Finds and marks the beginning of a concatenated expression.
 */
 static void concat1(CodeAnalyzer *ca, DFuncState *fs)
@@ -1301,12 +1294,6 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
 
 /*
 ** callstat -> ... [callstat] ... OP_CALL [callstat]
-** ============================ NESTED CONSTRUCTS ==============================
-** Call Statements: Yes
-** Return Statements: No
-** New Variables: No
-** New Blocks: No
-** =============================================================================
 ** Finds and marks the beginning of a call expression.
 */
 static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
@@ -1393,12 +1380,6 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
 
 /*
 ** retstat -> ... OP_RETURN
-** ============================ NESTED CONSTRUCTS ==============================
-** Call Statements: Yes
-** Return Statements: No
-** New Variables: No
-** New Blocks: No
-** =============================================================================
 ** If the beginning of the return statement cannot be determined from the
 ** information currently at hand, the (single) register used in the return
 ** statement is returned, otherwise -1.
@@ -1464,12 +1445,6 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
 
 /*
 ** fornumprep -> ... OP_FORPREP
-** ============================ NESTED CONSTRUCTS ==============================
-** Call Statements: Yes
-** Return Statements: No
-** New Variables: Only loop-control variables
-** New Blocks: No
-** =============================================================================
 ** Marks the start of for-num-loop preparation code.
 */
 static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
@@ -1524,12 +1499,6 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
 
 /*
 ** forlistprep -> ... OP_JMP (to OP_TFORLOOP)
-** ============================ NESTED CONSTRUCTS ==============================
-** Call Statements: Yes
-** Return Statements: No
-** New Variables: Only loop-control variables
-** New Blocks: No
-** =============================================================================
 ** Marks the start of for-list-loop preparation code.
 */
 static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
@@ -3342,7 +3311,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       break;
   }
   /* make sure branch-blocks are corrected if their relationship doesn't make
-     sense; NEXTBRANCH should have an exit-jump that jumps to  */
+     sense; NEXTBRANCH should have an false-exit that jumps to the start of the
+     else-block */
   if (nextbranch != NULL && nextbranch->startpc != 0 &&
       nextbranch->nextsibling != NULL &&
       nextbranch->nextsibling->type == BBL_ELSE) {
@@ -4213,7 +4183,7 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp,
   int i = reg;
   lua_assert(lastexp != NULL);
   /* dump any extra expressions that won't be assigned to anything; this is
-     needed an a case such as the following example:
+     needed in a case such as the following example:
         [1] local e;
         [2] e = 1, (a * 3 / (b+4)
         [3] );
