@@ -614,8 +614,20 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
       }
       break;
     }
+    case ECALL:
+    case ETAILCALL:
+      lprintf("[CALL %d,  %d ret, %d arg]", exp->info, exp->u.call.nret,
+              exp->u.call.narg);
+      break;
+    case ECONCAT:
+      lprintf("[CONCAT %d..%d]", index2exp(fs, exp->u.concat.firstindex)->info,
+              index2exp(fs, exp->u.concat.lastindex)->info);
+      break;
     case EGLOBAL:
       lprintf("_G.%s", getstr(exp->u.name));
+      break;
+    case EUPVAL:
+      lprintf("upval=%s", getstr(exp->u.name));
       break;
     case EBINOP:
       lprintf("[BINOP %s  %d, %d]", getbinoprstring(exp->u.binop.op),
@@ -624,6 +636,12 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
     case EUNOP:
       lprintf("[UNOP %s  %d]", getunoprstring(exp->u.unop.op),
               exp->u.unop.b);
+      break;
+    case ECON:
+      lprintf("'{}' %d, %d", exp->u.con.arrsize, exp->u.con.hashsize);
+      break;
+    case ESTORE:
+      lprintf("STORE (from %d)", exp->u.store.srcreg);
       break;
     default:
       break;
