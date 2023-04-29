@@ -391,13 +391,19 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
 }
 
 
-#define newopencall(fs,pc)  newopenexpr(fs,pc,CALLPREP)
-#define newopenconcat(fs,pc)  newopenexpr(fs,pc,CONCATPREP)
+#define newopencall1(fs,pc)  newopenexpr1(fs,pc,CALLPREP)
+#define newopenconcat1(fs,pc)  newopenexpr1(fs,pc,CONCATPREP)
+#define stat1commondecl(fs) int prevopenexprcount = fs->nopencalls
+
+#define newopenexpr1(fs,pc,kind)  \
+  newopenexpr(fs,pc,endpc,kind,fs->nopencalls-prevopenexprcount)
+
 
 /*
-** allocate a new open call statement
+** create a new OpenExpr
 */
-static OpenExpr *newopenexpr(DFuncState *fs, int pc, int kind)
+static OpenExpr *newopenexpr(DFuncState *fs, int startpc, int endpc, int kind,
+                             int numchildren)
 {
   OpenExpr *expr;
   hksc_State *H = fs->H;
@@ -407,7 +413,9 @@ static OpenExpr *newopenexpr(DFuncState *fs, int pc, int kind)
                   MAX_INT, "too many OpenExpr entries");
   expr = &a->opencalls[fs->nopencalls++];
   expr->kind = kind;
-  expr->startpc = pc;
+  expr->startpc = startpc;
+  expr->endpc = endpc;
+  expr->numchildren = numchildren;
   return expr;
 }
 
@@ -952,6 +960,43 @@ static void debugbblsummary(DFuncState *fs)
 }
 
 
+static int debugopenexpr(const OpenExpr *e, int indent)
+{
+  static const char *const typenames[] = {
+    "PRECALL",
+    "PRECONCAT",
+    "PREFORNUM",
+    "PREFORLIST",
+    "PRESETLIST",
+    "EMPTYTABLE",
+    "PRERETURN"
+  };
+  int i;
+  for (i = 0; i < indent; i++)
+    lprintf("  ");
+  if (indent) lprintf("- ");
+  lprintf("(%i-%i) %s\n", e->startpc, e->endpc, typenames[e->kind]);
+  for (i = 1; i <= e->numchildren; i++)
+    i += debugopenexpr(e-i, indent+1);
+  return i;
+}
+
+
+static void debugopenexprsummary(DFuncState *fs)
+{
+  OpenExpr *e;
+  lprintf("OPEN EXPRESSION SUMMARY\n"
+         "-------------------\n");
+  if (fs->nopencalls > 0) {
+    e = &fs->a->opencalls[fs->nopencalls-1];
+    do {
+      e -= debugopenexpr(e, 0);
+    } while (e >= &fs->a->opencalls[0]);
+  }
+  lprintf("-------------------\n");
+}
+
+
 static void checktreevisited(BasicBlock *bbl)
 {
   BasicBlock *child;
@@ -968,6 +1013,7 @@ static void checktreevisited(BasicBlock *bbl)
 #else /* !LUA_DEBUG */
 
 #define debugbblsummary(fs)  ((void)(fs))
+#define debugopenexprsummary(fs)  ((void)(fs))
 #define checktreevisited(bbl)  ((void)(bbl))
 
 #endif /* LUA_DEBUG */
@@ -1207,6 +1253,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
 {
   int endpc; /* pc of OP_CONCAT */
   int firstreg; /* first register used in concat operation */
+  stat1commondecl(fs);
   const Instruction *code = ca->code;
   {
     Instruction concat;
@@ -1240,7 +1287,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markconcat:
           set_ins_property(fs, pc, INS_PRECONCAT);
-          newopenconcat(fs, pc);
+          newopenconcat1(fs, pc);
           leavingstat1("concat");
           return;
         }
@@ -1248,7 +1295,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
     }
   }
   init_ins_property(fs, 0, INS_PRECONCAT);
-  newopenconcat(fs, 0);
+  newopenconcat1(fs, 0);
 }
 
 
@@ -1267,6 +1314,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
   int endpc; /* pc of call */
   int firstreg; /* first register used for the call */
   const Instruction *code = ca->code;
+  stat1commondecl(fs);
   { /* handle the call instruction */
     Instruction call;
     lua_assert(ca->pc >= 0);
@@ -1321,7 +1369,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
         else if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markcall:
           set_ins_property(fs, pc, INS_PRECALL);
-          newopencall(fs, pc);
+          newopencall1(fs, pc);
           leavingstat1("call");
           return;
         }
@@ -1330,7 +1378,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     }
   }
   set_ins_property(fs, 0, INS_PRECALL);
-  newopencall(fs, 0);
+  newopencall1(fs, 0);
 }
 
 /* only put this before the default case */
@@ -1361,6 +1409,7 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
   int firstreg; /* first register of returned expression list */
   int nret; /* number of returned values */
   int endpc; /* pc of OP_RETURN */
+  stat1commondecl(fs);
   lua_assert(ca->retpending.reg == -1 && ca->retpending.endpc == -1);
   { /* get start register and number of returned values */
     Instruction ret;
@@ -1400,7 +1449,7 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markret:
           init_ins_property(fs, pc, INS_PRERETURN);
-          newopenexpr(fs, pc, RETPREP);
+          newopenexpr1(fs, pc, RETPREP);
           leavingstat1("return");
           return;
         }
@@ -1408,7 +1457,7 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
     }
   }
   init_ins_property(fs, 0, INS_PRERETURN);
-  newopenexpr(fs, 0, RETPREP);
+  newopenexpr1(fs, 0, RETPREP);
   return;
 }
 
@@ -1428,6 +1477,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   const Instruction *code = ca->code;
   int firstreg; /* first register of loop control variables */
   int startpc; /* start pc of loop, specifically the jump op into the loop */
+  stat1commondecl(fs);
   { /* get the start-register of the loop control variables */
     Instruction entry; /* OP_FORPREP */
     Instruction test; /* OP_FORLOOP */
@@ -1455,7 +1505,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           markfornum:
           init_ins_property(fs, pc, INS_PREFORNUM);
-          newopenexpr(fs, pc, FORNUMPREP);
+          newopenexpr1(fs, pc, FORNUMPREP);
           leavingstat1("numeric for-loop prep");
           return;
         }
@@ -1469,7 +1519,7 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   */
   /*lua_assert(ca->pc < 0);*/
   init_ins_property(fs, 0, INS_PREFORNUM);
-  newopenexpr(fs, 0, FORNUMPREP);
+  newopenexpr1(fs, 0, FORNUMPREP);
 }
 
 /*
@@ -1488,6 +1538,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   int firstreg; /* first register of loop control variables */
   int nvars; /* number of loop variables */
   int startpc; /* start of loop, specifically the jump op into the loop */
+  stat1commondecl(fs);
   { /* get the start-register of the loop control variables */
     Instruction entry; /* OP_JMP into the for-loop */
     Instruction test; /* OP_TFORLOOP at the end of the for-loop */
@@ -1516,7 +1567,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           markforlist:
           init_ins_property(fs, pc, INS_PREFORLIST);
-          newopenexpr(fs, pc, FORLISTPREP);
+          newopenexpr1(fs, pc, FORLISTPREP);
           leavingstat1("list for-loop prep");
           return;
         }
@@ -1530,7 +1581,7 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
   */
   /*lua_assert(ca->pc < 0);*/
   init_ins_property(fs, 0, INS_PREFORLIST);
-  newopenexpr(fs, 0, FORLISTPREP);
+  newopenexpr1(fs, 0, FORLISTPREP);
 }
 
 #ifdef LUA_DEBUG
@@ -4793,21 +4844,6 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
       check_ins_property(fs, pc, INS_VISITED);
     checktreevisited(functionblock);
   }
-  DumpLiteral("\n",D);
-  {
-    int i;
-    static const char *const typenames[] = {
-      "PRECALL   ",
-      "PRECONCAT ",
-      "PREFORNUM ",
-      "PREFORLIST",
-      "PRERETURN "
-    };
-    for (i = fs->a->nopencalls-1; i >= 0; i--) {
-      OpenExpr *e = &fs->a->opencalls[i];
-      DumpStringf(D, "%s %d\n", typenames[e->kind], e->startpc+1);
-    }
-  }
 #endif /* LUA_DEBUG */
   UNUSED(D);
 }
@@ -4819,6 +4855,8 @@ static void DecompileFunction(DecompState *D, const Proto *f)
   open_func(&new_fs, D, f);
   pass1(f,&new_fs,D);
   debugbblsummary(&new_fs);
+  D(lprintf("\n"));
+  debugopenexprsummary(&new_fs);
   pass2(f,&new_fs,D);
   close_func(D);
 }
