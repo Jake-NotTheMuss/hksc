@@ -4208,6 +4208,8 @@ static ExpNode *getexpinreg2(DFuncState *fs, int reg)
   lua_assert(isregvalid(fs, reg));
   if (test_reg_property(fs, reg, REG_LOCAL))
     return NULL;
+  if (reg >= fs->firstfree)
+    return NULL;
   return index2exp(fs, getslotdesc(fs, reg)->u.expindex);
 }
 
