@@ -129,6 +129,23 @@ typedef struct OpenExpr {
 } OpenExpr;
 
 
+/* when debug info is not used, the decompiler makes note of how registers are
+   used in the program */
+enum NOTEWORTHY_TYPE {
+  REG_NOTE_UPVALUE, /* is used as an upvalue for a child function */
+  REG_NOTE_NONRELOC, /* is the source in an OP_MOVE inside an open expression */
+  MAX_REG_NOTE
+};
+
+
+typedef struct RegNote {
+  int note;  /* what is noteworhty about this register and pc */
+  int pc;
+  int reg;
+  struct RegNote *next;  /* next RegNote with REG >= this reg */
+} RegNote;
+
+
 /*
 ** Expression descriptor
 */

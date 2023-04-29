@@ -127,6 +127,7 @@ typedef struct DFuncState {
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int upvalcount;  /* number of upvalues encountered so far */
   int nopencalls;  /* number of OpenExpr entries created */
+  int nregnotes;  /* number of RegNote entries created */
 } DFuncState;
 
 
@@ -420,6 +421,55 @@ static OpenExpr *newopenexpr(DFuncState *fs, int startpc, int endpc, int kind,
 
 
 /*
+** create a new RegNote entry
+*/
+static RegNote *newregnote(DFuncState *fs, int note, int pc, int reg)
+{
+  RegNote *regnote;
+  hksc_State *H = fs->H;
+  Analyzer *a = fs->a;
+  lua_assert(fs->nregnotes >= 0 && fs->nregnotes <= a->sizeregnotes);
+  luaM_growvector(H, a->regnotes, fs->nregnotes, a->sizeregnotes, RegNote,
+                  MAX_INT, "too many RegNote entries");
+  { /* the array shall be sorted by register first, then by pc, descending */
+    int pos, low, high, mid, i;
+    low = 0;
+    high = fs->nregnotes;
+    while (1) {
+      int result;  /* comparison result */
+      if (high <= low) {
+        pos = low;
+        break;
+      }
+      mid = (low+high)/2;
+      /* comparison: RegNote a, b;
+         a < b if a.reg < b.reg
+         a < b if a.reg == b.reg and a.pc < b.pc */
+      result = a->regnotes[mid].reg - reg;
+      if (result == 0)
+        result = a->regnotes[mid].pc - pc;
+      if (result == 0) {
+        pos = mid+1;
+        break;
+      }
+      else if (result > 0)
+        low = mid+1;
+      else
+        high = mid;
+    }
+    for (i = fs->nregnotes; i > pos; i--)
+      a->regnotes[i] = a->regnotes[i-1];
+    regnote = &a->regnotes[i];
+  }
+  fs->nregnotes++;
+  regnote->note = note;
+  regnote->pc = pc;
+  regnote->reg = reg;
+  return regnote;
+}
+
+
+/*
 ** return the next free expression in the expression node stack and increment
 ** the number of stack elements in use
 */
@@ -642,6 +692,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   }
   fs->upvalcount = 0;
   fs->nopencalls = 0;
+  fs->nregnotes = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
   /* allocate vectors for instruction and register properties */
@@ -996,6 +1047,26 @@ static void debugopenexprsummary(DFuncState *fs)
 }
 
 
+static void debugregnotesummary(DFuncState *fs)
+{
+  static const char *const typenames[] = {
+    "REG_NOTE_UPVALUE",
+    "REG_NOTE_NONRELOC"
+  };
+  RegNote *regnote;
+  int i;
+  lprintf("REG NOTE SUMMARY\n"
+          "-------------------\n");
+  for (i = fs->nregnotes-1; i >= 0; i--) {
+    int note;
+    regnote = &fs->a->regnotes[i];
+    note = regnote->note;
+    lprintf("(pc %i, reg %d) %s\n", regnote->pc, regnote->reg, typenames[note]);
+  }
+  lprintf("-------------------\n");
+}
+
+
 static void checktreevisited(BasicBlock *bbl)
 {
   BasicBlock *child;
@@ -1208,6 +1279,12 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs);
       goto label; \
     break;
 
+#define STAT1_CASE_MOVE \
+  case OP_MOVE: \
+    newregnote(fs, REG_NOTE_NONRELOC, pc, GETARG_B(i)); \
+    goto poststat;
+
+
 #ifdef LUA_DEBUG
 
 #define printinsn1(pc,i,func) lprintf("pc %i: %O (" func ")\n",pc,i)
@@ -1264,6 +1341,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
     int a = GETARG_A(i);
     printinsn1(pc,i,"concat1");
     switch (o) {
+      STAT1_CASE_MOVE
       CASE_OP_CALL:
         callstat1(ca, fs);
         pc = ca->pc;
@@ -1277,6 +1355,7 @@ static void concat1(CodeAnalyzer *ca, DFuncState *fs)
         concat1(ca, fs);
         break;
       default:
+      poststat:
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markconcat:
           set_ins_property(fs, pc, INS_PRECONCAT);
@@ -1320,6 +1399,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     int c = GETARG_C(i);
     printinsn1(pc,i,"callstat1");
     switch (o) {
+      STAT1_CASE_MOVE
       case OP_CONCAT:
         concat1(ca, fs);
         /* The beginnig of the concat expression may already have been marked
@@ -1338,6 +1418,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
         c = GETARG_C(i);
         /* fallthrough */
       default: {
+      poststat:
         if (isOpCall(o)) { /* a nested call expression */
           callstat1(ca, fs);
           /* When a function return value is used to evaluate another function
@@ -1376,7 +1457,7 @@ static void callstat1(CodeAnalyzer *ca, DFuncState *fs)
     i = code[pc]; \
     o = GET_OPCODE(i); \
     a = GETARG_A(i); \
-    /* fallthrough */
+    goto poststat;
 
 /*
 ** retstat -> ... OP_RETURN
@@ -1425,7 +1506,9 @@ static void retstat1(CodeAnalyzer *ca, DFuncState *fs)
     switch (o) {
       STAT1_CASE_CALL(markret)
       STAT1_CASE_CONCAT
+      STAT1_CASE_MOVE
       default:
+      poststat:
         lua_assert(o != OP_RETURN); /* cannot have nested return statements */
         if (beginstempexpr(code, i, pc, firstreg, endpc)) {
           markret:
@@ -1476,7 +1559,9 @@ static void fornumprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     switch (o) {
       STAT1_CASE_CALL(markfornum)
       STAT1_CASE_CONCAT
+      STAT1_CASE_MOVE
       default:
+      poststat:
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           markfornum:
           init_ins_property(fs, pc, INS_PREFORNUM);
@@ -1532,7 +1617,9 @@ static void forlistprep1(CodeAnalyzer *ca, DFuncState *fs, int endpc)
     switch (o) {
       STAT1_CASE_CALL(markforlist)
       STAT1_CASE_CONCAT
+      STAT1_CASE_MOVE
       default:
+      poststat:
         if (beginstempexpr(code, i, pc, firstreg, startpc)) {
           markforlist:
           init_ins_property(fs, pc, INS_PREFORLIST);
@@ -1828,6 +1915,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     int a = GETARG_A(i);
     int b = GETARG_B(i);
     int c = GETARG_C(i);
+    int bx = GETARG_Bx(i);
     int sbx = GETARG_sBx(i);
     printinsn1(pc,i,"bbl1");
     switch (o) {
@@ -3248,6 +3336,15 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         }
         updatefirstclob1(fs, pc, a);
         break;
+      case OP_DATA:
+        if (a == 1) {
+          CHECK(fs, isregvalid(fs, bx), "OP_DATA indexes invalid register");
+          newregnote(fs, REG_NOTE_UPVALUE, pc, bx);
+        }
+        else if (a == 2)
+          CHECK(fs, bx >= 0 && bx < fs->f->nups, "OP_DATA indexes invalid "
+                "upvalue");
+        break;
       poststat: /* update variables after calls which change the pc */
         pc = ca->pc;
         i = code[pc];
@@ -3395,6 +3492,9 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   luaM_reallocvector(fs->H, fs->a->opencalls, fs->a->sizeopencalls,
                      fs->nopencalls, OpenExpr);
   fs->a->sizeopencalls = fs->nopencalls;
+  luaM_reallocvector(fs->H, fs->a->regnotes, fs->a->sizeregnotes, fs->nregnotes,
+                     RegNote);
+  fs->a->sizeregnotes = fs->nregnotes;
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
   lua_assert(ca.retpending.endpc == -1 && ca.retpending.reg == -1);
@@ -4827,6 +4927,8 @@ static void DecompileFunction(DecompState *D, const Proto *f)
   debugbblsummary(&new_fs);
   D(lprintf("\n"));
   debugopenexprsummary(&new_fs);
+  D(lprintf("\n"));
+  debugregnotesummary(&new_fs);
   pass2(f,&new_fs,D);
   close_func(D);
 }
