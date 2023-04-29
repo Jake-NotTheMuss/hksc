@@ -161,6 +161,7 @@ typedef enum {
   EVARARG,  /* `...' */
   ELITERAL,  /* a constant number or string */
   ECON,  /* a table constructor */
+  ECLOSURE,  /* a Lua function */
   ELOCAL,  /* a local variable */
   EUPVAL,  /* an upvalue */
   EGLOBAL,  /* a global variable */
@@ -181,6 +182,7 @@ typedef struct ExpNode {
     TString *name;  /* variable name */
     int token;  /* token ID, e.g. TK_TRUE for `true' */
     struct { int arrsize, hashsize; int est; } con;
+    const Proto *p;  /* Lua closure */
     struct {
       int b, c;  /* B and C operands from the instruction */
       /* these 2 fields are needed if B and/or C reference a pending expression

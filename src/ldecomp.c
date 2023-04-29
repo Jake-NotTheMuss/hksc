@@ -3918,9 +3918,6 @@ static void printinsn2(DFuncState *fs, BasicBlock *bbl, int pc, Instruction i)
 #endif /* LUA_DEBUG */
 
 
-static void DecompileFunction(DecompState *D, const Proto *f);
-
-
 static void visitinsn2(DFuncState *fs, BasicBlock *bbl, int pc, Instruction i)
 {
 #ifdef LUA_DEBUG
@@ -4198,6 +4195,20 @@ static void dumpexpva2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
   predumpexp2(D,fs,exp);
   DumpLiteral("...",D);
+  postdumpexp2(D,fs,exp);
+}
+
+
+static void DecompileFunction(DecompState *D, const Proto *f);
+
+/* dump a child function */
+static void dumpexpfunc2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  /* do not update the line */
+  dischargeholditems2(D);
+  CheckSpaceNeeded(D);
+  fs->lastclosurepc = exp->aux;
+  DecompileFunction(D, exp->u.p);
   postdumpexp2(D,fs,exp);
 }
 
@@ -4541,27 +4552,43 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
     }
     case EUPVAL:
     case EGLOBAL:
+      if (needparenforlineinfo)
+        addliteralholditem2(D, &holdparen, "(", 0);
       dumpexpvar2(D,fs,exp);
+      if (needparenforlineinfo)
+        dumpcloseparen2(D, fs, exp);
       break;
     case ELOCAL:
-      lua_assert(isregvalid(fs, exp->aux));
-      if (test_reg_property(fs, exp->aux, REG_LOCAL))
-        /* source is a local variable */
-        dumpexplocvar2(D,fs,exp);
-      else { /* source is a pending expression */
-        ExpNode *exp2 = index2exp(fs, getslotdesc(fs, exp->aux)->u.expindex);
-        dumpexpoperand2(D, fs, exp2, exp, 0);
-      }
+      if (needparenforlineinfo)
+        addliteralholditem2(D, &holdparen, "(", 0);
+      dumpexplocvar2(D,fs,exp);
+      if (needparenforlineinfo)
+        dumpcloseparen2(D, fs, exp);
+      break;
+    case ESTORE:
+      lua_assert(0);
       break;
     case ELITERAL:
-      dumpexpk2(D,fs,exp);
-      break;
     case ENIL:
-      dumpexpnil2(D,fs,exp);
-      break;
     case EVARARG:
-      dumpexpva2(D,fs,exp);
+    case ECLOSURE: {
+      int needparen = (limit == SUBEXPR_PRIORITY || needparenforlineinfo);
+      if (needparen)
+        addliteralholditem2(D, &holdparen, "(", 0);
+      if (exp->kind == ELITERAL)
+        dumpexpk2(D,fs,exp); /* dump literal */
+      else if (exp->kind == ENIL)
+        dumpexpnil2(D,fs,exp); /* dump nil */
+      else if (exp->kind == EVARARG)
+        dumpexpva2(D,fs,exp); /* dump vararg */
+      else if (exp->kind == ECLOSURE)
+        dumpexpfunc2(D,fs,exp); /* decompile child function */
+      else
+        lua_assert(0);
+      if (needparen)
+        dumpcloseparen2(D, fs, exp);
       break;
+    }
     default:
       DumpLiteral("[UNHANDLED EXP KIND]",D);
       break;
@@ -5260,6 +5287,9 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16);
       break;
     case OP_CLOSURE:
+      exp->kind = ECLOSURE;
+      exp->aux = pc;
+      exp->u.p = f->p[bx];
       break; /* todo */
     case OP_VARARG:
       exp->kind = EVARARG;
