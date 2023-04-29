@@ -97,13 +97,12 @@ typedef struct {
   int status;
   int usedebuginfo;  /* true if using debug info */
   int matchlineinfo;  /* true if matching statements to line info */
-  /* data for the current function's decompilation */
   int funcidx;  /* n for the nth function that is being decompiled */
-  int indentlevel;
-  int linenumber;
-  int needspace;
-  struct HoldItem *holdfirst;
-  struct HoldItem *holdlast;
+  int indentlevel;  /* indentation level counter */
+  int linenumber;  /* output line counter */
+  int needspace;  /* for adding space between tokens */
+  struct HoldItem *holdfirst;  /* first hold item in the chain */
+  struct HoldItem *holdlast;  /* last hold item in the chain */
   Mbuffer buff;  /* buffer for building strings */
 } DecompState;
 
