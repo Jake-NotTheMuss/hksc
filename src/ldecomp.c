@@ -4305,12 +4305,27 @@ static void dumpexpoperand2(DecompState *D, DFuncState *fs, ExpNode *operand,
 }
 
 
+static void dumpcloseparen2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  int saveline = exp->line;
+  lua_assert(exp->line <= exp->closeparenline);
+  exp->line = exp->closeparenline;
+  /* the line that the closing paren is on matters when matching */
+  checklineneeded2(D,fs,exp);
+  exp->line = saveline;
+  DumpLiteral(")",D);
+}
+
+
 /*
 ** dumps an expression node to the output
 */
 static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
                      unsigned int limit)
 {
+  /* NEEDPARENFORLINEINFO is for using extra parens to preserve line info */
+  int needparenforlineinfo = (exp->line != exp->closeparenline);
+  struct HoldItem holdparen;
   lua_assert(exp != NULL);
   lua_assert(exp->pending);
   exp->pending = 0;
@@ -4341,11 +4356,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       BinOpr op = exp->u.binop.op;
       int b = exp->u.binop.b;
       int c = exp->u.binop.c;
-      /* NEEDPAREN is for preserving order of operations */
-      int needparen;
-      /* NEEDPARENFORLINEINFO is for using extra parens to preserve line info */
-      int needparenforlineinfo; /* if matching line information */
-      struct HoldItem holdparen;
+      int needparen;  /* for preserving order of operations */
       if (exp->leftside)
         needparen = (priority[op].right < limit);
       else
@@ -4372,8 +4383,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
          is on line 2 */
       if (o2 != NULL && o2->line != exp->line)
         o2->closeparenline = exp->line;
-      /* check if you need to augment extra parens to match line info */
-      needparenforlineinfo = (exp->line != exp->closeparenline);
       if (needparen || needparenforlineinfo)
         addholditem2(D, &holdparen, "(", 0, 0);
       if (b == -1)
@@ -4391,15 +4400,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       else
         /* dump constant INDEXK(C) or local variable in C */
         dumpRK2(D, fs, c, exp); /* second operand */
-      if (needparen || needparenforlineinfo) {
-        int saveline = exp->line;
-        lua_assert(exp->line <= exp->closeparenline);
-        exp->line = exp->closeparenline;
-        /* the line that the closing paren is on matters when matching */
-        checklineneeded2(D,fs,exp);
-        exp->line = saveline;
-        DumpLiteral(")",D);
-      }
+      if (needparen || needparenforlineinfo)
+        dumpcloseparen2(D, fs, exp);
       D->needspace = 1;
       break;
     }
