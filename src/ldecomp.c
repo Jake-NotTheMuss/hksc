@@ -3399,12 +3399,9 @@ static void pass1(const Proto *f, DFuncState *fs)
   ca.retpending.endpc = ca.retpending.reg = -1;
   ca.code = f->code;
   bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL, NULL);
-  {
-    BasicBlock *first = fs->a->bbllist.first;
-    lua_assert(first != NULL);
-    lua_assert(first->nextsibling == NULL);
-    lua_assert(first->type == BBL_FUNCTION);
-  }
+  lua_assert(fs->a->bbllist.first != NULL);
+  lua_assert(fs->a->bbllist.first->nextsibling == NULL);
+  lua_assert(fs->a->bbllist.first->type == BBL_FUNCTION);
   set_ins_property(fs, f->sizecode-2, INS_BLOCKEND);
   D(lprintf("ca.pc == (%d)\n", ca.pc));
   luaM_reallocvector(fs->H, fs->a->opencalls, fs->a->sizeopencalls,
