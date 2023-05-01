@@ -30,9 +30,9 @@
 #ifdef HKSC_DECOMPILER
 
 #ifdef HKSC_DECOMP_DEBUG_PASS1
-#undef DECOMP_HAVE_PASS2
+#undef HKSC_DECOMP_HAVE_PASS2
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
-#define DECOMP_HAVE_PASS2
+#define HKSC_DECOMP_HAVE_PASS2
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
 
 /*
@@ -59,14 +59,14 @@ static const char *const insflagnames [] = {
 };
 #undef DEFINSFLAG
 
-#ifdef DECOMP_HAVE_PASS2
+#ifdef HKSC_DECOMP_HAVE_PASS2
 #define DEFREGFLAG(e)  "REG_" #e,
 static const char *const regflagnames [] = {
   REGFLAG_TABLE
   "MAX_REGFLAG"
 };
 #undef DEFREGFLAG
-#endif /* DECOMP_HAVE_PASS2 */
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 #define bbltypename(v) (bbltypenames[v])
 #define insflagname(v) (insflagnames[v])
@@ -151,9 +151,11 @@ static void lprintf(const char *fmt, ...)
         fputs(s, stdout);
         break;
       }
+#ifdef HKSC_DECOMP_HAVE_PASS2
       case 'R': /* register flag */
         printf("%s", regflagname(va_arg(argp, int)));
         break;
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
       case 'I': /* instruction flag */
         printf("%s", insflagname(va_arg(argp, int)));
         break;
@@ -249,6 +251,8 @@ static void printinsflags(DFuncState *fs, int pc, const char *preamble)
   lprintf("\n");
 }
 
+#ifdef HKSC_DECOMP_HAVE_PASS2
+
 static void printregflags(DFuncState *fs, int reg, const char *preamble)
 {
   int i;
@@ -259,6 +263,8 @@ static void printregflags(DFuncState *fs, int reg, const char *preamble)
   }
   lprintf("\n");
 }
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 #else /* !LUA_DEBUG */
@@ -337,7 +343,7 @@ static void unset_ins_property(DFuncState *fs, int pc, int prop)
   (lua_assert(!test_ins_property(fs,pc,prop)), set_ins_property(fs,pc,prop))
 
 
-#ifdef DECOMP_HAVE_PASS2
+#ifdef HKSC_DECOMP_HAVE_PASS2
 /*
 ** set_reg_property - set flag PROP for register REG
 */
@@ -373,7 +379,7 @@ static int test_reg_property(DFuncState *fs, int reg, int prop)
 }
 
 #define check_reg_property(fs,reg,val) lua_assert(test_reg_property(fs,reg,val))
-#endif /* DECOMP_HAVE_PASS2 */
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 /*
@@ -470,6 +476,8 @@ static RegNote *newregnote(DFuncState *fs, int note, int pc, int reg)
   return regnote;
 }
 
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
 
 /*
 ** return the next free expression in the expression node stack and increment
@@ -673,14 +681,6 @@ static SlotDesc *getslotdesc(DFuncState *fs, int reg)
 }
 
 
-static void updatefirstclob1(DFuncState *fs, int pc, int reg)
-{
-  fs->firstclob = pc;
-  if (reg >= fs->f->numparams)
-    fs->firstclobnonparam = pc;
-}
-
-
 static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
 {
   const Instruction *code;
@@ -715,6 +715,8 @@ static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
   CHECK(fs, i == fs->sizeupvalues, "not enough OP_DATA codes for number of "
         "upvalues");
 }
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
@@ -773,8 +775,10 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->expstack.total = 4;
   a->expstack.used = 0;
   a->expstack.stk = luaM_newvector(H, a->expstack.total, ExpNode);
+#ifdef HKSC_DECOMP_HAVE_PASS2
   if (fs->prev != NULL)
     getupvaluesfromparent(fs, fs->prev);
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 }
 
 
@@ -788,6 +792,20 @@ static void close_func (DecompState *D) {
   killtemp(obj2gco(fs->a)); /* make analyzer collectable */
   UNUSED(fs->a);
 }
+
+
+/*
+** updates the first pc that clobbers a register
+*/
+static void updatefirstclob1(DFuncState *fs, int pc, int reg)
+{
+  lua_assert(isregvalid(fs, reg));
+  fs->firstclob = pc;
+  if (reg >= fs->f->numparams)
+    fs->firstclobnonparam = pc;
+}
+
+
 
 static void addsibling1(BasicBlock *bbl1, BasicBlock *bbl2) {
   lua_assert(bbl1 != NULL);
@@ -893,6 +911,22 @@ static void DumpBlock(const void *b, size_t size, DecompState *D)
   }
 }
 
+/*
+static void DumpStringf(DecompState *D, const char *fmt, ...)
+{
+  va_list argp;
+  const char *s;
+  va_start(argp, fmt);
+  s = luaO_pushvfstring(D->H, fmt, argp);
+  DumpString(s,D);
+  va_end(argp);
+}*/
+
+
+static void DumpIndentation(DecompState *D);
+
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
 
 static void DumpTString(const TString *ts, DecompState *D)
 {
@@ -949,18 +983,6 @@ static void DumpConstant(DFuncState *fs, int index, DecompState *D)
   DumpTValue(o,D);
 }
 
-
-static void DumpStringf(DecompState *D, const char *fmt, ...)
-{
-  va_list argp;
-  const char *s;
-  va_start(argp, fmt);
-  s = luaO_pushvfstring(D->H, fmt, argp);
-  DumpString(s,D);
-  va_end(argp);
-}
-
-
 static void DumpSemi(DecompState *D)
 {
   DumpLiteral(";",D);
@@ -988,27 +1010,6 @@ static void CheckSpaceNeeded(DecompState *D)
 }
 
 
-/*#ifdef HKSC_DECOMP_DEBUG_PASS1*/
-static void DumpIndentation(DecompState *D)
-{
-  static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
-  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 32 */
-  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 48 */
-  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t"; /* 64 */
-  const int buffsize = cast_int(sizeof(tabs)-1);
-  int indentlevel = D->indentlevel;
-  lua_assert(indentlevel >= 0);
-  while (indentlevel > buffsize) {
-    DumpBlock(tabs, buffsize, D);
-    indentlevel -= buffsize;
-  }
-  lua_assert(indentlevel >= 0 && indentlevel <= buffsize);
-  if (indentlevel != 0)
-    DumpBlock(tabs, indentlevel, D);
-}
-/*#endif*/ /* HKSC_DECOMP_DEBUG_PASS1 */
-
-#ifdef DECOMP_HAVE_PASS2
 static void beginline2(DFuncState *fs, int n, DecompState *D)
 {
   static const char lf[] = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
@@ -1049,7 +1050,27 @@ static void maybebeginline2(DFuncState *fs, DecompState *D)
   if (fs->instatement == 0)
     beginline2(fs, 1, D);
 }
-#endif /* DECOMP_HAVE_PASS2 */
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+
+static void DumpIndentation(DecompState *D)
+{
+  static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 32 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 48 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t"; /* 64 */
+  const int buffsize = cast_int(sizeof(tabs)-1);
+  int indentlevel = D->indentlevel;
+  lua_assert(indentlevel >= 0);
+  while (indentlevel > buffsize) {
+    DumpBlock(tabs, buffsize, D);
+    indentlevel -= buffsize;
+  }
+  lua_assert(indentlevel >= 0 && indentlevel <= buffsize);
+  if (indentlevel != 0)
+    DumpBlock(tabs, indentlevel, D);
+}
 
 
 #ifdef LUA_DEBUG
@@ -3710,7 +3731,10 @@ typedef struct StackAnalyzer {
 } StackAnalyzer;
 
 
-#ifdef DECOMP_HAVE_PASS2
+static void DecompileFunction(DecompState *D, const Proto *f);
+
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
 
 
 /*
@@ -3838,7 +3862,7 @@ static void updatenextopenexpr2(StackAnalyzer *sa, DFuncState *fs)
 #define initfirstfree2(fs,f) ((fs)->firstfree = 0)
 #define updatenextopenexpr2(sa,fs)  \
   ((sa)->nextopenexpr = NULL, (sa)->nextopenreg = -1)
-#endif /* DECOMP_HAVE_PASS2 */
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 #ifdef LUA_DEBUG
@@ -3993,7 +4017,8 @@ static BasicBlock *updatenextchild2(StackAnalyzer *sa, BasicBlock *parent,
   return nextchild;
 }
 
-#ifdef DECOMP_HAVE_PASS2
+#ifdef HKSC_DECOMP_HAVE_PASS2
+
 #if 0
 static void updateline2(DFuncState *fs, int pc)
 {
@@ -4223,8 +4248,6 @@ static void dumpexpva2(DecompState *D, DFuncState *fs, ExpNode *exp)
   postdumpexp2(D,fs,exp);
 }
 
-
-static void DecompileFunction(DecompState *D, const Proto *f);
 
 /* dump a child function */
 static void dumpexpfunc2(DecompState *D, DFuncState *fs, ExpNode *exp)
@@ -5349,7 +5372,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   ExpNode *exp = &node;
   const Proto *f = fs->f;
   lua_assert(ispcvalid(fs, pc));
-  (void)DumpStringf;
   exp->info = a;
   exp->aux = 0;
   exp->previndex = exp2index(fs, NULL);
@@ -5741,7 +5763,7 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
 }
 
 
-#endif /* DECOMP_HAVE_PASS2 */
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 /*
@@ -5807,7 +5829,6 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     c = GETARG_C(i);
     bx = GETARG_Bx(i);
     sbx = GETARG_sBx(i);
-    numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
 #ifdef HKSC_DECOMP_DEBUG_PASS1
     visitinsn2(fs, bbl, pc, i); /* visit this instruction */
     /* make sure to run the first pass on all nested closures */
@@ -5815,7 +5836,9 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
       const Proto *f = fs->f->p[bx];
       DecompileFunction(D,f);
     }
+    UNUSED(numvars);
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
+    numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
 #if 0
     /* todo: make the line number of OP_CLOSURE will be the last line of the
        closure, so make sure that is handled correctly when updating the line */
@@ -5946,9 +5969,9 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
   sa.maxstacksize = f->maxstacksize;
   sa.intailemptyblock = 0;
   sa.inheadercondition = 0;
-  sa.lastexpindex = exp2index(fs, NULL);
-  sa.laststore = exp2index(fs, NULL);
-  sa.lastcall = exp2index(fs, NULL);
+  sa.lastexpindex = 0;
+  sa.laststore = 0;
+  sa.lastcall = 0;
   sa.openexprkind = -1;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BBL_FUNCTION);
