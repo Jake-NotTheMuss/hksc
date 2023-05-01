@@ -4772,6 +4772,9 @@ static void addindextolhs2(struct LHSStringBuilder *sb, int reg, int isfield)
   }
   else {
     addchartolhs2(sb, isfield ? '.' : '[');
+    sb->needspace = needspace;  /* if there was no space between the table and
+                                   `[', than also omit space between `[' and the
+                                   index */
   }
   if (ISK(reg)) {
     if (isfield)
