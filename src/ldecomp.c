@@ -400,7 +400,7 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
 
 
 /*
-** create a new OpenExpr
+** creates a new OpenExpr entry
 */
 static OpenExpr *newopenexpr(DFuncState *fs, int startpc, int endpc, int kind)
 {
@@ -470,7 +470,7 @@ static RegNote *newregnote(DFuncState *fs, int note, int pc, int reg)
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
 /*
-** return the next free expression in the expression node stack and increment
+** returns the next free expression in the expression node stack and increment
 ** the number of stack elements in use
 */
 static ExpNode *newexp(DFuncState *fs)
@@ -661,6 +661,10 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
 #endif /* LUA_DEBUG */
 
 
+
+/*
+** returns the SlotDesc entry for a given register
+*/
 static SlotDesc *getslotdesc(DFuncState *fs, int reg)
 {
   SlotDesc *slot;
@@ -671,6 +675,10 @@ static SlotDesc *getslotdesc(DFuncState *fs, int reg)
 }
 
 
+/*
+** populates the `upvalues' array with the names of the upvalues from PARENT
+** that FS uses
+*/
 static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
 {
   const Instruction *code;
@@ -913,11 +921,17 @@ static void DumpStringf(DecompState *D, const char *fmt, ...)
 }*/
 
 
+/*
+** declarations for dump functions used by both passes
+*/
 static void DumpIndentation(DecompState *D);
 
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
+/*
+** dumps a TString data to output
+*/
 static void DumpTString(const TString *ts, DecompState *D)
 {
   lua_assert(ts != NULL);
@@ -925,6 +939,9 @@ static void DumpTString(const TString *ts, DecompState *D)
 }
 
 
+/*
+** prints a Lua object as it would appear in source code to output
+*/
 static void DumpTValue(const TValue *o, DecompState *D)
 {
   switch (ttype(o))
@@ -966,6 +983,9 @@ static void DumpTValue(const TValue *o, DecompState *D)
 }
 
 
+/*
+** dumps a constant indexed by INDEX from the constant table
+*/
 static void DumpConstant(DFuncState *fs, int index, DecompState *D)
 {
   const Proto *f = fs->f;
@@ -973,6 +993,9 @@ static void DumpConstant(DFuncState *fs, int index, DecompState *D)
   DumpTValue(o,D);
 }
 
+/*
+** dumps a semicolon to output
+*/
 static void DumpSemi(DecompState *D)
 {
   DumpLiteral(";",D);
@@ -980,19 +1003,28 @@ static void DumpSemi(DecompState *D)
 }
 
 
+/*
+** dumps a comma to output
+*/
 static void DumpComma(DecompState *D)
 {
   DumpLiteral(",",D);
   D->needspace = 1;
 }
 
-
+/*
+** dumps a space to output
+*/
 static void DumpSpace(DecompState *D)
 {
   DumpLiteral(" ",D);
   D->needspace = 0;
 }
 
+
+/*
+** checks if a pending space is needed and discharges it
+*/
 static void CheckSpaceNeeded(DecompState *D)
 {
   if (D->needspace)
@@ -1000,6 +1032,9 @@ static void CheckSpaceNeeded(DecompState *D)
 }
 
 
+/*
+** dumps N linefeeds to output and updates the current line counter
+*/
 static void beginline2(DFuncState *fs, int n, DecompState *D)
 {
   static const char lf[] = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
@@ -1024,6 +1059,9 @@ static void beginline2(DFuncState *fs, int n, DecompState *D)
 }
 
 
+/*
+** updates the line counter, dumping new lines to output if needed
+*/
 static void updateline2(DFuncState *fs, int line, DecompState *D)
 {
   if (line > D->linenumber) {
@@ -1044,6 +1082,9 @@ static void maybebeginline2(DFuncState *fs, DecompState *D)
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
+/*
+** dumps indentation of to the current indentation level using tabs
+*/
 static void DumpIndentation(DecompState *D)
 {
   static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
@@ -2979,7 +3020,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_TFORLOOP: /* handled in case OP_JMP */
         lua_assert(test_ins_property(fs, pc+1, INS_LOOPEND));
         break;
-      case OP_FORLOOP: { /* a for-num loop */
+      case OP_FORLOOP: { /* a numeric for-loop */
         int target = pc + 1 + sbx; /* start of for-loop */
         init_ins_property(fs, target, INS_FORNUM);
         init_ins_property(fs, pc, INS_LOOPEND);
@@ -4758,7 +4799,6 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
   while (1) {
     OpCode rootop;  /* opcode family for the current store */
     ExpNode *prev;
-    /*lua_assert(exp->kind == ESTORE);*/
     rootop = exp->u.store.rootop;
     if (exp->kind != ESTORE || rootop == OP_MOVE) {
       /* assigning to local variable */
@@ -4766,8 +4806,6 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       addregtolhs2(&sb, exp->info);
     }
     else if (rootop == OP_SETFIELD || rootop == OP_SETTABLE) {
-      /*int tabreg = exp->u.store.aux1;*/
-      /*int key = exp->u.store.aux2;*/
       sb.currpriority = SUBEXPR_PRIORITY;
       addregtolhs2(&sb, exp->u.store.aux1);  /* add table variable */
       sb.needspace = 0;  /* no space between table and `[' */
@@ -4972,7 +5010,6 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
         DumpComma(D);
         dumpexp2(D, fs, exp, 0);
         lastexp = exp;
-
       }
     }
   }
@@ -5493,35 +5530,6 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     UNUSED(numvars);
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
     numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
-#if 0
-    /* todo: make the line number of OP_CLOSURE will be the last line of the
-       closure, so make sure that is handled correctly when updating the line */
-    if (o == OP_CLOSURE) { /* nested closure? */
-      const Proto *f = fs->f->p[bx];
-      int nup = f->nups;
-      int nupn = 0;
-      lua_assert(pc + nup < sa->sizecode);
-      for (; nupn<nup; nupn++) {
-        int upvaltype = GETARG_A(code[pc+nupn]);
-        int upvalinfo = GETARG_Bx(code[pc+nupn]);
-        lua_assert(GET_OPCODE(code[pc+nupn]) == OP_DATA);
-        lua_assert(upvaltype == 1 || upvaltype == 2);
-        lua_assert(fs->upvalcount < fs->sizeupvalues);
-        if (upvaltype == 1) {
-          /* UPVALINFO is the register of the local variable */
-          unset_reg_property(fs, upvalinfo, REG_UPVAL);
-          set_reg_property(fs, upvalinfo, REG_UPVAL);
-          test_reg_property(fs, upvalinfo, REG_UPVAL);
-        }
-        fs->upvalcount++;
-      }
-      DecompileFunction(D,f);
-      /*pc += nup;*/ /* skip over data instructions */
-      lua_assert(nextchildstartpc == -1 || pc < nextchildstartpc);
-      lua_assert(pc < endpc);
-      /*continue;*/
-    }
-#endif
     /* todo: need to check if this instruction begins preparation code:
        the following properties need to be checked:
        INS_PRECALL
@@ -5530,7 +5538,6 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
        INS_PREFORNUM
        INS_PRERETURN
        INS_PRERETURN1 */
-    /*if (test_ins_property(fs, pc, INS_PRECALL))*/
     if (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
       sa->currbbl = bbl;
       openexpr2(sa, fs);
@@ -5672,6 +5679,7 @@ static void f_decompiler (hksc_State *H, void *ud) {
   DecompileFunction(sd->D, sd->f);
   UNUSED(H);
 }
+
 
 /*
 ** dump Lua function as decompiled chunk
