@@ -4017,7 +4017,7 @@ static void flushpendingexp2(DFuncState *fs)
   }
 #endif /* LUA_DEBUG */
   fs->a->expstack.used = 0;
-  D(lprintf("updating fs->firstfree from %d to %d\n", fs->firstfree,
+  D(lprintf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
             fs->nlocvars));
   lua_assert(oldfirstfree >= newfirstfree);
   /* firstfree does not need to be an accessible slot as it can be equal to
@@ -5097,7 +5097,7 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     link = fs->firstfree <= lastreg;
     if (link) {
       D(lprintf("updating fs->firstfree from %d to %d\n",
-                fs->firstfree, reg+1));
+                fs->firstfree, lastreg+1));
       fs->firstfree = lastreg+1;
     }
     if (exp->kind == ECALL || exp->kind == ETAILCALL)
@@ -5361,7 +5361,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   }
   else if (exp->kind == EINDEXED) {
     exp->dependondest = (a == b || a == c);
-    CHECK(fs, isregvalid(fs, b), "invalid register operand indexed table");
+    CHECK(fs, isregvalid(fs, b), "invalid register operand for indexed table");
     if (!test_reg_property(fs, b, REG_LOCAL)) {
       exp->u.indexed.b = -1;
       exp->u.indexed.bindex = getslotdesc(fs, b)->u.expindex;
@@ -5634,12 +5634,11 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
         if (numvars > 0) {
           D(lprintf("NEW LOCAL VARIABLE\n"));
           initlocvars2(fs, checkfirstexp(fs)->info, numvars);
-          /*dischargefromreg2(fs, a);*/ (void)dischargefromreg2;
         }
       }
       else {  /* an A-mode instruction that doesn't clobber A */
-        if (addstore2(sa, fs, pc, o, a, b, c, bx) == 0) {
-          /* not a store instruction */
+        if (addstore2(sa, fs, pc, o, a, b, c, bx) == 0) { /* not a store */
+          /* the current store chain has ended; discharge it */
           checkdischargestores2(sa, fs);
           if (o == OP_RETURN) {
             emitretstat2(fs, pc, a, b-1);
