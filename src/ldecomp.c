@@ -3601,6 +3601,7 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
   DumpIndentation(fs->D);
   DumpString(bbltypename(bbl->type),fs->D);
   DumpLiteral("\n",fs->D);
+  UNUSED(sa);
 }
 
 
@@ -3616,6 +3617,7 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
     DumpIndentation(fs->D);
     DumpLiteral("END\n",fs->D);
   }
+  UNUSED(sa);
 }
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
 
