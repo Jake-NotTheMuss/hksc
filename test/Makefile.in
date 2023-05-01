@@ -121,7 +121,20 @@ PASS1_SRC=	16_fornum.lua \
 	73_iffalse_upval.lua \
 	74_iffalse_doblocks.lua
 
-PASS2_SRC=
+PASS2_SRC=	75_locvar.lua \
+	76_assignment.lua \
+	77_locvarlist.lua \
+	78_assignmentlist.lua \
+	79_assignmentlist2.lua \
+	80_binop.lua \
+	81_binop_in_list.lua \
+	82_binop_linemap.lua \
+	83_unop.lua \
+	84_loadnil.lua \
+	85_callexpr.lua \
+	86_openexpr.lua \
+	87_multiplestore.lua \
+	88_callstat.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=	99_newtable_arg.lua
