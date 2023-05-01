@@ -4864,7 +4864,9 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       /* for N remaining variables, if there are exactly N expressions
          remaining and they are all nil, do not write them, the entire
          assignment is just one `nil', which needs to be written */
-      if (i == 0 || src->kind != ENIL || src->aux != lastsrcreg) {
+      if (i != 0 && src->kind == ENIL && src->aux == lastsrcreg)
+        src->pending = 0;  /* skip */
+      else {
         if (i != 0)
           DumpComma(D);
         dumpexp2(D, fs, src, 0);
@@ -4960,7 +4962,9 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
     if (nvars > 1 && firstexp->kind == ENIL && firstexp->aux == lastreg)
       continue; /* don't write  */
     else if (exp != NULL) {
-      if (nvars == 1 || exp->kind != ENIL || exp->aux != lastreg) {
+      if (nvars > 1 && exp->kind == ENIL && exp->aux == lastreg)
+        exp->pending = 0;
+      else {
         if (seenfirstexp)
           DumpComma(D);
         dumpexp2(D, fs, exp, 0);
