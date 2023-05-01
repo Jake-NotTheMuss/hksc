@@ -4806,6 +4806,7 @@ static void addindextolhs2(struct LHSStringBuilder *sb, int reg, int isfield)
 */
 static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
 {
+  ExpNode dummy;  /* dummy (nil) node to use when there is no pending source */
   DecompState *D = fs->D;
   struct LHSStringBuilder sb;
   struct HoldItem lhs;  /* LHS names */
@@ -4845,7 +4846,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       prev = index2exp(fs, exp->previndex);
     if (prev == NULL) { /* end of chain */
       /* LASTSRCREG can be a K value */
-      lastsrcreg = exp->u.store.srcreg;
+      lastsrcreg = (exp->kind == ESTORE) ? exp->u.store.srcreg : exp->info;
       break;
     }
     addcommatolhs2(&sb);  /* add comma before next variable */
@@ -4856,7 +4857,18 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
                sb.needspace);
   i = 0; /* reset counter */
   exp = index2exp(fs, sa->laststore);  /* go back to begining of chain */
-  lastsrc = NULL;
+  /* Make LASTSRC point to DUMMY initially; if there is no first source
+     expression, than the store must have relied on a previous OP_LOADNIL,
+     which has already been discharged, for example, the following code:
+        local a, b, c, d;
+        a, b, c = nil;
+     The above code generates a single OP_LOADNIL, followed by 3 OP_MOVE's, and
+     by the time the OP_MOVE's are being discharged in this function, the
+     expression node created for OP_LOADNIL has already been discharged. */
+  lastsrc = &dummy;
+  lastsrc->kind = ENIL;
+  lastsrc->aux = lastsrcreg;
+  lastsrc->info = exp->info;
   D(lprintf("lastsrcreg = %d\n", lastsrcreg));
   while (1) { /* tarverse the chain to dump RHS values */
     /* get expression to assigm */
@@ -4888,15 +4900,23 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       dumplocvar2(D,fs,exp->u.store.srcreg);
     }
     else {
+      /* in case DUMMY is what LASTSRC points to, set the needed values */
+      if (lastsrc == &dummy) {
+        dummy.line = exp->line;
+        dummy.closeparenline = exp->closeparenline;
+        dummy.pending = 1;
+      }
       lua_assert(lastsrc != NULL);
-      lua_assert(i > 0);
       if (lastsrc->kind == EVARARG && lastsrc->info+lastsrc->aux-1 >= i)
         ; /* vararg has already been emitted */
-      else if (lastsrc->kind == ENIL && lastsrc->aux == lastsrcreg)
+      else if (i != 0 && lastsrc->kind == ENIL && lastsrc->aux == lastsrcreg)
         ; /* invisible nil's */
+      else if (lastsrc->kind == ECALL || lastsrc->kind == ETAILCALL)
+        ;
       else if (lastsrc->kind == ENIL) {
         lastsrc->pending = 1;
-        DumpComma(D);
+        if (i != 0)
+          DumpComma(D);
         dumpexp2(D, fs, lastsrc, 0);
       }
     }
@@ -4922,6 +4942,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
 */
 static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
 {
+  ExpNode dummy;
   ExpNode *firstexp, *lastexp;
   hksc_State *H = fs->H;
   DecompState *D = fs->D;
@@ -4929,7 +4950,6 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   int seenfirstexp = 0;
   Mbuffer *b;
   struct HoldItem lhs;
-  printf("firstreg = %d\n", firstreg);
   lua_assert(isregvalid(fs, firstreg));
   lua_assert(isregvalid(fs, firstreg+nvars-1));
   lua_assert(nvars > 0);
@@ -4948,8 +4968,20 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
     if (i != lastreg)
       addliteral2buff(H, b, ", ");
   }
-  firstexp = checkexpinreg2(fs, firstreg);
+  firstexp = getexpinreg2(fs, firstreg);
   lastexp = NULL;
+  /* FIRSTEXP can be NULL if this assignment relies on a previous OP_LOADNIL
+     which has already been handled and for which no pending expression exists
+     anymore  */
+  if (firstexp == NULL) {
+    firstexp = &dummy;
+    firstexp->kind = ENIL;
+    firstexp->line = D->linenumber;
+    firstexp->closeparenline = firstexp->line;
+    firstexp->info = firstreg;
+    firstexp->aux = lastreg;
+    lastexp = firstexp;
+  }
   /*lua_assert(firstexp == checkexpinreg2(fs, firstreg));*/
   lua_assert(firstexp->info == firstreg);
   /* if only assigning nil's, avoid writing the RHS altogether, unless it is
@@ -4959,6 +4991,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   addholditem2(D, &lhs, luaZ_buffer(b), luaZ_bufflen(b), 0);
   D(printf("added hold item for decl: `%.*s'\n", cast_int(luaZ_bufflen(b)),
            luaZ_buffer(b)));
+  D(lprintf("firstreg = %d, lastreg = %d\n", firstreg, lastreg));
   for (i = firstreg; i <= lastreg; i++) {
     ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
     setreglocal2(fs, i, &fs->locvars[fs->nlocvars++]);
@@ -4988,8 +5021,9 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
       }
       else if (lastexp->kind == ENIL) {
         /*CHECK(fs, lastexp->aux >= i, "");*/
-        lua_assert(seenfirstexp);
-        DumpComma(D);
+        if (seenfirstexp)
+          DumpComma(D);
+        lastexp->pending = 1;
         dumpexp2(D, fs, lastexp, 0);
       }
       else {
