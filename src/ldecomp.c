@@ -2401,7 +2401,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       branch->ifblock = new_block;
                       branch->firstblock = new_block;
                       ca->testset.endpc = ca->testset.reg = -1;
-                      dischargeretpending1(ca, fs, pc);
+                      /*dischargeretpending1(ca, fs, pc);*/
                       return;
                     }
                     else {
@@ -3314,10 +3314,12 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
           }
         }
-        if (ca->retpending.reg != -1 &&
-            beginstempexpr(code,i,pc,ca->retpending.reg,ca->retpending.endpc)) {
+        /*if (ca->retpending.reg != -1 &&
+            beginstempexpr(code,i,pc,ca->retpending.reg,ca->retpending.endpc,
+                           NULL)) {
           dischargeretpending1(ca, fs, pc);
-        }
+        }*/
+        (void)dischargeretpending1;
         break;
     }
     if (ca->pc == startpc)
@@ -3355,7 +3357,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     }
   }
   ca->testset.endpc = ca->testset.reg = -1;
-  dischargeretpending1(ca, fs, ca->pc);
+  /*dischargeretpending1(ca, fs, ca->pc);*/
   if (branch == NULL && block == NULL) {
     ca->curr = outer; /* pop old values */
   }
