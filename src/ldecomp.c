@@ -3373,7 +3373,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
 ** evaluations. It walks through the code backwards, which makes differentiating
 ** branch tests from loop tests a simpler task.
 */
-static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
+static void pass1(const Proto *f, DFuncState *fs)
 {
   CodeAnalyzer ca;
   ca.curr.start = ca.curr.end = ca.curr.type = -1;
@@ -3382,7 +3382,6 @@ static void pass1(const Proto *f, DFuncState *fs, DecompState *D)
   ca.testset.endpc = ca.testset.reg = -1;
   ca.retpending.endpc = ca.retpending.reg = -1;
   ca.code = f->code;
-  UNUSED(D);
   bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL, NULL);
   {
     BasicBlock *first = fs->a->bbllist.first;
@@ -5599,7 +5598,7 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
 }
 
 
-static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
+static void pass2(const Proto *f, DFuncState *fs)
 {
   BasicBlock *functionblock = fs->a->bbllist.first;
   StackAnalyzer sa;
@@ -5627,7 +5626,6 @@ static void pass2(const Proto *f, DFuncState *fs, DecompState *D)
     checktreevisited(functionblock);
   }
 #endif /* LUA_DEBUG */
-  UNUSED(D);
 }
 
 
