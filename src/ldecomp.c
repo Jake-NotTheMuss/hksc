@@ -4223,6 +4223,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       ExpNode *tab, *key;
       int b = exp->u.indexed.b;
       int c = exp->u.indexed.c;
+      int isfield = exp->u.indexed.isfield;
       struct HoldItem holditem; /* dot or open-brace */
       tab = (b == -1) ? index2exp(fs, exp->u.indexed.bindex) : NULL;
       key = (c == -1) ? index2exp(fs, exp->u.indexed.cindex) : NULL;
@@ -4232,16 +4233,27 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         dumpexpoperand2(D, fs, tab, exp, SUBEXPR_PRIORITY);
       else
         dumpRK2(D, fs, b, exp);
-      if (exp->u.indexed.isfield)
+      if (isfield)
         addliteralholditem2(D, &holditem, ".", 0);
       else
         addliteralholditem2(D, &holditem, "[", 0);
       D->needspace = 0;
-      if (c == -1)
+      if (c == -1) {
+        lua_assert(isfield == 0);
         dumpexpoperand2(D, fs, key, exp, 0);
-      else
-        dumpRK2(D, fs, c, exp);
-      if (exp->u.indexed.isfield == 0)
+      }
+      else {
+        if (isfield) {
+          TString *field = rawtsvalue(&fs->f->k[INDEXK(c)]);
+          predumpexp2(D, fs, exp);
+          DumpTString(field,D);
+          postdumpexp2(D, fs, exp);
+        }
+        else {
+          dumpRK2(D, fs, c, exp);
+        }
+      }
+      if (isfield == 0)
         DumpLiteral("]",D);
       if (needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
@@ -5152,8 +5164,8 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       break;
     case OP_GETFIELD: case OP_GETFIELD_R1:
       exp->kind = EINDEXED;
-      exp->u.indexed.b = RKASK(b);
-      exp->u.indexed.c = c;
+      exp->u.indexed.b = b;
+      exp->u.indexed.c = RKASK(c);
       /* write as a field unless the field is a reserved word */
       exp->u.indexed.isfield = (rawtsvalue(&fs->f->k[c])->tsv.reserved == 0);
       break;
@@ -5297,13 +5309,11 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     exp->dependondest = (a == b || a == c);
     CHECK(fs, isregvalid(fs, b), "invalid register operand indexed table");
     if (!test_reg_property(fs, b, REG_LOCAL)) {
-      ExpNode *o;
       exp->u.indexed.b = -1;
       exp->u.indexed.bindex = getslotdesc(fs, b)->u.expindex;
-      o = index2exp(fs, exp->u.indexed.bindex);
-      /*if (o) o->isreferenced = 1;*/
     }
-    if (!ISK(c) && !test_reg_property(fs, c, REG_LOCAL)) {
+    if (!ISK(exp->u.indexed.c) &&
+        !test_reg_property(fs, exp->u.indexed.c, REG_LOCAL)) {
       exp->u.indexed.c = -1;
       exp->u.indexed.cindex = getslotdesc(fs, c)->u.expindex;
     }
