@@ -346,7 +346,8 @@ static void pushclosure (LexState *ls, FuncState *func, expdesc *v) {
                   MAXARG_Bx, "constant table overflow");
   while (oldsize < f->sizep) f->p[oldsize++] = NULL;
   f->p[fs->np++] = func->f;
-  init_exp(v, VRELOCABLE, luaK_codeABx(fs, OP_CLOSURE, 0, fs->np-1));
+  init_typed_exp(v, VRELOCABLE, luaK_codeABx(fs, OP_CLOSURE, 0, fs->np-1),
+                 LUA_TIFUNCTION);
   for (i=0; i<func->f->nups; i++) {
     int a = (func->upvalues[i].k == VLOCAL) ? 1 : 2;
     luaK_codeABx(fs, OP_DATA, a, func->upvalues[i].info);
@@ -1393,7 +1394,7 @@ static void localfunc (LexState *ls) {
   TString *name = str_checkname(ls);
   new_localvar(ls, name, 0);
   addnamepart(ls, name, NAMEPART_NAME); /* add the name part to the chain */
-  init_exp(&v, VLOCAL, fs->freereg);
+  init_typed_exp(&v, VLOCAL, fs->freereg, LUA_TIFUNCTION);
   luaK_reserveregs(fs, 1);
   adjustlocalvars(ls, 1);
   body(ls, &b, 0, ls->linenumber);
