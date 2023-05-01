@@ -66,12 +66,12 @@ TO_LIB= src/$(STATICLIB) src/$(SHAREDLIB)
 # set prefix for the child Makefile to use with `rpath'
 all: src
 
-@TEST_ALL_RULE@: src
+@TEST_ALL_RULE@:
 	@cd test && \
 	$(MAKE) HKSC_NAME=hksc && \
 	$(MAKE) HKSC_NAME=hkscsh
 
-@TEST_STATIC_RULE@: src
+@TEST_STATIC_RULE@:
 	@cd test && \
 	$(MAKE) HKSC_NAME=hksc
 
@@ -88,6 +88,9 @@ depend:
 expect:
 	@cd test && $(MAKE) $@ GEN_EXPECT=./gen-expect
 	@cd test/error && $(MAKE) $@ GEN_EXPECT=../gen-expect
+
+temp-expect:
+	@cd test && $(MAKE) $@
 
 expectsum:
 	@cd test && $(MAKE) $@

@@ -193,6 +193,17 @@ error:
 	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC_NAME=$(HKSC_NAME)
 
 
+temp-expect:
+	@for f in $(TEST_SRC); do \
+		b=$${f%.*}; \
+		src=$(srcdir)/$$f; \
+		echo "Generating expect files for $$f"; \
+		$(HKSC) $(HKSCAFLAGS) -s $$src -o $$b.cexpect; \
+		$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $$b.profileexpect $$src; \
+		$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $$b.debugexpect $$src; \
+	done
+
+
 .SUFFIXES:
 .SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest .p1test
 
