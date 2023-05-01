@@ -4262,27 +4262,28 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
     case ECALL: {
       ExpNode *firstexp;
       ExpNode *nextexp, *lastexp;
-      int funcreg = exp->info;
       int narg = exp->u.call.narg;
       int i;
       firstexp = index2exp(fs, exp->previndex);
-      lastexp = index2exp(fs, exp->aux);
-      printf("funcreg = %d\n", funcreg);
-      printf("nargs = %d\n", narg);
+      /*printf("funcreg = %d\n", exp->info);
+      printf("nargs = %d\n", narg);*/
       lua_assert(firstexp != NULL);  /* there must be an expression to call */
       if (needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
       dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);
       DumpLiteral("(",D);
       D->needspace = 0;
-      nextexp = firstexp;
+      nextexp = lastexp = firstexp;
       for (i = 0; i < narg; i++) {
         if (i != 0)
           DumpLiteral(",",D);
         nextexp = index2exp(fs, nextexp->nextregindex);
-        if (nextexp == NULL)
-          break;
+        if (nextexp == NULL) {  /* multiple nil's */
+          nextexp = lastexp;
+          lastexp->pending = 1;
+        }
         dumpexp2(D, fs, nextexp, 0);
+        lastexp = nextexp;
       }
       DumpLiteral(")",D);
       if (needparenforlineinfo)
@@ -4291,27 +4292,38 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       break;
     }
     case ECONCAT: {
-      ExpNode *nextexp, *lastexp;
+      ExpNode *firstexp, *nextexp, *lastexp;
       int firstindex = exp->u.concat.firstindex;
       int lastindex = exp->u.concat.lastindex;
+      int nexps = exp->aux;
+      int i;
       int needparen;
       if (exp->leftside)
         needparen = (priority[OPR_CONCAT].right < limit);
       else
         needparen = (priority[OPR_CONCAT].left <= limit);
       needparen = (needparen || needparenforlineinfo);
-      nextexp = index2exp(fs, firstindex);
-      lastexp = index2exp(fs, lastindex);
       if (needparen)
         addliteralholditem2(D, &holdparen, "(", 0);
-      dumpexp2(D, fs, nextexp, priority[OPR_CONCAT].left);
-      while (nextexp != lastexp) {
-        nextexp = index2exp(fs, nextexp->nextregindex);
-        lua_assert(nextexp != NULL);
+      firstexp = index2exp(fs, firstindex);
+      lua_assert(firstexp != NULL);
+      dumpexp2(D, fs, firstexp, priority[OPR_CONCAT].left);
+      nextexp = lastexp = firstexp;
+      D(lprintf("nexps = %d (firstindex = %d, lastindex = %d)\n", nexps,
+                firstindex, lastindex));
+      lua_assert(nexps >= 2);
+      for (i = 1; i < nexps; i++) {
         CheckSpaceNeeded(D);
         DumpBinOpr(OPR_CONCAT,D);
         D->needspace = 1;
+        nextexp = index2exp(fs, nextexp->nextregindex);
+        if (nextexp == NULL) {
+          nextexp = lastexp;
+          lastexp->pending = 1;
+        }
+        lua_assert(nextexp != NULL);
         dumpexp2(D, fs, nextexp, priority[OPR_CONCAT].left);
+        lastexp = nextexp;
       }
       if (needparen)
         dumpcloseparen2(D, fs, exp);
@@ -5213,6 +5225,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->kind = ECONCAT;
       exp->u.concat.firstindex = exp2index(fs, getexpinreg2(fs, b));
       exp->u.concat.lastindex =exp2index(fs, getexpinreg2(fs, c));
+      exp->aux = c+1-b;  /* number of expressions in concat */
       break;
     /* arithmetic operations */
     case OP_ADD: case OP_ADD_BK:
