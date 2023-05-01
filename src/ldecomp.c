@@ -1187,6 +1187,14 @@ static void debugregnotesummary(DFuncState *fs)
 }
 
 
+static void debugpass1summary(DFuncState *fs)
+{
+  debugbblsummary(fs); lprintf("\n");
+  debugopenexprsummary(fs); lprintf("\n");
+  debugregnotesummary(fs);
+}
+
+
 static void checktreevisited(BasicBlock *bbl)
 {
   BasicBlock *child;
@@ -1202,8 +1210,7 @@ static void checktreevisited(BasicBlock *bbl)
 
 #else /* !LUA_DEBUG */
 
-#define debugbblsummary(fs)  ((void)(fs))
-#define debugopenexprsummary(fs)  ((void)(fs))
+#define debugpass1summary(fs)  ((void)(fs))
 #define checktreevisited(bbl)  ((void)(bbl))
 
 #endif /* LUA_DEBUG */
@@ -5656,15 +5663,12 @@ static void DecompileFunction(DecompState *D, const Proto *f)
 {
   DFuncState new_fs;
   open_func(&new_fs, D, f);
-  pass1(f,&new_fs,D);
-  debugbblsummary(&new_fs);
-  D(lprintf("\n"));
-  debugopenexprsummary(&new_fs);
-  D(lprintf("\n"));
-  debugregnotesummary(&new_fs);
-  pass2(f,&new_fs,D);
+  pass1(f,&new_fs);
+  debugpass1summary(&new_fs);
+  pass2(f,&new_fs);
   close_func(D);
 }
+
 
 /*
 ** Execute a protected decompiler.
