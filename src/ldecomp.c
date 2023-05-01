@@ -4616,7 +4616,6 @@ struct LHSStringBuilder {
   DFuncState *fs;
   DecompState *D;
   Mbuffer *buff;
-  int nvars;  /* number of LHS items processed so far */
   int needspace;
   unsigned int currpriority;
   lu_byte empty;
@@ -4629,7 +4628,6 @@ static void initstringbuilder2(struct LHSStringBuilder *sb, DecompState *D)
   sb->fs = D->fs;
   sb->D = D;
   sb->buff = &D->buff;
-  sb->nvars = 0;
   sb->needspace = 0;
   sb->currpriority = 0;
   sb->empty = 1;
