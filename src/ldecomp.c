@@ -127,6 +127,7 @@ typedef struct DFuncState {
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int firstfree;
   int lastfirstfree;
+  int lastcallexp;  /* exp index of last function call node */
   int upvalcount;  /* number of upvalues encountered so far */
   int nopencalls;  /* number of OpenExpr entries created */
   int nregnotes;  /* number of RegNote entries created */
@@ -752,6 +753,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->firstclobnonparam = -1;
   fs->firstfree = -1;
   fs->lastfirstfree = -1;
+  fs->lastcallexp = 0;
   /* allocate vectors for instruction and register properties */
   a->sizeinsproperties = f->sizecode; /* flags for each instruction */
   a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
@@ -3421,7 +3423,6 @@ typedef struct StackAnalyzer {
   const Instruction *code;
   BasicBlock *currbbl;
   int laststore;  /* exp index of last store node */
-  int lastcall;  /* exp index of last function call node */
   int pc;
   int sizecode;
   int maxstacksize;
@@ -3726,6 +3727,44 @@ static BasicBlock *updatenextchild2(StackAnalyzer *sa, BasicBlock *parent,
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
+/*
+** adds a new store node to the pending chain
+*/
+static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
+{
+  ExpNode *prevcall;
+  int prevlaststore = sa->laststore;
+  lua_assert(exp != NULL);
+  lua_assert(exp->kind == ESTORE);
+  exp->u.store.prevstore = sa->laststore;
+  sa->laststore = exp2index(fs, exp);
+  /* when preserving line info, if the last expression has a different line
+     than this store, add extra parens around it to make it end on the line that
+     this store is mapped to */
+  if (fs->D->matchlineinfo && prevlaststore == 0) {
+    ExpNode *prev = index2exp(fs, exp2index(fs, exp)-1);
+    if (prev != NULL && prev->line != exp->line)
+      prev->closeparenline = exp->line;
+  }
+  /* this store may reference a register that holds the second or greater
+     return value of the last function call; the actual expression node that is
+     referenced by AUX may point to the wrong value in this case (if the
+     function uses the register for one of its arguments), sp make sure AUX
+     points to NULL instead of one of the function arguments */
+  prevcall = index2exp(fs, fs->lastcallexp);
+  lua_assert(prevcall == NULL || (prevcall >= fs->a->expstack.stk &&
+             prevcall < &fs->a->expstack.stk[fs->a->expstack.used]));
+  if (prevcall != NULL && prevcall->kind == ECALL) {
+    int reg = exp->u.store.srcreg;
+    int firstretreg = prevcall->info;
+    int lastretreg = firstretreg + prevcall->u.call.nret;
+    if (!ISK(reg) && reg > firstretreg && reg <= lastretreg)
+      /* make source NULL because it uses results from a previous call */
+      exp->aux = 0;
+  }
+}
+
+
 #if 0
 static void updateline2(DFuncState *fs, int pc)
 {
@@ -4027,6 +4066,7 @@ static void flushpendingexp2(DFuncState *fs)
   memset(getslotdesc(fs, newfirstfree), 0,
          (oldfirstfree-newfirstfree) * sizeof(SlotDesc));
   fs->firstfree = newfirstfree;
+  fs->lastcallexp = 0;
 }
 
 
@@ -5384,11 +5424,10 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     index2exp(fs, exp->prevregindex)->nextregindex = sa->lastexpindex;
   if (exp->kind == ESTORE) {
     exp->pending = 0;
-    exp->u.store.prevstore = sa->laststore;
-    sa->laststore = exp2index(fs, exp);
+    updatelaststore2(sa, fs, exp);
   }
   else if (exp->kind == ECALL || exp->kind == ETAILCALL)
-    sa->lastcall = exp2index(fs, exp);  /* update last call node */
+    fs->lastcallexp = exp2index(fs, exp);  /* update last call node */
   return exp;
 }
 
@@ -5460,8 +5499,7 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
   exp->leftside = 0;
   exp->pending = 0;
   exp->u.store.srcreg = srcreg;
-  exp->u.store.prevstore = sa->laststore;
-  sa->laststore = exp2index(fs, exp);
+  updatelaststore2(sa, fs, exp);
   return 1;
 }
 
@@ -5687,7 +5725,6 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.inheadercondition = 0;
   sa.lastexpindex = 0;
   sa.laststore = 0;
-  sa.lastcall = 0;
   sa.openexprkind = -1;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BBL_FUNCTION);
