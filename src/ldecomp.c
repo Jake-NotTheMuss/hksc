@@ -3225,14 +3225,28 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         }
         updatefirstclob1(fs, pc, a);
         break;
-      case OP_DATA:
-        if (a == 1) {
-          CHECK(fs, isregvalid(fs, bx), "OP_DATA indexes invalid register");
-          newregnote(fs, REG_NOTE_UPVALUE, pc, bx);
+      case OP_CLOSURE: {
+        int nup, nupn;
+        lua_assert(bx >= 0 && bx < fs->f->sizep);
+        nupn = nup = fs->f->p[bx]->nups;
+        lua_assert(ispcvalid(fs, pc+nupn));
+        for (; nupn > 0; nupn--) {
+          Instruction data = code[pc+nupn];
+          int upvalindex = GETARG_Bx(data);
+          lua_assert(GET_OPCODE(data) == OP_DATA);
+          if (GETARG_A(data) == 1) {
+            CHECK(fs, isregvalid(fs, upvalindex), "OP_DATA indexes invalid "
+                  "register");
+            newregnote(fs, REG_NOTE_UPVALUE, pc+nupn, upvalindex);
+          }
+          else {
+            CHECK(fs, upvalindex >= 0 && upvalindex < fs->f->nups, "OP_DATA "
+                  "indexes invalid upvalue");
+          }
         }
-        else if (a == 2)
-          CHECK(fs, bx >= 0 && bx < fs->f->nups, "OP_DATA indexes invalid "
-                "upvalue");
+        break;
+      }
+      case OP_DATA:
         break;
       case OP_NEWTABLE:
         /* table constructors with only hash-items will not emit OP_SETLIST, nor
