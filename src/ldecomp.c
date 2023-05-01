@@ -484,16 +484,6 @@ static ExpNode *newexp(DFuncState *fs)
 }
 
 
-static void freeexp(DFuncState *fs, ExpNode *exp)
-{
-  Analyzer *a = fs->a;
-  lua_assert(a->expstack.used > 0 && a->expstack.used <= a->expstack.total);
-  lua_assert(exp == &a->expstack.stk[a->expstack.used-1]);
-  a->expstack.used--;
-  UNUSED(exp);
-}
-
-
 #define prevexp(fs,exp) index2exp(fs, exp->previndex)
 
 static int exp2index(DFuncState *fs, ExpNode *exp)
@@ -4357,7 +4347,6 @@ static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
   else { /* dump pending expression in REG */
     dumpexp2(D, fs, checkexpinreg2(fs, reg), priority);
   }
-  (void)freeexp;
   (void)popexp2;
 }
 
@@ -4517,22 +4506,6 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
     dumpexp2(D, fs, currexp, 0);
   }
 #endif
-}
-
-
-static void assignexptolocvar2(DFuncState *fs, int reg, ExpNode *exp)
-{
-  struct LocVar *var;
-  struct HoldItem lhs, eq;
-  lua_assert(isregvalid(fs, reg));
-  check_reg_property(fs, reg, REG_LOCAL);
-  var = getslotdesc(fs, reg)->u.locvar;
-  addholditem2(fs->D, &lhs, getstr(var->varname), var->varname->tsv.len, 0);
-  addliteralholditem2(fs->D, &eq, " = ", 0);
-  dumpexp2(fs->D, fs, exp, 0);
-  emitresidualexp2(fs, exp->info+1, exp);
-  DumpSemi(fs->D);
-  flushpendingexp2(fs);
 }
 
 
@@ -5057,7 +5030,6 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
   else {
     exp->previndex = sa->laststore;
     sa->laststore = exp2index(fs, exp);
-    (void)assignexptolocvar2;
     return NULL;
   }
 }
