@@ -5122,7 +5122,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
 ** chain
 */
 static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
-                             ExpNode *exp)
+                             ExpNode *exp, int *splitnil)
 {
   lua_assert(isregvalid(fs, reg));
   lua_assert(exp->kind != ESTORE);
@@ -5134,6 +5134,7 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
       lastreg = exp->info + exp->aux-2;
     else
       lastreg = reg;
+    lua_assert(isregvalid(fs, lastreg));
     link = fs->firstfree <= lastreg;
     if (link) {
       D(lprintf("updating fs->firstfree from %d to %d\n",
@@ -5143,12 +5144,29 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     if (exp->kind == ECALL || exp->kind == ETAILCALL)
       link = 1;  /* linking is needed to access the called expression */
     pushexp2(fs, reg, exp, link);
+    if (splitnil != NULL) *splitnil = 0;
     return exp;
   }
   else {
+    lua_assert(fs->nlocvars > 0);
+    lua_assert(exp->info < fs->nlocvars);
     exp->previndex = sa->laststore;
     sa->laststore = exp2index(fs, exp);
-    return NULL;
+    if (exp->kind == ENIL && exp->aux >= fs->nlocvars) {
+      ExpNode *new;
+      ExpNode node = *exp;  /* the node starts as local; the stack is about to
+                               be discharged; add it to the stack after */
+      node.info = fs->nlocvars;  /* start this node at the first pending */
+      exp->aux = fs->nlocvars-1;  /* end the original node at the last local */
+      dischargestores2(sa, fs);  /* store some of the nil's */
+      new = newexp(fs);  /* put the rest of the nil's in a new pending node */
+      *new = node;
+      lua_assert(!test_reg_property(fs, fs->nlocvars, REG_LOCAL));
+      if (splitnil != NULL) *splitnil = 1;
+      return addexptoreg2(sa, fs, new->info, new, NULL);
+    }
+    if (splitnil != NULL) *splitnil = 0;
+    return exp;
   }
 }
 
@@ -5539,7 +5557,7 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
         D(lprintf("---------------------------\n"));
         debugexp(fs, exp,0);
         D(lprintf("---------------------------\n"));
-        addexptoreg2(sa, fs, a, exp);
+        addexptoreg2(sa, fs, a, exp, NULL);
       }
     }
     UNUSED(sbx);
@@ -5651,27 +5669,37 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
       exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
+        int splitnil;
         D(lprintf("created new expression node\n"));
         D(lprintf("---------------------------\n"));
         debugexp(fs, exp,0);
         D(lprintf("---------------------------\n"));
         if (exp->kind != ESTORE)
-          addexptoreg2(sa, fs, a, exp);
+          exp = addexptoreg2(sa, fs, a, exp, &splitnil);
         if (exp->kind == ECALL && exp->u.call.nret == 0)
           emitcallstat2(fs, exp);
-          /* if the final return the next code and it is mapped to a different
-             line than this expression, wrap this expression in parens and put
-             the closing paren on the line that the return is mapped to; this
-             preserves line info when recompiling */
-          if (D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
-            int retline = getline(fs->f, pc+1);
-            lua_assert(GET_OPCODE(code[pc+1]) == OP_RETURN);
-            if (retline != exp->line)
+        /* if the final return the next code and it is mapped to a different
+           line than this expression, wrap this expression in parens and put
+           the closing paren on the line that the return is mapped to; this
+           preserves line info when recompiling */
+        if (D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
+          int retline = getline(fs->f, pc+1);
+          lua_assert(GET_OPCODE(code[pc+1]) == OP_RETURN);
+          if (retline != exp->line) {
+            D(lprintf("splitnil = %d\n", splitnil));
+            if (splitnil) {
+              lua_assert(exp->kind == ENIL);
+              exp->line = exp->closeparenline = retline;
+            }
+            else
               exp->closeparenline = retline;
           }
+        }
         if (numvars > 0) {
+          checkdischargestores2(sa, fs);
           D(lprintf("NEW LOCAL VARIABLE\n"));
-          initlocvars2(fs, checkfirstexp(fs)->info, numvars);
+          (void)getfirstexp;
+          initlocvars2(fs, fs->nlocvars, numvars);
         }
       }
       else {  /* an A-mode instruction that doesn't clobber A */
