@@ -3430,6 +3430,11 @@ typedef struct StackAnalyzer {
   int sizecode;
   int maxstacksize;
   int nextpclimit;  /* the next PC that causes the current block to change */
+  int openexprnildebt;  /* number of registers that contain nil values, but have
+                           no actual expression nodes for them because they
+                           share a previous OP_LOADNIL code that is before the
+                           start of the open expression; if non-zero, the first
+                           register to load nils into is NEXTOPENREG */
   int openexprkind;
   OpenExpr *nextopenexpr;  /* next open expression */
   int nextopenreg;  /* first register of next open expression */
@@ -3560,9 +3565,9 @@ static void updatenextopenexpr2(StackAnalyzer *sa, DFuncState *fs)
   }
   next = &fs->a->opencalls[--fs->nopencalls];
   sa->nextopenexpr = next;
+  sa->nextopenreg = next->firstreg;
   lua_assert(ispcvalid(fs, sa->nextopenexpr->startpc));
   lua_assert(ispcvalid(fs, sa->nextopenexpr->endpc));
-  sa->nextopenreg = GETARG_A(sa->code[next->startpc]);
   lua_assert(isregvalid(fs, sa->nextopenreg));
 }
 
@@ -5146,6 +5151,15 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     }
     if (exp->kind == ECALL || exp->kind == ETAILCALL)
       link = 1;  /* linking is needed to access the called expression */
+    /* check if the next open expression uses this nil expression */
+    if (sa->openexprkind == -1 && exp->kind == ENIL &&
+        sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == sa->pc+1 &&
+        exp->info < sa->nextopenreg && exp->aux >= sa->nextopenreg) {
+      /* set the nil debt for the next open expression */
+      sa->openexprnildebt = exp->aux+1-sa->nextopenreg;
+      /* make this nil node end 1 before the open register */
+      exp->aux = sa->nextopenreg-1;
+    }
     pushexp2(fs, reg, exp, link);
     if (splitnil != NULL) *splitnil = 0;
     return exp;
@@ -5164,8 +5178,22 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
       dischargestores2(sa, fs);  /* store some of the nil's */
       new = newexp(fs);  /* put the rest of the nil's in a new pending node */
       *new = node;
-      lua_assert(!test_reg_property(fs, fs->nlocvars, REG_LOCAL));
+      /* if this node loads nil into the first open register, change its line so
+         that it gets emitted with the first opcode of the open expression,
+         which is likely how it was in the source code; this has to be done here
+         since the node has already been split and is no longer shared, so there
+         will be no OPENEXPRNILDEBT when entering the open expression in
+         `openexpr2'; otherwise, OPENEXPRNILDEBT is set and the new nil node
+         will be created in `openexpr2', and its line will be set then */
+      if (sa->openexprkind == -1 && sa->nextopenexpr != NULL &&
+          sa->nextopenexpr->startpc == sa->pc+1 &&
+          fs->nlocvars == sa->nextopenreg) {
+        lua_assert(ispcvalid(fs, sa->pc+1));
+        new->line = getline(fs->f, sa->pc+1);
+        new->closeparenline = new->line;
+      }
       if (splitnil != NULL) *splitnil = 1;
+      lua_assert(!test_reg_property(fs, fs->nlocvars, REG_LOCAL));
       return addexptoreg2(sa, fs, new->info, new, NULL);
     }
     if (splitnil != NULL) *splitnil = 0;
@@ -5532,8 +5560,23 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
   lua_assert(sa->nextopenreg != -1);
   lua_assert(e->endpc >= sa->pc);
   lua_assert(ispcvalid(fs, e->endpc));
-  updatenextopenexpr2(sa, fs);  /* discharge this one now */
   sa->openexprkind = e->kind;
+  lua_assert(sa->openexprnildebt >= 0);
+  if (sa->openexprnildebt) {
+    ExpNode *exp = newexp(fs);
+    exp->kind = ENIL;
+    exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+    exp->info = sa->nextopenreg;
+    exp->aux = exp->info + sa->openexprnildebt-1;
+    exp->line = getline(fs->f, sa->pc);
+    exp->closeparenline = exp->line;
+    exp->dependondest = 0;
+    exp->leftside = 0;
+    exp->pending = 1;
+    addexptoreg2(sa, fs, exp->info, exp, NULL);
+    sa->openexprnildebt = 0;
+  }
+  updatenextopenexpr2(sa, fs);  /* discharge this one now */
   for (; sa->pc < e->endpc; sa->pc++) {
     int pc = sa->pc;
     Instruction i = sa->code[pc];
@@ -5757,6 +5800,7 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.lastexpindex = 0;
   sa.laststore = 0;
   sa.openexprkind = -1;
+  sa.openexprnildebt = 0;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BBL_FUNCTION);
   initfirstfree2(fs, f); /* set the first free reg for this function */
