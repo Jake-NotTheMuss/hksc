@@ -403,7 +403,8 @@ static BasicBlock *newbbl(hksc_State *H, int startpc, int endpc, int type) {
 /*
 ** creates a new OpenExpr entry
 */
-static OpenExpr *newopenexpr(DFuncState *fs, int startpc, int endpc, int kind)
+static OpenExpr *newopenexpr(DFuncState *fs, int firstreg, int startpc,
+                             int endpc, int kind)
 {
   OpenExpr *expr;
   hksc_State *H = fs->H;
@@ -415,6 +416,7 @@ static OpenExpr *newopenexpr(DFuncState *fs, int startpc, int endpc, int kind)
   expr->kind = kind;
   expr->startpc = startpc;
   expr->endpc = endpc;
+  expr->firstreg = firstreg;
   return expr;
 }
 
@@ -1144,7 +1146,8 @@ static void debugopenexpr(const OpenExpr *e)
     "EMPTYTABLE",
     "PRERETURN"
   };
-  lprintf("(%i-%i) %s\n", e->startpc, e->endpc, typenames[e->kind]);
+  lprintf("(%i-%i, reg %d) %s\n", e->startpc, e->endpc, e->firstreg,
+          typenames[e->kind]);
 }
 
 
@@ -1459,7 +1462,7 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
       break;
   }
   ca->pc = pc;
-  newopenexpr(fs, pc, endpc, kind);
+  newopenexpr(fs, firstreg, pc, endpc, kind);
 }
 
 
@@ -3258,10 +3261,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         if (c)
           /* walk back up the code vector to find the earliest possible end of
              this constructor */
-          scanforhashitems1(ca, fs, newopenexpr(fs, pc, -1, SETLISTPREP),
+          scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, SETLISTPREP),
                             luaO_fb2int(c-1)+1, a);
         else
-          newopenexpr(fs, pc, pc, EMPTYTABLE);
+          newopenexpr(fs, a, pc, pc, EMPTYTABLE);
         /* fallthrough */
       poststat: /* update variables after calls which change the pc */
         pc = ca->pc;

@@ -128,6 +128,7 @@ typedef struct OpenExpr {
   openexptype kind;
   int startpc;
   int endpc;
+  int firstreg;
 } OpenExpr;
 
 
