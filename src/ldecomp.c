@@ -3744,7 +3744,7 @@ static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
   int prevlaststore = sa->laststore;
   lua_assert(exp != NULL);
   lua_assert(exp->kind == ESTORE);
-  exp->u.store.prevstore = sa->laststore;
+  exp->previndex = sa->laststore;
   sa->laststore = exp2index(fs, exp);
   /* when preserving line info, if the last expression has a different line
      than this store, add extra parens around it to make it end on the line that
@@ -4888,10 +4888,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
     }
     else
       lua_assert(0);
-    if (exp->kind == ESTORE)
-      prev = index2exp(fs, exp->u.store.prevstore);  /* get previous in chain */
-    else
-      prev = index2exp(fs, exp->previndex);
+    prev = index2exp(fs, exp->previndex);  /* get previous in chain */
     if (prev == NULL) { /* end of chain */
       /* LASTSRCREG can be a K value */
       lastsrcreg = (exp->kind == ESTORE) ? exp->u.store.srcreg : exp->info;
@@ -4968,10 +4965,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
         dumpexp2(D, fs, lastsrc, 0);
       }
     }
-    if (exp->kind == ESTORE)
-      exp = index2exp(fs, exp->u.store.prevstore);
-    else
-      exp = index2exp(fs, exp->previndex);
+    exp = index2exp(fs, exp->previndex);
     if (exp == NULL) /* end of chain */
       break;
     i++;

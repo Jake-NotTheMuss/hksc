@@ -213,7 +213,6 @@ typedef struct ExpNode {
     struct {
       OpCode rootop;  /* the `root' opcode (without R1, BK, S or N suffixes)
                          ROOTOP serves as a subtype for ESTORE */
-      int prevstore;  /* exp index of previous L-value in the assignment list */
       int srcreg;  /* the source register to store (because the source
                       expression may be NULL in the case of OP_LOADNIL or 
                       OP_VARARG) */
@@ -223,7 +222,9 @@ typedef struct ExpNode {
       int aux2;  /* key RK operand for OP_SETTABLE family */
     } store;
   } u;
-  int previndex;  /* stack index of previous ExpNode for its own register */
+  int previndex;  /* if a store node, the previous store node in the chain,
+                     otherwise, the previous ExpNode that clobbered the same
+                     register */
   int prevregindex;  /* stack index of ExpNode in the previous register */
   int nextregindex;  /* stack index of ExpNode in the next register */
   /*int type_checked;*/  /* if type-checked, which type */
