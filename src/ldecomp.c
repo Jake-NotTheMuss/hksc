@@ -4326,12 +4326,15 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       D->needspace = 1;
       break;
     }
-    case EINDEXED: {
+    case EINDEXED:
+    case ESELF: {
       ExpNode *tab, *key;
       int b = exp->u.indexed.b;
       int c = exp->u.indexed.c;
+      int isself = exp->kind == ESELF;
       int isfield = exp->u.indexed.isfield;
       struct HoldItem holditem; /* dot or open-brace */
+      lua_assert((!isself && !isfield) || (isself != isfield));
       tab = (b == -1) ? index2exp(fs, exp->u.indexed.bindex) : NULL;
       key = (c == -1) ? index2exp(fs, exp->u.indexed.cindex) : NULL;
       if (needparenforlineinfo)
@@ -4342,15 +4345,29 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         dumpRK2(D, fs, b, exp);
       if (isfield)
         addliteralholditem2(D, &holditem, ".", 0);
-      else
+      else if (isself == 0)
         addliteralholditem2(D, &holditem, "[", 0);
+      else
+        addliteralholditem2(D, &holditem, ":", 0);
       D->needspace = 0;
       if (c == -1) {
         lua_assert(isfield == 0);
-        dumpexpoperand2(D, fs, key, exp, 0);
+        if (isself == 0)
+          dumpexpoperand2(D, fs, key, exp, 0);
+        else {
+          TString *field;
+          lua_assert(key != NULL);
+          key->pending = 0;
+          predumpexp2(D, fs, key);
+          CHECK(fs, key->kind == ELITERAL, "invalid key in OP_SELF (register "
+                "does not contain a string constant)");
+          field = rawtsvalue(key->u.k);
+          DumpTString(field,D);
+          postdumpexp2(D, fs, key);
+        }
       }
       else {
-        if (isfield) {
+        if (isfield || isself) {
           TString *field = rawtsvalue(&fs->f->k[INDEXK(c)]);
           predumpexp2(D, fs, exp);
           DumpTString(field,D);
@@ -4360,7 +4377,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           dumpRK2(D, fs, c, exp);
         }
       }
-      if (isfield == 0)
+      if (isfield == 0 && isself == 0)
         DumpLiteral("]",D);
       if (needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
@@ -4373,17 +4390,24 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       int i;
       firstexp = index2exp(fs, exp->previndex);
       lua_assert(firstexp != NULL);  /* there must be an expression to call */
-      /* initialize the expression list iterator for dumping arguments */
-      initexplistiter2(&iter, fs, exp->info+1, firstexp);
       if (needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
       dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);  /* called expression */
       DumpLiteral("(",D);  /* start of arguments */
       D->needspace = 0;
-      for (i = 0; i < narg; i++) {
-        if (i != 0)
-          DumpLiteral(",",D);
-        dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
+      narg -= (firstexp->kind == ESELF);
+      if (narg != 0) {
+        /* initialize the expression list iterator for dumping arguments */
+        initexplistiter2(&iter, fs, exp->info+1+(firstexp->kind == ESELF),
+                         firstexp);
+        if (firstexp->kind == ESELF) {
+          lprintf("firstexp->nextregindex = %d\n", firstexp->nextregindex);
+        }
+        for (i = 0; i < narg; i++) {
+          if (i != 0)
+            DumpLiteral(",",D);
+          dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
+        }
       }
       DumpLiteral(")",D);  /* end of arguments */
       if (needparenforlineinfo)
@@ -5185,7 +5209,7 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
   lua_assert(exp->kind != ESTORE);
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
     int link, lastreg;
-    if (exp->kind == ENIL)
+    if (exp->kind == ENIL || exp->kind == ESELF)
       lastreg = exp->aux;
     else if (exp->kind == EVARARG && exp->aux > 1)
       lastreg = exp->info + exp->aux-2;
@@ -5224,6 +5248,8 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
         }
       }
     }
+    if (exp->kind == ESELF)
+      pushexp2(fs, reg+1, exp, 0);
     pushexp2(fs, reg, exp, link);
     if (splitnil != NULL) *splitnil = 0;
     return exp;
@@ -5388,7 +5414,11 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       /* todo */
       break;
     case OP_SELF:
-      /* todo */
+      exp->kind = ESELF;
+      exp->u.indexed.b = b;
+      exp->u.indexed.c = c;
+      exp->u.indexed.isfield = 0;
+      exp->aux = a+1;
       break;
     case OP_GETFIELD: case OP_GETFIELD_R1:
       exp->kind = EINDEXED;
@@ -5534,7 +5564,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.unop.bindex = getslotdesc(fs, b)->u.expindex;
     }
   }
-  else if (exp->kind == EINDEXED) {
+  else if (exp->kind == EINDEXED || exp->kind == ESELF) {
     exp->dependondest = (a == b || a == c);
     CHECK(fs, isregvalid(fs, b), "invalid register operand for indexed table");
     if (!test_reg_property(fs, b, REG_LOCAL)) {

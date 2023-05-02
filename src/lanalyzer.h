@@ -164,6 +164,7 @@ typedef enum {
   EUPVAL,  /* an upvalue */
   EGLOBAL,  /* a global variable */
   EINDEXED,  /* a table index */
+  ESELF,  /* a table index called as a method */
   EBINOP,  /* a binary operation */
   EUNOP,  /* a unary operation */
   ECALL,  /* a function call */
