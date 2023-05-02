@@ -3203,7 +3203,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           ca->retpending.endpc = pc;
         }
         else*/
-        if (nret != 0 && nret != 1) {  /* returns an open expression */
+        if (nret == 1) {  /* returns a single register */
+          if (pc > 0)
+            /* the second pass is interested in knowing when it is about to
+               encounter a single-return */
+            set_ins_property(fs, pc-1, INS_PRERETURN1);
+        }
+        else if (nret != 0) {  /* returns an open expression */
           openexpr1(ca, fs, a, RETPREP);
         }
         goto poststat;
@@ -5194,14 +5200,29 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     }
     if (exp->kind == ECALL || exp->kind == ETAILCALL)
       link = 1;  /* linking is needed to access the called expression */
-    /* check if the next open expression uses this nil expression */
-    if (sa->openexprkind == -1 && exp->kind == ENIL &&
-        sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == sa->pc+1 &&
-        exp->info < sa->nextopenreg && exp->aux >= sa->nextopenreg) {
-      /* set the nil debt for the next open expression */
-      sa->openexprnildebt = exp->aux+1-sa->nextopenreg;
-      /* make this nil node end 1 before the open register */
-      exp->aux = sa->nextopenreg-1;
+    else if (exp->kind == ENIL) {
+      /* check if the next open expression uses this nil expression */
+      if (sa->openexprkind == -1 && sa->nextopenexpr != NULL &&
+          sa->nextopenexpr->startpc == sa->pc+1 &&
+          exp->info < sa->nextopenreg && exp->aux >= sa->nextopenreg) {
+        /* set the nil debt for the next open expression */
+        sa->openexprnildebt = exp->aux+1-sa->nextopenreg;
+        /* make this nil node end 1 before the open register */
+        exp->aux = sa->nextopenreg-1;
+      }
+      /* check if there is a single return that uses this nil expression */
+      else if (test_ins_property(fs, sa->pc, INS_PRERETURN1)) {
+        int retreg;
+        lua_assert(ispcvalid(fs, sa->pc+1));
+        lua_assert(GET_OPCODE(sa->code[sa->pc+1]) == OP_RETURN);
+        retreg = GETARG_A(sa->code[sa->pc+1]);
+        if (exp->info < retreg && exp->aux >= retreg) {
+          /* set the nil debt for the next return */
+          sa->openexprnildebt = exp->aux+1-retreg;
+          /* make this nil node end 1 before the returned register */
+          exp->aux = retreg-1;
+        }
+      }
     }
     pushexp2(fs, reg, exp, link);
     if (splitnil != NULL) *splitnil = 0;
@@ -5242,6 +5263,28 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     if (splitnil != NULL) *splitnil = 0;
     return exp;
   }
+}
+
+
+/*
+** discharges the current nil debt by adding a new nil expression into REG
+*/
+static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
+{
+  ExpNode *exp;
+  lua_assert(sa->openexprnildebt > 0);
+  exp = newexp(fs);
+  exp->kind = ENIL;
+  exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+  exp->info = reg;
+  exp->aux = exp->info + sa->openexprnildebt-1;
+  exp->line = getline(fs->f, sa->pc);
+  exp->closeparenline = exp->line;
+  exp->dependondest = 0;
+  exp->leftside = 0;
+  exp->pending = 1;
+  addexptoreg2(sa, fs, exp->info, exp, NULL);
+  sa->openexprnildebt = 0;
 }
 
 
@@ -5605,20 +5648,8 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
   lua_assert(ispcvalid(fs, e->endpc));
   sa->openexprkind = e->kind;
   lua_assert(sa->openexprnildebt >= 0);
-  if (sa->openexprnildebt) {
-    ExpNode *exp = newexp(fs);
-    exp->kind = ENIL;
-    exp->previndex = exp->prevregindex = exp->nextregindex = 0;
-    exp->info = sa->nextopenreg;
-    exp->aux = exp->info + sa->openexprnildebt-1;
-    exp->line = getline(fs->f, sa->pc);
-    exp->closeparenline = exp->line;
-    exp->dependondest = 0;
-    exp->leftside = 0;
-    exp->pending = 1;
-    addexptoreg2(sa, fs, exp->info, exp, NULL);
-    sa->openexprnildebt = 0;
-  }
+  if (sa->openexprnildebt)
+    dischargenildebt2(sa, fs, sa->nextopenreg);
   updatenextopenexpr2(sa, fs);  /* discharge this one now */
   for (; sa->pc < e->endpc; sa->pc++) {
     int pc = sa->pc;
@@ -5796,6 +5827,8 @@ static void bbl2(StackAnalyzer *sa, DFuncState *fs, BasicBlock *bbl)
           /* the current store chain has ended; discharge it */
           checkdischargestores2(sa, fs);
           if (o == OP_RETURN) {
+            if (sa->openexprnildebt)
+              dischargenildebt2(sa, fs, a);
             emitretstat2(fs, pc, a, b-1);
           }
         }

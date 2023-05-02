@@ -43,8 +43,7 @@ enum BBLTYPE {
   DEFINSFLAG(PRECONCAT)  /* first pc that sets up a concat operation */ \
   DEFINSFLAG(PRECALL)  /* first pc that sets up a function call */ \
   DEFINSFLAG(PRERETURN)  /* first pc that evaluates a returned expression */ \
-  /* possible first pc that evaluates a single return value */ \
-  DEFINSFLAG(PRERETURN1)  \
+  DEFINSFLAG(PRERETURN1) /* the pc before a single-value-return */ \
   DEFINSFLAG(PREBRANCHTEST)  /* first pc that evaluates a branch condition */ \
   /* possible first pc that evaluates a branch condition */ \
   DEFINSFLAG(PREBRANCHTEST1) \

@@ -11,3 +11,7 @@ a = (nil)();
 a = nil;
 
 a = (nil)(nil, nil, nil);
+
+a = nil;
+
+return nil, nil;
