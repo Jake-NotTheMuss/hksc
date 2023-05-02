@@ -134,7 +134,8 @@ PASS2_SRC=	75_locvar.lua \
 	85_callexpr.lua \
 	86_openexpr.lua \
 	87_multiplestore.lua \
-	88_callstat.lua
+	88_callstat.lua \
+	89_loadnil_before_openexpr.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=	99_newtable_arg.lua
