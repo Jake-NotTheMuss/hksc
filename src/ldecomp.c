@@ -4167,6 +4167,59 @@ static void dumpcloseparen2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 
 /*
+** `ExpListIterator' helps properly iterate through a complete expression list
+*/
+struct ExpListIterator {
+  DFuncState *fs;
+  ExpNode *lastexp;  /* the last ExpNode that was dumped */
+  ExpNode *nextexp;  /* the next ExpNode in the list */
+  int firstreg;  /* the start register of the expression list */
+};
+
+
+/*
+** initializes an expression list iterator, starting at FIRSTREG with FIRSTEXP
+*/
+static void initexplistiter2(struct ExpListIterator *iter, DFuncState *fs,
+                             int firstreg, ExpNode *firstexp)
+{
+  lua_assert(firstexp != NULL);
+  lua_assert(isregvalid(fs, firstreg));
+  iter->fs = fs;
+  iter->lastexp = firstexp;
+  iter->nextexp = firstexp;
+  iter->firstreg = firstreg;
+}
+
+
+/*
+** updates the iterator state to the next expression in the list and returns it
+*/
+static ExpNode *getnextexpinlist2(struct ExpListIterator *iter, int i)
+{
+  ExpNode *nextexp;
+  lua_assert(iter->nextexp != NULL);
+  iter->lastexp = iter->nextexp;
+  /* first try to follow the next expression chained to the current one */
+  nextexp = index2exp(iter->fs, iter->nextexp->nextregindex);
+  if (nextexp == NULL)
+    /* if NULL, the previous expression is more than one register removed; see
+       if there is a pending expression in the next register explicitly */
+    nextexp = getexpinreg2(iter->fs, iter->firstreg+i);
+  if (nextexp == NULL) {  /* multiple nil's */
+    /* if NULL, there is a previous nil expression that occupies this register
+       */
+    lua_assert(iter->lastexp != NULL);
+    nextexp = iter->lastexp;
+    /* this expression has already been dumped and will be dumped again */
+    nextexp->pending = 1;
+  }
+  iter->nextexp = nextexp;
+  return nextexp;
+}
+
+
+/*
 ** dumps an expression node to the output
 */
 static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
@@ -4308,39 +4361,33 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       break;
     }
     case ECALL: {
+      struct ExpListIterator iter;
       ExpNode *firstexp;
-      ExpNode *nextexp, *lastexp;
       int narg = exp->u.call.narg;
       int i;
       firstexp = index2exp(fs, exp->previndex);
-      /*printf("funcreg = %d\n", exp->info);
-      printf("nargs = %d\n", narg);*/
       lua_assert(firstexp != NULL);  /* there must be an expression to call */
+      /* initialize the expression list iterator for dumping arguments */
+      initexplistiter2(&iter, fs, exp->info+1, firstexp);
       if (needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
-      dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);
-      DumpLiteral("(",D);
+      dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);  /* called expression */
+      DumpLiteral("(",D);  /* start of arguments */
       D->needspace = 0;
-      nextexp = lastexp = firstexp;
       for (i = 0; i < narg; i++) {
         if (i != 0)
           DumpLiteral(",",D);
-        nextexp = index2exp(fs, nextexp->nextregindex);
-        if (nextexp == NULL) {  /* multiple nil's */
-          nextexp = lastexp;
-          lastexp->pending = 1;
-        }
-        dumpexp2(D, fs, nextexp, 0);
-        lastexp = nextexp;
+        dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
       }
-      DumpLiteral(")",D);
+      DumpLiteral(")",D);  /* end of arguments */
       if (needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
       D->needspace = 1;  /* will not always be set */
       break;
     }
     case ECONCAT: {
-      ExpNode *firstexp, *nextexp, *lastexp;
+      struct ExpListIterator iter;
+      ExpNode *firstexp;
       int firstindex = exp->u.concat.firstindex;
       int lastindex = exp->u.concat.lastindex;
       int nexps = exp->aux;
@@ -4355,23 +4402,18 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         addliteralholditem2(D, &holdparen, "(", 0);
       firstexp = index2exp(fs, firstindex);
       lua_assert(firstexp != NULL);
+      /* intialize the expression list iterator starting at the first register
+         used in the concatenation */
+      initexplistiter2(&iter, fs, firstexp->info, firstexp);
       dumpexp2(D, fs, firstexp, priority[OPR_CONCAT].left);
-      nextexp = lastexp = firstexp;
       D(lprintf("nexps = %d (firstindex = %d, lastindex = %d)\n", nexps,
                 firstindex, lastindex));
       lua_assert(nexps >= 2);
       for (i = 1; i < nexps; i++) {
         CheckSpaceNeeded(D);
         DumpBinOpr(OPR_CONCAT,D);
-        D->needspace = 1;
-        nextexp = index2exp(fs, nextexp->nextregindex);
-        if (nextexp == NULL) {
-          nextexp = lastexp;
-          lastexp->pending = 1;
-        }
-        lua_assert(nextexp != NULL);
-        dumpexp2(D, fs, nextexp, priority[OPR_CONCAT].left);
-        lastexp = nextexp;
+        D->needspace = 1;  /* space between `..' and next expression */
+        dumpexp2(D, fs, getnextexpinlist2(&iter, i), priority[OPR_CONCAT].left);
       }
       if (needparen)
         dumpcloseparen2(D, fs, exp);
@@ -4491,31 +4533,38 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
   }
   needblock = (test_ins_property(fs, pc, INS_BLOCKEND) == 0);
   if (pc == fs->f->sizecode-1)
-    return;  /* final return is augmented */
+    return;  /* final return is augmented by the compiler */
   if (nret == 0) {
     updateline2(fs, line, D);
     CheckSpaceNeeded(D);
     if (needblock) DumpLiteral("do ",D);
     DumpLiteral("return",D);
   }
+  else if (nret == 1 && test_reg_property(fs, reg, REG_LOCAL)) {
+    updateline2(fs, line, D);
+    CheckSpaceNeeded(D);
+    if (needblock) DumpLiteral("do ",D);
+    DumpLiteral("return",D);
+    DumpLiteral(" ",D);
+    dumplocvar2(D, fs, reg);
+  }
   else {
-    int i;
-    ExpNode *firstexp, *nextexp;
+    struct ExpListIterator iter;
     struct HoldItem holdreturn;
+    ExpNode *firstexp;
+    int i;
     if (needblock)
       addliteralholditem2(D, &holdreturn, "do return", 1);
     else
       addliteralholditem2(D, &holdreturn, "return", 1);
     firstexp = getexpinreg2(fs, reg);  /* first expression to return */
     lua_assert(firstexp != NULL);
-    dumpexp2(D, fs, firstexp, 0);
-    nextexp = firstexp;
+    dumpexp2(D, fs, firstexp, 0);  /* dump first expression in list */
+    /* initialize the expression list iterator starting at REG */
+    initexplistiter2(&iter, fs, reg, firstexp);
     for (i = 1; i < nret; i++) {
       DumpLiteral(",",D);
-      nextexp = index2exp(fs, nextexp->nextregindex);
-      if (nextexp == NULL)
-        break;
-      dumpexp2(D, fs, nextexp, 0);
+      dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
     }
   }
   DumpSemi(D);
