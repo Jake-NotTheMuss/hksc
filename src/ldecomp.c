@@ -608,8 +608,8 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
               exp->u.call.narg);
       break;
     case ECONCAT:
-      lprintf("[CONCAT %d..%d]", index2exp(fs, exp->u.concat.firstindex)->info,
-              index2exp(fs, exp->u.concat.lastindex)->info);
+      /*lprintf("[CONCAT %d..%d]", index2exp(fs, exp->u.concat.firstindex)->info,
+              index2exp(fs, exp->u.concat.lastindex)->info);*/
       break;
     case EGLOBAL:
       lprintf("_G.%s", getstr(exp->u.name));
