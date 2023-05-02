@@ -144,7 +144,6 @@ typedef struct RegNote {
   int note;  /* what is noteworhty about this register and pc */
   int pc;
   int reg;
-  struct RegNote *next;  /* next RegNote with REG >= this reg */
 } RegNote;
 
 
