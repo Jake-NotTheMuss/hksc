@@ -1804,6 +1804,9 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                  handles branch constructs */
         OpCode prevop; /* previous opcode to see if it is a test instruction */
         CHECK(fs, ispcvalid(fs, target), "jump target pc is invalid");
+        if (test_ins_property(fs, target, INS_BOOLLABEL) ||
+            test_ins_property(fs, pc+1, INS_BOOLLABEL))
+          break;  /* this jump is part of a boolean expression */
         if (test_ins_property(fs, pc+1, INS_FORLIST)) {
           openexpr1(ca, fs, GETARG_A(code[target]), FORLISTPREP);
           goto poststat;
@@ -3280,6 +3283,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         b = GETARG_B(i);
         c = GETARG_C(i);
       default:
+        if (o == OP_LOADBOOL && c) {
+          set_ins_property(fs, pc, INS_BOOLLABEL);
+          set_ins_property(fs, pc+1, INS_BOOLLABEL);
+        }
         if (beginseval(o, a, b, c, 0)) {
           int stateunsure;
           struct block1 *bl;

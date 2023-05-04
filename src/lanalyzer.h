@@ -71,6 +71,7 @@ enum BBLTYPE {
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
   DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
+  DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
 #define DEFINSFLAG(e)  INS_##e,
