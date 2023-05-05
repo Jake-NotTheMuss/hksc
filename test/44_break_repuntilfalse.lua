@@ -4,6 +4,7 @@
 	-- 4	[5]	JMP      	-4	; to 1
 	-- 5	[5]	RETURN   	0 1
 
+-- if line info is used, this will be detected as a repeat-loop
 repeat
 	do break; end
 	local a = 1234;

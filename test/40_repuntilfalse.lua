@@ -3,7 +3,9 @@
 	-- 3	[4]	JMP      	-3	; to 1
 	-- 4	[4]	RETURN   	0 1
 
--- this is semantically equivalent to a while-true-loop
+-- this is semantically equivalent to a while-true-loop, however it generates
+-- different line mappings for the final jump, so it will be detected as a
+-- repeat-loop if line info is used
 repeat
 	local a = 1234;
 	local b = 5678;

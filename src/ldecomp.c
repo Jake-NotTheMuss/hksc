@@ -2094,7 +2094,7 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  this is a special case that is handled later, in the code right
                  before the if-branch handler code below, once the while-loop
                  context has already been recursed into */
-              if (pc == endpc-1)
+              if (pc == endpc-1 && getline(fs->f, pc) <= getline(fs->f, target))
                 goto markwhilestat;
               /* this instruction is the end of a tail-if-block with an
                  else-part */
@@ -2118,6 +2118,11 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
             else { /* a while-loop */
               markwhilestat:
+              /* the final jump in a while-loop will have its line fixed to the
+                 start-line of the loop; if the line for this jump is greater
+                 than the start-line, this cannot be a while-loop */
+              if (getline(fs->f, pc) > getline(fs->f, target))
+                goto markrepeatstat;
               encountered1("while", target);
               set_ins_property(fs, target, INS_WHILESTAT);
               init_ins_property(fs, pc, INS_LOOPEND);
@@ -3379,7 +3384,8 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
      else-block */
   if (nextbranch != NULL && nextbranch->startpc != 0 &&
       nextbranch->nextsibling != NULL &&
-      nextbranch->nextsibling->type == BBL_ELSE) {
+      nextbranch->nextsibling->type == BBL_ELSE &&
+      nextbranch->nextsibling->isempty == 0) {
     Instruction jmp;
     int jmpval;
     int jmptarget;
