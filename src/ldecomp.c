@@ -1467,12 +1467,63 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
 
 
 /*
+** remove any block nodes that start at PC
+*/
+static void clearblocksatpc1(DFuncState *fs, BasicBlock **chain, int pc)
+{
+  BasicBlock *node;
+  lua_assert(chain != NULL);
+  lua_assert(ispcvalid(fs, pc));
+  lua_assert(ispcvalid(fs, pc+1));
+  node = *chain;
+  while (node && node->startpc == pc) {
+    BasicBlock *nextsibling = node->nextsibling;
+    rembbl1(fs, node, NULL);
+    node = nextsibling;
+  }
+  /* make sure none of these markings are on this pc */
+  unset_ins_property(fs, pc, INS_BRANCHFAIL);
+  unset_ins_property(fs, pc+1, INS_BRANCHBEGIN);
+  unset_ins_property(fs, pc, INS_BRANCHPASS);
+  unset_ins_property(fs, pc, INS_BLOCKEND);
+  *chain = node;
+}
+
+
+/*
+** readjust NEXTBRANCH after removing block nodes in an open or conditional
+** expression
+*/
+static void adjustnextbranch1(DFuncState *fs, BasicBlock *nextsibling,
+                              BasicBlock **chain, int *nextbranchtarget)
+{
+  BasicBlock *nextbranch;
+  lua_assert(chain != NULL);
+  lua_assert(nextbranchtarget != NULL);
+  /* also update NEXTBRANCH */
+  if (nextsibling && nextsibling->type == BBL_IF) {
+    nextbranch = nextsibling;
+    lua_assert(nextbranch->startpc-1 >= 0 &&
+               nextbranch->startpc-1 < fs->f->sizecode);
+    lua_assert(GET_OPCODE(fs->f->code[nextbranch->startpc-1]) == OP_JMP);
+    *nextbranchtarget = nextbranch->startpc-1 + 1 +
+                       GETARG_sBx(fs->f->code[nextbranch->startpc-1]);
+  }
+  else {
+    nextbranch = NULL;
+    *nextbranchtarget = -1;
+  }
+  *chain = nextbranch;
+}
+
+
+/*
 ** finds the earliest possible endpc for a SETLIST open expression with only
 ** hash items (the exact number cannot be known if operand C is graeter than 16
 ** due to the conversion with `luaO_fb2int')
 */
 static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
-                              int minhashsize, int firstreg)
+                        int minhashsize, int firstreg, BasicBlock **chain)
 {
   const Instruction *code = ca->code;
   int pc;  /* iterator */
@@ -1487,6 +1538,7 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
+    clearblocksatpc1(fs, chain, pc);
     if (o == OP_MOVE)
       newregnote(fs, REG_NOTE_NONRELOC, pc, GETARG_B(i));
     /* check if this opcode sets a table index */
@@ -1853,33 +1905,10 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               /* now, any and all blocks that were detected within this testset
                  expression need to be deleted, as they are all false */
               for (testsetpc = pc; testsetpc < target; testsetpc++) {
-                /* delete all blocks which start on TESTSETPC */
-                while (nextsibling && nextsibling->startpc == testsetpc) {
-                  BasicBlock *nextnextsibling = nextsibling->nextsibling;
-                  /* todo: what if the block endpc is after target? */
-                  rembbl1(fs, nextsibling, NULL);
-                  nextsibling = nextnextsibling; /* update NEXTSIBLING */
-                }
-                /* make sure none of these markings are on this pc */
-                unset_ins_property(fs, testsetpc, INS_BRANCHFAIL);
-                unset_ins_property(fs, testsetpc+1, INS_BRANCHBEGIN);
-                unset_ins_property(fs, testsetpc, INS_BRANCHPASS);
-                unset_ins_property(fs, testsetpc, INS_BLOCKEND);
+                clearblocksatpc1(fs, &nextsibling, testsetpc);
               }
               D(lprintf("--\n"));
-              /* also update NEXTBRANCH */
-              if (nextsibling && nextsibling->type == BBL_IF) {
-                nextbranch = nextsibling;
-                lua_assert(nextbranch->startpc-1 >= 0 &&
-                           nextbranch->startpc-1 < fs->f->sizecode);
-                lua_assert(GET_OPCODE(code[nextbranch->startpc-1]) == OP_JMP);
-                nextbranchtarget = nextbranch->startpc-1 + 1 +
-                                   GETARG_sBx(code[nextbranch->startpc-1]);
-              }
-              else {
-                nextbranch = NULL;
-                nextbranchtarget = -1;
-              }
+              adjustnextbranch1(fs, nextsibling, &nextbranch,&nextbranchtarget);
               D(lprintf("nextbranch = %B\n", nextbranch));
               if (nextbranchtarget != -1)
                 D(lprintf("nextbranchtarget = (%i)\n", nextbranchtarget));
@@ -3267,11 +3296,13 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
            empty table constructors, so they are detected here */
         CHECK(fs, b == 0, "no OP_SETLIST found for OP_NEWTABLE even though "
                 "OP_NEWTABLE has non-zero amount of list items");
-        if (c)
+        if (c) {
           /* walk back up the code vector to find the earliest possible end of
              this constructor */
           scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, SETLISTPREP),
-                            luaO_fb2int(c-1)+1, a);
+                            luaO_fb2int(c-1)+1, a, &nextsibling);
+          adjustnextbranch1(fs, nextsibling, &nextbranch, &nextbranchtarget);
+        }
         else
           newopenexpr(fs, a, pc, pc, EMPTYTABLE);
         /* fallthrough */
