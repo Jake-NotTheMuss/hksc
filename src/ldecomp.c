@@ -1384,9 +1384,6 @@ typedef struct CodeAnalyzer {
   struct {
     int endpc, reg;
   } testset;  /* the current OP_TESTSET expression */
-  struct {
-    int endpc, reg;
-  } retpending;
   const Instruction *code;  /* f->code */
 } CodeAnalyzer;
 
@@ -1396,19 +1393,6 @@ typedef struct CodeAnalyzer {
 #else /* !LUA_DEBUG */
 #define printinsn1(pc,i) ((void)0)
 #endif /* LUA_DEBUG */
-
-
-static void dischargeretpending1(CodeAnalyzer *ca, DFuncState *fs, int pc)
-{
-  if (ca->retpending.reg != -1) {
-    lua_assert(ca->retpending.endpc != -1);
-    set_ins_property(fs, pc, INS_PRERETURN1);
-    ca->retpending.endpc = ca->retpending.reg = -1;
-  }
-  else {
-    lua_assert(ca->retpending.endpc == -1);
-  }
-}
 
 
 /*
@@ -2443,7 +2427,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       branch->ifblock = new_block;
                       branch->firstblock = new_block;
                       ca->testset.endpc = ca->testset.reg = -1;
-                      /*dischargeretpending1(ca, fs, pc);*/
                       return;
                     }
                     else {
@@ -3234,12 +3217,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         goto poststat;
       case OP_RETURN: {  /* a return expression */
         int nret = b-1;
-        /*dischargeretpending1(ca, fs, pc);*/
-        /*if (nret == 1) {
-          ca->retpending.reg = a;
-          ca->retpending.endpc = pc;
-        }
-        else*/
         if (nret == 1) {  /* returns a single register */
           if (pc > 0)
             /* the second pass is interested in knowing when it is about to
@@ -3368,12 +3345,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
           }
         }
-        /*if (ca->retpending.reg != -1 &&
-            beginstempexpr(code,i,pc,ca->retpending.reg,ca->retpending.endpc,
-                           NULL)) {
-          dischargeretpending1(ca, fs, pc);
-        }*/
-        (void)dischargeretpending1;
         break;
     }
     if (ca->pc == startpc)
@@ -3412,7 +3383,6 @@ static void bbl1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     }
   }
   ca->testset.endpc = ca->testset.reg = -1;
-  /*dischargeretpending1(ca, fs, ca->pc);*/
   if (branch == NULL && block == NULL) {
     ca->curr = outer; /* pop old values */
   }
@@ -3451,7 +3421,6 @@ static void pass1(const Proto *f, DFuncState *fs)
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
   ca.testset.endpc = ca.testset.reg = -1;
-  ca.retpending.endpc = ca.retpending.reg = -1;
   ca.code = f->code;
   bbl1(&ca, fs, 0, BBL_FUNCTION, NULL, NULL, NULL);
   lua_assert(fs->a->bbllist.first != NULL);
@@ -3468,7 +3437,6 @@ static void pass1(const Proto *f, DFuncState *fs)
   fs->a->sizeregnotes = fs->nregnotes;
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
-  lua_assert(ca.retpending.endpc == -1 && ca.retpending.reg == -1);
 }
 
 
