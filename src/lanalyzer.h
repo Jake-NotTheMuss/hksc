@@ -17,23 +17,23 @@
 /*
 ** basic block types
 */
-#define BBLTYPE_TABLE \
-  DEFBBLTYPE(FUNCTION)   /* a Lua function */      \
-  DEFBBLTYPE(WHILE)      /* a while-loop */        \
-  DEFBBLTYPE(REPEAT)     /* a repeat-loop */       \
-  DEFBBLTYPE(FORNUM)     /* a for-numeric-loop */  \
-  DEFBBLTYPE(FORLIST)    /* a for-list-loop */     \
-  DEFBBLTYPE(DO)         /* a block */             \
-  DEFBBLTYPE(IF)         /* an if-block */         \
-  DEFBBLTYPE(ELSE)       /* an else-block */       \
-  DEFBBLTYPE(ELSEIF)     /* an elseif-block */
+#define BLTYPE_TABLE \
+  DEFBLTYPE(FUNCTION)   /* a Lua function */      \
+  DEFBLTYPE(WHILE)      /* a while-loop */        \
+  DEFBLTYPE(REPEAT)     /* a repeat-loop */       \
+  DEFBLTYPE(FORNUM)     /* a for-numeric-loop */  \
+  DEFBLTYPE(FORLIST)    /* a for-list-loop */     \
+  DEFBLTYPE(DO)         /* a block */             \
+  DEFBLTYPE(IF)         /* an if-block */         \
+  DEFBLTYPE(ELSE)       /* an else-block */       \
+  DEFBLTYPE(ELSEIF)     /* an elseif-block */
 
-#define DEFBBLTYPE(e)  BBL_##e,
-enum BBLTYPE {
-  BBLTYPE_TABLE
-  MAX_BBLTYPE
+#define DEFBLTYPE(e)  BL_##e,
+enum BLTYPE {
+  BLTYPE_TABLE
+  MAX_BLTYPE
 };
-#undef DEFBBLTYPE
+#undef DEFBLTYPE
 
 
 /*
@@ -99,10 +99,10 @@ enum REGFLAG {
 #undef DEFREGFLAG
 
 
-typedef struct BasicBlock {
-  struct BasicBlock *next;  /* next block */
-  struct BasicBlock *nextsibling;  /* next sibling block */
-  struct BasicBlock *firstchild;  /* first child block */
+typedef struct BlockNode {
+  struct BlockNode *next;  /* next block */
+  struct BlockNode *nextsibling;  /* next sibling block */
+  struct BlockNode *firstchild;  /* first child block */
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
   int type;  /* the type of the block */
@@ -110,7 +110,7 @@ typedef struct BasicBlock {
 #ifdef LUA_DEBUG
   lu_byte visited;  /* has this block been visited in pass2 */
 #endif
-} BasicBlock;
+} BlockNode;
 
 
 typedef enum {

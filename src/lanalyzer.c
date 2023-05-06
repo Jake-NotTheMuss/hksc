@@ -39,7 +39,7 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->sizelocvars = 0;
   a->upvalues = NULL;
   a->sizeupvalues = 0;
-  a->bbllist.first = a->bbllist.last = NULL;
+  a->bllist.first = a->bllist.last = NULL;
   a->expstack.stk = NULL;
   a->expstack.total = 0;
   a->expstack.used = 0;
@@ -48,7 +48,7 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
 
 
 void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
-  struct BasicBlock *bbl;
+  struct BlockNode *bn;
   luaM_freearray(H, a->insproperties, a->sizeinsproperties, InstructionFlags);
   luaM_freearray(H, a->opencalls, a->sizeopencalls, struct OpenExpr);
   luaM_freearray(H, a->regnotes, a->sizeregnotes, struct RegNote);
@@ -56,11 +56,11 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   luaM_freearray(H, a->lineinfo, a->sizelineinfo, int);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
   luaM_freearray(H, a->upvalues, a->sizeupvalues, TString *);
-  bbl = a->bbllist.first;
-  while (bbl != NULL) {
-    struct BasicBlock *next = bbl->next;
-    luaM_free(H, bbl);
-    bbl = next;
+  bn = a->bllist.first;
+  while (bn != NULL) {
+    struct BlockNode *next = bn->next;
+    luaM_free(H, bn);
+    bn = next;
   }
   luaM_freearray(H, a->expstack.stk, a->expstack.total, ExpNode);
   luaM_free(H, a);
