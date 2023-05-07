@@ -728,15 +728,18 @@ static void codearith (FuncState *fs, OpCode op, expdesc *e1, expdesc *e2) {
         break;
       }
       case OP_LEN: {
-        if (expisstring(e1) || expistable(e1) ||
-            exptype(e1) == (LUA_NUM_TYPE_OBJECTS-1))
+        if (expisstring(e1) || expistable(e1) || expisstruct(e1))
           exptype(e1) = LUA_TNUMBER;
+        else
+          exptype(e1) = LUA_TNONE;
         break;
       }
       case OP_CONCAT: {
         if ((expisnumber(e1) || expisstring(e1)) &&
             (expisnumber(e2) || expisstring(e2)))
           exptype(e1) = LUA_TSTRING;
+        else
+          exptype(e1) = LUA_TNONE;
         break;
       }
       default: break;
