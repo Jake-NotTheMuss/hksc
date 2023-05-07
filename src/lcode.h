@@ -41,6 +41,19 @@ typedef enum BinOpr {
 typedef enum UnOpr { OPR_MINUS, OPR_NOT, OPR_LEN, OPR_NOUNOPR } UnOpr;
 
 
+#ifdef LUA_CODIW6
+/*
+** hdelete expression kinds
+*/
+enum DELETE_KIND {
+  DELETE_LOCAL,  /* delete a local variable */
+  DELETE_GLOBAL,  /* delete a global variable */
+  DELETE_UPVAL,  /* delete an upvalue */
+  DELETE_INDEXED,  /* delete a table index */
+  DELETE_MAX
+};
+#endif /* LUA_CODIW6 */
+
 #define getcode(fs,e)	((fs)->f->code[(e)->u.s.info])
 
 #define luaK_codeAsBx(fs,o,A,sBx)	luaK_codeABx(fs,o,A,(sBx)+MAXARG_sBx)
@@ -65,6 +78,9 @@ LUAI_FUNC void luaK_self (FuncState *fs, expdesc *e, expdesc *key);
 LUAI_FUNC void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k);
 LUAI_FUNC void luaK_goiftrue (FuncState *fs, expdesc *e);
 LUAI_FUNC void luaK_storevar (FuncState *fs, expdesc *var, expdesc *e);
+#ifdef LUA_CODIW6
+LUAI_FUNC void luaK_delete (FuncState *fs, expdesc *var);
+#endif /* LUA_CODIW6 */
 LUAI_FUNC void luaK_setreturns (FuncState *fs, expdesc *e, int nresults);
 LUAI_FUNC void luaK_setoneret (FuncState *fs, expdesc *e);
 LUAI_FUNC int luaK_jump (FuncState *fs);

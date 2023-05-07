@@ -12,6 +12,7 @@
 
 #include "hksclua.h"
 
+#include "lcode.h"
 #include "ldebug.h"
 #include "lobject.h"
 #include "lopcodes.h"
@@ -184,6 +185,20 @@ static void PrintCode(const Proto *f)
         if (c==0) printf("\t; %d",(int)code[++pc]);
         else printf("\t; %d",c);
         break;
+#ifdef LUA_CODIW6
+      case OP_DELETE: case OP_DELETE_BK:
+        if (c == DELETE_UPVAL) {
+          printf("\t; %s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+        }
+        else if (c == DELETE_GLOBAL) {
+          printf("\t; %s",svalue(&f->k[INDEXK(b)]));
+        }
+        else if (c == DELETE_INDEXED) {
+          if (ISK(b))
+            printf("\t; "); PrintConstant(f,INDEXK(b));
+        }
+        break;
+#endif /* LUA_CODIW6 */
       default:
         break;
     }

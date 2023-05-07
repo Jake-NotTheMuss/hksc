@@ -528,6 +528,38 @@ void luaK_storevar (FuncState *fs, expdesc *var, expdesc *ex) {
 }
 
 
+#ifdef LUA_CODIW6
+void luaK_delete (FuncState *fs, expdesc *var) {
+  switch (var->k) {
+    case VLOCAL: {
+      luaK_codeABC(fs, OP_DELETE, var->u.s.info, 0, DELETE_LOCAL);
+      break;
+    }
+    case VUPVAL: {
+      luaK_codeABC(fs, OP_DELETE, 0, var->u.s.info, DELETE_UPVAL);
+      break;
+    }
+    case VGLOBAL: {
+      luaK_codeABC(fs, OP_DELETE_BK, 0, var->u.s.info, DELETE_GLOBAL);
+      break;
+    }
+    case VINDEXED: {
+      luaK_codeABC(fs, OP_DELETE, var->u.s.info, var->u.s.aux, DELETE_INDEXED);
+      break;
+    }
+    case VSLOT: {
+      /* VSLOT is accepted but no code is generated */
+      break;
+    }
+    default: {
+      lua_assert(0);  /* invalid var kind to delete */
+      break;
+    }
+  }
+}
+#endif /* LUA_CODIW6 */
+
+
 void luaK_self (FuncState *fs, expdesc *e, expdesc *key) {
   int func;
   luaK_exp2anyreg(fs, e);

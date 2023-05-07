@@ -271,10 +271,10 @@ DEFCODE1(CHECKTYPE_D, ABx, 0, 1, U, N, 0)
 DEFCODE1(GETSLOT_D, ABC, 0, 1, R, U, 0)
 DEFCODE1(GETGLOBAL_MEM, ABx, 0, 1, K, N, 1)
 
-#if 0
+#ifdef LUA_CODIW6
 DEFCODE1(DELETE, ABC, 0, 1, RK, U, 0)
 DEFCODE1(DELETE_BK, ABC, 0, 1, RK, U, 0)
-#endif
+#endif /* LUA_CODIW6 */
 
 /* end of opcodes */
 

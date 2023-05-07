@@ -44,9 +44,9 @@ DEFTOK(TK_UNTIL,          "until")
 DEFTOK(TK_WHILE,          "while")
 DEFTOK(TK_STRUCT,         "hstructure")
 DEFTOK(TK_MAKE,           "hmake")
-#if 0 /* IW6 extension */
+#ifdef LUA_CODIW6 /* IW6 extension */
 DEFTOK(TK_DELETE,         "hdelete")
-#endif
+#endif /* LUA_CODIW6 */
 
 /* end of reserved words */
 DEFTOK(TK_RESERVED_LAST,  "INVALID")

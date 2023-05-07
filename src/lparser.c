@@ -1471,6 +1471,25 @@ static void exprstat (LexState *ls) {
 }
 
 
+#ifdef LUA_CODIW6
+static void deletestat (LexState *ls) {
+  /* stat -> HDELETE `(' expression `)' */
+  FuncState *fs = ls->fs;
+  expdesc v;
+  int line;
+  checknext(ls, '(');
+  line = ls->linenumber;
+  primaryexp(ls, &v);
+  if (v.k == VCALL)
+    luaX_syntaxerror(ls, "Delete must be given assignable arguments");
+  check_condition(ls, VLOCAL <= v.k && v.k <= VINDEXED,
+                      "syntax error (non-variable in a delete expression)");
+  check_match(ls, ')', '(', line);
+  luaK_delete(fs, &v);
+}
+#endif /* LUA_CODIW6 */
+
+
 static void retstat (LexState *ls) {
   /* stat -> RETURN explist */
   FuncState *fs = ls->fs;
@@ -1550,6 +1569,13 @@ static int statement (LexState *ls) {
       breakstat(ls);
       return 1;  /* must be last statement */
     }
+#ifdef LUA_CODIW6
+    case TK_DELETE: {  /* stat -> deletestat */
+      luaX_next(ls);  /* skip HDELETE */
+      deletestat(ls);
+      return 0;
+    }
+#endif /* LUA_CODIW6 */
     default: {
       exprstat(ls);
       return 0;  /* to avoid warnings */
