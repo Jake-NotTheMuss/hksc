@@ -72,6 +72,8 @@ enum INSFLAG {
 ** register properties
 */
 #define REGFLAG_TABLE \
+  DEFREGFLAG(HASNOTE)  /* used by first pass to avoid creating redunadnt \
+                          RegNote entries */ \
   DEFREGFLAG(PENDING)  /* a register being used in a temporary expression */ \
   DEFREGFLAG(LOCAL)     /* a register which holds an active local variable */ \
   DEFREGFLAG(CONTROL)   /* a register which holds a loop control variable */ \
@@ -100,6 +102,8 @@ typedef struct BlockNode {
 
 
 typedef enum {
+  VOIDPREP,  /* use this kind when you need to traverse an instruction sequence
+                but not record it as an open expression */
   CALLPREP,  /* function-call preparation code */
   CONCATPREP,  /* concat preparation code */
   FORNUMPREP,  /* numeric for-loop preparation code */

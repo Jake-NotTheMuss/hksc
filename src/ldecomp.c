@@ -117,8 +117,8 @@ typedef struct DFuncState {
   int idx;  /* the nth function, used for generating local variable names */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;
-  int nlocvars;  /* number of local variables created so far */
-  int nlocvarsdetected;  /* number of local variables detected so far */
+  short nlocvars;  /* number of local variables created so far */
+  lu_byte nactvar;
   int sizelocvars;
   int sizeupvalues;
   int instatement;
@@ -252,7 +252,6 @@ static void printinsflags(DFuncState *fs, int pc, const char *preamble)
   lprintf("\n");
 }
 
-#ifdef HKSC_DECOMP_HAVE_PASS2
 
 static void printregflags(DFuncState *fs, int reg, const char *preamble)
 {
@@ -264,8 +263,6 @@ static void printregflags(DFuncState *fs, int reg, const char *preamble)
   }
   lprintf("\n");
 }
-
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 #else /* !LUA_DEBUG */
@@ -344,7 +341,7 @@ static void unset_ins_property(DFuncState *fs, int pc, int prop)
   (lua_assert(!test_ins_property(fs,pc,prop)), set_ins_property(fs,pc,prop))
 
 
-#ifdef HKSC_DECOMP_HAVE_PASS2
+
 /*
 ** set_reg_property - set flag PROP for register REG
 */
@@ -380,7 +377,7 @@ static int test_reg_property(DFuncState *fs, int reg, int prop)
 }
 
 #define check_reg_property(fs,reg,val) lua_assert(test_reg_property(fs,reg,val))
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
 
 
 /*
@@ -720,7 +717,8 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   D->fs = fs;
   fs->f = f;
   fs->idx = D->funcidx++;
-  fs->nlocvars = fs->nlocvarsdetected = 0;
+  fs->nlocvars = 0;
+  fs->nactvar = 0;
   fs->instatement = 0;
   if (f->name && getstr(f->name))
     D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
@@ -1138,6 +1136,7 @@ static void debugblocksummary(DFuncState *fs)
 static void debugopenexpr(const OpenExpr *e)
 {
   static const char *const typenames[] = {
+    "VOID",
     "PRECALL",
     "PRECONCAT",
     "PREFORNUM",
@@ -1275,6 +1274,16 @@ static int previsjump(const Instruction *code, int pc) {
 }
 #endif
 
+
+static const Instruction *getjumpcontrol (DFuncState *fs, int pc) {
+  Instruction *pi = &fs->f->code[pc];
+  if (pc >= 1 && testTMode(GET_OPCODE(*(pi-1))))
+    return pi-1;
+  else
+    return NULL;
+}
+
+
 /*
 ** Check if the given instruction I begins a temporary expression in register
 ** FISRTREG. PC is the pc of I. JUMPLIMIT is a pc used to check if a preceding
@@ -1282,9 +1291,10 @@ static int previsjump(const Instruction *code, int pc) {
 ** evaluation, meaning it is part of the temporary expression. CODE is the
 ** instruction array which contains I, used for single look-behinds.
 */
-static int beginstempexpr(const Instruction *code, Instruction i, int pc,
+static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
                           int firstreg, int jumplimit, int *nextstart)
 {
+  const Instruction *code = fs->f->code;
   OpCode o = GET_OPCODE(i);
   int a = GETARG_A(i);
   int b = GETARG_B(i);
@@ -1300,9 +1310,11 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
       return 0;
     }
     case OP_LOADBOOL:
-      /* OP_LOADBOOL may begin an expression, unless it is preceded by another
-         OP_LOADBOOL with argC == 1 */
-      if ((pc-1) >= 0) {
+      /* OP_LOADBOOL may begin an expression, unless it is a label */
+      if (test_ins_property(fs, pc, INS_BOOLLABEL))
+        return 0;
+      /* this instruction may not be marked as INS_BOOLLABEL yet */
+      else if ((pc-1) >= 0) {
         Instruction prev = code[pc-1];
         if (GET_OPCODE(prev) == OP_LOADBOOL && GETARG_C(prev))
           return 0; /* one result of a boolean expression */
@@ -1314,12 +1326,31 @@ static int beginstempexpr(const Instruction *code, Instruction i, int pc,
         if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP) {
           checkjumptarget:
           {
+            const Instruction *jumpcontrol = getjumpcontrol(fs, pc-1);
             int jumpoffs = GETARG_sBx(code[pc-1]);
             int target = pc + jumpoffs;
-            if (target > jumplimit || jumpoffs < 0)
+            if (jumpcontrol == NULL || target > jumplimit || jumpoffs <= 0)
               return 1; /* the previous jump is not part of this expression */
-            else
-              return 0;
+            else {
+              /* jumpcontrol != NULL && target <= jumplimit && jumpoffs >= 0 */
+              OpCode jco = GET_OPCODE(*jumpcontrol);
+              int jca = GETARG_A(*jumpcontrol);
+              if (jco == OP_TEST || jco == OP_TEST_R1 || jco == OP_TESTSET) {
+                if (jca >= firstreg)
+                  /* jump control tests FIRSTREG; the jump is part of this
+                     expression */
+                  return 0;
+                else
+                  /* jump control tests an earlier resgister; if the jump target
+                     is the endpc, it is not part of this expression */
+                  return (target == jumplimit);
+              }
+              else  /* comparison op */
+                /* comparison ops that are part of this expression will emit
+                   jumps to boolean labels before endpc, so checking target
+                   against the endpc is sufficient */
+                return (target == jumplimit);
+            }
           }
         }
         if (testAMode(o)) { /* OP_TEST */
@@ -1381,6 +1412,7 @@ typedef struct CodeAnalyzer {
   /* most of these values could be local to `whilestat1', but are kept in this
      structure to avoid allocating new copies on every recursive call */
   lu_byte prevTMode;  /* previous pc is a test instruction */
+  lu_byte inopenexpr;
   struct {
     int endpc, reg;
   } testset;  /* the current OP_TESTSET expression */
@@ -1395,45 +1427,118 @@ typedef struct CodeAnalyzer {
 #endif /* LUA_DEBUG */
 
 
+static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
+                        int minhashsize, int firstreg, BlockNode **chain);
+
+
+static void addregnote1(DFuncState *fs, int note, int pc, int reg)
+{
+  if (test_reg_property(fs, reg, REG_HASNOTE) == 0) {
+    newregnote(fs, note, pc, reg);
+    set_reg_property(fs, reg, REG_HASNOTE);
+  }
+}
+
+
+static void applyregnote(DFuncState *fs, int firstreg, int pc, OpCode o, int a,
+                         int b, int c)
+{
+  if (o != OP_LOADNIL && beginseval(o, a, b, c, 0)) {
+    /* check if B and C are registers and are less than FIRSTREG */
+    if ((getBMode(o) == OpArgR || (getBMode(o) == OpArgRK && !ISK(b))) &&
+        b < firstreg)
+      addregnote1(fs, REG_NOTE_NONRELOC, pc, b);
+    if ((getCMode(o) == OpArgR || (getCMode(o) == OpArgRK && !ISK(c))) &&
+        c < firstreg)
+      addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
+  }
+}
+
+
 /*
 ** finds and marks the beginning of an open expression of type KIND; recursing
 ** into nested open expressions is not necessary, as only the start/end pc of
-** root open expressions are needed by the second pass analyzer
+** root open expressions are needed by the second pass analyzer (VOIDPREP calls
+** are treated differently than other calls, however, so recursion does happen
+** in that case since VOIDPREP expressions are not recorded)
 */
 static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
 {
   const Instruction *code = ca->code;
-  int endpc = ca->pc--;
+  int endpc = ca->pc;
   int nextpossiblestart = endpc;
   int pc;
+  /* VOIDPREP calls already have ca->pc at the correct value; other kinds have
+     a particular opcode that ends the expression (e.g. OP_RETURN), and that
+     opcode has already been visited in those cases */
+  if (kind != VOIDPREP) ca->pc--;
+  else endpc++;  /* endpc needs to be (ca->pc+1) in all cases */
+  ca->inopenexpr++;
   for (pc = ca->pc; pc >= 0; pc--) {
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
+    int b = GETARG_B(i);
+    int c = GETARG_C(i);
     switch (o) {
+      case OP_LOADBOOL:
+        if (c) {
+          set_ins_property(fs, pc, INS_BOOLLABEL);
+          set_ins_property(fs, pc+1, INS_BOOLLABEL);
+        }
+        break;
       case OP_CALL:
       case OP_CALL_I:
       case OP_CALL_I_R1:
       case OP_CALL_C:
       case OP_CALL_M:
       case OP_CONCAT:
+        if (kind == VOIDPREP) {
+          openexpr1(ca, fs, a, o == OP_CONCAT ? CONCATPREP : CALLPREP);
+          goto postrecursion;
+        }
+        else
         /* a nested end-of-expression code can clobber FIRSTREG, but it does not
            begin an open expression... unless the previous code is OP_LOADNIL
            and OP_LOADNIL clobbers a register less than FIRSTREG; if that is the
            case, do not mark OP_LOADNIL as the start of this expression;
            instead, mark whatever NEXTPOSSIBLESTART was, which is why it is
            still updated here */
-        nextpossiblestart = pc;
+          nextpossiblestart = pc;
         continue;
+      case OP_SETLIST:
+        if (kind == VOIDPREP) {
+          openexpr1(ca, fs, a, SETLISTPREP);
+          postrecursion:
+          pc = ca->pc;
+          i = code[pc];
+          o = GET_OPCODE(i);
+          a = GETARG_A(i);
+          b = GETARG_B(i);
+          c = GETARG_C(i);
+        }
+        break;
+      case OP_NEWTABLE:
+        if (kind == VOIDPREP) {
+          CHECK(fs, b == 0, "no OP_SETLIST found for OP_NEWTABLE even though "
+                  "OP_NEWTABLE has non-zero amount of list items");
+          if (c) {
+            /* walk back up the code vector to find the earliest possible end of
+               this constructor */
+            scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, SETLISTPREP),
+                              luaO_fb2int(c-1)+1, a, NULL);
+          }
+          else
+            newopenexpr(fs, a, pc, pc, EMPTYTABLE);
+        }
+        break;
       default:
         break;
     }
     if (kind == SETLISTPREP && o == OP_NEWTABLE && a == firstreg)
       break;  /* found start of table */
-    if (o == OP_MOVE)
-      /* OP_MOVE in an open expression is not a store */
-      newregnote(fs, REG_NOTE_NONRELOC, pc, GETARG_B(i));
-    if (beginstempexpr(code, i, pc, firstreg, endpc, &nextpossiblestart)) {
+    applyregnote(fs, firstreg, pc, o, a, b, c);
+    if (beginstempexpr(fs, i, pc, firstreg, endpc, &nextpossiblestart)) {
       break;  /* found the beginning */
     }
     else if (o == OP_LOADNIL && a < firstreg) {
@@ -1446,7 +1551,27 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
       break;
   }
   ca->pc = pc;
-  newopenexpr(fs, firstreg, pc, endpc, kind);
+  if (kind != VOIDPREP)
+    newopenexpr(fs, firstreg, pc, endpc, kind);
+  ca->inopenexpr--;
+  if (ca->inopenexpr == 0) {
+    int i;
+    /* clear REG_HASNOTE on all registers */
+    for (i = 0; i < fs->a->sizeregproperties; i++)
+      unset_reg_property(fs, i, REG_HASNOTE);
+  }
+}
+
+
+static void locvarexpr1(CodeAnalyzer *ca, DFuncState *fs, int nvars)
+{
+  int reg;  /* register of first local variable that is initialized */
+  lua_assert(nvars > 0);
+  lua_assert(fs->nactvar >= nvars);
+  reg = fs->nactvar-nvars;
+  D(lprintf("entering VOIDPREP for local variable in reg %d\n", reg));
+  openexpr1(ca, fs, reg, VOIDPREP);
+  fs->nactvar -= nvars;
 }
 
 
@@ -1522,11 +1647,13 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
-    clearblocksatpc1(fs, chain, pc);
-    if (o == OP_MOVE)
-      newregnote(fs, REG_NOTE_NONRELOC, pc, GETARG_B(i));
+    int b = GETARG_B(i);
+    int c = GETARG_C(i);
+    if (chain != NULL)
+      clearblocksatpc1(fs, chain, pc);
+    applyregnote(fs, firstreg, pc, o, a, b, c);
     /* check if this opcode sets a table index */
-    else if (o == OP_SETFIELD ||
+    if (o == OP_SETFIELD ||
              o == OP_SETFIELD_R1 ||
              o == OP_SETTABLE ||
              o == OP_SETTABLE_BK ||
@@ -1534,6 +1661,10 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
              o == OP_SETTABLE_N_BK ||
              o == OP_SETTABLE_S ||
              o == OP_SETTABLE_S_BK) {
+      /* check if a RegNote entry can be added for the source register */
+      if (c < firstreg) {
+        addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
+      }
       if (a == firstreg) {
         numhashitems++;
         if (numhashitems == minhashsize)
@@ -1773,6 +1904,36 @@ static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
 }
 
 
+/*
+** updates the number of active local variables at PC; returns the first
+** variable that starts at PC, sets NVARS to the number of variables that start
+** at PC
+*/
+static struct LocVar *updateactvar1(DFuncState *fs, int pc, int *nvars)
+{
+  DecompState *D = fs->D;
+  struct LocVar *retvar = NULL;
+  int i,n=0;
+  lu_byte nactvar = 0;
+  lua_assert(ispcvalid(fs, pc));
+  lua_assert(nvars != NULL);
+  if (D->usedebuginfo == 0)
+    return NULL;
+  for (i = fs->sizelocvars-1; i >= 0; i--) {
+    struct LocVar *var = &fs->locvars[i];
+    if (var->startpc <= pc && pc <= var->endpc)
+      nactvar++;
+    if (var->startpc == pc) {
+      retvar = var;
+      n++;
+    }
+  }
+  fs->nactvar = nactvar;
+  *nvars = n;
+  return retvar;
+}
+
+
 static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
        struct branch1 *branch, struct block1 *block, BlockNode *futuresibling)
 {
@@ -1814,6 +1975,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   }
   ca->pc--;
   for (; ca->pc >= 0; ca->pc--) {
+    struct LocVar *locvarhere;/* the first local vartable that starts at PC+1 */
+    int nvars;  /* the number of variables that start at PC+1 */
     int pc = ca->pc;
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
@@ -1823,6 +1986,24 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     int bx = GETARG_Bx(i);
     int sbx = GETARG_sBx(i);
     printinsn1(pc,i);
+    /* update NACTVAR for PC+1 to catch variables that start on the final
+       return; variables that start at PC=0 are not interesting in the first
+       pass */
+    if ((locvarhere = updateactvar1(fs, pc+1, &nvars))) {
+      lua_assert(nvars > 0);
+      if (o == OP_FORPREP) {
+        updateactvar1(fs, pc, &nvars);
+        goto traversefornumprep;
+      }
+      else if (test_ins_property(fs, pc+1, INS_FORLIST)) {
+        updateactvar1(fs, pc, &nvars);
+        goto traverseforlistprep;
+      }
+      lprintf("encountered start of new local variable at next pc (%i)\n", pc+1);
+      locvarexpr1(ca, fs, nvars);
+      goto poststat;
+    }
+    printf("nactvar: %d\n", fs->nactvar);
     switch (o) {
       case OP_JMP: {
         int target = pc + 1 + sbx; /* the jump target pc */
@@ -1844,7 +2025,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             test_ins_property(fs, pc+1, INS_BOOLLABEL))
           break;  /* this jump is part of a boolean expression */
         if (test_ins_property(fs, pc+1, INS_FORLIST)) {
-          openexpr1(ca, fs, GETARG_A(code[target]), FORLISTPREP);
+          traverseforlistprep:
+          openexpr1(ca, fs, GETARG_A(code[pc+1+sbx]), FORLISTPREP);
           goto poststat;
         }
         if (pc == 0) {
@@ -3213,7 +3395,14 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_RETURN: {  /* a return expression */
         int nret = b-1;
         if (nret == 1) {  /* returns a single register */
-          if (pc > 0)
+          /* if debug info is available, a single-return can be differentiated
+             as either an open expression or a returned local variable */
+          if (fs->D->usedebuginfo) {
+            if (a >= fs->nactvar) {  /* returns a non-local register */
+              openexpr1(ca, fs, a, RETPREP);
+            }
+          }
+          else if (pc > 0)
             /* the second pass is interested in knowing when it is about to
                encounter a single-return */
             set_ins_property(fs, pc-1, INS_PRERETURN1);
@@ -3224,7 +3413,9 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         goto poststat;
       }
       case OP_FORPREP: {  /* mark the start of preparation code */
-        int target = pc + 1 + sbx; /* end of for-loop */
+        int target;
+        traversefornumprep:
+        target = pc + 1 + sbx; /* end of for-loop */
         CHECK(fs, ispcvalid(fs, target), "invalid target pc in OP_FORPREP");
         CHECK(fs, GET_OPCODE(code[target]) == OP_FORLOOP, "unexpected target "
               "code for OP_FORPREP (expected to jump to OP_FORLOOP)");
@@ -3319,9 +3510,17 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             stateunsure = 0;
             updateblockstate1:
             i = 0;
-            if (bl->reg == a) {
+            if (locvarhere != NULL) {
+              if (bl->reg == fs->nactvar || (o == OP_LOADNIL && bl->reg <= b)) {
+                blstate->startpc = pc+(o == OP_LOADNIL && bl->reg <= b);
+                blstate->firstchild = nextsibling;
+                blstate->prevsibling = NULL;
+              }
+            }
+            else if (fs->D->usedebuginfo == 0 &&
+                     (bl->reg == a || (o == OP_LOADNIL && bl->reg <= b))) {
               /* this block is now caught up to the current pc */
-              blstate->startpc = pc; /* update start */
+              blstate->startpc = pc+(bl->reg != a); /* update start */
               blstate->firstchild = nextsibling; /* update first child */
               /* discharge saved previous sibling */
               blstate->prevsibling = NULL;
@@ -3415,6 +3614,7 @@ static void pass1(const Proto *f, DFuncState *fs)
   ca.curr.start = ca.curr.end = ca.curr.type = -1;
   ca.pc = f->sizecode - 1; /* will be decremented again to skip final return */
   ca.prevTMode = 0;
+  ca.inopenexpr = 0;
   ca.testset.endpc = ca.testset.reg = -1;
   ca.code = f->code;
   blnode1(&ca, fs, 0, BL_FUNCTION, NULL, NULL, NULL);
@@ -3472,13 +3672,13 @@ static int varstartsatpc2(DFuncState *fs, int pc)
 {
   DecompState *D = fs->D;
   struct LocVar *var;
-  int i = fs->nlocvarsdetected;
+  int i = fs->nlocvars;
   int n = 0;
   lua_assert(ispcvalid(fs, pc));
   if (D->usedebuginfo == 0)
     return -1;
   while (i < fs->sizelocvars && (var = &fs->locvars[i])->startpc == pc) {
-    i = ++fs->nlocvarsdetected;
+    i = ++fs->nlocvars;
     n++;
     D(lprintf("variable '%s' begins at (%i)\n", getstr(var->varname), pc));
   }
@@ -3489,7 +3689,7 @@ static int varstartsatpc2(DFuncState *fs, int pc)
 static LocVar *addlocvar2(DFuncState *fs, int startpc, int endpc, int param)
 {
   struct LocVar *var;
-  int i = fs->nlocvars++;
+  int i = fs->nactvar++;
   lua_assert(i >= 0 && i < fs->sizelocvars);
   var = &fs->locvars[i];
   if (fs->D->usedebuginfo) { /* variable information already exists */
@@ -3500,7 +3700,7 @@ static LocVar *addlocvar2(DFuncState *fs, int startpc, int endpc, int param)
       lua_assert(var->startpc == startpc);
       lua_assert(var->endpc == endpc);
     }
-    lua_assert(fs->nlocvars <= fs->nlocvarsdetected);
+    lua_assert(fs->nactvar <= fs->nlocvars);
   }
   else { /* generate a variable name */
     char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC)];
@@ -4068,7 +4268,7 @@ static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
 static void flushpendingexp2(DFuncState *fs)
 {
   int oldfirstfree = fs->firstfree;
-  int newfirstfree = fs->nlocvars;
+  int newfirstfree = fs->nactvar;
 #ifdef LUA_DEBUG
   int i;
   for (i = 0; i < fs->a->expstack.used; i++) {
@@ -4078,7 +4278,7 @@ static void flushpendingexp2(DFuncState *fs)
 #endif /* LUA_DEBUG */
   fs->a->expstack.used = 0;
   D(lprintf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
-            fs->nlocvars));
+            fs->nactvar));
   lua_assert(oldfirstfree >= newfirstfree);
   /* firstfree does not need to be an accessible slot as it can be equal to
      maxstacksize */
@@ -5088,8 +5288,8 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   for (i = firstreg; i <= lastreg; i++) {
     struct LocVar *var;
     size_t len;
-    lua_assert(fs->nlocvars < fs->sizelocvars);
-    var = &fs->locvars[fs->nlocvars+(i-firstreg)];
+    lua_assert(fs->nactvar < fs->sizelocvars);
+    var = &fs->locvars[fs->nactvar+(i-firstreg)];
     lua_assert(var->varname != NULL);
     len = var->varname->tsv.len;
     addstr2buff(H, b, getstr(var->varname), len);
@@ -5122,7 +5322,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   D(lprintf("firstreg = %d, lastreg = %d\n", firstreg, lastreg));
   for (i = firstreg; i <= lastreg; i++) {
     ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
-    setreglocal2(fs, i, &fs->locvars[fs->nlocvars++]);
+    setreglocal2(fs, i, &fs->locvars[fs->nactvar++]);
     if (nvars > 1 && firstexp->kind == ENIL && firstexp->aux == lastreg)
       continue; /* don't write  */
     else if (exp != NULL) {
@@ -5158,7 +5358,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
         DumpLiteral("UNHANDLED CASE in initlocvar2\n",D);
       }
     }
-    /*needc initlocvar2(fs, i, &fs->locvars[fs->nlocvars++]);*/
+    /*needc initlocvar2(fs, i, &fs->locvars[fs->nactvar++]);*/
   }
   if (seenfirstexp == 0) {
     /* no expressions have been dumped, but the items in the hold need to be
@@ -5262,16 +5462,16 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     return exp;
   }
   else {
-    lua_assert(fs->nlocvars > 0);
-    lua_assert(exp->info < fs->nlocvars);
+    lua_assert(fs->nactvar > 0);
+    lua_assert(exp->info < fs->nactvar);
     exp->previndex = sa->laststore;
     sa->laststore = exp2index(fs, exp);
-    if (exp->kind == ENIL && exp->aux >= fs->nlocvars) {
+    if (exp->kind == ENIL && exp->aux >= fs->nactvar) {
       ExpNode *new;
       ExpNode node = *exp;  /* the node starts as local; the stack is about to
                                be discharged; add it to the stack after */
-      node.info = fs->nlocvars;  /* start this node at the first pending */
-      exp->aux = fs->nlocvars-1;  /* end the original node at the last local */
+      node.info = fs->nactvar;  /* start this node at the first pending */
+      exp->aux = fs->nactvar-1;  /* end the original node at the last local */
       dischargestores2(sa, fs);  /* store some of the nil's */
       new = newexp(fs);  /* put the rest of the nil's in a new pending node */
       *new = node;
@@ -5284,13 +5484,13 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
          will be created in `openexpr2', and its line will be set then */
       if (sa->openexprkind == -1 && sa->nextopenexpr != NULL &&
           sa->nextopenexpr->startpc == sa->pc+1 &&
-          fs->nlocvars == sa->nextopenreg) {
+          fs->nactvar == sa->nextopenreg) {
         lua_assert(ispcvalid(fs, sa->pc+1));
         new->line = getline(fs->f, sa->pc+1);
         new->closeparenline = new->line;
       }
       if (splitnil != NULL) *splitnil = 1;
-      lua_assert(!test_reg_property(fs, fs->nlocvars, REG_LOCAL));
+      lua_assert(!test_reg_property(fs, fs->nactvar, REG_LOCAL));
       return addexptoreg2(sa, fs, new->info, new, NULL);
     }
     if (splitnil != NULL) *splitnil = 0;
@@ -5856,7 +6056,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
           checkdischargestores2(sa, fs);
           D(lprintf("NEW LOCAL VARIABLE\n"));
           (void)getfirstexp;
-          initlocvars2(fs, fs->nlocvars, numvars);
+          initlocvars2(fs, fs->nactvar, numvars);
         }
       }
       else {  /* an A-mode instruction that doesn't clobber A */
@@ -5914,6 +6114,7 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.laststore = 0;
   sa.openexprkind = -1;
   sa.openexprnildebt = 0;
+  fs->nactvar = 0;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BL_FUNCTION);
   initfirstfree2(fs, f); /* set the first free reg for this function */
