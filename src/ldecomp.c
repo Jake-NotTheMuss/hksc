@@ -1975,22 +1975,21 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           }
           else { /* unconditional backward jump */
             if (prevop == OP_CLOSE) {
-              int pc1=pc-2; /* separate pc variable for looking-behind, starting
-                               with the one before the previous */
-              const OpCode o1[2] = {OP_JMP, OP_CLOSE}; /* the pattern to match
-                                                          alternates between
-                                                          these codes */
-              int i1=0; /* state machine variable */
-              while (pc1 >= 0) {
-                if (GET_OPCODE(code[pc1]) == o1[i1%2]) {
-                  i1++;
-                  if (i1 == 3) {
+              int i=0;  /* state machine variable */
+              /* the pattern to match */
+              const OpCode pattern[2] = {OP_JMP, OP_CLOSE};
+              pc=pc-2; /* skip the current OP_CLOSE-OP_JMP pair */
+              while (pc >= 0) {
+                Instruction insn = code[pc];
+                if (GET_OPCODE(insn) == pattern[i%2]) {
+                  i++;
+                  if (i == 3) {
                   /* At this point there is:
-                      OP_JMP    <-- pc1
+                      OP_JMP    <-- pc
                       OP_CLOSE
                       OP_JMP
-                      OP_CLOSE  <-- prevop (pc-1)
-                      OP_JMP    <-- o (pc)
+                      OP_CLOSE  <-- prevop (ca->pc-1)
+                      OP_JMP    <-- ca->pc
                      This can either be a while-loop with multiple break
                      statements at the end or a repeat-loop, both containing
                      local variables that are used as upvaleus:
@@ -2003,40 +2002,35 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                             do break; end
                             do break; end
                         end
-                     repeat-loop
+                     repeat-loop:
                         repeat
                             local b;
                             local function c()
                                b = b + 1;
                             end
                         until a;
-                     In the case of a repeat-loop, the instruction that precedes
-                     the OP_JMP at `pc1' must be a test instruction, and the
-                     jump instruction at PC1 jumps to the instruction at (PC-1)
                      */
-                    Instruction ins1 = code[pc1]; /* OP_JMP */
-                    pc1--;
+                    pc--;
                     /* need at least 1 more preceding instruction for it to be a
                        repeat-loop */
-                    if (pc1 >= 0) {
-                      /* INS1 is the first jump instruction in the pattern
-                         given above. It should target the last OP_CLOSE in said
-                         pattern, i.e. (PC-1), if it is a repeat-loop */
-                      if ((pc1 + 1 + 1 + GETARG_sBx(ins1)) == (pc - 1)) {
-                        /* a normal repeat-loop tests a condition before the
-                           jump at PC1 */
-                        /*if (testTMode(GET_OPCODE(code[pc1])))*/
-                          goto markrepeatstat;
+                    if (pc >= 0) {
+                      /* INSN is the first jump instruction in the pattern given
+                         above. It should target the last OP_CLOSE in said
+                         pattern, i.e. (ca->pc-1), if it is a repeat-loop */
+                      if ((pc + 1 + 1 + GETARG_sBx(insn)) == (ca->pc - 1)) {
+                        pc = ca->pc;  /* reset pc */
+                        goto markrepeatstat;
                       }
                     }
-                    /* while-loop is handled below */
-                    break; /* pattern matched */
+                    /* while-loop case is handled below */
+                    break;  /* pattern matched */
                   }
                 }
                 else
-                  break; /* pattern not matched */
-                pc1--;
+                  break;  /* pattern not matched */
+                pc--;
               }
+              pc = ca->pc;  /* reset pc */
               /* fallthrough */
             }
             /* inside a while-loop, jumping unconditionally back to the start
