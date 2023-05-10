@@ -40,31 +40,17 @@ enum BLTYPE {
 ** instruction properties
 */
 #define INSFLAG_TABLE \
-  DEFINSFLAG(PRECONCAT)  /* first pc that sets up a concat operation */ \
-  DEFINSFLAG(PRECALL)  /* first pc that sets up a function call */ \
-  DEFINSFLAG(PRERETURN)  /* first pc that evaluates a returned expression */ \
   DEFINSFLAG(PRERETURN1) /* the pc before a single-value-return */ \
-  DEFINSFLAG(PREBRANCHTEST)  /* first pc that evaluates a branch condition */ \
-  /* possible first pc that evaluates a branch condition */ \
-  DEFINSFLAG(PREBRANCHTEST1) \
-  /* false-jump out of an if-statement condition evaluation */ \
-  DEFINSFLAG(BRANCHFAIL) \
-   /* true-jump out of an if-statement condition evaluation */ \
-  DEFINSFLAG(BRANCHPASS) \
-  DEFINSFLAG(PRELOOPTEST)  /* first pc that evaluates a loop condition */ \
-  /* possible first pc that evaluates a loop condition */ \
-  DEFINSFLAG(PRELOOPTEST1) \
-  DEFINSFLAG(LOOPFAIL)  /* false-jump out of a loop condition evaluation */ \
-  DEFINSFLAG(LOOPPASS)  /* true-jump out of a loop condition evaluation */ \
+  DEFINSFLAG(BRANCHFAIL) /* false-jump in an if-statement condition */ \
+  DEFINSFLAG(BRANCHPASS) /* true-jump in an if-statement condition */ \
+  DEFINSFLAG(LOOPFAIL)  /* false-jump in a loop condition */ \
+  DEFINSFLAG(LOOPPASS)  /* true-jump in a loop condition */ \
   DEFINSFLAG(OPTLOOPFAILTARGET)  /* optimized jump target of a loop fail */ \
   DEFINSFLAG(REPEATSTAT)  /* first pc in a repeat-loop */ \
   DEFINSFLAG(WHILESTAT)  /* first pc in a while-loop */ \
   DEFINSFLAG(FORLIST)  /* first pc in a list for-loop */ \
-  /* first pc to evaluate for-list control variables */ \
-  DEFINSFLAG(PREFORLIST) \
   DEFINSFLAG(FORNUM)  /* first pc in a numeric for-loop */ \
-  DEFINSFLAG(PREFORNUM)  /* first pc to evluate for-num control variables */ \
-  DEFINSFLAG(BLOCKEND)  /* last pc in a block */ \
+  DEFINSFLAG(BLOCKEND)  /* last pc in a non-loop block */ \
   DEFINSFLAG(BRANCHBEGIN)  /* start of branch block */ \
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
