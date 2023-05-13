@@ -250,10 +250,22 @@ case $debug_pass in
 	*) error "Invalid value for --debug-pass '$debug_pass'" ;;
 esac
 
+defaultgame=
+
+case \
+$STRUCTURE_EXTENSION_ON$WITHNATIVEINT$WITHDOUBLES$SELF$GETGLOBAL_MEMOIZATION in
+	*1*) defaultgame=none;;
+	*) defaultgame=t7;;
+esac
+
+
 case $game in
 	"")
-		echo "Configuring compatibility settings for 't7' by default"
-		game=t7; lua_codt6=1; lua_codt7=1; lua_codiw6=0 ;;
+		echo "Configuring compatibility settings for '$defaultgame' by default"
+		game=$defaultgame;;
+esac
+
+case $game in
 	t6) lua_codiw6=0; lua_codt6=1; lua_codt7=0 ;;
 	t7) lua_codiw6=0; lua_codt6=1; lua_codt7=1 ;;
 	iw6|s1)
@@ -263,13 +275,7 @@ esac
 
 # configure compatibility settings based on the build config type
 case $game in
-	t6|t7|none)
-		STRUCTURE_EXTENSION_ON=0
-		WITHNATIVEINT=0
-		WITHDOUBLES=0
-		SELF=0
-		GETGLOBAL_MEMOIZATION=0
-		;;
+	t6|t7|none) ;;
 	*) error "Unsupported game '$game'" ;;
 esac
 
