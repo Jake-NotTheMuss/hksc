@@ -1946,6 +1946,7 @@ static struct LocVar *updateactvar1(DFuncState *fs, int pc, int *nvars)
 static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
        struct branch1 *branch, struct block1 *block, BlockNode *futuresibling)
 {
+  DecompState *D = fs->D;
   struct stat1 outer; /* the outer loop context, saved on the stack */
   BlockNode *nextsibling; /* the most recently created block; it gets assigned
                               to the ->nextsibling field for each newly created
@@ -3406,7 +3407,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         if (nret == 1) {  /* returns a single register */
           /* if debug info is available, a single-return can be differentiated
              as either an open expression or a returned local variable */
-          if (fs->D->usedebuginfo) {
+          if (D->usedebuginfo) {
             if (a >= fs->nactvar) {  /* returns a non-local register */
               openexpr1(ca, fs, a, RETPREP);
             }
@@ -3526,7 +3527,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 blstate->prevsibling = NULL;
               }
             }
-            else if (fs->D->usedebuginfo == 0 &&
+            else if (D->usedebuginfo == 0 &&
                      (bl->reg == a || (o == OP_LOADNIL && bl->reg <= b))) {
               /* this block is now caught up to the current pc */
               blstate->startpc = pc+(bl->reg != a); /* update start */
