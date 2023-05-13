@@ -75,7 +75,7 @@ all: src
 	@cd test && \
 	$(MAKE) HKSC_NAME=hksc
 
-src:
+src: src/hkscconf.h
 	@cd src && $(MAKE)
 
 clean:
