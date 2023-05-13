@@ -658,6 +658,7 @@ void luaU_target_info (hksc_State *H, struct target_info *target)
       sizesize = 4;
       sizeinstr = 4;
       bigendian = 0;
+      break;
     case HKSC_TARGET_PLAT_ORBIS:
     case HKSC_TARGET_PLAT_DURANGO:
     case HKSC_TARGET_PLAT_WINDOWS:
