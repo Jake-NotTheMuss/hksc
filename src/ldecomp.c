@@ -1224,6 +1224,7 @@ static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
     case OP_LOADNIL:
     case OP_GETUPVAL:
     case OP_NEWTABLE:
+    case OP_NEWSTRUCT:
     case OP_CLOSURE:
     case OP_VARARG:
       return 1;
@@ -1234,6 +1235,11 @@ static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
     case OP_NOT: case OP_NOT_R1:
     case OP_LEN:
     case OP_TESTSET:
+    case OP_GETSLOT:
+    case OP_GETSLOTMT:
+    case OP_SELFSLOT:
+    case OP_SELFSLOTMT:
+    case OP_GETFIELD_MM:
       return !checkdep || a != b;
     /* these operations depend on what's in B and C and B or C may equal A */
     case OP_SELF:
