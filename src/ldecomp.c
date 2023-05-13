@@ -1218,7 +1218,7 @@ static void checktreevisited(BlockNode *bn)
 static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
   switch (o) {
     /* these operations never depend on what's in A */
-    case OP_GETGLOBAL:
+    case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
     case OP_LOADBOOL:
     case OP_LOADK:
     case OP_LOADNIL:
@@ -5541,7 +5541,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   exp->leftside = 0;
   exp->pending = 1;
   switch (o) {
-    case OP_GETGLOBAL:
+    case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
       exp->kind = EGLOBAL;
       /* todo: if generating variable names, make sure this global name doesnt
          conflict with any of the variable names generated so far, create a test
