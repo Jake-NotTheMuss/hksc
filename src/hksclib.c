@@ -440,6 +440,9 @@ LUA_API void hksI_CompilerSettings(hksc_CompilerSettings *settings) {
 #endif /* LUA_CODT6 */
   settings->ignore_debug = 0;
   settings->emit_struct = 0;
+#if HKSC_GETGLOBAL_MEMOIZATION
+  settings->emit_memo = 1;
+#endif /* HKSC_GETGLOBAL_MEMOIZATION */
   settings->enable_int_literals = INT_LITERALS_NONE;
 #ifdef HKSC_DECOMPILER
   settings->match_line_info = 1;

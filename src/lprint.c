@@ -130,7 +130,7 @@ static void PrintCode(const Proto *f)
       case OP_SETUPVAL:
         printf("\t; %s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
         break;
-      case OP_GETGLOBAL:
+      case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
       case OP_SETGLOBAL:
         printf("\t; %s",svalue(&f->k[bx]));
         break;

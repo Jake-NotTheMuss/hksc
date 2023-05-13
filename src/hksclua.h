@@ -173,6 +173,9 @@ typedef struct {
   /* compiler-specific settings */
   int emit_struct; /* whether `hstructure' and `hmake' should be emitted */
   int enable_int_literals; /* int literal setting */
+#if HKSC_GETGLOBAL_MEMOIZATION
+  int emit_memo;
+#endif /* HKSC_GETGLOBAL_MEMOIZATION */
   int strip; /* bytecode stripping level */
   /*const char **strip_names;*/
   /*lua_LineMap debug_map;*/

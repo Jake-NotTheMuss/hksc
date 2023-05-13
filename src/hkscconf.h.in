@@ -104,10 +104,6 @@
 #endif
 
 /* put here any errors that need to happen for unsupported configurations */
-#if HKSC_GETGLOBAL_MEMOIZATION
-#error "Global Memoization not implemented"
-#endif
-
 #if HKSC_STRUCTURE_EXTENSION_ON
 #error "Structures not implemented"
 #endif

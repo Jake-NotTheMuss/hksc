@@ -223,6 +223,33 @@ static void freeexp (FuncState *fs, expdesc *e) {
 }
 
 
+#if HKSC_GETGLOBAL_MEMOIZATION
+static int addmemoslot (FuncState *fs, int kslot)
+{
+  hksc_State *H = fs->H;
+  TValue *idx;
+  Proto *f = fs->f;
+  int oldsize = f->sizek;
+  TValue key;
+  setpvalue(&key, cast(void *, cast(size_t, kslot)));
+  idx = luaH_set(H, fs->h, &key);
+  if (ttislightuserdata(idx)) {
+    return cast_int(cast(size_t, pvalue(idx)));
+  }
+  else {
+    setpvalue(idx, cast(void *, cast(size_t, fs->nk)));
+    /* reserve 2 more slots */
+    luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
+                    MAXARG_Bx, "constant table overflow");
+    luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
+                    MAXARG_Bx, "constant table overflow");
+    while (oldsize < f->sizek) setnilvalue(&f->k[oldsize++]);
+    { int nk = fs->nk; fs->nk+=2; return nk; }
+  }
+}
+#endif /* HKSC_GETGLOBAL_MEMOIZATION */
+
+
 static int addk (FuncState *fs, TValue *k, TValue *v) {
   hksc_State *H = fs->H;
   TValue *idx = luaH_set(H, fs->h, k);
@@ -339,7 +366,14 @@ void luaK_dischargevars (FuncState *fs, expdesc *e) {
       break;
     }
     case VGLOBAL: {
+#if HKSC_GETGLOBAL_MEMOIZATION
+      int k = e->u.s.info;
+      OpCode op = Settings(fs->H).emit_memo ? OP_GETGLOBAL_MEM : OP_GETGLOBAL;
+      e->u.s.info = luaK_codeABx(fs, op, 0, k);
+      luaK_codeABx(fs, OP_DATA, 20, addmemoslot(fs, k));
+#else /* !HKSC_GETGLOBAL_MEMOIZATION */
       e->u.s.info = luaK_codeABx(fs, OP_GETGLOBAL, 0, e->u.s.info);
+#endif /* HKSC_GETGLOBAL_MEMOIZATION */
       e->k = VRELOCABLE;
       break;
     }

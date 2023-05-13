@@ -95,7 +95,7 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
     int b = 0;
     int c = 0;
     check(op < NUM_OPCODES);
-    checkreg(pt, a);
+    if (op != OP_DATA) checkreg(pt, a);
     switch (getOpMode(op)) {
       case iABC: {
         b = GETARG_B(i);
