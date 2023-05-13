@@ -1569,6 +1569,9 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
 }
 
 
+/*
+** traverse a local variable initialized expression
+*/
 static void locvarexpr1(CodeAnalyzer *ca, DFuncState *fs, int nvars)
 {
   int reg;  /* register of first local variable that is initialized */
