@@ -3455,7 +3455,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   "indexes invalid upvalue");
           }
         }
-        break;
+        goto poststat;
       }
       case OP_DATA:
         break;
