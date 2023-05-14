@@ -25,3 +25,9 @@ if a and b then
 else
 	return b;
 end
+
+if a then
+	local b = b;
+	if b then
+	end
+end

@@ -2563,7 +2563,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               return;
             }
             else { /* jumping inside a branch-condition */
-              if (test_ins_property(fs, target-1, INS_BRANCHFAIL))
+              if (test_ins_property(fs, target-1, INS_BRANCHFAIL) &&
+                  !test_ins_property(fs, target, INS_EMPTYBLOCK))
                 init_ins_property(fs, pc, INS_BRANCHPASS);
               else {
                 init_ins_property(fs, pc, INS_BRANCHFAIL);
