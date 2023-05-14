@@ -1736,7 +1736,7 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
   if (branch != NULL && branch->potentialblock != NULL && \
       branch->potentialblock->state.prevsibling == NULL) \
     branch->potentialblock->state.prevsibling = new; \
-  seenstat = 1; \
+  nextstat = ca->pc; \
 } while(0)
 
 
@@ -1979,7 +1979,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   BlockNode *nextbranch = NULL;
   int nextbranchtarget = -1;
   int endpc; /* endpc of the current block */
-  lu_byte seenstat = 0;
+  int nextstat = -1;
   lu_byte finalnactvar = fs->nactvar;  /* number of active locals at the end of
                                           this loop */
   const Instruction *code = ca->code;
@@ -2029,7 +2029,6 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
        pass */
     if ((locvarhere = updateactvar1(fs, pc+1, &nvars))) {
       lua_assert(nvars > 0);
-      seenstat = 1;
       if (o == OP_FORPREP) {
         updateactvar1(fs, pc, &nvars);
         goto traversefornumprep;
@@ -2185,7 +2184,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else { /* a repeat-loop fail-jump */
                 if (type == BL_REPEAT && target == startpc) {
                   lua_assert(test_ins_property(fs, target, INS_REPEATSTAT));
-                  if (seenstat == 0 && finalnactvar == fs->nactvar)
+                  if (nextstat == -1 && finalnactvar == fs->nactvar)
                     /* no statement has been seen yet and no local variables
                        have died; the loops can be combined */
                     break;
@@ -2661,6 +2660,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     block->firstsibling = new_block;
                     return; /* pop the block context */
                   }
+                  nextstat = pc;
                 }
               }
             }
@@ -2823,7 +2823,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
                          &nextsibling);
               blnode1(ca, fs, startpc, type, &new_branch, NULL, futuresibling);
-              seenstat = 1;
+              nextstat = ca->pc;
               {
                 BlockNode *new_block;
                 BlockNode *ifblock = new_branch.ifblock;
@@ -3352,7 +3352,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             new_block.endpc = pc;
             new_block.reg = a;
             blnode1(ca, fs, startpc, type, NULL, &new_block, futuresibling);
-            seenstat = 1;
+            nextstat = ca->pc;
             D(lprintf("new_block.prevsibling = %B\n",
                       new_block.state.prevsibling));
             /* check if the block was inside an else-branch */
@@ -3427,7 +3427,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_SETUPVAL:
       case OP_SETUPVAL_R1:
         /* instructions that use register A as a source in a store operation */
-        seenstat = 1;  /* encountered an assignment statement */
+        nextstat = pc;  /* encountered an assignment statement */
         if (storeexpr1(ca, fs, a))
           goto poststat;
         break;
@@ -3444,22 +3444,22 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_SETSLOTS:
       case OP_SETSLOTMT:
         /* instructions that use C as a source in a store operation */
-        seenstat = 1;  /* encountered an assignment statement */
+        nextstat = pc;  /* encountered an assignment statement */
         if (storeexpr1(ca, fs, c))
           goto poststat;
         break;
       case OP_SETSLOTN:
         /* assigning nil to a structure slot */
-        seenstat = 1;  /* encountered an assignment statement */
+        nextstat = pc;  /* encountered an assignment statement */
         break;
       case OP_MOVE:
         if (D->usedebuginfo) {
           if (a < fs->nactvar) {  /* storing something in a local variable */
-            seenstat = 1;
             storeexpr1(ca, fs, b);
+            goto poststat;
           }
         }
-        goto poststat;
+        goto postexpr;
       case OP_CALL:
       case OP_CALL_I:
       case OP_CALL_I_R1:
@@ -3468,8 +3468,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         int nret = c-1;  /* number of return values used */
         openexpr1(ca, fs, a, CALLPREP);
         if (nret == 0)  /* call is a statement */
-          seenstat = 1;
-        goto poststat;
+          goto poststat;
+        goto postexpr;
       }
       case OP_TAILCALL:
       case OP_TAILCALL_I:
@@ -3481,9 +3481,9 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_CONCAT:  /* a concat expression */
         openexpr1(ca, fs, b, CONCATPREP);
         if (D->usedebuginfo) {
-          if (a < fs->nactvar) seenstat = 1;
+          if (a < fs->nactvar) goto poststat;
         }
-        goto poststat;
+        goto postexpr;
       case OP_RETURN: {  /* a return expression */
         int nret = b-1;
         if (nret == 1) {  /* returns a single register */
@@ -3502,7 +3502,6 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         else if (nret != 0) {  /* returns an open expression */
           openexpr1(ca, fs, a, RETPREP);
         }
-        seenstat = 1;  /* encountered return statement */
         goto poststat;
       }
       case OP_FORPREP: {  /* mark the start of preparation code */
@@ -3518,7 +3517,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       }
       case OP_SETLIST:
         openexpr1(ca, fs, a, SETLISTPREP);
-        goto poststat;
+        goto postexpr;
       case OP_TESTSET: /* a testset expression */
         if (ca->testset.reg == -1)
           ca->testset.reg = b;
@@ -3548,7 +3547,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   "indexes invalid upvalue");
           }
         }
-        goto poststat;
+        goto postexpr;
       }
       case OP_DATA:
         break;
@@ -3566,8 +3565,10 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         }
         else
           newopenexpr(fs, a, pc, pc, EMPTYTABLE);
-        /* fallthrough */
-      poststat: /* update variables after calls which change the pc */
+        goto postexpr;
+      poststat:
+        nextstat = ca->pc;
+      postexpr:  /* update variables after calls which change the pc */
         pc = ca->pc;
         i = code[pc];
         o = GET_OPCODE(i);
@@ -3586,7 +3587,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           updatefirstclob1(fs, pc, a);
           if (D->usedebuginfo) {
             if (a < fs->nactvar)
-              seenstat = 1;  /* something was assigned to a local variable */
+              nextstat = pc;  /* something was assigned to a local variable */
           }
           if (branch != NULL && branch->parentblock != NULL) {
             bl = branch->parentblock;
