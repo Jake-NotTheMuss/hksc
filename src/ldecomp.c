@@ -2606,7 +2606,6 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                         new_block = next;
                         D(lprintf("merging this branch with the next block "
                                   "%B\n", next));
-                        new_block->startpc = branchstartpc;
                         issingle = 0;
                         nextsibling = new_block->nextsibling;
                         goto blockcreated;
@@ -2618,7 +2617,6 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       if (nextsibling->endpc == branchendpc &&
                           nextstat+1 >= nextsibling->startpc) {
                         new_block = nextsibling;
-                        new_block->startpc = branchstartpc;
                         nextsibling = new_block->nextsibling;
                         goto blockcreated;
                       }
