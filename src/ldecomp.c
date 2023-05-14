@@ -2613,6 +2613,16 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       }
                     }
                     issingle = 1;
+                    if (nextsibling != NULL && nextsibling->type == BL_IF) {
+                      lua_assert(ispcvalid(fs, nextstat));
+                      if (nextsibling->endpc == branchendpc &&
+                          nextstat+1 >= nextsibling->startpc) {
+                        new_block = nextsibling;
+                        new_block->startpc = branchstartpc;
+                        nextsibling = new_block->nextsibling;
+                        goto blockcreated;
+                      }
+                    }
                   }
                   nextbranch = NULL;
                   nextbranchtarget = -1;

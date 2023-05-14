@@ -120,7 +120,8 @@ PASS1_SRC=	16_fornum.lua \
 	72_potential_doblock.lua \
 	73_iffalse_upval.lua \
 	74_iffalse_doblocks.lua \
-	93_melded_repeat.lua
+	93_melded_repeat.lua \
+	94_melded_if.lua
 
 PASS2_SRC=	75_locvar.lua \
 	76_assignment.lua \
