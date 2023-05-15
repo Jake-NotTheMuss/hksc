@@ -3962,7 +3962,7 @@ static void assertblvalid(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
   int endpc = bn->endpc;
   int type = bn->type;
   BlockNode *nextsibling = bn->nextsibling;
-  lua_assert(startpc <= endpc || bn->isempty);
+  lua_assert(startpc > endpc == bn->isempty);
   lua_assert(type >= 0 && type < MAX_BLTYPE);
   if (sa->intailemptyblock) {
     lua_assert(sa->pc+1 == startpc);
