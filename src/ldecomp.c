@@ -59,14 +59,12 @@ static const char *const insflagnames [] = {
 };
 #undef DEFINSFLAG
 
-#ifdef HKSC_DECOMP_HAVE_PASS2
 #define DEFREGFLAG(e)  "REG_" #e,
 static const char *const regflagnames [] = {
   REGFLAG_TABLE
   "MAX_REGFLAG"
 };
 #undef DEFREGFLAG
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 #define bltypename(v) (bltypenames[v])
 #define insflagname(v) (insflagnames[v])
@@ -152,11 +150,9 @@ static void lprintf(const char *fmt, ...)
         fputs(s, stdout);
         break;
       }
-#ifdef HKSC_DECOMP_HAVE_PASS2
       case 'R': /* register flag */
         printf("%s", regflagname(va_arg(argp, int)));
         break;
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
       case 'I': /* instruction flag */
         printf("%s", insflagname(va_arg(argp, int)));
         break;
