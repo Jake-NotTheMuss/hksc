@@ -3626,32 +3626,32 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           }
           else if (block != NULL) { /* update for enclosing block contexts */
             int i;
+            int regtocheck;
             bl = block;
             blstate = &bl->state;
             stateunsure = 0;
             updateblockstate1:
             i = 0;
-            if (locvarhere != NULL) {
-              if (bl->reg == fs->nactvar || (o == OP_LOADNIL && bl->reg <= b)) {
-                blstate->startpc = pc+(o == OP_LOADNIL && bl->reg <= b &&
-                                       bl->reg > a);
-                blstate->firstchild = nextsibling;
+            if (D->usedebuginfo)
+              regtocheck = (locvarhere != NULL) ? cast_int(fs->nactvar) : -1;
+            else
+              regtocheck = a;
+            if (isregvalid(fs, regtocheck)) {
+              int usesprevnil =(o == OP_LOADNIL && a < bl->reg && bl->reg <= b);
+              if (bl->reg == regtocheck || (o == OP_LOADNIL && bl->reg <= b)) {
+                /* this block is now caught up to the current pc */
+                blstate->startpc = pc+usesprevnil;
+                blstate->firstchild = nextsibling; /* update first child */
+                /* discharge saved previous sibling */
                 blstate->prevsibling = NULL;
               }
             }
-            else if (D->usedebuginfo == 0 &&
-                     (bl->reg == a || (o == OP_LOADNIL && bl->reg <= b))) {
-              /* this block is now caught up to the current pc */
-              blstate->startpc = pc+(bl->reg != a); /* update start */
-              blstate->firstchild = nextsibling; /* update first child */
-              /* discharge saved previous sibling */
-              blstate->prevsibling = NULL;
-            }
             /* update the rest of the parents but only update startpc */
             for (bl = bl->prev; bl != NULL; bl = bl->prev) {
+              int usesprevnil =(o == OP_LOADNIL && a < bl->reg && bl->reg <= b);
               blstate = stateunsure ? &bl->possiblestate : &bl->state;
-              if (bl->reg == a) {
-                blstate->startpc = pc;
+              if (bl->reg == regtocheck || usesprevnil) {
+                blstate->startpc = pc+usesprevnil;
                 D(lprintf("%supdating .firstclob for R(%d) to (%i), %d block%s "
                           "removed\n", stateunsure ? "(possibly) " : "",bl->reg,
                           pc, i, i == 1 ? "" : "s"));
