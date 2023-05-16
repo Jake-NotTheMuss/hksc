@@ -3537,6 +3537,12 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         }
         updatefirstclob1(fs, pc, a);
         break;
+      case OP_LOADBOOL:
+        if (c) {
+          set_ins_property(fs, pc, INS_BOOLLABEL);
+          set_ins_property(fs, pc+1, INS_BOOLLABEL);
+        }
+        goto postexpr;
       case OP_CLOSURE: {
         int nup, nupn;
         lua_assert(bx >= 0 && bx < fs->f->sizep);
@@ -3585,10 +3591,6 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         b = GETARG_B(i);
         c = GETARG_C(i);
       default:
-        if (o == OP_LOADBOOL && c) {
-          set_ins_property(fs, pc, INS_BOOLLABEL);
-          set_ins_property(fs, pc+1, INS_BOOLLABEL);
-        }
         if (beginseval(o, a, b, c, 0)) {
           int stateunsure;
           struct block1 *bl;
