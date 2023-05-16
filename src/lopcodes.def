@@ -47,6 +47,7 @@
 ** R(x) - register
 ** Kst(x) - constant (in constant table)
 ** RK(x) == if ISK(x) then Kst(INDEXK(x)) else R(x)
+** Slot[x] - struct slot
 */
 
 
@@ -79,9 +80,11 @@ DEFCODE1(SELF, ABC, 0, 1, R, RK, 1)
 /* OP_RETURN  A B  return R(A), ... ,R(A+B-2)  (see note) */
 DEFCODE1(RETURN, ABC, 0, 1, U, N, 0)
 
-/* OP_GETTABLE  A B C  R(A) := R(B)[RK(C)] */
+/* OP_GETTABLE  A B C  R(A) := R(B)[RK(C):string] */
 DEFCODE1(GETTABLE_S, ABC, 0, 1, R, RK, 0)
+/* OP_GETTABLE  A B C  R(A) := R(B)[RK(C):number] */
 DEFCODE1(GETTABLE_N, ABC, 0, 1, R, RK, 0)
+/* OP_GETTABLE  A B C  R(A) := R(B)[RK(C)] */
 DEFCODE1(GETTABLE, ABC, 0, 1, R, RK, 0)
 
 /* OP_LOADBOOL  A B C  R(A) := (Bool)B; if (C) pc++ */
@@ -94,11 +97,13 @@ DEFCODE1(TFORLOOP, ABC, 1, 1, N, U, 0)
 /* OP_SETFIELD  A B C  R(A)[Kst(B)] := RK(C) */
 DEFCODE_R1(SETFIELD, ABC, 0, 1, K, RK, 0)
 
-/* OP_SETTABLE  A B C  R(A)[RK(B)] := RK(C) */
+/* OP_SETTABLE  A B C  R(A)[RK(B):string] := RK(C) */
 DEFCODE1(SETTABLE_S, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SETTABLE_S_BK, ABC, 0, 1, RK, RK, 0)
+/* OP_SETTABLE  A B C  R(A)[RK(B):number] := RK(C) */
 DEFCODE1(SETTABLE_N, ABC, 0, 1, RK, RK, 0)
 DEFCODE1(SETTABLE_N_BK, ABC, 0, 1, RK, RK, 0)
+/* OP_SETTABLE  A B C  R(A)[RK(B)] := RK(C) */
 DEFCODE1(SETTABLE, ABC, 0, 0, RK, RK, 0)
 DEFCODE1(SETTABLE_BK, ABC, 0, 0, RK, RK, 0)
 
@@ -106,7 +111,7 @@ DEFCODE1(SETTABLE_BK, ABC, 0, 0, RK, RK, 0)
 DEFCODE_R1(TAILCALL_I, ABC, 0, 1, U, U, 0)
 DEFCODE1(TAILCALL_C, ABC, 0, 1, U, U, 0)
 
-/* OP_TAILCALL_M ??? */
+/* OP_TAILCALL_M  A B C  return call TM_CALL method on R(A) */
 DEFCODE1(TAILCALL_M, ABC, 0, 1, U, U, 0)
 
 /* OP_LOADK  A Bx  R(A) := Kst(Bx) */
@@ -121,7 +126,7 @@ DEFCODE1(SETGLOBAL, ABx, 0, 1, K, N, 0)
 /* OP_JMP  sBx  pc+=sBx */
 DEFCODE1(JMP, AsBx, 0, 0, UK, N, 0)
 
-/* OP_CALL_M ??? */
+/* OP_CALL_M  A B C  call TM_CALL method on R(A) */
 DEFCODE1(CALL_M, ABC, 0, 1, U, U, 0)
 
 /* OP_CALL  A B C  R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1)) */
@@ -245,30 +250,41 @@ DEFCODE_R1V(GETFIELD_R1, ABC, 0, 1, R, K, 1, R1B)
 DEFCODE_R1V(SETFIELD_R1, ABC, 0, 1, K, RK, 0, R1A)
 
 
-/* ??? */
+/* OP_NEWSTRUCT  A B C  R(A) := {} (size = B,C) */
 DEFCODE1(NEWSTRUCT, ABC, 0, 1, U, U, 1)
 
 /* OP_DATA  A Bx  extra information used by the VM */
 DEFCODE1(DATA, ABx, 0, 1, UK, N, 0)
 
+/* OP_SETSLOTN  A C  R(A).Slot[C] := nil */
 DEFCODE1(SETSLOTN, ABC, 0, 1, N, U, 0)
+/* OP_SETSLOTI  A B C  R(A).Slot[B] := RK(C) */
 DEFCODE1(SETSLOTI, ABC, 0, 1, U, RK, 0)
+/* OP_SETSLOT  A B C  R(A).Slot[B] := RK(C) */
 DEFCODE1(SETSLOT, ABC, 0, 1, U, RK, 0)
+/* OP_SETSLOTS  A B C  R(A).Slot[B] := R(C) */
 DEFCODE1(SETSLOTS, ABC, 0, 1, U, R, 0)
 DEFCODE1(SETSLOTMT, ABC, 0, 1, U, RK, 0)
 
-/* OP_CHECKTYPE  A Bx  check type of R(A) is Bx */
+/* OP_CHECKTYPE  A Bx  check R(A) is of type Bx */
 DEFCODE1(CHECKTYPE, ABx, 0, 1, U, N, 0)
-/* OP_CHECKTYPES  A Bx  check type of R(A) is a structure with id Bx  */
+/* OP_CHECKTYPES  A Bx  check R(A) is a structure with id Bx  */
 DEFCODE1(CHECKTYPES, ABx, 0, 1, U, N, 0)
 
+/* OP_GETSLOT  A B C  R(A) := R(B).Slot[C] */
 DEFCODE1(GETSLOT, ABC, 0, 1, R, U, 0)
 DEFCODE1(GETSLOTMT, ABC, 0, 1, R, U, 0)
+
+/* OP_SELFSLOT  A B C  R(A+1) := R(B); R(A) := R(B).Slot[C] */
 DEFCODE1(SELFSLOT, ABC, 0, 1, R, U, 0)
 DEFCODE1(SELFSLOTMT, ABC, 0, 1, R, U, 0)
+
+/* OP_GETFIELD_MM  A B C  R(A) := C metamethod for R(B) */
 DEFCODE1(GETFIELD_MM, ABC, 0, 1, R, K, 1)
+
 DEFCODE1(CHECKTYPE_D, ABx, 0, 1, U, N, 0)
 DEFCODE1(GETSLOT_D, ABC, 0, 1, R, U, 0)
+
 DEFCODE1(GETGLOBAL_MEM, ABx, 0, 1, K, N, 1)
 
 #ifdef LUA_CODIW6
