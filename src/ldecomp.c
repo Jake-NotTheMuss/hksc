@@ -3633,7 +3633,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             i = 0;
             if (locvarhere != NULL) {
               if (bl->reg == fs->nactvar || (o == OP_LOADNIL && bl->reg <= b)) {
-                blstate->startpc = pc+(o == OP_LOADNIL && bl->reg <= b);
+                blstate->startpc = pc+(o == OP_LOADNIL && bl->reg <= b &&
+                                       bl->reg > a);
                 blstate->firstchild = nextsibling;
                 blstate->prevsibling = NULL;
               }
