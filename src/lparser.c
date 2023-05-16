@@ -320,7 +320,13 @@ static void enterblock (FuncState *fs, BlockCnt *bl, lu_byte isbreakable) {
   bl->upval = 0;
   bl->previous = fs->bl;
   fs->bl = bl;
-  lua_assert(fs->freereg == fs->nactvar);
+  /* I commented out the assertion below because there is a case where it can
+     not be true, namely, when a list for-loop has more than 3 expressions in
+     its list. This is still a valid assertion and it is a bug in Lua 5.1. The
+     bug was fixed in Lua 5.3.4, and in the official documentation, the bug is
+     said to have existed since Lua 5.2. This bug exists in Havok Script as
+     well. */
+  /*lua_assert(fs->freereg == fs->nactvar);*/
 }
 
 
