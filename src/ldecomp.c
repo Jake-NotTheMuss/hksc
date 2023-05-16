@@ -4585,10 +4585,12 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       /* b is set to (-1) to tell this function to use `bindex' instead to index
          the pending expression in the expression stack */
       o = (b == -1) ? index2exp(fs, exp->u.unop.bindex) : NULL;
-      /* see explanation `case EBINOP' */
+      /* avoid dumping 2 minus signs in a row by using an inner paren for the
+         operand */
       if (op == OPR_MINUS && o != NULL && o->kind == EUNOP &&
           o->u.unop.op == OPR_MINUS)
         o->u.unop.needinnerparen = 1;
+      /* see explanation `case EBINOP' */
       if (o != NULL && o->line != exp->line)
         o->closeparenline = exp->line;
       /* dump operand */
