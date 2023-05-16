@@ -56,9 +56,9 @@ static int precheck (const Proto *pt) {
 
 int luaG_checkopenop (Instruction i) {
   switch (GET_OPCODE(i)) {
-    case OP_CALL: case OP_CALL_I: case OP_CALL_C: case OP_CALL_M:
-    case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_C:
-    case OP_TAILCALL_M:
+    case OP_CALL: case OP_CALL_I: case OP_CALL_I_R1: case OP_CALL_C:
+    case OP_CALL_M: case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1:
+    case OP_TAILCALL_C: case OP_TAILCALL_M:
     case OP_RETURN:
     case OP_SETLIST: {
       check(GETARG_B(i) == 0);
@@ -72,9 +72,9 @@ int luaG_checkopenop (Instruction i) {
 static int checkArgMode (const Proto *pt, int r, enum OpArgMask mode) {
   switch (mode) {
     case OpArgN: check(r == 0); break;
-    case OpArgU: case OpArgK: break;
+    case OpArgU: case OpArgK: case OpArgUK: break;
     case OpArgR: checkreg(pt, r); break;
-    case OpArgRK: case OpArgUK:
+    case OpArgRK:
       check(ISK(r) ? INDEXK(r) < pt->sizek : r < pt->maxstacksize);
       break;
     default: break;
@@ -141,7 +141,8 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         break;
       }
       case OP_GETUPVAL:
-      case OP_SETUPVAL: {
+      case OP_SETUPVAL:
+      case OP_SETUPVAL_R1: {
         check(b < pt->nups);
         break;
       }
@@ -150,8 +151,10 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         break;
       }
       case OP_GETGLOBAL:
+      case OP_GETGLOBAL_MEM:
       case OP_SETGLOBAL:
-      case OP_SETFIELD: {
+      case OP_SETFIELD:
+      case OP_SETFIELD_R1: {
         check(ttisstring(&pt->k[b]));
         break;
       }
