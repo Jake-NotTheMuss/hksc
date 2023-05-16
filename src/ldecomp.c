@@ -703,6 +703,20 @@ static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
+static void marklocvarendings(DFuncState *fs)
+{
+  int i;
+  for (i = 0; i < fs->sizelocvars; i++) {
+    struct LocVar *var = &fs->locvars[i];
+    /* prevent bad debug info from crashing the program */
+    CHECK(fs, var->varname != NULL, "NULL variable name in debug info");
+    CHECK(fs, ispcvalid(fs, var->startpc), "invalid local variable startpc");
+    CHECK(fs, ispcvalid(fs, var->endpc), "invalid local variable endpc");
+    set_ins_property(fs, var->endpc, INS_LOCVAREND);
+  }
+}
+
+
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
@@ -761,6 +775,8 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->expstack.total = 4;
   a->expstack.used = 0;
   a->expstack.stk = luaM_newvector(H, a->expstack.total, ExpNode);
+  if (D->usedebuginfo)
+    marklocvarendings(fs);
 #ifdef HKSC_DECOMP_HAVE_PASS2
   if (fs->prev != NULL)
     getupvaluesfromparent(fs, fs->prev);
