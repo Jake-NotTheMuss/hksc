@@ -3608,6 +3608,24 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           struct block1 *bl;
           struct blockstate1 *blstate;
           updatefirstclob1(fs, pc, a);
+          if (o == OP_LOADNIL) {
+            if (pc > 0 && GET_OPCODE(code[pc-1]) == OP_LOADNIL) {
+              OpCode prevop = GET_OPCODE(code[pc-1]);
+              if (prevop == OP_LOADNIL) {
+                int prevA = GETARG_A(code[pc-1]);
+                int prevB = GETARG_B(code[pc-1]);
+                /* if these 2 nil codes could have been optimized, this pc must
+                   have been a possible jump label when the code was generated,
+                   such as an if-true block:
+                      local a = nil;
+                      if true then
+                          local b = nil;
+                      end */
+                if (a >= prevA && a <= prevB+1)
+                  set_ins_property(fs, pc, INS_NILLABEL);
+              }
+            }
+          }
           if (D->usedebuginfo) {
             if (a < fs->nactvar)
               nextstat = pc;  /* something was assigned to a local variable */

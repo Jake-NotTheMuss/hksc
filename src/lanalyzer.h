@@ -58,6 +58,7 @@ enum BLTYPE {
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
   DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
+  DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
   DEFINSFLAG(LOCVAREND)  /* endpc of a local variable */ \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
