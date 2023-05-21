@@ -706,6 +706,7 @@ void luaU_target_info (hksc_State *H, struct target_info *target)
 {
   target->sizeint = sizeof(int);
   target->sizesize = sizeof(size_t);
+  target->sizeinstr = sizeof(Instruction);
   if (isbigendian())
     target->needendianswap=(G(H)->bytecode_endianness==HKSC_LITTLE_ENDIAN);
   else /* little endian */
