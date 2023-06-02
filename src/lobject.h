@@ -284,6 +284,7 @@ typedef struct LocVar {
 
 /* flags defined in lanalyzer.h */
 typedef lu_int32 InstructionFlags;
+struct BlockState;
 struct SlotDesc;
 struct BlockNode;
 struct ExpNode;
@@ -309,14 +310,21 @@ typedef struct Analyzer {
   int sizelineinfo;
   int sizelocvars;
   int sizeupvalues;
+  /*int pass;*/
   struct {
     struct BlockNode *first, *last;
   } bllist;
   struct {
+    /*union { struct BlockState *stk1; struct ExpNode *stk2; } stk;*/
     struct ExpNode *stk;  /* base stack pointer */
     int total;  /* total number of elements in the stack */
     int used;  /* number of used elements in the stack */
   } expstack;
+  struct {
+    struct BlockState *stk;
+    int total;
+    int used;
+  } pendingblocks;
 } Analyzer;
 
 #endif /* HKSC_DECOMPILER */

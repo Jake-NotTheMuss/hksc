@@ -43,6 +43,9 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->expstack.stk = NULL;
   a->expstack.total = 0;
   a->expstack.used = 0;
+  a->pendingblocks.stk = NULL;
+  a->pendingblocks.total = 0;
+  a->pendingblocks.used = 0;
   return a;
 }
 
@@ -63,6 +66,7 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
     bn = next;
   }
   luaM_freearray(H, a->expstack.stk, a->expstack.total, ExpNode);
+  luaM_freearray(H, a->pendingblocks.stk, a->pendingblocks.total, BlockState);
   luaM_free(H, a);
 }
 

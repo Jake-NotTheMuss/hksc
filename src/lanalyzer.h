@@ -55,11 +55,16 @@ enum BLTYPE {
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
+  DEFINSFLAG(AUGBREAK)  /* augmented break in a repeat-loop with upvalues */ \
+  DEFINSFLAG(AUGCONT)  /* augmented continue in a repeat-loop with upvalues */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
   DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
+  DEFINSFLAG(MINHASHEND) \
+  DEFINSFLAG(TESTSETTARGET) \
   DEFINSFLAG(LOCVAREND)  /* endpc of a local variable */ \
+  DEFINSFLAG(CLOBBER) \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
 #define DEFINSFLAG(e)  INS_##e,
@@ -101,6 +106,48 @@ typedef struct BlockNode {
   lu_byte visited;  /* has this block been visited in pass2 */
 #endif
 } BlockNode;
+
+
+/* variables that are subject to being overwritten on each instruction */
+struct BlockStateControl {
+  int startpc;
+  BlockNode *firstchild, *prevsibling;
+};
+
+
+typedef struct BlockState {
+  BlockNode *nextsibling;
+  BlockNode *result;  /* the else-part if a branch */
+  BlockNode *firstblock;
+  short nested;  /* immediate nesting level (0 if this is not nested) */
+  lu_byte branch;
+  int endpc;
+  struct BlockStateControl parentsnapshot;
+  union {
+    struct {
+      struct BlockStateControl rcnt, pcnt;  /* actual and potential states */
+      BlockNode *firstsibling;
+      int reg;  /* closed register */
+      short lastbranch;  /* relative position of last branch state */
+      lu_byte upval;  /* has upvalues */
+      lu_byte opaque;  /* is being tracked alongside (behind) a branch */
+      lu_byte loop;  /* is tracking a loop block */
+    } bl;  /* block data */
+    struct {
+      BlockNode *prevsibling2;  /* preceding block for the else-part */
+      int startpc;  /* startpc of the if-part */
+      int midpc;  /* startpc of the else-part */
+      int target1;  /* actual fail-jump target from the if-part */
+      int target2;  /* actual exit-jump target from the if-part */
+      int optimalexit;  /* an optimal jump target for the if-part exit */
+      int parentblock;  /* stack index of parent (non-branch) block */
+      int parentbranchwithblock;  /* stack index of parent branch that had an
+                                     opaque block created with it */
+      lu_byte withblock;  /* is tracking a regular block with this branch */
+    } br;  /* branch data */
+  } u;
+} BlockState;
+
 
 
 typedef enum {

@@ -375,6 +375,14 @@ static int test_reg_property(DFuncState *fs, int reg, int prop)
 #define check_reg_property(fs,reg,val) lua_assert(test_reg_property(fs,reg,val))
 
 
+/* empty blocks start 1 pc after they end; the startpc to use for comparisons is
+   the emptiness subtracted from the startpc (consider a tail-empty child block
+   which has an actual startpc that is greater than its parent block's endpc, or
+   similarly, a previous empty sibling block that ends immediately before its
+   next sibling block, which would have a startpc that is equal to its sibling
+   block's startpc) */
+#define blstartpc(bl)  check_exp(bl, cast_int((bl)->startpc - (bl)->isempty))
+
 
 /*
 ** allocate a new block structure and return it
@@ -391,6 +399,23 @@ static BlockNode *newblnode(hksc_State *H, int startpc, int endpc, int type) {
   D(bn->visited = 0);
   return bn;
 }
+
+
+/*
+** returns the next free expression in the expression node stack and increment
+** the number of stack elements in use
+*/
+static BlockState *newblockstate(DFuncState *fs)
+{
+  hksc_State *H = fs->H;
+  Analyzer *a = fs->a;
+  lua_assert(a->pendingblocks.used >= 0 &&
+             a->pendingblocks.used <= a->pendingblocks.total);
+  luaM_growvector(H, a->pendingblocks.stk, a->pendingblocks.used,
+      a->pendingblocks.total, BlockState, MAX_INT, "too many block contexts");
+  return &a->pendingblocks.stk[a->pendingblocks.used++];
+}
+
 
 
 /*
@@ -817,16 +842,16 @@ static void addsibling1(BlockNode *bl1, BlockNode *bl2) {
 static BlockNode *addblnode1(DFuncState *fs, int startpc, int endpc, int type) {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
-  BlockNode *curr, *new;
+  BlockNode *curr, *new_node;
   curr = a->bllist.first;
-  new = newblnode(H, startpc, endpc, type);
-  new->next = curr;
-  a->bllist.first = new;
+  new_node = newblnode(H, startpc, endpc, type);
+  new_node->next = curr;
+  a->bllist.first = new_node;
   if (curr == NULL)
-    a->bllist.last = new;
-  D(lprintf("recording new block node of type %b (%i-%i)\n", new, startpc,
+    a->bllist.last = new_node;
+  D(lprintf("recording new block node of type %b (%i-%i)\n", new_node, startpc,
             endpc));
-  return new;
+  return new_node;
 }
 
 
@@ -1110,21 +1135,23 @@ static void DumpIndentation(DecompState *D)
 
 #ifdef LUA_DEBUG
 
-static void debugblnode(DFuncState *fs, BlockNode *bn, int indent) {
+static void debugblnode(DFuncState *fs, BlockNode *node, int indent) {
   BlockNode *child, *nextsibling;
   int i;
-  lua_assert(bn != NULL);
-  child = bn->firstchild;
-  nextsibling = bn->nextsibling;
+  lua_assert(node != NULL);
+  child = node->firstchild;
+  nextsibling = node->nextsibling;
   for (i = 0; i < indent; i++)
     lprintf("  ");
   if (indent) lprintf("- ");
-  lprintf("(%i-%i) %b ", bn->startpc, bn->endpc, bn);
+  lprintf("(%i-%i) %b ", node->startpc, node->endpc, node);
   if (nextsibling != NULL)
     lprintf("(sibling (%i-%i) %b)\n", nextsibling->startpc, nextsibling->endpc,
             nextsibling);
   else
     lprintf("(NO sibling)\n");
+  lua_assert(node->visited == 0);
+  node->visited = 1;
   while (child != NULL) {
     debugblnode(fs, child, indent+1);
     child = child->nextsibling;
@@ -1134,14 +1161,18 @@ static void debugblnode(DFuncState *fs, BlockNode *bn, int indent) {
 
 static void debugblocksummary(DFuncState *fs)
 {
-  BlockNode *first = fs->a->bllist.first;
+  BlockNode *node = fs->a->bllist.first;
   lprintf("BLOCK SUMMARY\n"
          "-------------------\n");
-  lua_assert(first != NULL);
-  lua_assert(first->type == BL_FUNCTION);
-  lua_assert(first->nextsibling == NULL);
-  debugblnode(fs, first, 0);
+  lua_assert(node != NULL);
+  lua_assert(node->type == BL_FUNCTION);
+  lua_assert(node->nextsibling == NULL);
+  debugblnode(fs, node, 0);
   lprintf("-------------------\n");
+  while (node != NULL) {
+    node->visited = 0;  /* unvisit before pass2 */
+    node = node->next;
+  }
 }
 
 
@@ -1415,6 +1446,13 @@ static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
 /* a loop in the first pass, described by its start and end pc and its type */
 struct stat1 {
   int start, end, type;
+};
+
+
+struct blockstates1 {
+  BlockState *block, *branch;
+  int stkbase;  /* the stack position when the current loop was entered */
+  lu_byte upval;  /* this refers to the current loop; does it have upvalues */
 };
 
 
@@ -1729,224 +1767,849 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
 #endif /* LUA_DEBUG */
 
 
-#define loop1(ca,fs,startpc,blocktype) do { \
-  struct BlockNode *new; /* the new block */ \
-  /* create the new block */ \
-  blnode1(ca, fs, startpc, blocktype, NULL, NULL, nextsibling); \
-  new = fs->a->bllist.first; \
-  lua_assert(new != nextsibling); \
-  /* in the case of an erroneous while-loop detection, whatever block is first \
-     will already have the correct nextsibling */ \
-  if (new->nextsibling == NULL) addsibling1(new, nextsibling); \
-  nextsibling = new; \
-  /* if enclosed by a block, save a previous sibling for it, as the block may \
-     really begin after this newly created block */ \
-  if (block != NULL && block->state.prevsibling == NULL) \
-    block->state.prevsibling = new; \
-  if (branch != NULL && branch->elseprevsibling == NULL) \
-    branch->elseprevsibling = new; \
-  if (branch != NULL && branch->potentialblock != NULL && \
-      branch->potentialblock->state.prevsibling == NULL) \
-    branch->potentialblock->state.prevsibling = new; \
-  nextstat = ca->pc; \
-} while(0)
-
-
-struct block1;
-
-
 /*
-** `branch1' holds the context for an if-else branch construct in the first pass
+** a structure which holds a snapshot of the previous and next BlockNode for a
+** given pc, as well as a root node for basing the search on
 */
-struct branch1 {
-  struct branch1 *prev;  /* enclosing branch context if nested */
-  struct branch1 *root;  /* the first context in this group of contexts, i.e.,
-                            the first in its group to be recursed into, and the
-                            last to be returned from; it is only used to handle
-                            adjacent groups of nested `if-false' blocks */
-  struct block1 *parentblock;  /* enclosing block if nested */
-  struct block1 *potentialblock;  /* if the if-part closes variables */
-  /*BlockNode *next;*/  /* the next branch block in this group */
-  BlockNode *ifblock;  /* first if-part */
-  BlockNode *elseblock;  /* the else-part */
-  BlockNode *elseprevsibling;  /* the preceding sibling of the else-part */
-  BlockNode *firstblock;  /* the first block in the branch context, used when
-                              no if-part is found when returning, meaning the
-                              detection was erroneous and this block needs to be
-                              accounted for in the parent call */
-  /* `if_false_root' is used when handling erroneous else-branch detection, and
-     it is the root if-false block in the current context's group, where a
-     group is a hierarchy of nested if-false blocks. Because the root context
-     returns first in this case, the parent exists before the child. When the
-     leaf if-false-block in its group is created, all parent contexts have been
-     unwound, and this handle is needed to access the root of the hierarchy */
-  BlockNode *if_false_root;
-  struct stat1 *outer;  /* saved values for the outer loop statement */
-  int target1;  /* jump target out of the branch condition */
-  int startpc, endpc, midpc;  /* midpc is the start of the else-part */
-  int optimalexit;  /* target of optimized jumps out of this branch */
-  int contextswitched;  /* this flag was created to handle to the case where an
-                           erroneous branch detection is discovered at the time
-                           when a new branch has been detected; if this happens,
-                           there is an enclosing branch context to return from,
-                           the one which was erroneous, and the context for it
-                           needs to be switched out with the new branch
-                           detection, and the recursion performed again with the
-                           new context, and the erroneous branch needs to be
-                           changed to a repeat-loop node and the sibling chain
-                           needs to be fixed */
-  int nocommit; /* this flag is used to tell the parent `blnode1' caller to
-                   delete the block node that it created before recursing into
-                   the branch context */
-  int correctingwhile;  /* true if unwinding the call stack to correct an
-                           erroneous while-loop detection */
-  int correctingwhilepc;
+struct siblingsnapshot1 {
+  BlockNode *startnode;  /* the root node to start searching at */
+  BlockNode *prevsibling, *nextsibling;  /* the snapshot nodes */
 };
 
 
 /*
-** `blockstate1' holds all block data that is continuously updated while within
-** a block or branch context
+** intializer to call before entering a loop
 */
-struct blockstate1 {
-  int startpc;
-  BlockNode *firstchild;  /* see explanation in `block1' */
-  BlockNode *prevsibling;  /* see explanation in `block1' */
-};
-
-
-/*
-** `block1' holds the context for a do-end block in the first pass
-*/
-struct block1 {
-  struct block1 *prev;  /* parent block context if nested */
-  /* the following fields may have less obvious purposes than it seems */
-  /* `nextbranch' is used when an else-branch is encountered and recursed into,
-     where the else-branch closes variables, which caused the analyzer to think
-     that there was a do-end block which wasn't there. Because at that point the
-     analyzer would have already recursed into a do-block context, it passes the
-     resulting data (needed after the branch recursion) with the block context
-     and then returns for that context. This way, the branch data gets saved
-     even when the function returns again (after returning from the branch
-     context) in order to pop off the erroneous block context */
-  BlockNode *nextbranch;
-  BlockNode *ifblock;  /* if this block is actually an if-statement */
-  int nextbranchtarget;
-  /* `nextsibling' is used when 2 adjacent blocks are detected. The analyzer
-     will end the existing block and overwrite the current context for the new
-     block instead of recursing into a new context. In this case, the block
-     node entry for the adjacent block is created and the function continues
-     as normal without returning or calling. This field is saved for each new
-     block context so that when adjacent blocks are encountered, the block can
-     be created and linked to its sibling wihtout returning to the caller which
-     has the correct `nextsibling' */
-  BlockNode *nextsibling;
-  /* `prevsibling' holds the last sibling before the start of the do-block. This
-     is needed because do-blocks will not always return on the exact pc that
-     they actually start. The analyzer will keep going until the start of the
-     enclosing loop/function and then truncate the block to start on the first
-     instruction that clobbers the first register that is closed by the block.
-     The `nextsibling' block will continue to be updated even past the real
-     start of the block, so the block's true previous sibling is saved */
-  /*BlockNode *prevsibling;*/
-  /* `firstsibling' is used to pass the local variable `nextsibling' back to the
-     caller, so that it may update its `nextsibling' to that value */
-  BlockNode *firstsibling;
-  /* `firstchild' holds the first block that starts after the real start of the
-     block. This is needed for the same reason as described in the description
-     for `prevsibling' */
-  /*BlockNode *firstchild;*/
-  struct stat1 *outer;  /* saved values for the outer loop statement */
-  int pass;  /* true if passing data to its caller/parent block */
-  int correctingwhile;  /* true if unwinding the call stack to correct an
-                           erroneous while-loop detection */
-  int correctingwhilepc;
-  int reg;  /* register to close up to in OP_CLOSE */
-  int seenclosure;
-  int endpc;
-  struct blockstate1 state;  /* todo: explain these fields */
-  struct blockstate1 possiblestate;
-  /*int startpc, endpc;*/
-};
-
-
-static BlockNode *fixsiblingchain1(BlockNode *block, BlockNode **chain) {
-  int endpc = block->endpc;
-  BlockNode *lastchild = NULL;
-  BlockNode *nextsibling;
-  BlockNode *firstsibling;
-  lua_assert(block != NULL);
-  if (chain == NULL) chain = &block->nextsibling;
-  nextsibling = firstsibling = *chain;
-  D(lprintf("fixing up sibling chain for %B\n", block));
-  D(lprintf("--\n"));
-  /* if the next sibling starts before this block ends OR the next sibling is
-     empty and its startpc is 1 after the end of this block, make it a child of
-     this block */
-  while (nextsibling &&
-         (nextsibling->startpc <= endpc ||
-          (nextsibling->isempty && nextsibling->startpc-1 == endpc))) {
-    lastchild = nextsibling;
-    D(lprintf("found child %B\n", nextsibling)); 
-    nextsibling = nextsibling->nextsibling;
-  }
-  D(lprintf("--\n"));
-  D(lprintf("next sibling changed to %B\n", nextsibling));
-  D(lprintf("previous next sibling was %B\n", block->nextsibling));
-  *chain = nextsibling;
-  if (lastchild) {
-    block->firstchild = firstsibling;
-    if (firstsibling) {
-      D(lprintf("first child is %B\n", firstsibling)); 
-    }
-    /* fix sibling chain for last child */
-    lastchild->nextsibling = NULL;
-    D(lprintf("last child is %B\n", lastchild)); 
-  }
-  else {
-    D(lprintf("found no children for this block\n"));
-  }
-  /* chain may be &block->nextsibling to avoid having to update any extra
-     variables such as NEXTSIBLING in blnode1 */
-  if (chain != &block->nextsibling) {
-    lua_assert(block->nextsibling == NULL || block->nextsibling==firstsibling);
-    block->nextsibling = nextsibling;
-  }
-  return lastchild;
+static void initsiblingsnapshot1(struct siblingsnapshot1 *s, BlockNode *start)
+{
+  s->prevsibling = s->nextsibling = NULL;
+  s->startnode = start;
 }
 
 
-static void newbranch1(DFuncState *fs, struct branch1 *branch, int midpc,
-                       int endpc, int jumptarget, BlockNode **nextsibling)
+/*
+** function to call after each loop iteration
+*/
+static void advancesiblingsnapshot1(struct siblingsnapshot1 *s)
 {
-  BlockNode *block;
-  struct branch1 *prev = branch->prev;
-  branch->startpc = -1;  /* startpc of the if-part is unknown right now */
-  branch->midpc = midpc;
-  branch->endpc = endpc;
-  branch->target1 = -1;
-  if (prev && endpc+1 == prev->midpc) {
-    branch->optimalexit = prev->optimalexit;
-    branch->root = prev->root;
+  s->startnode = s->prevsibling;
+}
+
+
+/*
+** calculate a snapshot of the previous and next block nodes for a given pc,
+** using the current STARTNODE as the base of the search
+*/
+static void getsiblingsforpc1(struct siblingsnapshot1 *s, int pc)
+{
+  BlockNode *prevnode = NULL;
+  /* start at STARTNODE and find the first block node which is after PC */
+  BlockNode *node = s->startnode;
+  while (node != NULL && blstartpc(node) < pc) {
+    lua_assert(node->nextsibling != node);
+    prevnode = node;  /* update PREVSIBLING */
+    node = node->nextsibling;
+  }
+  s->prevsibling = prevnode;
+  s->nextsibling = node;
+}
+
+
+/*
+** apply a sibling snapshot to a block node's child/sibling relationships
+*/
+static void fixsiblingchain1(BlockNode *node, struct siblingsnapshot1 *s)
+{
+  BlockNode *lastchild = s->prevsibling;
+  BlockNode *nextsibling = s->nextsibling;
+  BlockNode *firstsibling = s->startnode;
+  lua_assert(node != NULL);
+  if (lastchild) {
+    node->firstchild = firstsibling;
+    /* fix sibling chain for last child */
+    lastchild->nextsibling = NULL;
+  }
+  node->nextsibling = nextsibling;
+}
+
+
+/*
+** correct a NEXTSIBLING variable and a block node's sibling chain
+*/
+static void rescansiblingchain1(BlockNode *node, BlockNode **chain) {
+  struct siblingsnapshot1 s;
+  lua_assert(node != NULL);
+  initsiblingsnapshot1(&s, chain != NULL ? *chain : node->nextsibling);
+  getsiblingsforpc1(&s, node->endpc+1);
+  fixsiblingchain1(node, &s);
+  if (chain != NULL)
+    *chain = s.nextsibling;
+}
+
+
+/* assumes (br->nested > 0) check before calling */
+#define prevbranchstate1(brstate) ((brstate) - 1 - (brstate)->u.br.withblock)
+
+/*
+** return the BlockState that immediately encloses BRANCH if it exists
+*/
+static BlockState *getbranchparent1(BlockState *branch)
+{
+  lua_assert(branch != NULL);
+  return branch->nested ? prevbranchstate1(branch) : NULL;
+}
+
+
+/*
+** return the root BlockState in the same group as BRANCH
+*/
+static BlockState *getbranchroot1(BlockState *branch)
+{
+  short nested;
+  lua_assert(branch != NULL);
+  nested = branch->nested;
+  lua_assert(nested >= 0);
+  for (; nested > 0; nested--)
+    branch = prevbranchstate1(branch);
+  return branch;
+}
+
+
+/*
+** return the most recent pending branch context from the block state stack
+*/
+static BlockState *getlastbranch1(DFuncState *fs, struct blockstates1 *s)
+{
+  if (s->branch != NULL)
+    return s->branch;
+  else {
+    BlockState *branch;
+    BlockState *block = s->block;
+    if (block == NULL || block->u.bl.lastbranch == 0)
+      return NULL;
+    lua_assert(block->u.bl.lastbranch >= 0);
+    branch = block - block->u.bl.lastbranch;
+    lua_assert(branch >= &fs->a->pendingblocks.stk[s->stkbase] &&
+               branch < &fs->a->pendingblocks.stk[fs->a->pendingblocks.used]);
+    lua_assert(branch->branch);
+    return branch;
+  }
+  (void)getbranchroot1;
+}
+
+
+/*
+** return the first parent do-block state of a branch context or NULL
+*/
+static BlockState *getparentblock1(DFuncState *fs, BlockState *branch)
+{
+  lua_assert(branch != NULL);
+  lua_assert(branch->branch);
+  if (branch->u.br.parentblock)
+    return &fs->a->pendingblocks.stk[branch->u.br.parentblock-1];
+  else
+    return NULL;
+}
+
+
+/*
+** pop a block state from the stack
+*/
+static BlockState *popblockstate1(DFuncState *fs)
+{
+  lua_assert(fs->a->pendingblocks.used > 0);
+  return &fs->a->pendingblocks.stk[--fs->a->pendingblocks.used];
+}
+
+
+/*
+** return the previous block state given a BlockState BL and a stack limit from
+** S->STKBASE; if the position of BL is above the limit, the BlockState at the
+** preceding position is returned, otherwise NULL is returned
+*/
+static BlockState *prevblockstate1(DFuncState *fs, struct blockstates1 *s,
+                                   BlockState *bl)
+{
+  int base = s->stkbase;
+  int index = bl - fs->a->pendingblocks.stk;
+  lua_assert(base >= 0);
+  lua_assert(fs->a->pendingblocks.used >= base);
+  lua_assert(index >= 0 && index < fs->a->pendingblocks.used);
+  if (index <= base)
+    return NULL;
+  else
+    return bl-1;
+}
+
+/*
+** return the do-block state that immediately encloses BL if it exists
+*/
+static BlockState *prevdoblockstate1(BlockState *bl)
+{
+  return bl->nested ? bl-1 : NULL;
+}
+
+
+/*
+** pop the last block state from the stack and update the state pointers
+*/
+static BlockState *updateblockstates1(DFuncState *fs, struct blockstates1 *s) {
+  BlockState *oldstate = popblockstate1(fs);
+  BlockState *top = oldstate;
+  int base = s->stkbase;
+  if (top->branch && top->u.br.withblock)
+    /* also pop the block context that was created with the branch */
+    top = popblockstate1(fs);
+  lua_assert(base >= 0);
+  lua_assert(fs->a->pendingblocks.used >= base);
+  if (fs->a->pendingblocks.used == base) {
+    s->block = s->branch = NULL;
+    return oldstate;
+  }
+  lua_assert(fs->a->pendingblocks.used > base);
+  top--;
+  if (top->branch) {
+    s->block = NULL;
+    s->branch = top;
   }
   else {
-    branch->optimalexit = jumptarget;
-    branch->root = branch; /* root points to itself */
+    s->block = top;
+    s->branch = NULL;
   }
-  block = addblnode1(fs, midpc, endpc, BL_ELSE);
-  if (prev != NULL && prev->elseprevsibling == NULL)
-    prev->elseprevsibling = block;
-  lua_assert(block != NULL);
-  D(lprintf("ELSE BLOCK - (%i-%i)\n", midpc, endpc));
-  fixsiblingchain1(block, nextsibling);
-  branch->elseblock = block;
-  branch->ifblock = NULL;
-  branch->elseprevsibling = NULL;
+  return oldstate;
+}
+
+
+/*
+** create a new do-block context and push it to the block state stack
+*/
+static BlockState *pushblock1(DFuncState *fs, struct blockstates1 *s, int endpc,
+                              int reg, lu_byte upval)
+{
+  /* parent block state snapshots are only needed when a nested branch occludes
+     part of the parent block; until a `pushbranch1' call happens, the snapshot
+     remains unused */
+  struct BlockStateControl parentsnapshot = {-1, NULL, NULL};
+  struct BlockState *block;
+  struct BlockState *prev = s->block;
+  short nested, lastbranch;
+  if (prev != NULL) {
+    nested = prev->nested+1;
+    lastbranch = prev->u.bl.lastbranch+1;
+  }
+  else {
+    nested = 0;
+    if (s->branch == NULL)
+      lastbranch = 0;
+    else
+      lastbranch = fs->a->pendingblocks.used-(s->branch-fs->a->pendingblocks.stk);
+  }
+  block = newblockstate(fs);
+  UNUSED(prev);  /* pointer may be invalid past this point */
+  block->nextsibling = NULL;
+  block->result = NULL;
+  block->firstblock = NULL;
+  block->nested = nested;
+  block->branch = 0;
+  block->endpc = endpc;
+  block->u.bl.rcnt.startpc = endpc;
+  block->u.bl.rcnt.firstchild = NULL;
+  block->u.bl.rcnt.prevsibling = NULL;
+  block->u.bl.pcnt = block->u.bl.rcnt;
+  block->parentsnapshot = parentsnapshot;
+  block->u.bl.firstsibling = NULL;
+  block->u.bl.reg = reg;
+  block->u.bl.lastbranch = lastbranch;
+  block->u.bl.upval = upval;
+  block->u.bl.opaque = 0;
+  block->u.bl.loop = 0;
+  s->block = block;
+  s->branch = NULL;
+  return block;
+}
+
+
+/*
+** create a new branch context and push it to the block state stack
+*/
+static BlockState *pushbranch1(DFuncState *fs, struct blockstates1 *s,
+                               int midpc, int endpc, int jumptarget)
+{
+  /* default parent block state snapshpt to use if there is no parent block */
+  struct BlockStateControl parentsnapshot = {-1, NULL, NULL};
+  struct BlockState *branch, *parentblock;
+  struct BlockState *prev = s->branch;
+  short nested;
+  int optimalexit, parentbranchwithblock;
+  if (prev != NULL) {
+    lua_assert(prev->branch);
+    nested = prev->nested+1;
+    optimalexit = (endpc+1 == prev->u.br.midpc) ? prev->u.br.optimalexit :
+                  jumptarget;
+    /* the next parent block is that of the parent branch state */
+    parentblock = getparentblock1(fs, prev);
+    if (prev->u.br.withblock)
+      parentbranchwithblock = prev-fs->a->pendingblocks.stk+1;
+    else
+      parentbranchwithblock = prev->u.br.parentbranchwithblock;
+  }
+  else {  /* root */
+    nested = 0;
+    optimalexit = jumptarget;
+    /* maybe there is currently a block pending; that is the parent block */
+    parentblock = s->block;
+    parentbranchwithblock = 0;
+  }
+  if (parentblock != NULL) {  /* there is a parent block state */
+    BlockState *lastparentblock = parentblock;
+    /* save the current state of the first parent to assign to this branch */
+    parentsnapshot = parentblock->u.bl.pcnt;
+    /* because all pending block states are corrected before `pushbranch1' is
+       called, the rest of the parents need to update their snapshots; iterate
+       through the rest of the parents and update each snapshot; note that the
+       potential state is used for the snapshot because the blocks may or may
+       not be occluded by a branch block (when else-blocks are encountered, they
+       may actually be if-false-blocks, in which case there is no occlusion
+       being done by an if-part, so the potential state being correct means that
+       it may be valid, while an incorrect potential state is when its startpc
+       is inside a branch block that has been identified, and thus the state is
+       definitely not valid) */
+    while ((parentblock = prevdoblockstate1(parentblock)) != NULL) {
+      lastparentblock->parentsnapshot = parentblock->u.bl.pcnt;
+      lastparentblock = parentblock;
+    }
+  }
+  branch = newblockstate(fs);
+  UNUSED(parentblock);
+  UNUSED(prev);  /* pointer may be invalid past this point */
+  branch->nextsibling = NULL;
+  branch->result = NULL;
   branch->firstblock = NULL;
-  branch->contextswitched = 0;
-  branch->nocommit = 0;
-  branch->correctingwhile = 0;
-  branch->if_false_root = NULL;
+  branch->nested = nested;
+  branch->branch = 1;
+  branch->endpc = endpc;
+  branch->parentsnapshot = parentsnapshot;
+  branch->u.br.prevsibling2 = NULL;
+  branch->u.br.startpc = -1;  /* startpc of the if-part is unknown right now */
+  branch->u.br.midpc = midpc;
+  branch->u.br.target1 = -1;
+  branch->u.br.target2 = jumptarget;
+  branch->u.br.optimalexit = optimalexit;
+  branch->u.br.parentblock = 0;
+  branch->u.br.parentbranchwithblock = parentbranchwithblock;
+  branch->u.br.withblock = 0;
+  s->branch = branch;
+  s->block = NULL;
+  return branch;
+}
+
+
+/*
+** create a do-block node from a do-block state
+*/
+#define createdoblockfromstate1(fs,blstate) \
+  createdoblock1(fs, (blstate)->u.bl.rcnt.startpc, (blstate)->endpc)
+
+static BlockNode *createdoblock1(DFuncState *fs, int startpc, int endpc)
+{
+  BlockNode *node;
+  lua_assert(ispcvalid(fs, startpc));
+  lua_assert(ispcvalid(fs, endpc));
+  node = addblnode1(fs, startpc, endpc, BL_DO);
+  set_ins_property(fs, startpc, INS_DOSTAT);
+  set_ins_property(fs, endpc, INS_BLOCKEND);
+  return node;
+}
+
+
+/*
+** finalize a do-block context by creating a block node from its current state
+*/
+static BlockNode *finalizeblock1(DFuncState *fs, BlockState *block)
+{
+  BlockNode *node;
+  lua_assert(block != NULL);
+  lua_assert(block->branch == 0);
+  if (block->u.bl.loop)  /* this block state was for a loop */
+    return NULL;
+  node = createdoblockfromstate1(fs, block);
+  node->firstchild = block->u.bl.rcnt.firstchild;
+  node->nextsibling = block->nextsibling;
+  if (block->u.bl.rcnt.prevsibling) {
+    /* connect previous sibling to this node */
+    block->u.bl.rcnt.prevsibling->nextsibling = node;
+  }
+  return node;
+}
+
+
+/*
+** finalize a branch context (NODE1 is the if-part block node)
+*/
+static BlockNode *finalizebranch1(DFuncState *fs, BlockState *branch,
+                                  BlockNode *node1)
+{
+  BlockState *parent;
+  BlockNode *node2;  /* the else-part */
+  BlockNode *firstresult;
+  int midpc;
+  lua_assert(branch != NULL);
+  midpc = branch->u.br.midpc;
+  lua_assert(midpc > 0);  /* midpc must always come after a jump */
+  node2 = branch->result;
+  lua_assert(node2 != NULL);
+  lua_assert(node2->type == BL_ELSE);
+  parent = getbranchparent1(branch);
+  if (node1 != NULL) {
+    lua_assert(node1->type == BL_IF);
+    lua_assert(branch->u.br.target1 != -1);
+    firstresult = node1;
+    if (node1->endpc != midpc-1 || node1->nextsibling != node2)
+      goto badelsebranch;
+  }
+  else {  /* no if-part; change else-part to a single if (i.e. `if false') */
+    firstresult = node2;
+    badelsebranch:
+    /* the condition below means the following: this branch is enclosed in an
+       immediate parent branch, this branch ends at the end of the if-part of
+       the parent, the exit-jump of this branch is optimized to target the
+       exit pc of a parent branch, the optimized exit pc is not an earlier pc
+       (such as the start of an enclosing while-loop), and the parent branch
+       does not have an opaque pending block state */
+    if (parent != NULL && branch->endpc+1 == parent->u.br.midpc &&
+        branch->u.br.target2 == branch->u.br.optimalexit &&
+        branch->u.br.optimalexit > node2->endpc && parent->u.br.withblock == 0)
+    {
+      /* todo: decide whether to use the optimal exit as the endpc */;
+    }
+    node2->type = BL_IF;
+    /* there is not if-part; unmark block ending */
+    unset_ins_property(fs, midpc-1, INS_BLOCKEND);
+    /* handle a preceding do-block with upvalues (check against 1 specifically,
+       as a value of 2 indicates there is a block but a node should not be
+       created) */
+    if (branch->u.br.withblock == 1) {
+      BlockNode *node;
+      BlockState *pblock = branch-1/*prevblockstate1(fs, &s, branch)*/;
+      lua_assert(pblock->u.bl.opaque);
+      lua_assert(pblock->branch == 0);
+      lua_assert(pblock->u.bl.upval);
+      node = createdoblockfromstate1(fs, pblock);
+      firstresult = node;
+      /* if the earliest block before this is not the else-part, make it a child
+         of this one */
+      if (pblock->u.bl.rcnt.firstchild != node2)
+        node->firstchild = pblock->u.bl.rcnt.firstchild;
+      node->nextsibling = node2;
+      /* connect the preceding block to this do-block if it exists */
+      if (pblock->u.bl.rcnt.prevsibling) {
+        pblock->u.bl.rcnt.prevsibling->nextsibling = node;
+      }
+      if (node->firstchild != NULL) {
+        BlockNode *child = node->firstchild;
+        /* find the last child and disconnect it from the else-part */
+        while (child->nextsibling != NULL && child->nextsibling != node2)
+          child = child->nextsibling;
+        child->nextsibling = NULL;
+      }
+      branch->u.br.prevsibling2 = NULL;  /* already was handled here */
+    }
+    /* the if-part endpc may have defaulted to the pc just before the original
+       startpc of the else-part, but now the else-part startpc has changed, and
+       the if-part endpc needs to be adjusted in case it overlaps with the
+       else-part */
+    if (node1 != NULL && node1->endpc+1 >= node2->startpc) {
+      /* todo: does the node2 endpc actually change? */
+    }
+    /* correct sibling and child relationships for the branch node */
+    rescansiblingchain1(node2, NULL);
+    /* todo: handle elseprevsibling */
+    if (branch->u.br.prevsibling2 != NULL) {
+      BlockNode *prevsibling = branch->u.br.prevsibling2;
+      prevsibling->nextsibling = node2;
+      if (prevsibling->type == BL_ELSE && prevsibling->endpc == node2->startpc)
+      {
+        /*prevsibling->endpc = node2->endpc;*/
+      }
+      /* todo: when is this necessary? */
+      rescansiblingchain1(prevsibling, NULL);
+    }
+    if (branch->u.br.parentbranchwithblock) {
+      int endpc = branch->endpc;
+      BlockState *br = &fs->a->pendingblocks.stk
+      [branch->u.br.parentbranchwithblock-1];
+      lua_assert(br->branch);
+      lua_assert(br->u.br.withblock);
+      if (br->u.br.withblock == 1 && br->u.br.midpc-2 == branch->endpc) {
+        BlockState *block = br-1;
+        lua_assert(block->branch == 0);
+        lua_assert(block->u.bl.opaque);
+        lua_assert(block->u.bl.upval);
+        lua_assert(block->endpc == endpc);
+        if (block->u.bl.rcnt.startpc == midpc)
+          /* make it still true, but a BlockNode does not need to be created for
+             it (this if-false block is sufficient to generate matching code) */
+          br->u.br.withblock = 2;
+      }
+    }
+  }
+  return firstresult;
+}
+
+
+/*
+** finalize the current branch context and pop it from the pending stack
+*/
+static BlockNode *popbranch1(DFuncState *fs, struct blockstates1 *s,
+                       BlockNode *node1, BlockNode **siblingchain)
+{
+  BlockNode *result;
+  BlockState *oldbranch;
+  lua_assert(s->branch != NULL);
+  result = finalizebranch1(fs, s->branch, node1);
+  if (siblingchain != NULL) *siblingchain = result;
+  oldbranch = updateblockstates1(fs, s);
+  if (s->block != NULL) {
+    int branchstartpc = node1 ? oldbranch->u.br.startpc : oldbranch->u.br.midpc;
+    int branchendpc = oldbranch->endpc;
+    if (s->block->u.bl.pcnt.startpc <= branchendpc &&
+        s->block->u.bl.pcnt.startpc >= branchstartpc)
+      s->block->u.bl.pcnt = oldbranch->parentsnapshot;
+  }
+  return result;
+}
+
+
+static int updateblockstatenodes1(BlockState *block, BlockNode *node)
+{
+  lua_assert(node != NULL);
+  lua_assert(block != NULL);
+  if (block->u.bl.pcnt.startpc > node->endpc &&
+      (block->u.bl.pcnt.prevsibling == NULL ||
+       block->u.bl.pcnt.prevsibling->endpc < node->startpc)) {
+    block->u.bl.pcnt.prevsibling = node;
+    return 1;
+  }
+  else if (block->u.bl.pcnt.startpc <= blstartpc(node) &&
+      (block->u.bl.pcnt.firstchild == NULL ||
+       block->u.bl.pcnt.firstchild->startpc > node->endpc)) {
+    block->u.bl.pcnt.firstchild = node;
+    return 2;
+  }
+  return 0;
+}
+
+
+static void postfinalizeblock1(BlockState *block, BlockNode *result,
+                               BlockNode **siblingchain)
+{
+  BlockState *parentblock;
+  int startpc;
+  lua_assert(block != NULL);
+  lua_assert(block->branch == 0);
+  lua_assert(result != NULL);
+  lua_assert(siblingchain != NULL);
+  parentblock = prevdoblockstate1(block);
+  startpc = block->u.bl.rcnt.startpc;
+  if (*siblingchain == NULL || startpc <= blstartpc(*siblingchain))
+    *siblingchain = result;
+  if (parentblock != NULL)
+    updateblockstatenodes1(parentblock, result);
+}
+
+
+static void postfinalizebranch1(DFuncState *fs, BlockState *branch,
+                                BlockNode *result)
+{
+  BlockState *block = getparentblock1(fs, branch);
+  int n = 0;
+  for (; block != NULL; block = prevdoblockstate1(block)) {
+    n |= updateblockstatenodes1(block, result);
+    /* if a FIRSTCHILD and PREVSIBLING field have both been updated, stop */
+    if (n == 3) break;
+  }
+}
+
+
+/*
+** unwind the pending block stack to the local base position for the current
+** loop
+*/
+static void finalizependingblocks1(DFuncState *fs, struct blockstates1 *s,
+                                   BlockNode **siblingchain)
+{
+  BlockNode *nextsibling = *siblingchain;
+  lu_byte prevbranch = 0;
+  lua_assert(s->stkbase >= 0 && s->stkbase <= fs->a->pendingblocks.used);
+  while (fs->a->pendingblocks.used > s->stkbase) {
+    BlockNode *result;
+    if (s->branch != NULL) {
+      BlockState *branch = s->branch;
+      /*int i;*/
+      result = finalizebranch1(fs, branch, NULL);
+      postfinalizebranch1(fs, branch, result);
+      /* the hierarchical structure for branches that have no if-parts is
+         inverse to the stack, so the top item is actually the outermost (or
+         earliest) branch in its group; therefore, if this was the first branch
+         in its group, update nextsibling, otherwise, it is already the earliest
+         block so far */
+      if (prevbranch == 0) {
+        if (nextsibling == NULL || result->startpc <= blstartpc(nextsibling)) {
+          nextsibling = result;
+        }
+      }
+      prevbranch = 1;
+    }
+    else {
+      BlockState *block = s->block;
+      int startpc;
+      lua_assert(block != NULL);
+      block->u.bl.rcnt = block->u.bl.pcnt;
+      startpc = block->u.bl.rcnt.startpc;
+      result = finalizeblock1(fs, block);
+      if (result != NULL)
+        postfinalizeblock1(block, result, &nextsibling);
+      prevbranch = 0;
+    }
+    updateblockstates1(fs, s);  /* pop finalized block state */
+  }
+  *siblingchain = nextsibling;
+  lua_assert(s->branch == NULL && s->block == NULL);
+}
+
+
+/*
+** update the state of one or more pending blocks for a given pc
+*/
+static int recordblockstateforpc1(DFuncState *fs, BlockState *bl, LocVar *var,
+                int pc, int p, struct siblingsnapshot1 *s, int startpclimit)
+{
+  BlockNode *nextsibling = s->nextsibling, *prevsibling = s->prevsibling;
+  int updatedblock = 0;
+  lua_assert(ispcvalid(fs, pc));
+  lua_assert(bl != NULL);
+  lua_assert(bl->branch == 0);
+  if (nextsibling != NULL) {
+    lua_assert(nextsibling->startpc >= pc);
+  }
+  if (test_ins_property(fs, pc, INS_CLOBBER)) {
+    int regtocheck;
+    int updatedchild = 0;
+    OpCode o = GET_OPCODE(fs->f->code[pc]);
+    int a = GETARG_A(fs->f->code[pc]);
+    int b = GETARG_B(fs->f->code[pc]);
+    struct BlockStateControl *blcnt = p ? &bl->u.bl.pcnt : &bl->u.bl.rcnt;
+    struct BlockStateControl *lastblcnt;
+    if (fs->D->usedebuginfo)
+      regtocheck = (var != NULL) ? cast_int(fs->nactvar) : -1;
+    else
+      regtocheck = a;
+    if (isregvalid(fs, regtocheck)) {
+      int blreg = bl->u.bl.reg;
+      int usesprevnil = (o == OP_LOADNIL && a < blreg && blreg <= b);
+      if (blreg == regtocheck || (o == OP_LOADNIL && blreg <= b)) {
+        /* this block is now caught up to the current pc */
+        blcnt->startpc = pc+usesprevnil;
+        if (nextsibling != NULL && nextsibling->endpc <= bl->endpc)
+          blcnt->firstchild = nextsibling; /* update first child */
+        else
+          blcnt->firstchild = NULL;
+        /* discharge saved previous sibling */
+        blcnt->prevsibling = prevsibling;
+        updatedblock = updatedchild = 1;
+        if (!p)
+          bl->u.bl.pcnt = *blcnt;
+      }
+    }
+    lastblcnt = blcnt;
+    /* update the rest of the parents but only update startpc */
+    while ((bl = prevdoblockstate1(bl)) != NULL) {
+      int blreg = bl->u.bl.reg;
+      int usesprevnil = (o == OP_LOADNIL && a < blreg && blreg <= b);
+      blcnt = p ? &bl->u.bl.pcnt : &bl->u.bl.rcnt;
+      if (blreg == regtocheck || usesprevnil) {
+        int newstartpc = pc+usesprevnil;
+        blcnt->startpc = newstartpc;
+        /* if the first block firstchild/prevsibling were not updated, check if */
+        if (updatedchild == 0) {
+          if (nextsibling != NULL && nextsibling->endpc <= bl->endpc)
+            blcnt->firstchild = nextsibling;
+          else
+            blcnt->firstchild = NULL;
+          blcnt->prevsibling = prevsibling;
+          updatedchild = 1;
+        }
+        if (!p)
+          bl->u.bl.pcnt.startpc = blcnt->startpc;
+      }
+      /* if this block doesn't get updated, but a child block has been updated
+         and this block startpc is in an invalid range, move it to the latest
+         possible that it can start, i.e. it's child startpc; normally, the
+         startpclimit is such that (blcnt->startpc <= startpclimit) always
+         evaluates to true; but when rescanning code after encountering a branch
+         context, the startpclimit is used to control when parent block contexts
+         are updated; if the parent startpc was set to a pc that is inside the
+         newly encountered branch context, it will be moved to a valid pc
+         outside of the branch context, otherwise it will be updated normally */
+      else if (updatedchild && blcnt->startpc <= startpclimit) {
+        blcnt->startpc = lastblcnt->startpc;
+      }
+      lastblcnt = blcnt;
+    }
+  }
+  return updatedblock;
+}
+
+
+/*
+** rescan an instruction range and stop on the first pc where the state of a
+** given block is updated
+*/
+static int updateblockstateinrange1(DFuncState *fs, BlockState *block,
+                    int startpc, int endpc, BlockNode *nextnode, int occluded)
+{
+  int updatedblock = 0;
+  int nextnodestart = nextnode ? nextnode->startpc : -1;
+  struct siblingsnapshot1 s;
+  int pc;
+  initsiblingsnapshot1(&s, nextnode);
+  for (pc = startpc; pc < endpc; pc++) {
+    /* skip over existing block nodes that start inside this do-block */
+    if (pc == nextnodestart) {
+      pc = nextnode->endpc;
+      nextnode = nextnode->nextsibling;
+      nextnodestart = nextnode ? nextnode->startpc : -1;
+      continue;
+    }
+    getsiblingsforpc1(&s, pc);
+    if (recordblockstateforpc1(fs, block, NULL, pc, occluded, &s, startpc-1)) {
+      updatedblock = 1;
+      break;
+    }
+    advancesiblingsnapshot1(&s);
+  }
+  return updatedblock;
+}
+
+
+/*
+** close any pending blocks that are inside an encountered branch and update the
+** state the remaining pending blocks
+*/
+static void rescanblocksfornewbranch1(DFuncState *fs, struct blockstates1 *s,
+                                      int endpc, BlockNode **siblingchain)
+{
+  int occluded;
+  BlockNode *nextsibling = *siblingchain;
+  BlockState *laststate, *block = s->block;
+  BlockState *branch;
+  if (block != NULL && block->endpc <= endpc) {
+    struct BlockState *lastbl = NULL;
+    while (block != NULL) {
+      BlockNode *node;
+      lastbl = block;
+      if (block->endpc >= endpc)
+        break;
+      block->u.bl.rcnt = block->u.bl.pcnt;
+      node = finalizeblock1(fs, block);
+      lua_assert(node != NULL);
+      postfinalizeblock1(block, node, &nextsibling);
+      updateblockstates1(fs, s);  /* pop finalized do-block state */
+      block = s->block;
+    }
+    lua_assert(lastbl != NULL);
+    lua_assert(lastbl->branch == 0);
+    /* check if a block was created for this branch because it has upvalues */
+    if (lastbl->endpc == endpc) {
+      /* check if the current loop was thought to have upvalues; this would
+         happen if there the OP_CLOSE code was before the last OP_JMP in a loop
+        */
+      if (lastbl->u.bl.loop) s->upval = 0;
+      /* this branch has upvalues; the block is redundant */
+      updateblockstates1(fs, s);
+      block = s->block;
+    }
+    else if (lastbl->endpc > endpc)
+      block = lastbl;
+    else
+      lua_assert(block == NULL);
+  }
+  branch = s->branch;
+  if (branch != NULL) {
+    /* get the last do-block context */
+    block = getparentblock1(fs, branch);
+    laststate = branch;
+  }
+  else
+    laststate = block;
+  /* for the rest of the block contexts that end after the new branch context,
+     correct their start pcs if needed to ensure they do not start in the middle
+     of the new branch block */
+  occluded = (branch != NULL);
+  while (block != NULL && block->endpc > endpc) {
+    /*BlockNode *nextnode = nextsibling;
+    int nextnodestart = nextnode ? nextnode->startpc : -1;*/
+    int limitpc = occluded ? branch->u.br.midpc-1 : block->endpc;
+    if (block->u.bl.pcnt.startpc <= endpc) {
+      if (updateblockstateinrange1(fs, block, endpc+1, limitpc, nextsibling,
+                                   occluded) == 0) {
+      /* the block context has only been updated to pcs inside the new branch
+         context since its last valid state, so reset it to its last valid
+         state */
+        if (occluded)
+          /* if this block has a child, the child will have a snapshot of this
+             block's last valid state */
+          block->u.bl.pcnt = laststate->parentsnapshot;
+        else {
+          /* no valid state exists; reset the state completely */
+          block->u.bl.rcnt.startpc = block->endpc;
+          block->u.bl.rcnt.prevsibling = NULL;
+          block->u.bl.rcnt.firstchild = NULL;
+        }
+      }
+      /* stop once a block has actually been updated (not reset) because its
+         parents startpcs will have been corrected as well */
+      else break;
+    }
+    laststate = block;
+    block = prevdoblockstate1(block);
+  }
+  /* update NEXTSIBLING for the caller in case there were nested block nodes
+     created */
+  *siblingchain = nextsibling;
+}
+
+
+/*
+** close all pending blocks that exist within a newly encountered branch before
+** pushing a new state for the branch
+*/
+static int updateblocksfornewbranch1(DFuncState *fs, struct blockstates1 *s,
+                                      int maxendpc, BlockNode **siblingchain)
+{
+  BlockState *oldbranch = s->branch;
+  lu_byte prevbranch = 0;
+  rescanblocksfornewbranch1(fs, s, maxendpc, siblingchain);
+  while (s->branch != NULL && maxendpc > s->branch->endpc &&
+         maxendpc > s->branch->u.br.optimalexit+1) {
+    BlockState *branch = s->branch;
+    BlockNode *result;
+    /* finalize any branch contexts that are contained within this new branch
+       context */
+    short nested = branch->nested;
+    /* the previous branch context ends earlier than this one, and no if-part
+       has been found yet for it; finalize the branch and craete an if-false
+       node for it */
+    /* only update NEXTSIBLING for root if-false branches because their order is
+       inverse to the stack, i.e. the top branch in its group is the earliest
+       one */
+    result = popbranch1(fs, s, NULL, prevbranch ? NULL : siblingchain);
+    postfinalizebranch1(fs, branch, result);
+    prevbranch = (nested != 0);
+    /* check again for nested block contexts that need to be finalized first */
+    rescanblocksfornewbranch1(fs, s, maxendpc, siblingchain);
+  }
+  return oldbranch != s->branch;
 }
 
 
@@ -1980,50 +2643,122 @@ static struct LocVar *updateactvar1(DFuncState *fs, int pc, int *nvars)
 }
 
 
-static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
-       struct branch1 *branch, struct block1 *block, BlockNode *futuresibling)
+/*
+** return whether the line at PC was fixed to the start-line of a loop starting
+** at TARGET
+*/
+static int isjumpfixed(DFuncState *fs, int pc, int target, int defaultvalue)
+{
+  lua_assert(ispcvalid(fs, pc));
+  lua_assert(ispcvalid(fs, target));
+  lua_assert(pc >= target);
+  if (fs->D->usedebuginfo == 0)
+    return defaultvalue;
+  else {
+    int pcline = getline(fs->f, pc);
+    int targetline = getline(fs->f, target);
+    if (pcline > targetline)
+      return 0;  /* line was not fixed */
+    else if (pcline < targetline)
+      return 1;  /* line was fixed */
+    else {
+      int i;
+      for (i = target+1; i < pc; i++) {
+        if (getline(fs->f, i) > targetline)
+          return 1;  /* line was fixed */
+      }
+      return 0;  /* line may have been fixed but it does not manifest */
+    }
+  }
+}
+
+
+static void updateprevsibling1(DFuncState *fs, struct blockstates1 *s,
+                               BlockNode *node)
+{
+  BlockState *bl;
+  int p;
+  if (s->branch != NULL) {
+    if (s->branch->u.br.prevsibling2 == NULL)
+      s->branch->u.br.prevsibling2 = node;
+    else if (blstartpc(s->branch->u.br.prevsibling2) <= node->endpc)
+      s->branch->u.br.prevsibling2 = node;
+    if (s->branch->u.br.withblock) {
+      bl = prevblockstate1(fs, s, s->branch);
+      lua_assert(bl->branch == 0);
+      lua_assert(bl->u.bl.opaque);
+      if (bl->u.bl.rcnt.prevsibling == NULL)
+        bl->u.bl.rcnt.prevsibling = node;
+    }
+    bl = getparentblock1(fs, s->branch);
+    p = bl != NULL && bl->u.bl.opaque == 0;
+  }
+  else {
+    bl = s->block;
+    p = 0;
+  }
+  if (bl != NULL) {
+    struct BlockStateControl *blstate;
+    lua_assert(bl->branch == 0);
+    blstate = p ? &bl->u.bl.pcnt : &bl->u.bl.rcnt;
+    if (blstate->prevsibling == NULL)
+      blstate->prevsibling = node;
+  }
+}
+
+
+static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
+                    BlockNode *futuresibling);
+
+
+static void innerloop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
+                       BlockNode **nextsibling, struct blockstates1 *s)
+{
+  struct BlockNode *new_node;
+  /* get the index for block/branch pointers because the stack may grow */
+  int branchidx = s->branch ? s->branch - fs->a->pendingblocks.stk + 1 : 0;
+  int blockidx = s->block ? s->block - fs->a->pendingblocks.stk + 1 : 0;
+  lua_assert(branchidx >= 0 && branchidx <= fs->a->pendingblocks.used);
+  lua_assert(blockidx >= 0 && blockidx <= fs->a->pendingblocks.used);
+  loop1(ca, fs, startpc, type, *nextsibling);
+  new_node = fs->a->bllist.first;
+  lua_assert(new_node != *nextsibling);
+  if (new_node->nextsibling == NULL) addsibling1(new_node, *nextsibling);
+  /* update the branch/block pointers */
+  lua_assert(branchidx <= fs->a->pendingblocks.used);
+  lua_assert(blockidx <= fs->a->pendingblocks.used);
+  s->branch = branchidx ? &fs->a->pendingblocks.stk[branchidx-1] : NULL;
+  s->block = blockidx ? &fs->a->pendingblocks.stk[blockidx-1] : NULL;
+  /* update block/branch states */
+  updateprevsibling1(fs, s, new_node);
+  *nextsibling = new_node;
+}
+
+
+static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
+                    BlockNode *futuresibling)
 {
   DecompState *D = fs->D;
-  struct stat1 outer; /* the outer loop context, saved on the stack */
-  BlockNode *nextsibling; /* the most recently created block; it gets assigned
-                              to the ->nextsibling field for each newly created
-                              BlockNode, before being set to the new block */
+  struct stat1 outer;  /* the outer loop context, saved on the stack */
+  struct blockstates1 s;
+  /* NEXTSIBLING is the next chronological block node that has been created */
+  BlockNode *nextsibling = NULL;
+  /* NEXTBRANCH is the next if-branch block node that has been created */
   BlockNode *nextbranch = NULL;
   int nextbranchtarget = -1;
-  int endpc; /* endpc of the current block */
+  int endpc;  /* endpc of the current block */
   int nextstat = -1;
+  int closedloopreg = -1;
   lu_byte finalnactvar = fs->nactvar;  /* number of active locals at the end of
                                           this loop */
   const Instruction *code = ca->code;
-  if (branch == NULL && block == NULL) { /* inside a loop or function */
-    nextsibling = NULL;
-    endpc = ca->pc;
-    outer = ca->curr; /* save old values */
-    ca->curr.start = startpc; /* update current */
-    ca->curr.end = endpc;
-    ca->curr.type = type;
-    D(lprintf("entering new block node of type (%s)\n", bltypename(type)));
-  }
-  else {
-    struct stat1 *outersaved;
-    if (branch != NULL) { /* inside a branch construct */
-      lua_assert(block == NULL);
-      lua_assert(branch->elseblock != NULL);
-      nextsibling = branch->elseblock; /* the else-block */
-      outersaved = branch->outer;
-      D(lprintf("entering new branch\n"));
-    }
-    else { /* inside a block */
-      lua_assert(block != NULL);
-      nextsibling = NULL;
-      outersaved = block->outer;
-      D(lprintf("entering new do-block\n"));
-    }
-    endpc = ca->curr.end;  /* endpc must be the end of the current loop */
-    lua_assert(outersaved != NULL);
-    outer = *outersaved;
-  }
-  ca->pc--;
+  endpc = ca->pc--;
+  s.branch = s.block = NULL;
+  /* each loop context has a local stack base, any block states below this base
+     position are outside of the current loop and will be handled after
+     returning */
+  s.stkbase = fs->a->pendingblocks.used;
+  s.upval = 0;
   for (; ca->pc >= 0; ca->pc--) {
     struct LocVar *locvarhere;/* the first local vartable that starts at PC+1 */
     int nvars;  /* the number of variables that start at PC+1 */
@@ -2154,7 +2889,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               encountered1("for-list", target);
               init_ins_property(fs, target, INS_FORLIST);
               init_ins_property(fs, pc, INS_LOOPEND);
-              loop1(ca, fs, target, BL_FORLIST);
+              innerloop1(ca, fs, target, BL_FORLIST, &nextsibling, &s);
+              nextstat = ca->pc;
             }
             else { /* either an optimized jump or a repeat-loop */
               /* check if this jumps to the start of a while-loop first; in that
@@ -2206,113 +2942,25 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 set_ins_property(fs, target, INS_REPEATSTAT);
                 init_ins_property(fs, pc, INS_LOOPEND);
                 init_ins_property(fs, pc, INS_LOOPPASS);
-                loop1(ca, fs, target, BL_REPEAT);
+                innerloop1(ca, fs, target, BL_REPEAT, &nextsibling, &s);
+                nextstat = ca->pc;
               }
             }
           }
           else { /* unconditional backward jump */
-            if (prevop == OP_CLOSE) {
-              int i=0;  /* state machine variable */
-              /* the pattern to match */
-              const OpCode pattern[2] = {OP_JMP, OP_CLOSE};
-              pc=pc-2; /* skip the current OP_CLOSE-OP_JMP pair */
-              while (pc >= 0) {
-                Instruction insn = code[pc];
-                if (GET_OPCODE(insn) == pattern[i%2]) {
-                  i++;
-                  if (i == 3) {
-                  /* At this point there is:
-                      OP_JMP    <-- pc
-                      OP_CLOSE
-                      OP_JMP
-                      OP_CLOSE  <-- prevop (ca->pc-1)
-                      OP_JMP    <-- ca->pc
-                     This can either be a while-loop with multiple break
-                     statements at the end or a repeat-loop, both containing
-                     local variables that are used as upvaleus:
-                     while-loop:
-                        while a do
-                            local b;
-                            local function c()
-                               b = b + 1;
-                            end
-                            do break; end
-                            do break; end
-                        end
-                     repeat-loop:
-                        repeat
-                            local b;
-                            local function c()
-                               b = b + 1;
-                            end
-                        until a;
-                     */
-                    pc--;
-                    /* need at least 1 more preceding instruction for it to be a
-                       repeat-loop */
-                    if (pc >= 0) {
-                      /* INSN is the first jump instruction in the pattern given
-                         above. It should target the last OP_CLOSE in said
-                         pattern, i.e. (ca->pc-1), if it is a repeat-loop */
-                      if ((pc + 1 + 1 + GETARG_sBx(insn)) == (ca->pc - 1)) {
-                        pc = ca->pc;  /* reset pc */
-                        goto markrepeatstat;
-                      }
-                    }
-                    /* while-loop case is handled below */
-                    break;  /* pattern matched */
-                  }
-                }
-                else
-                  break;  /* pattern not matched */
-                pc--;
-              }
-              pc = ca->pc;  /* reset pc */
-              /* fallthrough */
-            }
-            /* inside a while-loop, jumping unconditionally back to the start
-               is an optimized jump out of a branch-block which would otherwise
-               jump to the very end of the loop, eg.:
-                  while a do
-                      local b;
-                      if b then
-                          ...
-                      else -- jump back to start of the while-loop
-                          ...
-                      end
-                  end */
             if (type == BL_WHILE && target == startpc) {
-              /* ...unless this jump is immediately before the end of the
-                 enclosing loop, in which case there is (usually) a nested
-                 while-loop, e.g.:
-                    while true do
-                        while a do
-                            local b = 12;
-                        end -- OP_JMP to pc=0
-                    end -- OP_JMP to pc=0
-                 though the decompiler detects this as:
-                    while true do
-                        while true do
-                            if a then
-                                local b = 12;
-                            end
-                        end
-                    end
-                 which is semantically equivalent and generates the same code
-                 NOTE: this could also be the following code:
-                    while a do
-                        ...
-                        repeat
-                            break;
-                        until true;
-                    end
-                 this is a special case that is handled later, in the code right
-                 before the if-branch handler code below, once the while-loop
-                 context has already been recursed into */
-              if (pc == endpc-1 && getline(fs->f, pc) <= getline(fs->f, target))
+              /* if not using debug info, err on the side of assuming this is a
+                 while-loop; if you treat it as a branch and it is actually a
+                 while-loop, then you run into trouble when encountering break
+                 instructions because they will target a pc that is still inside
+                 the current loop; it is easier to detect a wrong guess with a
+                 while-loop because any jumps that break the loop will target a
+                 pc that is past the end of the loop, which cannot happen unless
+                 the next instruction after the end of the loop has a jump, but
+                 that can be accounted for using instruction properties */
+              if (isjumpfixed(fs, pc, target, 1))
                 goto markwhilestat;
-              /* this instruction is the end of a tail-if-block with an
-                 else-part */
+              /* otherwise it is a branch with an optimized exit-jump */
               branchendpc = endpc-1;
               goto elsebranch;
             }
@@ -2359,7 +3007,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      whether a conditional jump is part of a loop or a branch */
                   init_ins_property(fs, nexttarget, INS_OPTLOOPFAILTARGET);
               }
-              loop1(ca, fs, target, BL_WHILE);
+              innerloop1(ca, fs, target, BL_WHILE, &nextsibling, &s);
+              nextstat = ca->pc;
             }
           }
         }
@@ -2435,8 +3084,8 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               BlockNode *lastsibling;
               BlockNode *newblock;
               D(lprintf("fixing erroneous while-true-loop detection\n"));
-              correctwhile1:
-              if (block != NULL) {
+              finalizependingblocks1(fs, &s, &nextsibling);
+              /*if (block != NULL) {
                 D(lprintf("returning from block context before correcting "
                           "while-loop\n"));
                 block->firstsibling = nextsibling;
@@ -2453,7 +3102,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 branch->correctingwhilepc = pc;
                 branch->correctingwhile = 1;
                 return;
-              }
+              }*/
               lastsibling = nextsibling;
               D(lprintf("the while-loop thought to end at (%i) actually ends "
                         "at (%i) and is not nested\n", endpc, endpc+1));
@@ -2586,27 +3235,35 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                    else-block cause a recursive call, whereas
                                    else-less branches are always child blocks in
                                    the current branch context */
-                  BlockNode *new_block;
+                  BlockNode *new_node;
+                  BlockState *branch;
                   ifbranch:
+                  if (tailbranchjump)
+                    branchendpc = endpc-1;
+                  else
+                    branchendpc = target-1;
+                  updateblocksfornewbranch1(fs, &s, branchendpc, &nextsibling);
+                  branch = getlastbranch1(fs, &s);
                   branchstartpc = pc+1;
                   if (branch != NULL)
-                    branch->startpc = branchstartpc;
+                    branch->u.br.startpc = branchstartpc;
                   /* determine if this is a single branch statement ot not and
                      calculate the endpc of the if-part */
                   if (branch != NULL &&
-                      (target == branch->midpc || tailbranchjump)) {
-                    branchendpc = branch->midpc-1; /* the end of the if-part */
+                      (target == branch->u.br.midpc || tailbranchjump)) {
+                    /* the end of the if-part */
+                    branchendpc = branch->u.br.midpc-1;
                     issingle = 0; /* there is an else-block */
                   }
                   else {
                     if (tailbranchjump && branch == NULL)
                       /* a single tail if-statement in a while-loop */
                       branchendpc = endpc-1;
-                    else if (branch == NULL || target < branch->midpc)
+                    else if (branch == NULL || target < branch->u.br.midpc)
                       /* a single (possibly child) if-statement */
                       branchendpc = target-1;
                     else
-                      branchendpc = branch->midpc-1;
+                      branchendpc = branch->u.br.midpc-1;
                     /* NEXTBRANCH is used to check if this branch and the next
                        branch have the same target and endpc, in which case they
                        can be merged as one if-statement with multiple
@@ -2616,12 +3273,12 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       lua_assert(nextbranchtarget != -1);
                       if (next->endpc == branchendpc &&
                           nextbranchtarget == target) {
-                        new_block = next;
+                        new_node = next;
                         D(lprintf("merging this branch with the next block "
                                   "%B\n", next));
                         issingle = 0;
-                        nextsibling = new_block->nextsibling;
-                        goto blockcreated;
+                        nextsibling = new_node->nextsibling;
+                        goto ifbranchnodecreated;
                       }
                     }
                     issingle = 1;
@@ -2629,21 +3286,18 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       lua_assert(ispcvalid(fs, nextstat));
                       if (nextsibling->endpc == branchendpc &&
                           nextstat+1 >= nextsibling->startpc) {
-                        new_block = nextsibling;
-                        nextsibling = new_block->nextsibling;
-                        goto blockcreated;
+                        new_node = nextsibling;
+                        nextsibling = new_node->nextsibling;
+                        goto ifbranchnodecreated;
                       }
                     }
                   }
                   nextbranch = NULL;
                   nextbranchtarget = -1;
-                  if (branch) branch->target1 = target;
-                  if (issingle && branch != NULL) {
-                    D(lprintf("this branch is a child block of the top-level "
-                             "one\n"));
-                  }
-                  new_block = addblnode1(fs, branchstartpc, branchendpc,BL_IF);
-                  blockcreated:
+                  if (branch) branch->u.br.target1 = target;
+                  /*rescanblocksfornewbranch1(fs, &s, branchendpc, &nextsibling);*/
+                  new_node = addblnode1(fs, branchstartpc, branchendpc, BL_IF);
+                  ifbranchnodecreated:
                   /* BRANCHENDPC can be less than BRANCHSTARTPC if the block is
                      empty */
                   if (branchstartpc <= branchendpc) {
@@ -2653,34 +3307,27 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   else { /* empty block */
                     init_ins_property(fs, branchstartpc, INS_EMPTYBLOCK);
                   }
-                  lua_assert(new_block != NULL);
-                  D(lprintf("BRANCH BLOCK - %B\n", new_block));
-                  if (issingle || branch == NULL ||
-                      nextsibling != branch->elseblock)
-                    fixsiblingchain1(new_block, &nextsibling);
-                  else
-                    /* connect the if and else parts, nothing else needed */
-                    new_block->nextsibling = branch->elseblock;
-                  nextsibling = new_block;
-                  if (branch && !issingle) {
+                  lua_assert(new_node != NULL);
+                  D(lprintf("BRANCH BLOCK - %B\n", new_node));
+                  if (issingle || s.branch == NULL ||
+                      nextsibling != s.branch->result)
+                    rescansiblingchain1(new_node, &nextsibling);
+                  /* connect the if and else parts */
+                  if (s.branch != NULL)
+                    new_node->nextsibling = s.branch->result;
+                  nextsibling = new_node;
+                  if (s.branch && !issingle) {
                     if (nextbranch == NULL) {
-                      branch->ifblock = new_block;
-                      branch->firstblock = new_block;
-                      ca->testset.endpc = ca->testset.reg = -1;
-                      return;
+                      popbranch1(fs, &s, new_node, NULL);
                     }
                     else {
-                      nextbranch = new_block;
+                      nextbranch = new_node;
                       nextbranchtarget = target;
                     }
                   }
-                  /* check if this single if-statement has upvalues, and make
-                     sure an extra block is not created with it */
-                  else if (block != NULL && block->endpc == branchendpc) {
-                    block->ifblock = new_block;
-                    block->firstsibling = new_block;
-                    return; /* pop the block context */
-                  }
+                  else
+                    updateprevsibling1(fs, &s, new_node);
+                  ca->testset.endpc = ca->testset.reg = -1;
                   nextstat = pc;
                 }
               }
@@ -2714,33 +3361,49 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 init_ins_property(fs, pc, INS_LOOPFAIL);
             }
             else { /* exiting a branch */
-              struct block1 *parentblock;
-              struct branch1 new_branch;
-              struct block1 potentialblock;
-              int noblock; /* true if the analyzer marked this branch as a
-                              do-block and needs to correct */
-              if (branch != NULL &&
-                  (target == branch->optimalexit || target == branch->endpc+1))
-                branchendpc = branch->midpc-1;
-              else
-                branchendpc = target-1;
+              BlockNode *result;
+              int parentblock;
+              /* use the maximum possible endpc to begin with */
+              branchendpc = target-1;
               elsebranch:
-              if (branch != NULL) {
-                D(lprintf("nested else-branch ends at (%i), the enclosing "
-                          "if-branch ends at (%i)\n", branchendpc,
-                          branch->midpc-1));
+              lua_assert(ispcvalid(fs, branchendpc));
+              /* first finalize any block contexts that are contained within
+                 this new branch context */
+              if (updateblocksfornewbranch1(fs, &s, branchendpc, &nextsibling))
+              {
+                if (s.branch != NULL && s.branch->u.br.withblock) {
+                  BlockState *block = s.branch-1;
+                  int limitpc = s.branch->u.br.midpc-2;
+                  short nested = block->nested;
+                  /* pretend it doesn't have any parents so that they don't get
+                     updated during the rescanning (they already have valid
+                     startpcs) */
+                  block->nested = 0;
+                  updateblockstateinrange1(fs, s.branch-1, pc+1, limitpc,
+                                           nextsibling, 0);
+                  block->nested = nested;
+                }
+              }
+              /* now that the stack has been cleaned up, calculate a more
+                 appropriate endpc for this branch */
+              if (s.branch != NULL &&
+                  (target == s.branch->u.br.optimalexit ||
+                   target == s.branch->endpc+1))
+                branchendpc = s.branch->u.br.midpc-2;
+              /* check if this is the fail-jump in an if-false-else */
+              if (s.branch != NULL && GET_OPCODE(code[branchendpc]) == OP_JMP &&
+                  target == s.branch->u.br.midpc) {
+                goto ifbranch;
               }
               /* something is wrong if this new else-branch ends after an
                  enclosing if-branch ends  */
-              if (branch != NULL && branchendpc >= branch->midpc) {
+              if (s.branch != NULL && branchendpc >= s.branch->u.br.midpc) {
                 /* the problem: a new branch has been encountered and a context
                    for it must be created, but simultaneously, the enclosing
                    branch context is false and needs to be returned from */
                 /* the idea: switch out the branch context for the enclosing
                    one, return from the enclosing context, fix the erroneous
                    block, and recurse into the new branch context */
-                D(lprintf("existing branch-context is erroneous\n"));
-                lua_assert(branch->contextswitched == 0);
                 /* Check if this new branch ends in the middle of the parent
                    branch. Even if the parent branch is erroneous, it is still a
                    valid block and if this branch jumps to the middle of that
@@ -2750,68 +3413,6 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       local b = false or 5;
                       local c = 1 or 5;
                    */
-                if (branchendpc >= branch->midpc &&
-                    branchendpc < branch->endpc) {
-                  D(lprintf("avoiding impossible parent-child relationship "
-                            "between this new context and the parent context -"
-                            " the parent context (%i-%i) will be ignored\n",
-                            branch->midpc, branch->endpc));
-                  branch->nocommit = 1;
-                  branch->firstblock = nextsibling;
-                  return;
-                }
-                D(lprintf("performing context-switch and returning from context"
-                          " before recursing\n"));
-                branch->contextswitched = 1;
-                lua_assert(branch->ifblock == NULL);
-                branch->firstblock = nextsibling;
-                branch->endpc = branchendpc;
-                return;
-              }
-              if (block != NULL && block->endpc <= branchendpc) {
-                struct block1 *bl = block;
-                struct block1 *lastbl = NULL;
-                int i=0;
-                BlockNode *childblock = bl->state.firstchild;
-                D(lprintf("encountered an else-block which closes variables, "
-                       "correcting erroneous do-block detection\n"));
-                /* the OP_CLOSE at the end of this branch is not for a block */
-                noblock = 1;
-                /* need to close all the child blocks that are contained inside
-                   the else-part as well */
-                D(lprintf("childblock initialized to %B\n", childblock));
-                for (; bl != NULL; bl = bl->prev) {
-                  D(lprintf("i = (%d), bl = (%p)\n", i, cast(void *, bl)));
-                  lastbl = bl;
-                  if (bl->endpc < branchendpc) {
-                    BlockNode *currblock;
-                    currblock =
-                    addblnode1(fs,bl->state.startpc,bl->endpc,BL_DO);
-                    lua_assert(currblock != NULL);
-                    set_ins_property(fs, currblock->startpc, INS_DOSTAT);
-                    set_ins_property(fs, currblock->endpc, INS_BLOCKEND);
-                    D(lprintf("found an inner block %B\n", currblock));
-                    currblock->firstchild = childblock;
-                    childblock = currblock;
-                    bl->pass = 1; /* need to pass branch data to parent */
-                  }
-                  else
-                    break;
-                  i++;
-                }
-                lua_assert(lastbl != NULL);
-                lastbl->pass = 0;
-                if (childblock != NULL)
-                  nextsibling = childblock;
-                D(lprintf("nextsibling set to %B\n", nextsibling));
-                if (lastbl->endpc > branchendpc)
-                  parentblock = lastbl;
-                else
-                  parentblock = NULL;
-              }
-              else {
-                noblock = 0;
-                parentblock = block;
               }
               branchstartpc = pc+1;
               init_ins_property(fs, pc, INS_BLOCKEND);
@@ -2824,459 +3425,57 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else { /* empty block */
                 init_ins_property(fs, branchstartpc, INS_EMPTYBLOCK);
               }
-              new_branch.prev = branch;
-              new_branch.outer = &outer; /* keep the same loop context */
-              if (branch != NULL)
-                new_branch.parentblock = branch->parentblock;
+              /* compute the stack index of the next parent block context */
+              if (s.branch != NULL)
+                /* use the previous branch context value */
+                parentblock = s.branch->u.br.parentblock;
+              else if (s.block != NULL)
+                /* compute the stack index of s.block */
+                parentblock = s.block - fs->a->pendingblocks.stk + 1;
               else
-                new_branch.parentblock = parentblock;
-              if (block != NULL)
+                /* no parent block exists currently */
+                parentblock = 0;
+              if (s.block != NULL) {
                 /* update the block's possible state to its actual state, as the
                    possible state may be what gets updated within the branch
                    context, so it needs to be initialized */
-                block->possiblestate = block->state;
-              /* if the if-part closes variables, keep track of the block
-                 context in case there is no if-part */
-              if (prevop == OP_CLOSE)
-                new_branch.potentialblock = &potentialblock;
-              else
-                new_branch.potentialblock = NULL;
-              newbranch1(fs, &new_branch, branchstartpc, branchendpc, target,
-                         &nextsibling);
-              blnode1(ca, fs, startpc, type, &new_branch, NULL, futuresibling);
-              nextstat = ca->pc;
-              {
-                BlockNode *new_block;
-                BlockNode *ifblock = new_branch.ifblock;
-                BlockNode *elseblock = new_branch.elseblock;
-                /*lua_assert(ifblock != NULL);*/
-                lua_assert(elseblock != NULL);
-                lua_assert(elseblock->type == BL_ELSE);
-                lua_assert(new_branch.midpc == elseblock->startpc);
-                if (new_branch.nocommit) {
-                  /* the elseblock that was created needs to be deleted -
-                     promote all its children and update NEXTSIBLING */
-                  BlockNode *earliestblock =
-                    remblnode1(fs, elseblock, new_branch.elseprevsibling);
-                  /* update NEXTSIBLING to the earliest block so far */
-                  lua_assert(new_branch.firstblock != NULL);
-                  /* if FIRSTBLOCK was updated to something earlier than
-                     ELSEBLOCK, than that is the earliest block */
-                  if (new_branch.firstblock != elseblock)
-                    earliestblock = new_branch.firstblock;
-                  nextsibling = earliestblock;
-                  elseblock = NULL;
-                  new_block = NULL; /* no new block */
-                }
-                else if (ifblock != NULL) {
-                  lua_assert(ifblock->type == BL_IF);
-                  lua_assert(new_branch.target1 != -1);
-                  D(lprintf("ifblock = %B\n", ifblock));
-                  /* make sure this if-block is really the sibling of the
-                     else-block: the following must be true:
-                     - the if-block ends right before the else-block starts
-                     - the else-block is the immediate next sibling of the
-                       if-block
-                     - the jump-target out of the if-block condition is the
-                       startpc of the else-block, however:
-                       * there can be an exception to this, for example, if the
-                         elseblock is empty and at the end of a while-loop, the
-                         if-part will not fail-jump to the start of the
-                         else-part; instead, it will jump to the start of the
-                         loop, but this will never be the case here, because an
-                         unconditional backward jump right before ENDPC that
-                         jumps to the start of the loop is not detected as an
-                         else-branch, but rather a nested while-loop, and a
-                         correction gets made elsewhere if the jump really was
-                         for an empty else-branch at the end of the while-loop
-                     */
-                  if (ifblock->endpc != new_branch.midpc-1 ||
-                      ifblock->nextsibling != elseblock /*||
-                      new_branch.target1 != elseblock->startpc*/) {
-                    goto badelsebranch;
-                  }
-                  else
-                    new_block = nextsibling = ifblock;
-                }
-                else {
-                  BlockNode *elseprevsibling;
-                  badelsebranch:
-                  /* ELSEBLOCK is not actually an else-block */
-                  D(lprintf("handling erroneous else-branch detection %B\n",
-                            elseblock));
-                  D(lprintf("new_branch.potentialblock = %p\n",
-                            new_branch.potentialblock));
-                  /* correct the else-block that has already been created */
-                  lua_assert(elseblock->startpc == pc+1);
-                  D(lprintf("branchendpc = (%i)\n"
-                            "branch->midpc = (%i)\n",
-                            branchendpc, branch ? branch->midpc: -1));
-                  if (branch != NULL && branchendpc+1 == branch->midpc &&
-                      target == new_branch.optimalexit &&
-                      new_branch.optimalexit > elseblock->endpc &&
-                      branch->potentialblock == NULL) {
-                    D(lprintf("using new_branch.optimalexit-1 (%i) as the endpc"
-                              " instead of (%i)\n", new_branch.optimalexit-1,
-                              elseblock->endpc));
-                    elseblock->endpc = new_branch.optimalexit-1;
-                  }
-                  else {
-                    if (branch != NULL && target == branch->midpc) {
-                      elseblock->type = BL_IF;
-                      branch->ifblock = elseblock;
-                      branch->firstblock = new_branch.firstblock;
-                      branch->startpc = elseblock->startpc;
-                      branch->target1 = target;
-                      return;
-                    }
-                    /* disconnect this branch from the parent, since the
-                       optimal exit is not being used as the endpc */
-                    new_branch.root = &new_branch;
-                  }
-                  elseblock->type = BL_IF;
-                  /* if OP_CLOSE precedes this if-false block, create a block
-                     for it using the `potentialblock' context */
-                  if (new_branch.potentialblock != NULL &&
-                      /* only create the block if there is no previous sibling
-                         or if the previous sibling ends before the block would
-                         end, because otherwise, the previous sibling already
-                         closes the variables */
-                      (new_branch.elseprevsibling == NULL ||
-                       new_branch.elseprevsibling->endpc <
-                       new_branch.potentialblock->endpc)) {
-                    BlockNode *doblock;
-                    BlockNode *child;
-                    struct block1 *pblock = new_branch.potentialblock;
-                    D(lprintf("creating do-block from the preceding OP_CLOSE of"
-                              " the if-false-block\n"));
-                    lua_assert(prevop == OP_CLOSE);
-                    doblock = addblnode1(fs,pblock->state.startpc,pblock->endpc,
-                                      BL_DO);
-                    lua_assert(doblock != NULL);
-                    set_ins_property(fs, doblock->startpc, INS_DOSTAT);
-                    set_ins_property(fs, doblock->endpc, INS_BLOCKEND);
-                    if (pblock->state.firstchild != elseblock)
-                      doblock->firstchild = pblock->state.firstchild;
-                    D(lprintf("doblock->firstchild is %B\n",
-                              doblock->firstchild));
-                    D(lprintf("doblock->nextsibling is %B\n", elseblock));
-                    doblock->nextsibling = elseblock;
-                    D(lprintf("clearing new_branch.elseprevsibling, was %B\n",
-                              new_branch.elseprevsibling));
-                    new_branch.elseprevsibling = NULL;
-                    if (pblock->state.prevsibling) {
-                      D(lprintf("connecting previous doblock sibling %B\n",
-                                pblock->state.prevsibling));
-                      pblock->state.prevsibling->nextsibling = doblock;
-                    }
-                    child = doblock->firstchild;
-                    if (child != NULL) {
-                      while (child->nextsibling != NULL &&
-                             child->nextsibling != elseblock)
-                        child = child->nextsibling;
-                      D(lprintf("doblock last child is %B\n"
-                                "  clearing last child next sibling, was %B\n",
-                                child, child->nextsibling));
-                      child->nextsibling = NULL;
-                    }
-                    /* make sure firstblock is actually the earliest block */
-                    if (pblock->state.prevsibling == NULL) {
-                      new_branch.firstblock = doblock;
-                    }
-                    else {
-                      lua_assert(new_branch.firstblock != elseblock);
-                    }
-                    D(lprintf("new_branch.firstblock = %B\n",
-                              new_branch.firstblock));
-                  }
-                  /* the if-block endpc may have defaulted to the pc just before
-                     the original startpc of the elseblock, but now the
-                     elseblock startpc has changed, and the if-block endpc needs
-                     to be adjusted in case it overlaps with the elseblock */
-                  if (ifblock != NULL && ifblock->endpc+1 >= elseblock->startpc)
-                  {
-                    ifblock->endpc = elseblock->startpc-2;
-                    ifblock->isempty = (ifblock->startpc > ifblock->endpc);
-                  }
-                  D(lprintf("else-block corrected to %B\n", elseblock));
-                  D(lprintf("elseblock->nextsibling = %B\n",
-                            elseblock->nextsibling));
-                  fixsiblingchain1(elseblock, NULL);
-                  unset_ins_property(fs, pc, INS_BLOCKEND);
-                  elseprevsibling = new_branch.elseprevsibling;
-                  D(lprintf("elseprevsibling = %B\n", elseprevsibling));
-                  if (elseprevsibling != NULL) {
-                    /* make sure the sibling relation exists */
-                    elseprevsibling->nextsibling = elseblock;
-                    if (elseprevsibling->type == BL_ELSE &&
-                        elseprevsibling->endpc == pc) {
-                      D(lprintf("changing elseprevsibling->endpc from (%i) to"
-                                " (%i)\n", pc, branchendpc));
-                      elseprevsibling->endpc = branchendpc;
-                    }
-                    fixsiblingchain1(elseprevsibling, NULL);
-                    /*lua_assert(new_branch.elseprevsibling->nextsibling ==
-                               elseblock);*/
-                    /* the analyzer thought ELSEBLOCK was an else-block that
-                       started after the jump at PC, but really it starts ON the
-                       jump at PC, and said jump is a break (maybe?), so the
-                       previous sibling of ELSEBLOCK can't contain the jump, as
-                       it should be inside to ELSEBLOCK */
-                    /*lua_assert(elseprevsibling->endpc+1 < elseblock->startpc);
-                    */
-                  }
-                  /* this is the new block resulting from the branch context */
-                  new_block = elseblock;
-                  /* because parent contexts return first in the case of nested
-                     erroneous branch contexts, the root block node in the
-                     group nesting needs to be forwarded to parent contexts,
-                     which actually represent child blocks, for example, given
-                     the source code:
-                        if false then
-                            ...
-                            if false then
-                                ...
-                                if false then
-                                    ...
-                                end
-                            end
-                        end
-                     the context for the inner block is pushed first and returns
-                     last, and within a given context, the BRANCH variable
-                     points to the immediate child block. This creates a problem
-                     when there are multiple, independent, adjcent nestings of
-                     if-false blocks, such as:
-                        if false then
-                            ...
-                            if false then
-                                ...
-                                if false then
-                                    ...
-                                end
-                            end
-                        end
-                        local a = 12;
-                        if false then
-                            ...
-                            if false then
-                                ...
-                                if false then
-                                    ...
-                                end
-                            end
-                        end
-                     There are six blocks and six branch contexts here, and they
-                     are pushed from last to first, and return first to last.
-                     When the context for the first block returns, it will save
-                     the block node that it creates as an `if_false_root' for
-                     its group. It will then `forward' this root block to the
-                     parent (again, which actually represents the child), as
-                     long as the parent context and this context share the same
-                     root context (meaning they are in the same group). This
-                     way, `elseprevsibling' will be updated properly for the
-                     parent context - if the parent is part of a different
-                     group, its `elseprevsibling' will point to the
-                     `if_false_root' block so as to avoid attaching the parent
-                     as a sibling to the innermost child the preceding group;
-                     instead, it will be attached as a sibling of the root
-                     block of the previous group */
-                  /* set the root BlockNode of this group */
-                  if (new_branch.if_false_root == NULL) {
-                    D(lprintf("setting if_false_root for this group to %B\n",
-                              new_block));
-                    new_branch.if_false_root = new_block;
-                  }
-                  /* forward `if_false_root' to the parent if it is part of the
-                     same group */
-                  if (branch != NULL && branch->root == new_branch.root) {
-                    D(lprintf("forwarding if_false_root %B to parent branch "
-                              "context\n", new_branch.if_false_root));
-                    branch->if_false_root = new_branch.if_false_root;
-                  }
-                  /* otherwise, correct `elseprevsibling' to point to the root
-                     block of the previous group instead of the leaf */
-                  else if (branch != NULL) {
-                    D(lprintf("comparing nextsibling to branch->elseblock\n"
-                              "  nextsibling = %B\n"
-                              "  branch->elseblock = %B\n",
-                              nextsibling, branch->elseblock));
-                    if (branch->elseblock == nextsibling) {
-                      branch->elseprevsibling = new_branch.if_false_root;
-                    }
-                    else {
-                      D(lprintf("setting new_branch.if_false_root->nextsibling "
-                              "to %B\n", nextsibling));
-                      new_branch.if_false_root->nextsibling = nextsibling;
-                      branch->elseprevsibling = NULL;
-                    }
-                  }
-                  else {
-                    /* make sure the root block gets assigned the next sibling
-                       before updating NEXTSIBLING */
-                    D(lprintf("if_false_root = %B\n",new_branch.if_false_root));
-                    D(lprintf("setting nextsibling for if_false_root to %B\n",
-                              nextsibling));
-                    new_branch.if_false_root->nextsibling = nextsibling;
-                  }
-                  /* firstblock should never be NULL as it gets set to the value
-                     of NEXTSIBLING when returning, and NEXTSIBLING is
-                     intialized to the else-part (ELSEBLOCK when recursing into
-                     a branch context) */
-                  lua_assert(new_branch.firstblock != NULL);
-                  D(lprintf("new_branch.firstblock = %B\n",
-                            new_branch.firstblock));
-                  /* set NEXTSIBLING to the earliest block; if
-                     new_branch.firstblock is not new_branch.if_false_root,
-                     than the former must come earlier than the latter */
-                  if (new_branch.firstblock != new_branch.if_false_root)
-                    nextsibling = new_branch.firstblock;
-                  else
-                    nextsibling = new_branch.if_false_root;
-                  D(lprintf("updated nextsibling to %B\n", nextsibling));
-                  /* This is here to handle back-to-back `repeat-break'
-                     statements and turn them into child and parent instead of
-                     siblings, since the outer one's endpc will be after the
-                     inner one's startpc. If NEXTSIBLING is not NEW_BLOCK, then
-                     this is not the innermost context, and the sibling chain
-                     can be fixed up. In this case, NEXTSIBLING is actually the
-                     previous sibling of NEW_BLOCK (confusing, I know) as the
-                     order of recursive calls for this type of else-branch is
-                     from innermost-to-outermost, and the order in which the
-                     calls return is outermost-to-innermost, so the `firstblock'
-                     field in each call will be set to the block's enclosing
-                     context, because that is what has returned before returning
-                     from the current context */
-                  if (nextsibling != new_block &&
-                      nextsibling->nextsibling == new_block) {
-                    nextsibling->nextsibling = new_branch.if_false_root;
-                    /* NEXTSIBLING is the outer block that needs to be made the
-                       parent. NEW_BLOCK is the inner block that is currently
-                       the next sibling, but needs to be made the child. Use a
-                       dummy variable so `fixsiblingchain' doesn't change these
-                       variables */
-                    fixsiblingchain1(nextsibling, NULL);
-                  }
-                  if (new_branch.contextswitched) {
-                    D(lprintf("handling else-branch context-switch for pc "
-                              "(%i)\n", ca->pc));
-                    pc = ca->pc;
-                    branchendpc = new_branch.endpc;
-                    target = pc + 1 + GETARG_sBx(code[pc]);
-                    D(lprintf("update variables before recursing with new "
-                              "context:\n"
-                              "  pc = (%i)\n"
-                              "  branchendpc = (%i)\n"
-                              "  target = (%i)\n"
-                              "  nextsibling = %B\n",
-                              pc, branchendpc, target, nextsibling));
-                    nextbranch = NULL;
-                    nextbranchtarget = -1;
-                    if (block != NULL) {
-                      block->state = block->possiblestate;
-                    }
-                    goto elsebranch;
-                  }
-                }
-                D(lprintf("exited block %B\n", new_block));
-                lua_assert(new_block != NULL || new_branch.nocommit);
-                if (new_block == ifblock) {
-                  /* this is ok even if NEW_BLOCK and IFBLOCK are both NULL */
-                  nextbranch = ifblock;
-                  D(lprintf("setting nextbranch to %B\n", ifblock));
-                  nextbranchtarget = new_branch.target1;
-                  D(lprintf("setting nextbranchtarget to (%i)\n",
-                            nextbranchtarget));
-                }
-                else {
-                  nextbranch = NULL;
-                  nextbranchtarget = -1;
-                  if (block != NULL) {
-                    block->state = block->possiblestate;
-                    if (new_branch.nocommit) {
-                      if (block->state.prevsibling == NULL &&
-                          nextsibling != elseblock->nextsibling) {
-                        BlockNode *prevsibling = nextsibling;
-                        BlockNode *elsenextsibling = elseblock->nextsibling;
-                        lua_assert(prevsibling != NULL);
-                        while (prevsibling->nextsibling != NULL &&
-                               prevsibling->nextsibling != elsenextsibling) {
-                          prevsibling = prevsibling->nextsibling;
-                        }
-                        block->state.prevsibling = prevsibling;
-                      }
-                      else {
-                        lua_assert(block->state.prevsibling ==
-                                   elseblock->nextsibling);
-                      }
-                    }
-                    else if (block->state.startpc <= branchendpc) {
-                      /* make sure the block starts before the if-block */
-                      D(lprintf("block->state.startpc = (%i)\n",
-                                block->state.startpc));
-                      D(lprintf("new_branch.elseprevsibling = %B\n",
-                                new_branch.elseprevsibling));
-                      if (new_branch.elseprevsibling)
-                      D(lprintf("elseprevsibling->nextsibling = %B\n",
-                                new_branch.elseprevsibling->nextsibling));
-                      D(lprintf("nextsibling = %B\n", nextsibling));
-                      {
-                        BlockNode *sibling = nextsibling;
-                        BlockNode *if_false_root = new_branch.if_false_root;
-                        lua_assert(sibling != NULL);
-                        while (sibling->nextsibling != if_false_root &&
-                               sibling->nextsibling != NULL)
-                          sibling = sibling->nextsibling;
-                        D(lprintf("sibling = %B\n", sibling));
-                        if (block->state.startpc > if_false_root->startpc-1 ||
-                            (sibling != NULL &&
-                             block->state.startpc > sibling->startpc-1)) {
-                          block->state.startpc =
-                            new_branch.if_false_root->startpc-1;
-                        }
-                      }
-                      block->state.firstchild = new_branch.if_false_root;
-                      D(lprintf("comparing nextsibling %B to if_false_root "
-                                "%B\n", nextsibling, new_branch.if_false_root));
-                      if (nextsibling != new_branch.if_false_root) {
-                        /* find the previous sibling of if_false_root */
-                        BlockNode *prevsibling = nextsibling;
-                        BlockNode *if_false_root = new_branch.if_false_root;
-                        lua_assert(prevsibling != NULL);
-                        while (prevsibling->nextsibling != if_false_root &&
-                               prevsibling->nextsibling != NULL) {
-                          prevsibling = prevsibling->nextsibling;
-                        }
-                        D(lprintf("setting block->state.prevsibling to %B\n",
-                                  prevsibling));
-                        block->state.prevsibling = prevsibling;
-                      }
-                      else
-                        block->state.prevsibling = NULL;
-                    }
-                    else {
-                      if (block->state.prevsibling == NULL)
-                        block->state.prevsibling = nextsibling;
-                    }
-                  }
-                }
-                if (noblock) { /* close the erroneous block and pass data */
-                  lua_assert(block != NULL);
-                  if (new_block == ifblock) {
-                    block->nextbranch = nextbranch;
-                    block->nextbranchtarget = nextbranchtarget;
-                  }
-                  else {
-                    block->ifblock = new_branch.if_false_root;
-                  }
-                  block->firstsibling = nextsibling;
-                  block->correctingwhile = new_branch.correctingwhile;
-                  block->correctingwhilepc = new_branch.correctingwhilepc;
-                  return; /* return from the do-block context */
-                }
-                if (new_branch.correctingwhile) {
-                  goto correctwhile1;
-                }
+                s.block->u.bl.pcnt = s.block->u.bl.rcnt;
+                ;
               }
+              /* create the node for this `else' part, which may actually be a
+                 single if-false block */
+              result = addblnode1(fs, branchstartpc, branchendpc, BL_ELSE);
+              updateprevsibling1(fs, &s, result);
+              /* if the supposed if-part closes variables, keep track of the
+                 block context in case there is no if-part and it is actually
+                 its own do-block */
+              if (prevop == OP_CLOSE) {
+                int prevbranch = s.branch != NULL;
+                int prevblock = s.block != NULL;
+                pushblock1(fs, &s, -1, -1, 1)->u.bl.opaque = 1;
+                if (prevbranch) {
+                  /* restore parent branch pointer */
+                  s.branch = s.block-1;
+                  s.block = NULL;
+                }
+                else if (prevblock)
+                  /* restore parent block pointer */
+                  s.block = s.block-1;
+                else
+                  /* block is opaque, there is not parent */
+                  s.block = NULL;
+              }
+              pushbranch1(fs, &s, branchstartpc, branchendpc, target);
+              s.branch->result = result;
+              s.branch->u.br.parentblock = parentblock;
+              s.branch->u.br.withblock = (prevop == OP_CLOSE);
+              lua_assert(s.branch->result != NULL);
+              /* scan for block nodes that are contained in this else-block;
+                 they were thought to be siblings when they were created, but
+                 now they need to be demoted to children of this else-block */
+              rescansiblingchain1(s.branch->result, &nextsibling);
+              nextsibling = s.branch->result;
+              nextstat = ca->pc;  /* else-stat or if-stat */
             }
           }
         }
@@ -3289,158 +3488,94 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         int target = pc + 1 + sbx; /* start of for-loop */
         init_ins_property(fs, target, INS_FORNUM);
         init_ins_property(fs, pc, INS_LOOPEND);
-        loop1(ca, fs, target, BL_FORNUM);
+        innerloop1(ca, fs, target, BL_FORNUM, &nextsibling, &s);
+        nextstat = ca->pc;
         break;
       }
       case OP_CLOSE: /* check for a block-ending if the next op is not a jump */
-        if (branch != NULL && pc+2 == branch->midpc &&
-            branch->potentialblock != NULL) {
-          /* initialize the potential block context for the branch context */
-          struct block1 *pblock = branch->potentialblock;
-          pblock->prev = branch->parentblock;
-          pblock->ifblock = NULL;
-          pblock->nextbranch = NULL;
-          pblock->nextbranchtarget = -1;
-          pblock->nextsibling = nextsibling;
-          pblock->firstsibling = NULL;
-          pblock->state.prevsibling = NULL;
-          pblock->state.firstchild = NULL;
-          pblock->possiblestate = pblock->state;
-          pblock->pass = 0;
-          pblock->outer = &outer; /* keep the same loop context */
-          pblock->state.startpc = pc;
-          pblock->endpc = pc;
-          pblock->reg = a;
+        if (pc+1 == endpc && type != BL_FUNCTION) {
+          s.upval = 1;
+          closedloopreg = a;
+          lua_assert(s.branch == NULL);
+          lua_assert(s.block == NULL);
+          s.block = pushblock1(fs, &s, pc, a, 1);
+          s.block->u.bl.loop = 1;
+          break;
         }
-        else if (GET_OPCODE(code[pc+1]) != OP_JMP) {
+        if (s.branch != NULL && s.branch->u.br.withblock &&
+            pc+2 == s.branch->u.br.midpc) {
+          /* initialize the potential block context for the branch context */
+          struct BlockState *pblock = s.branch-1/*prevblockstate1(fs, &s, branch)*/;
+          lua_assert(pblock != NULL);
+          lua_assert(pblock->u.bl.opaque);
+          pblock->nextsibling = nextsibling;
+          pblock->u.bl.rcnt.prevsibling = NULL;
+          pblock->u.bl.rcnt.firstchild = NULL;
+          pblock->u.bl.rcnt.startpc = pc;
+          pblock->u.bl.pcnt = pblock->u.bl.rcnt;
+          pblock->endpc = pc;
+          pblock->u.bl.reg = a;
+          pblock->u.bl.upval = 1;
+        }
+        else if (s.upval && test_ins_property(fs, pc+1, INS_BREAKSTAT)) {
+          if (a == closedloopreg)
+            break;
+          /* if an OP_CLOSE before a break statement closes up to a lower
+             register than that of the block state created for the current loop,
+             that means the state created for the loop was actually for a nested
+             block, and the loop itself does not have upvalues */
+          else if (a < closedloopreg) {
+            BlockState *bl;
+            lua_assert(s.stkbase < fs->a->pendingblocks.used);
+            bl = &fs->a->pendingblocks.stk[s.stkbase];
+            lua_assert(bl->branch == 0);
+            lua_assert(bl->u.bl.loop);
+            bl->u.bl.loop = 0;
+            /*upval = 0;*/
+            closedloopreg = -1;
+          }
+        }
+        else if (test_ins_property(fs, pc+1, INS_LOOPPASS) ||
+                 test_ins_property(fs, pc+1, INS_LOOPFAIL) ||
+                 (s.upval &&
+                  (test_ins_property(fs, pc+1, INS_BREAKSTAT) ||
+                   test_ins_property(fs, pc+1, INS_AUGBREAK) ||
+                   test_ins_property(fs, pc+1, INS_AUGCONT)))) {
+          break;
+        }
+        else {
           /* when multiple, possibly nested OP_CLOSE are encountered, it is
              important to compare the argA of each. A nested block would not
              close up to register <= to that of its enclosing block. So, if
              there is a previous OP_CLOSE context, check its register. If it is
              greater than or equal to this A, it cannot logically be nested. */
-          if (block != NULL && block->reg >= a) {
+          if (s.block != NULL && s.block->u.bl.reg >= a) {
             /* this block is adjacent to the previous, switch out the context
                instead of pushing a new one */
-            BlockNode *new_block;
-            D(lprintf("encountered adjacent do-block\n"));
-            new_block = addblnode1(fs,block->state.startpc,block->endpc,BL_DO);
-            lua_assert(new_block != NULL);
-            set_ins_property(fs, new_block->startpc, INS_DOSTAT);
-            set_ins_property(fs, new_block->endpc, INS_BLOCKEND);
-            new_block->firstchild = block->state.firstchild;
-            D(lprintf("setting first child for block to %B\n",
-                      block->state.firstchild));
-            new_block->nextsibling = block->nextsibling;
-            D(lprintf("setting next sibling for block to %B\n",
-                      block->nextsibling));
+            BlockNode *node = createdoblockfromstate1(fs, s.block);
+            node->firstchild = s.block->u.bl.rcnt.firstchild;
+            node->nextsibling = s.block->nextsibling;
             /* link the last sibling before the adjacent block to it */
-            if (block->state.prevsibling) {
-              block->state.prevsibling->nextsibling = new_block;
-              D(lprintf("connecting previous sibling %B\n",
-                        block->state.prevsibling));
-            }
+            if (s.block->u.bl.rcnt.prevsibling)
+              s.block->u.bl.rcnt.prevsibling->nextsibling = node;
             else
-              nextsibling = new_block;
+              nextsibling = node;
             /* re-initialize the context and continue without recursing */
-            block->state.prevsibling = NULL;
-            block->nextsibling = nextsibling;
-            block->firstsibling = NULL;
-            block->state.firstchild = NULL;
-            block->ifblock = NULL;
-            block->nextbranch = NULL;
-            block->nextbranchtarget = -1;
-            block->pass = 0;
-            block->correctingwhile = 0;
-            block->state.startpc = pc;
-            block->endpc = pc;
-            block->reg = a;
-            nextsibling = NULL; /* set to NULL as if recursing */
+            s.block->nextsibling = nextsibling;
+            s.block->u.bl.rcnt.prevsibling = NULL;
+            s.block->u.bl.rcnt.firstchild = NULL;
+            s.block->u.bl.rcnt.startpc = pc;
+            s.block->endpc = pc;
+            s.block->u.bl.reg = a;
           }
           else {
-            struct block1 new_block;
-            new_block.prev = block;
-            new_block.ifblock = NULL;
-            new_block.nextbranch = NULL;
-            new_block.nextbranchtarget = -1;
-            new_block.nextsibling = nextsibling;
-            new_block.firstsibling = NULL;
-            new_block.state.prevsibling = NULL;
-            new_block.state.firstchild = NULL;
-            new_block.pass = 0;
-            new_block.correctingwhile = 0;
-            new_block.outer = &outer; /* keep the same loop context */
-            new_block.state.startpc = pc;
-            new_block.endpc = pc;
-            new_block.reg = a;
-            blnode1(ca, fs, startpc, type, NULL, &new_block, futuresibling);
-            nextstat = ca->pc;
-            D(lprintf("new_block.prevsibling = %B\n",
-                      new_block.state.prevsibling));
-            /* check if the block was inside an else-branch */
-            if (new_block.nextbranch != NULL) {
-              nextbranch = new_block.nextbranch;
-              nextbranchtarget = new_block.nextbranchtarget;
-              nextsibling = new_block.firstsibling;
-              /* check if the parent was also inside the else-branch */
-              if (new_block.pass) { /* also pass this data to the parent */
-                lua_assert(block != NULL);
-                block->nextbranch = nextbranch;
-                block->nextbranchtarget = nextbranchtarget;
-                block->firstsibling = nextsibling;
-                return; /* return for each block that was in the else-branch */
-              }
-            }
-            else if (new_block.ifblock != NULL) {
-              BlockNode *ifblock = new_block.ifblock;
-              D(lprintf("nextsibling = %B\n", new_block.nextsibling));
-              ifblock->nextsibling = new_block.nextsibling;
-              nextsibling = new_block.firstsibling;
-              if (block != NULL && block->state.prevsibling == NULL)
-                block->state.prevsibling = ifblock;
-              if (branch != NULL && branch->elseprevsibling == NULL)
-                branch->elseprevsibling = ifblock;
-              if (new_block.pass) { /* also pass this data to the parent */
-                lua_assert(block != NULL);
-                block->ifblock = ifblock;
-                block->firstsibling = nextsibling;
-                return; /* return for each block that was in the else-branch */
-              }
-              break; /* the block was actually an if-statement */
-            }
-            else { /* create a new block node entry */
-              BlockNode *doblock;
-              lua_assert(new_block.pass == 0);
-              doblock = addblnode1(fs, new_block.state.startpc, new_block.endpc,
-                                BL_DO);
-              lua_assert(doblock != NULL);
-              set_ins_property(fs, doblock->startpc, INS_DOSTAT);
-              set_ins_property(fs, doblock->endpc, INS_BLOCKEND);
-              doblock->firstchild = new_block.state.firstchild;
-              doblock->nextsibling = new_block.nextsibling;
-              if (new_block.state.prevsibling) {
-                D(lprintf("connecting previous sibling %B\n",
-                          new_block.state.prevsibling));
-                new_block.state.prevsibling->nextsibling = doblock;
-                /* there were blocks encountered that come before this block */
-                nextsibling = new_block.firstsibling;
-              }
-              else {
-                /* this is the actual earliest block so far */
-                nextsibling = doblock;
-              }
-              if (block != NULL)
-                /* update child for the parent */
-                block->state.firstchild = doblock;
-              if (branch != NULL && branch->elseprevsibling == NULL)
-                branch->elseprevsibling = doblock;
-              if (new_block.correctingwhile) {
-                pc = new_block.correctingwhilepc;
-                D(lprintf("jumping back to while-loop correction\n"
-                          "  nextsibling = %B\n"
-                          "  pc = (%i)\n", nextsibling, pc));
-                goto correctwhile1;
-              }
-            }
+            /* push a new do-block context */
+            BlockState *new_block = pushblock1(fs, &s, pc, a, 1);
+            /* save the current nextsibling for later when creating the node */
+            new_block->nextsibling = nextsibling;
+            new_block->u.bl.rcnt.startpc = pc;
+            nextsibling = NULL;  /* set to NULL as if recursing */
+            nextstat = pc;  /* end of do-stat */
           }
         }
         break;
@@ -3528,7 +3663,7 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_FORPREP: {  /* mark the start of preparation code */
         int target;
         traversefornumprep:
-        target = pc + 1 + sbx; /* end of for-loop */
+        target = pc + 1 + sbx;  /* end of for-loop */
         CHECK(fs, ispcvalid(fs, target), "invalid target pc in OP_FORPREP");
         CHECK(fs, GET_OPCODE(code[target]) == OP_FORLOOP, "unexpected target "
               "code for OP_FORPREP (expected to jump to OP_FORLOOP)");
@@ -3604,10 +3739,9 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         c = GETARG_C(i);
       default:
         if (beginseval(o, a, b, c, 0)) {
-          int stateunsure;
-          struct block1 *bl;
-          struct blockstate1 *blstate;
+          set_ins_property(fs, pc, INS_CLOBBER);
           updatefirstclob1(fs, pc, a);
+          /* check for an unused OP_LOADNIL label */
           if (o == OP_LOADNIL) {
             if (pc > 0 && GET_OPCODE(code[pc-1]) == OP_LOADNIL) {
               OpCode prevop = GET_OPCODE(code[pc-1]);
@@ -3630,55 +3764,72 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             if (a < fs->nactvar)
               nextstat = pc;  /* something was assigned to a local variable */
           }
-          if (branch != NULL && branch->parentblock != NULL) {
-            bl = branch->parentblock;
-            blstate = &bl->possiblestate;
-            stateunsure = 1;
-            goto updateblockstate1;
-          }
-          else if (branch != NULL && branch->potentialblock != NULL) {
-            bl = branch->potentialblock;
-            blstate = &bl->state;
-            stateunsure = (bl->prev == branch->parentblock);
-            goto updateblockstate1;
-          }
-          else if (block != NULL) { /* update for enclosing block contexts */
-            int i;
-            int regtocheck;
-            bl = block;
-            blstate = &bl->state;
-            stateunsure = 0;
-            updateblockstate1:
-            i = 0;
-            if (D->usedebuginfo)
-              regtocheck = (locvarhere != NULL) ? cast_int(fs->nactvar) : -1;
-            else
-              regtocheck = a;
-            if (isregvalid(fs, regtocheck)) {
-              int usesprevnil =(o == OP_LOADNIL && a < bl->reg && bl->reg <= b);
-              if (bl->reg == regtocheck || (o == OP_LOADNIL && bl->reg <= b)) {
-                /* this block is now caught up to the current pc */
-                blstate->startpc = pc+usesprevnil;
-                blstate->firstchild = nextsibling; /* update first child */
-                /* discharge saved previous sibling */
-                blstate->prevsibling = NULL;
-              }
+          /* update a pending block if needed (I am using WHILE so that I can
+             break if there is no block to update; this avoids having to
+             compare BL to NULL which is unnecessary) */
+          while (s.block != NULL || s.branch != NULL) {
+            int occluded;
+            struct BlockState *bl;
+            if (s.block != NULL) {
+              bl = s.block;
+              occluded = 0;
             }
-            /* update the rest of the parents but only update startpc */
-            for (bl = bl->prev; bl != NULL; bl = bl->prev) {
-              int usesprevnil =(o == OP_LOADNIL && a < bl->reg && bl->reg <= b);
-              blstate = stateunsure ? &bl->possiblestate : &bl->state;
-              if (bl->reg == regtocheck || usesprevnil) {
-                blstate->startpc = pc+usesprevnil;
-                D(lprintf("%supdating .firstclob for R(%d) to (%i), %d block%s "
-                          "removed\n", stateunsure ? "(possibly) " : "",bl->reg,
-                          pc, i, i == 1 ? "" : "s"));
-
+            else {  /* see if there is an occluded or opaque block to update */
+              BlockState *branch = s.branch;
+              if (branch->u.br.withblock) {
+                bl = branch-1;
+                occluded = 0;  /* never treat the opaque block as occluded */
               }
-              i++;
+              else if (branch->u.br.parentblock) {
+                bl = getparentblock1(fs, branch);
+                occluded = 1;
+              }
+              else break;  /* no block to update */
             }
+            lua_assert(bl != NULL);
+            {
+              struct siblingsnapshot1 s;
+              /* the current sibling snapshot: nextsibling is nextsibling,
+                 prevsibling is unknown currently and therefore NULL */
+              s.nextsibling = nextsibling; s.prevsibling = NULL;
+              recordblockstateforpc1(fs, bl, locvarhere, pc, occluded, &s,
+                                     fs->f->sizecode-1);
+            }
+            break;
           }
+#if 0
+          if (s.block != NULL ||
+              (s.branch != NULL &&
+               (s.branch->u.br.parentblock || s.branch->u.br.withblock))) {
+            int occluded;
+            struct BlockState *bl;
+            struct siblingsnapshot1 siblingsnapshot;
+            if (s.block != NULL) {
+              bl = s.block;
+              occluded = 0;
+            }
+            else {
+              if (s.branch->u.br.parentblock)
+                bl = getparentblock1(fs, s.branch);
+              else
+                bl = s.branch-1;
+              /* if there is a branch context within a block context, the block
+                 is occluded, unless the block was created with the branch
+                 context because there was an OP_CLOSE code before the end of
+                 the if-part */
+              occluded = (bl->u.bl.opaque == 0);
+            }
+            /* the current sibling snapshot; nextsibling is nextsibling,
+               prevsibling is unknown currently and therefore NULL */
+            siblingsnapshot.nextsibling = nextsibling;
+            siblingsnapshot.prevsibling = NULL;
+            /* update pending block contexts */
+            recordblockstateforpc1(fs, bl, locvarhere, pc, occluded,
+                                   &siblingsnapshot, fs->f->sizecode-1);
+          }
+#endif
         }
+
         break;
     }
     if (ca->pc == startpc)
@@ -3717,27 +3868,11 @@ static void blnode1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
     }
   }
   ca->testset.endpc = ca->testset.reg = -1;
-  if (branch == NULL && block == NULL) {
-    ca->curr = outer; /* pop old values */
-  }
-  else {
-    if (branch != NULL) {
-      D(lprintf("forced to return from branch without finding an if-part\n"));
-      branch->firstblock = nextsibling;
-      if (branch->potentialblock != NULL)
-        branch->potentialblock->firstsibling = nextsibling;
-      /*lua_assert(branch->next != NULL && branch->next->type == BL_IF)*/;
-    }
-    else {
-      D(lprintf("setting block->firstsibling to %B\n", nextsibling));
-      block->firstsibling = nextsibling;
-    }
-    return;
-  }
+  ca->curr = outer;
+  finalizependingblocks1(fs, &s, &nextsibling);
   /* create a new block node */
   /* `nextsibling' will end up being the first child of this new block */
   addblnode1(fs, startpc, endpc, type)->firstchild = nextsibling;
-  D(lprintf("ca->pc = (%d)\n", ca->pc));
 }
 
 
@@ -3757,7 +3892,8 @@ static void pass1(const Proto *f, DFuncState *fs)
   ca.inopenexpr = 0;
   ca.testset.endpc = ca.testset.reg = -1;
   ca.code = f->code;
-  blnode1(&ca, fs, 0, BL_FUNCTION, NULL, NULL, NULL);
+  /*preparepass1(fs);*/
+  loop1(&ca, fs, 0, BL_FUNCTION, NULL);
   lua_assert(fs->a->bllist.first != NULL);
   lua_assert(fs->a->bllist.first->nextsibling == NULL);
   lua_assert(fs->a->bllist.first->type == BL_FUNCTION);
