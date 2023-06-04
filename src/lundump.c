@@ -300,7 +300,7 @@ static void LoadConstants(LoadState *S, Proto *f)
         setnilvalue(o);
         break;
       case LUA_TBOOLEAN:
-        setbvalue(o,LoadChar(S));
+        setbvalue(o,LoadChar(S)!=0);
         break;
       case LUA_TLIGHTUSERDATA:
         setpvalue(o,cast(void *, LoadSize(S)));
@@ -315,7 +315,7 @@ static void LoadConstants(LoadState *S, Proto *f)
         setui64value(o,LoadUI64(S));
         break;
       default:
-        IF(1, "bad constant");
+        error(S,"bad constant");
         break;
     }
   }

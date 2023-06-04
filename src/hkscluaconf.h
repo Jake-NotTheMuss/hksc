@@ -521,10 +521,24 @@
 */
 #if defined(LUA_NUMBER_DOUBLE) && !defined(LUA_ANSI) && !defined(__SSE2__) && \
     (defined(__i386) || defined (_M_IX86) || defined(__i386__))
+
+/* On a Microsoft compiler, use assembler */
+#if defined(_MSC_VER)
+
+#define lua_number2int(i,d)   __asm fld d   __asm fistp i
+#define lua_number2integer(i,n)    lua_number2int(i, n)
+
+/* the next trick should work on any Pentium, but sometimes clashes
+   with a DirectX idiosyncrasy */
+#else
+
 union luai_Cast { double l_d; long l_l; };
 #define lua_number2int(i,d) \
   { volatile union luai_Cast u; u.l_d = (d) + 6755399441055744.0; (i) = u.l_l; }
 #define lua_number2integer(i,n)		lua_number2int(i, n)
+
+#endif
+
 
 /* this option always works, but may be slow */
 #else

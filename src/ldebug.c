@@ -133,6 +133,11 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
     switch (op) {
       case OP_LOADBOOL: {
         check(c == 0 || pc+2 < pt->sizecode);  /* check its jump */
+        if (c == 1) {  /* does it jump? */
+          check(pc+2 < pt->sizecode);  /* check its jump */
+          check(GET_OPCODE(pt->code[pc+1]) != OP_SETLIST ||
+                GETARG_C(pt->code[pc+1]) != 0);
+        }
         break;
       }
       case OP_LOADNIL: {
@@ -205,28 +210,24 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
       case OP_SETLIST: {
         if (b > 0) checkreg(pt, a + b);
         if (c == 0) {
-          OpCode op1;
-          int a1;
           pc++;
-          op1 = GET_OPCODE(pt->code[pc]);
-          a1 = GETARG_A(pt->code[pc]);
-          check(op1 == OP_DATA);
-          check(a1 == 0);
+          check(pc < pt->sizecode - 1);
         }
         break;
       }
       case OP_CLOSURE: {
-        int nup, nupn;
+        int nup, j;
         check(b < pt->sizep);
-        nupn = nup = pt->p[b]->nups;
+        nup = pt->p[b]->nups;
         check(pc + nup < pt->sizecode);
-        for (; nupn>0; nupn--) {
-          OpCode op1 = GET_OPCODE(pt->code[pc+nupn]);
-          int a1 = GETARG_A(pt->code[pc+nupn]);
+        for (j = 1; j <= nup; j++) {
+          OpCode op1 = GET_OPCODE(pt->code[pc + j]);
+          int a1 = GETARG_A(pt->code[pc + j]);
           check(op1 == OP_DATA);
           check(a1 == 1 || a1 == 2);
         }
-        pc += nup;
+        if (reg != NO_REG)  /* tracing? */
+          pc += nup;  /* do not 'execute' these pseudo-instructions */
         break;
       }
       case OP_VARARG: {

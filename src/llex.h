@@ -79,9 +79,9 @@ typedef struct LexState {
 
 
 LUAI_FUNC void luaX_init (hksc_State *H);
-LUAI_FUNC void luaX_setinput (hksc_State *H, LexState *LS, ZIO *z,
+LUAI_FUNC void luaX_setinput (hksc_State *H, LexState *ls, ZIO *z,
                               TString *source);
-LUAI_FUNC TString *luaX_newstring (LexState *LS, const char *str, size_t l);
+LUAI_FUNC TString *luaX_newstring (LexState *ls, const char *str, size_t l);
 LUAI_FUNC void luaX_next (LexState *ls);
 LUAI_FUNC void luaX_lookahead (LexState *ls);
 LUAI_FUNC void luaX_readfirsttoken (LexState *ls);

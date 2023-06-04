@@ -139,8 +139,8 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
 
 LUA_API void lua_close (hksc_State *H) {
   H = G(H)->mainthread;  /* only the main thread can be closed */
-  luai_userstateclose(H);
   lua_lock(H);
+  luai_userstateclose(H);
   close_state(H);
 }
 

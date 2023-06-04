@@ -90,8 +90,8 @@ DEFCODE1(GETTABLE, ABC, 0, 1, R, RK, 0)
 /* OP_LOADBOOL  A B C  R(A) := (Bool)B; if (C) pc++ */
 DEFCODE1(LOADBOOL, ABC, 0, 1, U, U, 0)
 
-/* OP_TFORLOOP  A C  R(A+3), ...,R(A+3+C) := R(A)(R(A+1), R(A+2));
-   if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); } */
+/* OP_TFORLOOP  A C R(A+3), ... ,R(A+2+C) := R(A)(R(A+1), R(A+2)); 
+   if R(A+3) ~= nil then R(A+2)=R(A+3) else pc++  */ 
 DEFCODE1(TFORLOOP, ABC, 1, 1, N, U, 0)
 
 /* OP_SETFIELD  A B C  R(A)[Kst(B)] := RK(C) */
