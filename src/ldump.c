@@ -18,8 +18,6 @@
 #include "lobject.h"
 #include "lundump.h"
 
-/* for TStrings which may be NULL */
-#define ts2txt(ts) (((ts) != NULL && getstr(ts) != NULL) ? getstr(ts) : "")
 
 /* macros for testing stripping level properties */
 #ifdef LUA_CODT6
@@ -57,6 +55,7 @@ struct DumpState {
 
 #define DumpMem(b,n,size,D)	DumpBlock(b,(n)*(size),D)
 #define DumpVar(x,D)	 	DumpMem(&x,1,sizeof(x),D)
+#define DumpCStr(s,D)  DumpMem(s,strlen(s),sizeof(char),D)
 
 static void DumpBlock(const void *b, size_t size, DumpState *D)
 {
@@ -312,6 +311,7 @@ static int sizeofdebuginfo(struct target_info *target)
 }
 #endif /* HKSC_FORMAT_VERSION <= 13 */
 
+
 static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
@@ -347,14 +347,36 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
   }
 #ifdef LUA_CODT6
   else if (D->striplevel == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION) {
+    char buff[CHAR_BIT * sizeof(lu_int32) * 2];  /* should be enough space */
     n=f->sizelineinfo;
+#define PrintString(str,D)  DumpMem(str,strlen(str),sizeof(char),D)
+#define PrintTString(ts,D)  DumpMem(getstr(ts),ts->tsv.len,sizeof(char),D)
+#define PrintComma(D)  PrintString(",",D)
+#define PrintStringf(fmt,var,D) sprintf(buff,fmt,var); PrintString(buff,D)
     for (i=0; i<n; i++) {
       /* <hash>,<i>,<source>,<lineno>,<name> */
-      const char *str = luaO_pushfstring(D->H, "%" LUA_INT_FRMLEN "u,"
-        "%u,%s,%u,%s\n", f->hash, i, getstr(f->source), f->lineinfo[i],
-        ts2txt(f->name));
-      DumpMem(str,strlen(str),sizeof(char),D);
+      /* print hash */
+      PrintStringf("%" LUA_INT_FRMLEN "u", f->hash, D); PrintComma(D);
+      /* print line info index */
+      PrintStringf("%u", i, D); PrintComma(D);
+      /* print source name */
+      PrintTString(f->source,D); PrintComma(D);
+      /* print line number */
+      PrintStringf("%u", f->lineinfo[i], D); PrintComma(D);
+      /* print function name */
+      if (f->name != NULL)
+        /* calculate the length of the name instead of using the TString length
+           so the string is only printed up to the first NULL byte (function
+           names may contain embedded NULL bytes due to a Havok Script bug, and
+           test builds will reproduce the bug, but when dumping callstack
+           reconstruction, printf is used, avoiding printing the NULL byte */
+        PrintString(getstr(f->name),D);
+      PrintString("\n",D);
     }
+#undef PrintString
+#undef PrintTString
+#undef PrintComma
+#undef PrintStringf
   }
 #endif /* LUA_CODT6 */
   else { /* (BYTECODE_STRIPPING_NONE || BYTECODE_STRIPPING_DEBUG_ONLY) */
