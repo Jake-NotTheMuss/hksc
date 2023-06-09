@@ -175,28 +175,24 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
 */
 struct StringBuilder {
   hksc_State *H;
-  char *str;  /* currently building string */
+  Mbuffer *b;
   size_t l;  /* current length of string */
-  TString *result;  /* final result */
-  const char *data;
-  union {
-    va_list argp;  /* extra arguments in a formatted string */
-    size_t len;  /* length of data */
-  } aux;
 };
 
 
 #define pushstr(sb,str) pushlstr(sb,str,strlen(str))
 #define pushchar(sb,c) do { char buff = (c); pushlstr(sb,&buff,1); } while (0)
+#define pushescapechar(sb,c) pushchar(sb,'\\'); pushchar(sb,c)
 
 static void pushlstr (struct StringBuilder *sb, const char *str, size_t l) {
   hksc_State *H = sb->H;
-  size_t ol = sb->l;
-  size_t nl = ol + l;
-  luaM_reallocvector(H, sb->str, ol, nl, char);
-  memcpy(&sb->str[ol], str, l);
+  Mbuffer *b = sb->b;
+  size_t nl = sb->l + l;
+  char *s = luaZ_openspace(H, b, nl);
+  memcpy(s + sb->l, str, l);
   sb->l = nl;
 }
+
 
 #define pushnum(sb,n) do { \
   char s[LUAI_MAXNUMBER2STR]; \
@@ -211,124 +207,97 @@ static void pushlstr (struct StringBuilder *sb, const char *str, size_t l) {
 } while (0)
 
 
-/* return a printable version of a string constant */
-static void f_kstring2print (hksc_State *H, void *ud) {
-  struct StringBuilder *sb = (struct StringBuilder *)ud;
-  size_t i,n=sb->aux.len;
-  const char *s = sb->data; /* original string */
-  pushchar(sb, '\"');
-  for (i = 0; i < n; i++) {
+TString *luaO_kstring2print (hksc_State *H, TString *ts) {
+  struct StringBuilder sb;
+  const char *s = getstr(ts);
+  size_t i;
+  sb.H = H;
+  sb.b = &G(H)->buff;
+  sb.l = 0;
+  pushchar(&sb, '\"');
+  for (i = 0; i < ts->tsv.len; i++) {
     int c = s[i];
     switch (c) {
-      case '"': pushchar(sb, '\\'); pushchar(sb, '"'); break;
-      case '\\': pushchar(sb, '\\'); pushchar(sb, '\\'); break;
-      case '\a': pushchar(sb, '\\'); pushchar(sb, 'a'); break;
-      case '\b': pushchar(sb, '\\'); pushchar(sb, 'b'); break;
-      case '\f': pushchar(sb, '\\'); pushchar(sb, 'f'); break;
-      case '\n': pushchar(sb, '\\'); pushchar(sb, 'n'); break;
-      case '\r': pushchar(sb, '\\'); pushchar(sb, 'r'); break;
-      case '\t': pushchar(sb, '\\'); pushchar(sb, 't'); break;
-      case '\v': pushchar(sb, '\\'); pushchar(sb, 'v'); break;
+      case '"': pushescapechar(&sb, '"'); break;
+      case '\\': pushescapechar(&sb, '\\'); break;
+      case '\a': pushescapechar(&sb, 'a'); break;
+      case '\b': pushescapechar(&sb, 'b'); break;
+      case '\f': pushescapechar(&sb, 'f'); break;
+      case '\n': pushescapechar(&sb, 'n'); break;
+      case '\r': pushescapechar(&sb, 'r'); break;
+      case '\t': pushescapechar(&sb, 't'); break;
+      case '\v': pushescapechar(&sb, 'v'); break;
       default: {
         if (isprint(c))
-          pushchar(sb, c);
+          pushchar(&sb, c);
         else {
           char buff[5];
-          sprintf(buff, "\\%03u", (unsigned char)c);
-          pushstr(sb, buff);
+          sprintf(buff, "\\%03u", cast(unsigned char, c));
+          pushstr(&sb, buff);
         }
       }
     }
   }
-  pushchar(sb, '\"');
-  sb->result = luaS_newlstr(H, sb->str, sb->l);
-}
-
-
-TString *luaO_kstring2print (hksc_State *H, TString *ts) {
-  int status;
-  struct StringBuilder sb;
-  sb.H=H; sb.str=NULL; sb.l=0; sb.result=NULL; sb.data=getstr(ts);
-  sb.aux.len=ts->tsv.len;
-  status = luaD_pcall(H, f_kstring2print, &sb);
-  luaM_freearray(H, sb.str, sb.l, char);
-  if (status) /* memory error */
-    luaD_throw(H, status); /* pass error to caller */
-  else /* good */
-    lua_assert(sb.result != NULL);
-  return sb.result;
+  pushchar(&sb, '\"');
+  return luaS_newlstr(H, luaZ_buffer(sb.b), sb.l);
 }
 
 
 
 /* this function handles only `%d', `%c', %f, %p, and `%s' formats */
-static void f_buildvfstring (hksc_State *H, void *ud) {
-  struct StringBuilder *sb = (struct StringBuilder *)ud;
-  const char *fmt = sb->data;
-  va_list argp = sb->aux.argp;
+const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
+  TString *result;
+  struct StringBuilder sb;
+  sb.H = H;
+  sb.b = &G(H)->buff;
+  sb.l = 0;
   for (;;) {
     const char *e = strchr(fmt, '%');
     if (e == NULL) break;
-    pushlstr(sb, fmt, e-fmt);
+    pushlstr(&sb, fmt, e-fmt);
     switch (*(e+1)) {
       case 's': {
         const char *s = va_arg(argp, char *);
         if (s == NULL) s = "(null)";
-        pushstr(sb, s);
+        pushstr(&sb, s);
         break;
       }
       case 'c': {
-        pushchar(sb, cast(char, va_arg(argp, int)));
+        pushchar(&sb, cast(char, va_arg(argp, int)));
         break;
       }
       case 'd': {
-        pushint(sb, va_arg(argp, int), "%d");
+        pushint(&sb, va_arg(argp, int), "%d");
         break;
       }
       case 'u': {
-        pushint(sb, va_arg(argp, unsigned int), "%u");
+        pushint(&sb, va_arg(argp, unsigned int), "%u");
         break;
       }
       case 'f': {
-        pushnum(sb, va_arg(argp, l_uacNumber));
+        pushnum(&sb, va_arg(argp, l_uacNumber));
         break;
       }
       case 'p': {
         char buff[4*sizeof(void *) + 8]; /* should be enough space for a `%p' */
         sprintf(buff, "%p", va_arg(argp, void *));
-        pushstr(sb, buff);
+        pushstr(&sb, buff);
         break;
       }
       case '%': {
-        pushchar(sb, '%');
+        pushchar(&sb, '%');
         break;
       }
       default: {
-        char buff[2];
-        buff[0] = '%';
-        buff[1] = *(e+1);
-        pushlstr(sb, buff, sizeof(buff));
+        lua_assert(0);
         break;
       }
     }
     fmt = e+2;
   }
-  pushstr(sb, fmt);
-  sb->result = luaS_newlstr(H, sb->str, sb->l);
-}
-
-
-const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
-  int status;
-  struct StringBuilder sb;
-  sb.H=H; sb.str=NULL; sb.l=0; sb.result=NULL; sb.data=fmt; sb.aux.argp=argp;
-  status = luaD_pcall(H, f_buildvfstring, &sb);
-  luaM_freearray(H, sb.str, sb.l, char);
-  if (status) /* memory error */
-    luaD_throw(H, status); /* pass error to caller */
-  else /* good */
-    lua_assert(sb.result != NULL);
-  return getstr(sb.result);
+  pushstr(&sb, fmt);
+  result = luaS_newlstr(H, luaZ_buffer(sb.b), sb.l);
+  return getstr(result);
 }
 
 
