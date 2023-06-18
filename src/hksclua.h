@@ -176,6 +176,7 @@ typedef struct {
   int enable_int_literals; /* int literal setting */
 #if HKSC_GETGLOBAL_MEMOIZATION
   int emit_memo;
+  int skip_memo;
 #endif /* HKSC_GETGLOBAL_MEMOIZATION */
   int strip; /* bytecode stripping level */
   /*const char **strip_names;*/

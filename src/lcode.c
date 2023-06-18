@@ -368,12 +368,14 @@ void luaK_dischargevars (FuncState *fs, expdesc *e) {
     case VGLOBAL: {
 #if HKSC_GETGLOBAL_MEMOIZATION
       int k = e->u.s.info;
-      OpCode op = Settings(fs->H).emit_memo ? OP_GETGLOBAL_MEM : OP_GETGLOBAL;
-      e->u.s.info = luaK_codeABx(fs, op, 0, k);
-      luaK_codeABx(fs, OP_DATA, 20, addmemoslot(fs, k));
-#else /* !HKSC_GETGLOBAL_MEMOIZATION */
-      e->u.s.info = luaK_codeABx(fs, OP_GETGLOBAL, 0, e->u.s.info);
+      if (Settings(fs->H).skip_memo == 0) {
+        OpCode op = Settings(fs->H).emit_memo ? OP_GETGLOBAL_MEM : OP_GETGLOBAL;
+        e->u.s.info = luaK_codeABx(fs, op, 0, k);
+        luaK_codeABx(fs, OP_DATA, 20, addmemoslot(fs, k));
+      }
+      else
 #endif /* HKSC_GETGLOBAL_MEMOIZATION */
+      e->u.s.info = luaK_codeABx(fs, OP_GETGLOBAL, 0, e->u.s.info);
       e->k = VRELOCABLE;
       break;
     }
