@@ -437,7 +437,7 @@ static void pushCompatibilityErrorString(hksc_State *H, char bits) {
   char msg[MAX_COMPAT_ERROR_LENGTH];
   strcpy(msg, BADCOMPATMSG);
 #define checkcompatbit(bit,flag) \
-  if ((bits & (1 << HKSC_COMPATIBILITY_BIT_##bit)) != HKSC_##flag) \
+  if (((bits >> HKSC_COMPATIBILITY_BIT_##bit) & 1) != HKSC_##flag) \
     strcat(msg, " HKSC_" #flag)
   checkcompatbit(MEMOIZATION, GETGLOBAL_MEMOIZATION);
   checkcompatbit(STRUCTURES, STRUCTURE_EXTENSION_ON);
