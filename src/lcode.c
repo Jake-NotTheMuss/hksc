@@ -241,9 +241,11 @@ static int addmemoslot (FuncState *fs, int kslot)
     /* reserve 2 more slots */
     luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
                     MAXARG_Bx, "constant table overflow");
-    luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
+    luaM_growvector(H, f->k, fs->nk+1, f->sizek, TValue,
                     MAXARG_Bx, "constant table overflow");
     while (oldsize < f->sizek) setnilvalue(&f->k[oldsize++]);
+    setnilvalue(&f->k[fs->nk]);
+    setnilvalue(&f->k[fs->nk+1]);
     { int nk = fs->nk; fs->nk+=2; return nk; }
   }
 }

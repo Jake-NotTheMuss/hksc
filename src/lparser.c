@@ -527,6 +527,17 @@ static void close_func (LexState *ls) {
   if (fs) anchor_token(ls);
 }
 
+
+#if HKSC_GETGLOBAL_MEMOIZATION
+static void handle_memo_testing_mode (LexState *ls) {
+  if (Settings(ls->H).skip_memo)
+    luaK_ret(ls->fs, 0, 0);
+}
+#else /* !HKSC_GETGLOBAL_MEMOIZATION */
+#define handle_memo_testing_mode(ls) ((void)0)
+#endif /* HKSC_GETGLOBAL_MEMOIZATION */
+
+
 struct SParser {
   struct LexState *ls;
   struct FuncState *fs;
@@ -553,6 +564,7 @@ static void parser_inner_func (hksc_State *H, void *ud) {
                       "and UTF-8 are supported");
       break;
   }
+  handle_memo_testing_mode(ls);
   chunk(ls);
   check(ls, TK_EOS);
   close_func(ls);
@@ -781,6 +793,7 @@ static void body (LexState *ls, expdesc *e, int needself, int line) {
   }
   parlist(ls);
   checknext(ls, ')');
+  handle_memo_testing_mode(ls);
   chunk(ls);
   new_fs.f->lastlinedefined = ls->linenumber;
   check_match(ls, TK_END, TK_FUNCTION, line);
