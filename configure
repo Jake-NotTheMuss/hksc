@@ -126,6 +126,14 @@ compat_vararg=1
 lua_multiplat=0
 HKSC_TARGET_PLAT=
 
+STRUCTURE_EXTENSION_ON=0
+WITHNATIVEINT=0
+WITHDOUBLES=0
+SELF=0
+GETGLOBAL_MEMOIZATION=0
+
+HKSC_FROMSOFT_TTABLES=0
+
 test -e "$config_file" && . "$config_file"
 
 old_debug=$debug
@@ -276,6 +284,13 @@ esac
 # configure compatibility settings based on the build config type
 case $game in
 	t6|t7|none) ;;
+	ds3|sekiro)
+		STRUCTURE_EXTENSION_ON=1
+		GETGLOBAL_MEMOIZATION=1
+		WITHDOUBLES=0
+		WITHNATIVEINT=0
+		SELF=0
+		HKSC_FROMSOFT_TTABLES=1;;
 	*) error "Unsupported game '$game'" ;;
 esac
 
@@ -409,6 +424,8 @@ logvar STRUCTURE_EXTENSION_ON
 logvar SELF
 logvar WITHNATIVEINT
 logvar WITHDOUBLES
+
+logvar HKSC_FROMSOFT_TTABLES
 
 printvar CC
 printvar CFLAGS
@@ -577,6 +594,7 @@ s/@LUACONFIG_CODT6@/$lua_codt6/g
 s/@LUACONFIG_CODT7@/$lua_codt7/g
 s/@LUACONFIG_CODIW6@/$lua_codiw6/g
 s/@LUACONFIG_MULTIPLAT@/$lua_multiplat/g
+s/@LUACONFIG_FROMSOFT_TTABLES@/$HKSC_FROMSOFT_TTABLES/g
 s/@HKSC_GETGLOBAL_MEMOIZATION@/$GETGLOBAL_MEMOIZATION/g
 s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
 s/@HKSC_SELF@/$SELF/g

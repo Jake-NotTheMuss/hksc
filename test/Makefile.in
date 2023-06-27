@@ -155,14 +155,17 @@ UI64_SRC_NO=
 HSTRUCTURE_SRC_NO=
 
 UI64_SRC_YES=ui64.lua
-HSTRUCTURE_SRC_YES=
+HSTRUCTURE_SRC_YES=s_constructor.lua s_len.lua s_metastruct.lua  \
+	s_proxytable.lua s_self.lua s_typed_param.lua s_typedforlist.lua  \
+	s_typedfornum.lua s_typedlhs.lua s_typedupval.lua
 
 EXTRA_TESTS=
-@EXTRA_TESTS_VAR@=$(UI64_SRC_@WITH_UI64@) $(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
+@EXTRA_TESTS_VAR@=$(UI64_SRC_@WITH_UI64@)
+STRUCT_TESTS=$(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
 
 ALL_TESTS=$(TEST_SRC:.lua=@TESTSUFFIX@) $(EXTRA_TESTS:.lua=@TESTSUFFIX@)
 
-all: prepare dummy version error $(ALL_TESTS)
+all: prepare dummy version error $(ALL_TESTS) $(STRUCT_TESTS:.lua=.ctest1)
 	@echo ----------------------------
 	@echo ---------------------------- >> $(MAKELOG)
 	@echo All Lua tests passed
@@ -213,7 +216,7 @@ error:
 
 
 temp-expect:
-	@for f in $(TEST_SRC); do \
+	@for f in $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS); do \
 		b=$${f%.*}; \
 		src=$(srcdir)/$$f; \
 		echo "Generating expect files for $$f"; \
@@ -224,7 +227,26 @@ temp-expect:
 
 
 .SUFFIXES:
-.SUFFIXES: .lua .cexpect .profileexpect .debugexpect .ctest .dtest .p1test
+.SUFFIXES: .lua .cexpect .cexpect1 .cexpect2 .ctest1 .ctest2 .profileexpect .debugexpect .ctest .dtest .p1test
+
+# for structure tests, 'cexpect1' is the precompiled source, and 'cexpect' is
+# the loaded bytecode dumped back to another file
+.cexpect.ctest1:
+	@echo ------------ $* ------------
+	@echo ------------ $* ------------ >> $(MAKELOG)
+# 	generate stripped bytecode
+	@echo $(HKSC) $(HKSCAFLAGS) -s $(srcdir)/$*.lua -o $*.luac >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) -s $(srcdir)/$*.lua -o $*.luac
+# 	compare code with expected
+	@echo $(HKSC_CMP_CODE) $*.cexpect1 $*.luac >> $(MAKELOG)
+	@ $(HKSC_CMP_CODE) $*.cexpect1 $*.luac &&  echo "$*.luac OK"
+# 	redump the code and compare with the redumped expect file
+# 	a separate expect file is needed because the bytecode may be changed by the
+# 	loader when loading in prototypes
+	@echo $(HKSC) $(HKSCBFLAGS) -s $*.luac -o $*_redumped.luac >> $(MAKELOG)
+	@$(HKSC) $(HKSCBFLAGS) -s $*.luac -o $*_redumped.luac
+	@echo $(HKSC_CMP_CODE) $*.cexpect $*_redumped.luac >> $(MAKELOG)
+	@ $(HKSC_CMP_CODE) $*.cexpect $*_redumped.luac && echo "$*.luac redumped OK"
 
 # compiler test + bytecode loader test
 .cexpect.ctest:

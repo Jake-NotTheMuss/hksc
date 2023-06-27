@@ -23,6 +23,7 @@
 #include "lopcodes.h"
 #include "lparser.h"
 #include "lstate.h"
+#include "lstruct.h"
 #include "ltable.h"
 
 
@@ -31,6 +32,13 @@
 
 static int isnumeral(expdesc *e) {
   return (e->k == VKNUM && e->t == NO_JUMP && e->f == NO_JUMP);
+}
+
+
+static int ismatchingtype(expdesc *e1, expdesc *e2) {
+  if (!expisstruct(e1)) lua_assert(expproto(e1) == NULL);
+  if (!expisstruct(e2)) lua_assert(expproto(e2) == NULL);
+  return(exptype(e1) == exptype(e2) && expproto(e1) == expproto(e2));
 }
 
 
@@ -356,6 +364,333 @@ void luaK_setoneret (FuncState *fs, expdesc *e) {
 }
 
 
+#if HKSC_STRUCTURE_EXTENSION_ON
+
+#define STRUCT_MAX_TAG_CHAIN  5
+#define STRUCT_LOOKUP_MAX_STEPS  15
+
+/*
+** kinds of struct index for the code generator; controls what code is generated
+** for struct indexes
+*/
+enum StructIndexKind {
+  STRUCT_INDEX_SLOT,  /* a valid slot in the structure */
+  STRUCT_INDEX_PROXYTABLE,  /* slot was not resolved, index the backing table */
+  STRUCT_INDEX_INVALID  /* an invalid index */
+};
+
+
+typedef struct StructSlotLookupStep {
+  StructProto *p;  /* the structure holding the slot that was searched for */
+  StructSlot *s;  /* the slot searched for */
+  int istagstep;  /* true if this lookup was done to access a prototype
+                     contained by a tag-method slot */
+} StructSlotLookupStep;
+
+
+typedef struct StructSlotLookup {
+  /* the slot type info; `is_static' in this context refers to the consistency
+     of the slot type across the tag chain */
+  TypeInfo t;
+  /* the tag-method slot to search for when tarversing up the meta chain, either
+     `__index' or `__newindex' */
+  TString *tm_search_name;
+  /* number of slot lookups so far */
+  int nsteps;
+  /* whether assigning a value to the slot or retrieving the value */
+  int store;
+  /* array of all slot lookups in order */
+  StructSlotLookupStep steps[STRUCT_LOOKUP_MAX_STEPS];
+} StructSlotLookup;
+
+
+static int lookup_step (StructSlotLookup *s, StructProto *proto,
+                        StructSlot *slot, int istagstep) {
+  if (s->nsteps < STRUCT_LOOKUP_MAX_STEPS) {
+    StructSlotLookupStep *step = &s->steps[s->nsteps++];
+    step->p = proto;
+    step->s = slot;
+    step->istagstep = istagstep;
+    return 1;
+  }
+  return 0;
+}
+
+
+static void init_struct_lookup (FuncState *fs, StructSlotLookup *s, int set) {
+  global_State *g = G(fs->H);
+  s->t.type = LUA_TNONE;
+  s->t.proto = NULL;
+  s->t.is_static = 1;
+  s->tm_search_name = set ? g->tm_names[TM_NEWINDEX] : g->tm_names[TM_INDEX];
+  s->store = set;
+  s->nsteps = 0;
+}
+
+
+/*
+** populate the TypeInfo T for a given SLOT of a structure prototype
+*/
+void luaK_getslottypeinfo (FuncState *fs, StructSlot *slot, TypeInfo *t) {
+  StructProto *proto = NULL;
+  int type = slot->typeid;
+  if (type == LUA_TNIL) type = LUA_TNONE;
+  if (type == LUA_TSTRUCT)
+    proto = luaR_getstructbyid(fs->H, slot->structid);
+  if (t->type != LUA_TNONE && t->is_static)
+    t->is_static = (t->type == type && t->proto == proto);
+  t->type = type;
+  t->proto = proto;
+}
+
+
+/*
+** resolve a structure index as a primitive lookup, i.e. without involving meta
+** prototypes
+*/
+static int resolveprimitive (FuncState *fs, StructProto *proto, TString *name,
+                             StructSlotLookup *s) {
+  StructSlot *slot = luaR_findslot(proto, name);
+  if (slot != NULL) {
+    if (!lookup_step(s, proto, slot, 0))
+      /* slot exists but there are no more steps left to access it; a normal
+         table lookup has to be emitted */
+      return STRUCT_INDEX_PROXYTABLE;
+    /* update the type info for the slot */
+    luaK_getslottypeinfo(fs, slot, &s->t);
+    return STRUCT_INDEX_SLOT;
+  }
+  else {  /* slot not found */
+    if (proto->hasproxy)
+      return STRUCT_INDEX_PROXYTABLE;  /* use the backing table */
+    lookup_step(s, proto, NULL, 0);  /* an initial lookup to not find NAME */
+    /* there is no backing table, so the index is invalid */
+    return STRUCT_INDEX_INVALID;
+  }
+}
+
+
+static int resolvestructindex (FuncState *fs, StructProto *proto, TString *name,
+                               StructSlotLookup *s) {
+  int result1 = resolveprimitive(fs, proto, name, s);
+  if (result1 == STRUCT_INDEX_PROXYTABLE) {
+    s->t.type = LUA_TNONE;
+    /* the backing table will be used for the lookup, nothing more to do */
+    return STRUCT_INDEX_PROXYTABLE;
+  }
+  if (proto->hasmeta) {
+    /* save the current state; if the meta slot does not need to be accessed
+       because it doesn't have a tag-mathod slot or the structure type said slot
+       contains does not have the desired slot, the state of the lookup will be
+       reverted back to this value */
+    int nsteps = s->nsteps;
+    StructSlot *metaslot = getmetaslot(proto);
+    /* the structure contained by the meta slot if it is a structure type */
+    StructProto *metaproto;
+    /* the `__index' or `__newindex' slot */
+    StructSlot *tmslot;
+    /* a lookup to access the meta slot */
+    if (!lookup_step(s, proto, metaslot, 1) || metaslot->typeid != LUA_TSTRUCT)
+      /* the meta slot may not contain a structure; GETTABLE is required */
+      return STRUCT_INDEX_PROXYTABLE;
+    /* meta slot is a structure type; get the prototype */
+    metaproto = luaR_getstructbyid(fs->H, metaslot->structid);
+    lua_assert(metaproto != NULL);
+    /* find the tag-method slot in the meta slot structure type */
+    tmslot = luaR_findslot(metaproto, s->tm_search_name);
+    if (tmslot != NULL) {
+      /* structure contained by the tag-method slot if it is a structure type */
+      StructProto *parent;
+      int result;  /* result of recursive call */
+      /* a lookup to access the tag-method slot */
+      if (!lookup_step(s, metaproto, tmslot, 1) ||
+          tmslot->typeid != LUA_TSTRUCT)
+        /* the tag-method slot is not a structure type; GETTABLE is required */
+        return STRUCT_INDEX_PROXYTABLE;
+      parent = luaR_getstructbyid(fs->H, tmslot->structid);
+      lua_assert(parent != NULL);
+      /* look up NAME in the parent structure prototype */
+      result = resolvestructindex(fs, parent, name, s);
+      /* an invalid result marks the end of recursion, because it means this is
+         the last valid structure prototype that could be accessed in the
+         tag-chain; therefore, the result is only passed to the caller if it is
+         a valid result, otherwise the terminal logic is run */
+      if (result != STRUCT_INDEX_INVALID)
+        return result;
+      else if (s->store)
+        /* for slot assignments, when the `__newindex' slot contains a
+           structure, but the dseired slot cannot be resolved in that structure,
+           SETTABLE is emitted */
+        return STRUCT_INDEX_PROXYTABLE;
+      /* else go through and handle the terminal case */
+    }
+    if (metaproto->hasproxy)
+      /* given now that the tag-method slot either does not exist or cannot be
+         used to access the desired slot, the meta prototype backing table is
+         next in line to fall back on */
+      return STRUCT_INDEX_PROXYTABLE;
+    /* there is no backing table and the meta slot does not yield any access to
+       the desired slot, so it will not be used for lookup; revert back to the
+       state before accessing the meta */
+    s->nsteps = nsteps;
+  }
+  return result1;  /* return result of primitive lookup */
+}
+
+
+static int resolvenewstructindex (FuncState *fs, StructProto *proto,
+                                  TString *name, StructSlotLookup *s) {
+  int result = resolvestructindex(fs, proto, name, s);
+  /* if the slot is valid, but the type is inconsistent between parent/child
+     structures, use SETTABLE, as the instruction sequence used for slot
+     assignments will not be sufficient to ensure types are properly checked */
+  if (result == STRUCT_INDEX_SLOT && s->t.is_static == 0)
+    result = STRUCT_INDEX_PROXYTABLE;
+  return result;
+}
+
+
+/*
+** emit data opcodes to encode a complete tag-chain for a structure index
+*/
+static void codetagchain (FuncState *fs, StructSlotLookup *s) {
+  int i;
+  for (i = 0; i/3 < s->nsteps/3; i+=3) {
+    StructSlot *slot = s->steps[i].s;
+    StructSlot *tmslot = s->steps[i+2].s;  /* `__index' slot */
+    lu_byte slotposition = slot ? slot->position : 0;
+    lua_assert(tmslot != NULL);
+    luaK_codeABx(fs, OP_DATA, slotposition, tmslot->position);
+  }
+  lua_assert(s->steps[s->nsteps-1].s != NULL);
+  luaK_codeABx(fs, OP_DATA, s->steps[s->nsteps-1].s->position, 0);
+}
+
+
+static void invalid_index (FuncState *fs, StructProto *proto, TString *name) {
+  const char *msg = luaO_pushfstring(fs->H, "Cannot index instances of '%s' "
+                          "with '%s'", getstr(proto->name), getstr(name));
+  luaX_semerror(fs->ls, msg);
+}
+
+static void cannot_resolve (FuncState *fs, StructProto *proto, TString *name) {
+  const char *msg = luaO_pushfstring(fs->H, "Cannot resolve slot '%s' in "
+      "instance of '%s' for assignment.", getstr(name), getstr(proto->name));
+  luaX_semerror(fs->ls, msg);
+}
+
+
+static int code_getslot (FuncState *fs, expdesc *e, StructProto *proto,
+                     TString *slotname, int selfreg) {
+  StructSlotLookup s;
+  int pc, dest, result;
+  OpCode op, op_mt;
+  if (selfreg != NO_REG) {
+    op = OP_SELFSLOT; op_mt = OP_SELFSLOTMT; dest = selfreg;
+  }
+  else {
+    op = OP_GETSLOT; op_mt = OP_GETSLOTMT; dest = 0;
+  }
+  init_struct_lookup(fs, &s, 0);
+  lua_assert(proto != NULL);
+  result = resolvestructindex(fs, proto, slotname, &s);
+  if (result == STRUCT_INDEX_SLOT) {
+    if (s.nsteps == 1) {
+      StructSlot *slot = s.steps[0].s;
+      lua_assert(slot != NULL);
+      pc = luaK_codeABC(fs, op, dest, e->u.s.info, slot->position);
+    }
+    else {
+      pc = luaK_codeABC(fs, op_mt, dest, e->u.s.info, s.nsteps/3);
+      codetagchain(fs, &s);
+    }
+    return pc;
+  }
+  else if (result == STRUCT_INDEX_INVALID)
+    invalid_index(fs, proto, slotname);
+  return -1;
+}
+
+
+/*
+** call this for primitive slot assignments; KIND controls what store code gets
+** generated for the assignment; KEY and VAL are RK-values for the key and value
+** in the assignment; REG is the struct; T has the slot type info, SLOT may be
+** NULL if assigning to the proxytable
+*/
+void luaK_setslot (FuncState *fs, StructSlot *slot, const TypeInfo *t, int reg,
+                   int key, int val, int kind) {
+  if (kind != ASSIGN_SLOT_GENERIC && kind != ASSIGN_SLOT_PROXYTABLE)
+    lua_assert(slot != NULL);
+  switch (kind) {
+    case ASSIGN_SLOT_NIL:
+      luaK_codeABC(fs, OP_SETSLOTN, reg, 0, slot->position);
+      break;
+    case ASSIGN_SLOT_STATIC:
+      luaK_codeABC(fs, OP_SETSLOTI, reg, slot->position, val);
+      break;
+    case ASSIGN_SLOT_DYNAMIC: {
+      int bx;  /* type id or struct id to check */
+      if (t->type == LUA_TSTRUCT) {
+        lua_assert(t->proto != NULL);
+        luaK_codeABC(fs, OP_SETSLOTS, reg, slot->position, val);
+        bx = cast_int(t->proto->id);
+      }
+      else {
+        luaK_codeABC(fs, OP_SETSLOT, reg, slot->position, val);
+        bx = t->type;
+      }
+      luaK_codeABx(fs, OP_DATA, 0, bx);
+      break;
+    }
+    default:
+      luaK_codeABC(fs, OP_SETTABLE, reg, key, val);
+      break;
+  }
+}
+
+
+static int assignslot (FuncState *fs, expdesc *var, expdesc *e, int reg) {
+  StructSlotLookup s;
+  TString *slotname;
+  StructProto *proto = var->u.s.proto;
+  int res;
+  lua_assert(var->k == VSLOT);
+  if (!ttisstring(&var->u.s.structindex))
+    return 0;  /* index must be a string to be a slot */
+  slotname = rawtsvalue(&var->u.s.structindex);
+  init_struct_lookup(fs, &s, 1);
+  res = resolvenewstructindex(fs, proto, slotname, &s);
+  if (res == STRUCT_INDEX_SLOT) {
+    res = luaK_checkslotassignment(fs, slotname, e, &s.t);
+    if (s.nsteps == 1) {
+      lua_assert(s.steps[0].s != NULL);
+      luaK_setslot(fs, s.steps[0].s, &s.t, var->u.s.info, NO_REG, reg, res);
+    }
+    else {  /* s.nsteps != 1 */
+      int b;
+      int type = s.t.type;
+      if (type == LUA_TNONE) type = LUA_TNIL;
+      b = s.nsteps/3;
+      lua_assert((b & SLOTMT_TAG_CHAIN_MASK) == b);
+      b |= (type << SLOTMT_POS_TYPE);
+      luaK_codeABC(fs, OP_SETSLOTMT, var->u.s.info, b, reg);
+      if (type == LUA_TSTRUCT) {
+        lua_assert(s.t.proto != NULL);
+        luaK_codeABx(fs, OP_DATA, 0, s.t.proto->id);
+      }
+      codetagchain(fs, &s);
+    }
+    return 1;
+  }
+  else if (res == STRUCT_INDEX_INVALID)
+    cannot_resolve(fs, proto, slotname);
+  return 0;
+}
+
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 void luaK_dischargevars (FuncState *fs, expdesc *e) {
   switch (e->k) {
     case VLOCAL: {
@@ -381,12 +716,32 @@ void luaK_dischargevars (FuncState *fs, expdesc *e) {
       e->k = VRELOCABLE;
       break;
     }
+#if HKSC_STRUCTURE_EXTENSION_ON
+    case VSLOT: {
+      const TValue *index = &e->u.s.structindex;
+      freereg(fs, e->u.s.aux);
+      freereg(fs, e->u.s.info);
+      if (ttisstring(index)) {
+        int pc = code_getslot(fs, e, e->u.s.proto, rawtsvalue(index), NO_REG);
+        if (pc != -1) {
+          e->u.s.info = pc;
+          e->k = VRELOCABLE;
+          break;
+        }
+      }
+      e->u.s.info = luaK_codeABC(fs, OP_GETTABLE, 0, e->u.s.info, e->u.s.aux);
+      e->k = VRELOCABLE;
+      luaK_codeABx(fs, OP_DATA, 0, 0);
+      luaK_codeABx(fs, OP_DATA, 0, 0);
+      break;
+    }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     case VINDEXED: {
       freereg(fs, e->u.s.aux);
       freereg(fs, e->u.s.info);
       e->u.s.info = luaK_codeABC(fs, OP_GETTABLE, 0, e->u.s.info, e->u.s.aux);
       e->k = VRELOCABLE;
-      luaK_codeABx(fs, OP_DATA, 0, 0); /* ??? */
+      luaK_codeABx(fs, OP_DATA, 0, 0);
       luaK_codeABx(fs, OP_DATA, 0, 0);
       break;
     }
@@ -535,15 +890,128 @@ int luaK_exp2RK (FuncState *fs, expdesc *e) {
 }
 
 
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+void luaK_checktype (FuncState *fs, TypeInfo *t, int reg) {
+  if (t->type == LUA_TSTRUCT) {
+    lua_assert(t->proto != NULL);
+    luaK_codeABx(fs, OP_CHECKTYPES, reg, t->proto->id);
+  }
+  else if (t->type > LUA_TNIL)
+    luaK_codeABx(fs, OP_CHECKTYPE, reg, t->type);
+}
+
+
+static int checkstatictype (FuncState *fs, TypeInfo *t, expdesc *exp) {
+  int type = t->type; StructProto *proto = t->proto;
+  if (type == LUA_TNIL || exptype(exp) == LUA_TNIL)
+    return 0;  /* no type-check needed for nil-variables or nil-values */
+  if (exptype(exp) == LUA_TNONE)
+    return 1;  /* append a type-check code for EXP */
+  /* both types are known; compare them */
+  if (exptype(exp) == type && (type != LUA_TSTRUCT || expproto(exp) == proto))
+    return 0;  /* already matching types; no type-check code needed */
+  else {  /* static type-check failed */
+    const char *s1, *s2, *s3, *s4;
+    if (type == LUA_TSTRUCT) {
+      s1 = "struct ";
+      s2 = getstr(proto->name);
+    }
+    else {
+      s1 = "";
+      s2 = luaX_typename(type);
+    }
+    if (exptype(exp) == LUA_TSTRUCT) {
+      s3 = "struct ";
+      s4 = getstr(expproto(exp)->name);
+    }
+    else {
+      s3 = "";
+      s4 = luaX_typename(exptype(exp));
+    }
+    luaX_semerror(fs->ls, luaO_pushfstring(fs->H, "Attempting to set local "
+                    "variable of type '%s%s' to type '%s%s'", s1, s2, s3, s4));
+  }
+  return 0;
+}
+
+
+void luaK_applytypecontraint (FuncState *fs, TypeInfo *t, expdesc *e) {
+  if (t->type != LUA_TNONE && checkstatictype(fs, t, e))
+    luaK_checktype(fs, t, e->u.s.info);
+}
+
+
+int luaK_checkslotassignment (FuncState *fs, TString *slotname, expdesc *e,
+                                const TypeInfo *t) {
+  int type;
+  StructProto *proto = NULL;
+  if (t->is_static == 0)
+    return ASSIGN_SLOT_DYNAMIC;
+  switch (e->k) {
+    case VNIL:
+      type = LUA_TNIL;
+      break;
+    case VTRUE:
+    case VFALSE:
+      type = LUA_TBOOLEAN;
+      break;
+    case VK:
+      type = ttype(&fs->f->k[e->u.s.info]);
+      break;
+    case VKNUM:
+      type = LUA_TNUMBER;
+      break;
+    default:
+      type = exptype(e);
+      proto = expproto(e);
+      break;
+  }
+  if (type == LUA_TNIL)
+    return ASSIGN_SLOT_NIL;
+  if (t->type != LUA_TNONE) {
+    if (type == LUA_TNONE)
+      return ASSIGN_SLOT_DYNAMIC;
+    if (t->type != type) {  /* static type mismatch */
+      luaX_semerror(fs->ls, luaO_pushfstring(fs->H, "Attempt to assign a "
+        "value of invalid type to slot '%s' (expected '%s').", getstr(slotname),
+        luaX_typename(t->type)));
+    }
+    else if (type == LUA_TSTRUCT && t->proto != proto) {
+      luaX_semerror(fs->ls, luaO_pushfstring(fs->H, "Attempt to assign an "
+        "instance of '%s' to slot '%s' (expected '%s').", getstr(proto->name),
+        getstr(slotname), getstr(t->proto->name)));
+    }
+  }
+  return ASSIGN_SLOT_STATIC;
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 void luaK_storevar (FuncState *fs, expdesc *var, expdesc *ex) {
   switch (var->k) {
     case VLOCAL: {
+      TypeInfo *t;
       freeexp(fs, ex);
       exp2reg(fs, ex, var->u.s.info);
+#if HKSC_STRUCTURE_EXTENSION_ON
+      /* append a type-check code for the local variable if needed */
+      t = &fs->a->locvarstyping[var->u.s.info];
+      if (t->is_static && checkstatictype(fs, t, ex))
+        luaK_checktype(fs, t, var->u.s.info);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+      UNUSED(t);
       return;
     }
     case VUPVAL: {
       int e = luaK_exp2anyreg(fs, ex);
+#if HKSC_STRUCTURE_EXTENSION_ON
+      if (exptype(var) != LUA_TNONE) {  /* upvalue is typed */
+        TypeInfo t; t.type = exptype(var); t.proto = expproto(var);
+        if (checkstatictype(fs, &t, ex))
+          luaK_checktype(fs, &t, ex->u.s.info);
+      }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
       luaK_codeABC(fs, OP_SETUPVAL, e, var->u.s.info, 0);
       break;
     }
@@ -552,6 +1020,14 @@ void luaK_storevar (FuncState *fs, expdesc *var, expdesc *ex) {
       luaK_codeABx(fs, OP_SETGLOBAL, e, var->u.s.info);
       break;
     }
+#if HKSC_STRUCTURE_EXTENSION_ON
+    case VSLOT: {
+      int e = luaK_exp2RK(fs, ex);
+      if (!assignslot(fs, var, ex, e))
+        luaK_codeABC(fs, OP_SETTABLE, var->u.s.info, var->u.s.aux, e);
+      break;
+    }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     case VINDEXED: {
       int e = luaK_exp2RK(fs, ex);
       luaK_codeABC(fs, OP_SETTABLE, var->u.s.info, var->u.s.aux, e);
@@ -598,13 +1074,30 @@ void luaK_delete (FuncState *fs, expdesc *var) {
 #endif /* LUA_CODIW6 */
 
 
+#if HKSC_STRUCTURE_EXTENSION_ON
+static int codeselfslot (FuncState *fs, expdesc *e, int k, int reg) {
+  const TValue *index;
+  if (!expisstruct(e) || !ISK(k))
+    return 0;
+  index = &fs->f->k[INDEXK(k)];
+  if (!ttisstring(index))
+    return 0;
+  return (code_getslot(fs, e, expproto(e), rawtsvalue(index), reg) != -1);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 void luaK_self (FuncState *fs, expdesc *e, expdesc *key) {
-  int func;
+  int func, c;
   luaK_exp2anyreg(fs, e);
   freeexp(fs, e);
   func = fs->freereg;
   luaK_reserveregs(fs, 2);
-  luaK_codeABC(fs, OP_SELF, func, e->u.s.info, luaK_exp2RK(fs, key));
+  c = luaK_exp2RK(fs, key);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (!codeselfslot(fs, e, c, func))
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  luaK_codeABC(fs, OP_SELF, func, e->u.s.info, c);
   freeexp(fs, key);
   e->u.s.info = func;
   e->k = VNONRELOC;
@@ -694,10 +1187,12 @@ static void codenot (FuncState *fs, expdesc *e) {
   switch (e->k) {
     case VNIL: case VFALSE: {
       e->k = VTRUE;
+      exptype(e) = LUA_TBOOLEAN; expproto(e) = NULL;
       break;
     }
     case VK: case VKNUM: case VTRUE: {
       e->k = VFALSE;
+      exptype(e) = LUA_TBOOLEAN; expproto(e) = NULL;
       break;
     }
     case VJMP: {
@@ -727,6 +1222,49 @@ static void codenot (FuncState *fs, expdesc *e) {
 void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
   t->u.s.aux = luaK_exp2RK(fs, k);
   t->k = VINDEXED;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (Settings(fs->H).emit_struct) {
+    if (exptype(t) == LUA_TSTRUCT) {
+      lua_assert(expproto(t) != NULL);
+      switch (k->k) {
+        case VK: {
+          const TValue *o = &fs->f->k[k->u.s.info];
+          t->u.s.proto = expproto(t);
+          setobj(&t->u.s.structindex, o);
+          t->k = VSLOT;
+          if (ttisstring(o)) {
+            int result;
+            StructSlotLookup s;
+            init_struct_lookup(fs, &s, 0);
+            result = resolvestructindex(fs, expproto(t), rawtsvalue(o), &s);
+            if (result == STRUCT_INDEX_SLOT && s.t.is_static) {
+              exptype(t) = s.t.type;
+              expproto(t) = s.t.proto;
+              return;
+            }
+          }
+          break;
+        }
+        case VTRUE:
+        case VFALSE: {
+          t->u.s.proto = expproto(t);
+          setbvalue(&t->u.s.structindex, k->k == VTRUE);
+          t->k = VSLOT;
+          break;
+        }
+        case VKNUM: {
+          t->u.s.proto = expproto(t);
+          setnvalue(&t->u.s.structindex, k->u.nval);
+          t->k = VSLOT;
+          break;
+        }
+        default: break;
+      }
+    }
+    exptype(t) = LUA_TNONE;
+    expproto(t) = NULL;
+  }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 }
 
 
@@ -837,6 +1375,8 @@ static void codecomp (FuncState *fs, OpCode op, int cond, expdesc *e1,
   }
   e1->u.s.info = condjump(fs, op, cond, o1, o2);
   e1->k = VJMP;
+  exptype(e1) = LUA_TBOOLEAN;
+  expproto(e1) = NULL;
 }
 
 
@@ -845,8 +1385,10 @@ void luaK_prefix (FuncState *fs, UnOpr op, expdesc *e) {
   e2.t = e2.f = NO_JUMP; e2.k = VKNUM; e2.u.nval = 0;
   switch (op) {
     case OPR_MINUS: {
-      if (!isnumeral(e))
+      if (!isnumeral(e)) {
         luaK_exp2anyreg(fs, e);  /* cannot operate on non-numeric constants */
+        exptype(e) = LUA_TNONE;
+      }
       codearith(fs, OP_UNM, e, &e2);
       break;
     }
@@ -882,11 +1424,16 @@ void luaK_infix (FuncState *fs, BinOpr op, expdesc *v) {
     case OPR_BIT_AND: case OPR_BIT_OR:
 #endif /* LUA_CODT7 */
     {
-      if (!isnumeral(v)) luaK_exp2RK(fs, v);
+      if (!isnumeral(v)) {
+        luaK_exp2RK(fs, v);
+        if (exptype(v) != LUA_TNUMBER)
+          exptype(v) = LUA_TNONE;
+      }
       break;
     }
     default: {
       luaK_exp2RK(fs, v);
+      exptype(v) = LUA_TNONE;
       break;
     }
   }
@@ -899,6 +1446,9 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
       lua_assert(e1->t == NO_JUMP);  /* list must be closed */
       luaK_dischargevars(fs, e2);
       luaK_concat(fs, &e2->f, e1->f);
+      if (!ismatchingtype(e1, e2)) {
+        exptype(e2) = LUA_TNONE; expproto(e2) = NULL;
+      }
       *e1 = *e2;
       break;
     }
@@ -906,6 +1456,9 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
       lua_assert(e1->f == NO_JUMP);  /* list must be closed */
       luaK_dischargevars(fs, e2);
       luaK_concat(fs, &e2->t, e1->t);
+      if (!ismatchingtype(e1, e2)) {
+        exptype(e2) = LUA_TNONE; expproto(e2) = NULL;
+      }
       *e1 = *e2;
       break;
     }
@@ -921,6 +1474,8 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
         luaK_exp2nextreg(fs, e2);  /* operand must be on the 'stack' */
         codearith(fs, OP_CONCAT, e1, e2);
       }
+      if (exptype(e1) != LUA_TSTRING || exptype(e2) != LUA_TSTRING)
+        exptype(e1) = LUA_TNONE;
       break;
     }
     case OPR_ADD: codearith(fs, OP_ADD, e1, e2); break;

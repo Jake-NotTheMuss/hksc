@@ -23,6 +23,7 @@
 #include "lparser.h"
 #include "lstate.h"
 #include "lstring.h"
+#include "lstruct.h"
 #include "ltable.h"
 
 
@@ -114,6 +115,14 @@ static void check_match (LexState *ls, int what, int who, int where) {
 }
 
 
+static TString *str_getname (LexState *ls) {
+  TString *ts;
+  check(ls, TK_NAME);
+  ts = ls->t.seminfo.ts;
+  return ts;
+}
+
+
 static TString *str_checkname (LexState *ls) {
   TString *ts;
   check(ls, TK_NAME);
@@ -130,6 +139,13 @@ static void init_typed_exp (expdesc *e, expkind k, int i, int type) {
   e->k = k;
   e->u.s.info = i;
   e->inferred_type = type;
+  e->inferred_proto = NULL;
+}
+
+
+static void setexptypeinfo (expdesc *e, TypeInfo *t) {
+  e->inferred_type = t->type;
+  e->inferred_proto = t->proto;
 }
 
 
@@ -162,37 +178,272 @@ static int registerlocalvar (LexState *ls, TString *varname) {
 }
 
 
+#if !HKSC_STRUCTURE_EXTENSION_ON
+
 #ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
-#define TYPEDVARMSG "Cannot use typed local variables when the virtual " \
-    "machine is built without structures See HKS_STRUCTURE_EXTENSION_ON in " \
-    "HksSettings.h."
-#define TYPEDPARMSG "Cannot use typed parameters when the virtual machine is " \
-  "built without structures. See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
+#define TYPED_MSG_HELP " See HKS_STRUCTURE_EXTENSION_ON in HksSettings.h."
 #else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
-#define TYPEDVARMSG "Cannot use typed local variables when the virtual " \
-    "machine is built without structures"
-#define TYPEDPARMSG "Cannot use typed parameters when the virtual machine is " \
-  "built without structures"
+#define TYPED_MSG_HELP ""
 #endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 
+#define typed_error_msg(x,d) "Cannot use typed " x " when the virtual " \
+"machine is built without structures" d TYPED_MSG_HELP
 
-#if HKSC_STRUCTURE_EXTENSION_ON
-#error "typed variables not implemented (required when structures are enabled)"
-#else /* !HKSC_STRUCTURE_EXTENSION_ON */
-#define typecheck_param(ls) luaX_inputerror(ls, TYPEDPARMSG);
-#define typecheck_locvar(ls) luaX_inputerror(ls, TYPEDVARMSG);
-#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+static void error_typedlocalvar (LexState *ls) {
+  luaX_semerror(ls, typed_error_msg("local variables", ""));
+}
+
+static void error_typedparam (LexState *ls) {
+  luaX_semerror(ls, typed_error_msg("parameters", "."));
+}
+#endif /* !HKSC_STRUCTURE_EXTENSION_ON */
 
 
 #define new_localvarliteral(ls,v,n) \
-  new_localvar(ls, luaX_newstring(ls, "" v, (sizeof(v)/sizeof(char))-1), n)
+  new_typedlocalvarliteral(ls,v,n,LUA_TNONE,NULL)
+
+#define new_typedlocalvarliteral(ls,v,n,t,p) \
+new_typedlocalvar(ls,luaX_newstring(ls, "" v, (sizeof(v)/sizeof(char))-1),n,t,p)
+
+#define new_localvar(ls,name,n)  new_typedlocalvar(ls,name,n,LUA_TNONE,NULL)
 
 
-static void new_localvar (LexState *ls, TString *name, int n) {
+static void new_typedlocalvar (LexState *ls, TString *name, int n, int type,
+                               struct StructProto *proto) {
   FuncState *fs = ls->fs;
   luaY_checklimit(fs, fs->nactvar+n+1, LUAI_MAXVARS, "local variables");
   fs->actvar[fs->nactvar+n] = cast(unsigned short, registerlocalvar(ls, name));
+  /* create space for a new type map entry */
+  n = cast_int(fs->nactvar+n);
+  luaM_growvector(ls->H, fs->a->locvarstyping, n, fs->a->sizelocvarstyping,
+                  TypeInfo, SHRT_MAX, "");
+  fs->a->locvarstyping[n].type = type;
+  fs->a->locvarstyping[n].proto = proto;
+  fs->a->locvarstyping[n].is_static = (type != LUA_TNONE);
 }
+
+
+static void pushlhstyping (LexState *ls, TypeInfo *t) {
+  FuncState *fs = ls->fs;
+  /* add to the LHS type map */
+  luaM_growvector(ls->H, fs->a->lhstyping, fs->nlocalslhs, fs->a->sizelhstyping,
+                  TypeInfo, SHRT_MAX, "");
+  fs->a->lhstyping[fs->nlocalslhs++] = *t;
+}
+
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+
+static void type_error (LexState *ls, const char *fmt, TString *typename) {
+  luaX_semerror(ls, luaO_pushfstring(ls->H, fmt, getstr(typename)));
+}
+
+
+/* return value when the name does not match any builtin type */
+#define STUCTURE_TYPE  (LUA_NUM_TYPE_OBJECTS-1)
+
+static int gettypeidfromstring (LexState *ls, TString *ts) {
+  int i;
+  for (i = 0; i < LUA_NUM_TYPE_OBJECTS+1; i++) {
+    if (ts == G(ls->H)->typenames[i])
+      break;
+  }
+  i -= 2;
+  return i;
+}
+
+/*
+** generate type information from a given type name
+*/
+static void parsetype (LexState *ls, TypeInfo *t, TString *typename) {
+  int i = gettypeidfromstring(ls, typename);
+  if (i == STUCTURE_TYPE) {  /* structure type */
+    StructProto *proto = luaR_getstructbyname(ls->H, typename);
+    if (proto == NULL) {
+      type_error(ls, "Type declaration '%s' does not match any built-in type "
+                 "or structure.", typename);
+    }
+    t->type = LUA_TSTRUCT;
+    t->proto = proto;
+    t->is_static = 1;
+  }
+  else if (i == LUA_TSTRUCT) {  /* "struct" is not allowed */
+    luaX_semerror(ls, "Type declaration 'struct' is not allowed.");
+  }
+  else {  /* built-in type */
+    if (i == LUA_TANY) {  /* "object" */
+      t->type = LUA_TNONE;
+      t->is_static = 0;
+    }
+    else {
+      t->type = i;
+      t->is_static = 1;
+    }
+    t->proto = NULL;
+  }
+}
+
+
+static TString *structname (LexState *ls) {
+  hksc_State *H = ls->H;
+  TString *name = str_checkname(ls);
+  if (Settings(H).emit_struct) {
+    int i;
+    for (i = 0; i < LUA_NUM_TYPE_OBJECTS+1; i++) {
+      if (name == G(H)->typenames[i]) {
+        type_error(ls, "Cannot use '%s' as a structure name", name);
+        break;
+      }
+    }
+  }
+  return name;
+}
+
+
+static void initstruct (LexState *ls, TString *name) {
+  hksc_State *H = ls->H;
+  if (Settings(H).emit_struct) {
+    StructProto *p = &ls->current_proto.p;
+    p->nslots = 0;
+    p->hasmeta = 0;
+    p->hasproxy = 0;
+    p->id = LAST_STRUCT_ID;
+    p->name = name;
+    luaR_addreservedslots(H, &ls->current_proto.p, ls->current_proto.s);
+  }
+}
+
+
+static void finalizestruct (LexState *ls) {
+  hksc_State *H = ls->H;
+  if (Settings(H).emit_struct) {
+    StructProto *p = &ls->current_proto.p;
+    StructProto *p1;
+    if (p->nslots == NUM_SLOTS_RESERVED)
+      luaX_semerror(ls, "Empty structure definitions are not allowed.");
+    p1 = luaR_getstructbyname(H, p->name);
+    if (p1 != NULL) {
+      if (!luaR_compareproto(p, ls->current_proto.s, p1, getprotoslots(p1)))
+      {
+        type_error(ls, "Structure '%s' already has a different definition.",
+                   p->name);
+      }
+    }
+    if (G(H)->protolist.nuse + 1 >= LUAI_MAXSTRUCTS) {
+      luaX_inputerror(ls, "Cannot define another structure in this VM: too "
+                      "many structure prototypes.");
+    }
+    luaR_addstructproto(H, p);
+  }
+}
+
+
+static void addstructproxy (LexState *ls) {
+  hksc_State *H = ls->H;
+  if (Settings(H).emit_struct) {
+    StructProto *p = &ls->current_proto.p;
+    if (p->hasproxy)
+      luaX_semerror(ls, "Duplicate 'proxytable' slot definition.");
+    p->hasproxy = 1;
+  }
+}
+
+
+static void addstructmeta (LexState *ls, TString *typename) {
+  hksc_State *H = ls->H;
+  if (Settings(H).emit_struct) {
+    StructProto *p = &ls->current_proto.p;
+    StructSlot *metaslot;
+    int metatype;
+    StructProto *metaproto;
+    if (p->hasmeta)
+      luaX_semerror(ls, "Duplicate 'meta' slot definition.");
+    metatype = gettypeidfromstring(ls, typename);
+    if (metatype == STUCTURE_TYPE) {
+      metatype = LUA_TSTRUCT;
+      metaproto = luaR_getstructbyname(H, typename);
+      if (metaproto == NULL) {
+        if (typename == p->name)
+          metaproto = p;
+        else {
+          type_error(ls, "Undefined structure type '%s' in slot definition.",
+                     typename);
+        }
+      }
+    }
+    else {
+      if (metatype == LUA_TANY) metatype = LUA_TNIL;
+      else if (metatype != LUA_TTABLE) {
+        type_error(ls, "Invalid type name '%s' for meta slot. Must be a "
+                   "object/table/structure name.", typename);
+      }
+      metaproto = NULL;
+    }
+    p->hasmeta = 1;
+    metaslot = &ls->current_proto.s[SLOT_INDEX_META];
+    metaslot->typeid = metatype;
+    metaslot->structid = metaproto ? metaproto->id : 0;
+  }
+}
+
+
+static void addstructslot (LexState *ls, TString *slotname, TString *typename) {
+  hksc_State *H = ls->H;
+  if (Settings(H).emit_struct) {
+    StructProto *p = &ls->current_proto.p;
+    int type;
+    size_t i;
+    for (i = 0; i < p->nslots; i++) {
+      if (ls->current_proto.s[i].name == slotname) {
+        luaX_semerror(ls, "Duplicate slot name.");
+        break;
+      }
+    }
+    if (p->nslots >= MAX_STRUCT_SLOTS) {
+      luaX_inputerror(ls, "Too many slots in the structure. Cannot add any "
+                      "more.");
+    }
+    type = gettypeidfromstring(ls, typename);
+    if (type == LUA_TSTRUCT) {
+      luaX_semerror(ls, "Cannot use 'struct' as a type name. Must be a "
+                      "structure name.");
+    }
+    else if (type == LUA_TUI64) {
+      luaX_semerror(ls, "Unable to store UI64 values in a structure.");
+    }
+    else {
+      if (type == STUCTURE_TYPE) {
+        StructProto *slotproto = luaR_getstructbyname(H, typename);
+        if (slotproto == NULL) {
+          /* the slot can contain its parent structure type, which has not yet
+             been added to the Lua state */
+          if (typename == p->name)
+            slotproto = p;
+          else {
+            type_error(ls, "Undefined structure type '%s' in slot definition.",
+                       typename);
+          }
+        }
+        luaR_addslot(H, p, ls->current_proto.s, slotname, LUA_TSTRUCT,
+                     slotproto->id);
+      }
+      else {
+        if (type == LUA_TANY) type = LUA_TNIL;
+        luaR_addslot(H, p, ls->current_proto.s, slotname, type, -1);
+      }
+    }
+  }
+}
+
+
+static void typedlocvar (LexState *ls, TString *name, TString *type, int n) {
+  TypeInfo t;
+  parsetype(ls, &t, type);
+  new_typedlocalvar(ls, name, n, t.type, t.proto);
+}
+
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
 
 static void adjustlocalvars (LexState *ls, int nvars) {
@@ -260,6 +511,8 @@ static int singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
     int v = searchvar(fs, n);  /* look up at current level */
     if (v >= 0) {
       init_exp(var, VLOCAL, v);
+      lua_assert(fs->a->sizelocvarstyping > v);
+      setexptypeinfo(var, &fs->a->locvarstyping[v]);
       if (!base)
         markupval(fs, v);  /* local will be used as an upval */
       return VLOCAL;
@@ -284,23 +537,194 @@ static TString *singlevar (LexState *ls, expdesc *var) {
 }
 
 
-static void adjust_assign (LexState *ls, int nvars, int nexps, expdesc *e) {
+/*
+** push a new ExpListEntry
+*/
+static ExpListEntry *pushexplistentry (FuncState *fs) {
+  ExpListEntry *l;
+  luaM_growvector(fs->H, fs->a->explists, fs->a->nexplists, fs->a->sizeexplists,
+                  ExpListEntry, MAX_INT, "");
+  l = &fs->a->explists[fs->a->nexplists++];
+  l->types = NULL;
+  l->constraints = NULL;
+  l->hasconstraints = 0;
+  l->sizetypes = 0;
+  l->sizeconstraints = 0;
+  l->ntypes = 0;
+  l->nconstraints = 0;
+  return l;
+}
+
+
+/*
+** return the top ExpListEntry
+*/
+static ExpListEntry *gettopexplistentry (FuncState *fs) {
+  lua_assert(fs->a->nexplists > 0);
+  return &fs->a->explists[fs->a->nexplists-1];
+}
+
+
+/*
+** pop an ExpListEntry from the stack
+*/
+static void popexplistentry (FuncState *fs) {
+  ExpListEntry *l;
+  lua_assert(fs->a->nexplists > 0);
+  l = &fs->a->explists[--fs->a->nexplists];
+  luaM_freearray(fs->H, l->types, l->sizetypes, TypeInfo);
+  luaM_freearray(fs->H, l->constraints, l->sizeconstraints, TypeInfo);
+}
+
+
+/*
+** push a new TypeInfo element to the top ExpListEntry's TypeInfo stack
+*/
+static TypeInfo *pushexplisttypeinfo (FuncState *fs) {
+  ExpListEntry *l;
+  lua_assert(fs->a->nexplists > 0);
+  l = &fs->a->explists[fs->a->nexplists-1];
+  luaM_growvector(fs->H, l->types, l->ntypes, l->sizetypes, TypeInfo, MAX_INT,
+                  "");
+  return &l->types[l->ntypes++];
+}
+
+
+/*
+** push a TypeInfo element to the top ExpListEntry's TypeInfo stack using the
+** type information from the expression V
+*/
+static void pushexptyping (FuncState *fs, expdesc *v) {
+  TypeInfo *t = pushexplisttypeinfo(fs);
+  t->type = exptype(v);
+  t->proto = expproto(v);
+  t->is_static = exptype(v) != LUA_TNONE;
+}
+
+
+/*
+** push a TypeInfo element to the top ExpListEntry's TypeInfo stack using the
+** type information from TYPE
+*/
+static void pushpaddedtyping (FuncState *fs, int type) {
+  TypeInfo *t = pushexplisttypeinfo(fs);
+  lua_assert(type != LUA_TSTRUCT);
+  t->type = type;
+  t->proto = NULL;
+  t->is_static = (type != LUA_TNONE);
+}
+
+
+/*
+** pop a TypeInfo element from the top ExpListEntry's TypeInfo stack and apply
+** the type information to the expression V
+*/
+static void popexptyping (FuncState *fs, expdesc *v) {
+  ExpListEntry *l = gettopexplistentry(fs);
+  TypeInfo *t;
+  lua_assert(l->ntypes > 0);
+  t = &l->types[--l->ntypes];
+  exptype(v) = t->type;
+  expproto(v) = t->proto;
+}
+
+
+/*
+** remove extra TypeInfo entries from the top expression list
+*/
+static void popnlisttyping (FuncState *fs, int n) {
+  ExpListEntry *l = gettopexplistentry(fs);
+  lua_assert(l->ntypes >= n);
+  l->ntypes -= n;
+}
+
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+/*
+** push a new type constraint to the top ExpListEntry
+*/
+static void pushtypeconstraint (FuncState *fs, ExpListEntry *l, TypeInfo *t) {
+  luaM_growvector(fs->H, l->constraints, l->nconstraints, l->sizeconstraints,
+                  TypeInfo, MAX_INT, "");
+  l->constraints[l->nconstraints++] = *t;
+}
+
+/*
+** return the top TypeInfo element in the type constraints for an ExpListEntry
+*/
+static TypeInfo *poptypeconstraint (ExpListEntry *l) {
+  lua_assert(l->hasconstraints);
+  lua_assert(l->nconstraints > 0);
+  return &l->constraints[--l->nconstraints];
+}
+
+
+/*
+** pop a type constraint from the stack and apply it to an expression
+*/
+static void applytypeconstraint (FuncState *fs, expdesc *e) {
+  ExpListEntry *l = gettopexplistentry(fs);
+  lua_assert(l->nconstraints >= 0);
+  /* Havok Script has a bug here where it crashes if there are extra values on
+     the right hand side of a typed local definition, such as the following:
+        local i:ifunction = function() end, "", ""
+     The type-constraint handler just checks that `hasconstraints' is set,
+     without checking if there are any type constraint entries left in the
+     array, which there won't be after storing the closure and popping the
+     type constraint for the local variable i; the now empty stack is still
+     accessed to handle the 2 empty strings because `hasconstraints' remains
+     set, but the buffer pointer is NULL, and a segmentation fault occurs */
+  if (l->hasconstraints && l->nconstraints != 0)
+    luaK_applytypecontraint(fs, poptypeconstraint(l), e);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
+static int adjust_assign (LexState *ls, int nvars, int nexps, expdesc *e) {
   FuncState *fs = ls->fs;
   int extra = nvars - nexps;
   if (hasmultret(e->k)) {
+#if HKSC_STRUCTURE_EXTENSION_ON
+    ExpListEntry *l = gettopexplistentry(fs);
+    int checktypereg;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     extra++;  /* includes call itself */
     if (extra < 0) extra = 0;
+#if HKSC_STRUCTURE_EXTENSION_ON
+    /* vararg expressions will go into the next register, whereas function
+       calls have already reserved a slot for the result */
+    checktypereg = fs->freereg - (e->k != VVARARG);
+    if (l->hasconstraints)
+      /* vararg or a function call cannot be statically type-checked */
+      luaK_checktype(fs, poptypeconstraint(l), checktypereg);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     luaK_setreturns(fs, e, extra);  /* last exp. provides the difference */
-    if (extra > 1) luaK_reserveregs(fs, extra-1);
+    if (extra > 1) {
+#if HKSC_STRUCTURE_EXTENSION_ON
+      if (l->hasconstraints) {
+        int i;
+        for (i = 0; i < extra-1; i++)
+          luaK_checktype(fs, poptypeconstraint(l), ++checktypereg);
+      }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+      luaK_reserveregs(fs, extra-1);
+    }
   }
   else {
-    if (e->k != VVOID) luaK_exp2nextreg(fs, e);  /* close last expression */
+    if (e->k != VVOID) {
+      luaK_exp2nextreg(fs, e);  /* close last expression */
+#if HKSC_STRUCTURE_EXTENSION_ON
+      applytypeconstraint(fs, e);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+    }
     if (extra > 0) {
       int reg = fs->freereg;
       luaK_reserveregs(fs, extra);
       luaK_nil(fs, reg, extra);
+      return 1;
     }
   }
+  return 0;
 }
 
 
@@ -469,6 +893,45 @@ static TString *buildfuncname (LexState *ls) {
 }
 
 
+static TypeAnalyzer *newtypeanalyzer(hksc_State *H) {
+  TypeAnalyzer *a = luaM_new(H, TypeAnalyzer);
+  luaC_link(H, obj2gco(a), LUA_TTYPEANALYZER);
+  a->locvarstyping = NULL;
+  a->sizelocvarstyping = 0;
+  a->lhstyping = NULL;
+  a->sizelhstyping = 0;
+  a->explists = NULL;
+  a->sizeexplists = 0;
+  a->nexplists = 0;
+  return a;
+}
+
+
+static void freetypeanalyzerdata(hksc_State *H, TypeAnalyzer *a) {
+  int i;
+  luaM_freearray(H, a->locvarstyping, a->sizelocvarstyping, TypeInfo);
+  a->locvarstyping = NULL; a->sizelocvarstyping = 0;
+  luaM_freearray(H, a->lhstyping, a->sizelhstyping, TypeInfo);
+  a->lhstyping = NULL; a->sizelhstyping = 0;
+  for (i = 0; i < a->nexplists; i++) {
+    ExpListEntry *l = &a->explists[i];
+    luaM_freearray(H, l->types, l->sizetypes, TypeInfo);
+    if (l->hasconstraints)
+      luaM_freearray(H, l->constraints, l->sizeconstraints, TypeInfo);
+  }
+  luaM_freearray(H, a->explists, a->sizeexplists, ExpListEntry);
+  a->explists = NULL; a->nexplists = a->sizeexplists = 0;
+}
+
+/*
+** called by garbage collector
+*/
+void luaY_freetypeanalyzer(hksc_State *H, TypeAnalyzer *a) {
+  freetypeanalyzerdata(H, a);
+  luaM_free(H, a);
+}
+
+
 static void open_func (LexState *ls, FuncState *fs) {
   TString *name;
   hksc_State *H = ls->H;
@@ -478,6 +941,7 @@ static void open_func (LexState *ls, FuncState *fs) {
     name = luaS_newliteral(ls->H, MAINCHUNKNAME);
   else
     name = buildfuncname(ls);
+  fs->a = newtypeanalyzer(H);
   fs->prev = ls->fs;  /* linked list of funcstates */
   fs->ls = ls;
   fs->H = H;
@@ -489,6 +953,7 @@ static void open_func (LexState *ls, FuncState *fs) {
   fs->nk = 0;
   fs->np = 0;
   fs->nlocvars = 0;
+  fs->nlocalslhs = 0;
   fs->nactvar = 0;
   fs->bl = NULL;
   f->source = ls->source;
@@ -522,19 +987,21 @@ static void close_func (LexState *ls) {
   lua_assert(fs->bl == NULL);
   ls->fs = fs->prev;
   killtemp(obj2gco(fs->h)); /* make table collectable */
-  UNUSED(fs->h);
+  /* free the type analyzer arrays and mark it for collection */
+  freetypeanalyzerdata(ls->H, fs->a);
+  killtemp(obj2gco(fs->a));
   /* last token read was anchored in defunct function; must reanchor it */
   if (fs) anchor_token(ls);
 }
 
 
 #if HKSC_GETGLOBAL_MEMOIZATION
-static void handle_memo_testing_mode (LexState *ls) {
+static void check_memo_testing_mode (LexState *ls) {
   if (Settings(ls->H).skip_memo)
     luaK_ret(ls->fs, 0, 0);
 }
 #else /* !HKSC_GETGLOBAL_MEMOIZATION */
-#define handle_memo_testing_mode(ls) ((void)0)
+#define check_memo_testing_mode(ls) ((void)0)
 #endif /* HKSC_GETGLOBAL_MEMOIZATION */
 
 
@@ -564,7 +1031,7 @@ static void parser_inner_func (hksc_State *H, void *ud) {
                       "and UTF-8 are supported");
       break;
   }
-  handle_memo_testing_mode(ls);
+  check_memo_testing_mode(ls);
   chunk(ls);
   check(ls, TK_EOS);
   close_func(ls);
@@ -610,8 +1077,8 @@ static void field (LexState *ls, expdesc *v, int type) {
   expdesc key;
   luaK_exp2anyreg(fs, v);
   luaX_next(ls);  /* skip the dot or colon */
-  name = ls->t.seminfo.ts; /* get the name now, it gets skipped in checkname() */
-  checkname(ls, &key);
+  name = str_checkname(ls);
+  codestring(ls, &key, name);
   if (type != NAMEPART_NONE) {
     lua_assert(type == NAMEPART_FIELD || type == NAMEPART_SELF);
     addnamepart(ls, name, type); /* add the name part to the chain */
@@ -642,7 +1109,77 @@ struct ConsControl {
   int nh;  /* total number of `record' elements */
   int na;  /* total number of array elements */
   int tostore;  /* number of array elements pending to be stored */
+  struct StructProto *proto;  /* prototype of struct instance being created */
 };
+
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+
+static void invalid_slot (LexState *ls, StructProto *proto, TString *name) {
+  const char *msg = luaO_pushfstring(ls->H, "Attempt to assign slot '%s' on "
+            "instances of " LUA_QS_U " is not allowed.", getstr(name),
+            getstr(proto->name));
+  luaX_semerror(ls, msg);
+}
+
+
+/*
+** describes a slot intiailization in a struct constructor
+*/
+struct slotfield_s {
+  StructSlot *slot;
+  TypeInfo t;
+};
+
+
+static int checkslotfield (LexState *ls, StructProto *proto, expdesc *key,
+                           expdesc *val, struct slotfield_s *s) {
+  switch (key->k) {
+    case VNIL:
+      luaX_semerror(ls, "Table index is nil.");
+      break;
+    case VTRUE:
+    case VFALSE:
+    case VKNUM:
+      if (proto->hasproxy == 0)
+        type_error(ls, "Attempt to assign to number indexes on instances of "
+                   "structure '%s' is not allowed.", proto->name);
+      return ASSIGN_SLOT_PROXYTABLE;
+    case VK:
+      if (ttisstring(&ls->fs->f->k[key->u.s.info])) {
+        TString *slotname = rawtsvalue(&ls->fs->f->k[key->u.s.info]);
+        StructSlot *slot = luaR_findslot(proto, slotname);
+        if (slot != NULL) {
+          luaK_getslottypeinfo(ls->fs, slot, &s->t);
+          s->slot = slot;
+          return luaK_checkslotassignment(ls->fs, slotname, val, &s->t);
+        }
+        if (proto->hasproxy == 0)
+          invalid_slot(ls, proto, slotname);
+        return ASSIGN_SLOT_PROXYTABLE;
+      }
+      break;
+    case VRELOCABLE:
+    case VNONRELOC:
+      if (exptype(key) == LUA_TNONE || exptype(key) == LUA_TSTRING)
+        return ASSIGN_SLOT_GENERIC;
+      break;
+    default:
+      return ASSIGN_SLOT_GENERIC;
+  }
+  if (proto->hasproxy == 0)
+    type_error(ls, "Attempt to assign to non-string indexes on instances "
+                   "of structure '%s' is not allowed.", proto->name);
+  return ASSIGN_SLOT_PROXYTABLE;
+}
+
+static void checkslotname (LexState *ls, StructProto *proto, TString *name) {
+  if (Settings(ls->H).emit_struct == 0)
+    return;
+  if (proto && luaR_findslot(proto, name) == NULL && proto->hasproxy == 0)
+    invalid_slot(ls, proto, name);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
 
 static void recfield (LexState *ls, struct ConsControl *cc) {
@@ -650,9 +1187,12 @@ static void recfield (LexState *ls, struct ConsControl *cc) {
   FuncState *fs = ls->fs;
   int reg = ls->fs->freereg;
   expdesc key, val;
-  int rkkey;
+  int rkkey, rkval;
   if (ls->t.token == TK_NAME) {
     luaY_checklimit(fs, cc->nh, MAX_INT, "items in a constructor");
+#if HKSC_STRUCTURE_EXTENSION_ON
+    checkslotname(ls, cc->proto, ls->t.seminfo.ts);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     checkname(ls, &key);
   }
   else  /* ls->t.token == '[' */
@@ -661,7 +1201,18 @@ static void recfield (LexState *ls, struct ConsControl *cc) {
   checknext(ls, '=');
   rkkey = luaK_exp2RK(fs, &key);
   expr(ls, &val);
-  luaK_codeABC(fs, OP_SETTABLE, cc->t->u.s.info, rkkey, luaK_exp2RK(fs, &val));
+  rkval = luaK_exp2RK(fs, &val);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (Settings(ls->H).emit_struct && cc->proto != NULL) {
+    struct slotfield_s s = {NULL, typeinfoinit(LUA_TNONE, NULL, 1)};
+    int res = checkslotfield(ls, cc->proto, &key, &val, &s);
+    /* only allocate hashtable space for proxytable fields */
+    if (res != ASSIGN_SLOT_PROXYTABLE) cc->nh--;
+    luaK_setslot(fs, s.slot, &s.t, cc->t->u.s.info, rkkey, rkval, res);
+  }
+  else
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  luaK_codeABC(fs, OP_SETTABLE, cc->t->u.s.info, rkkey, rkval);
   fs->freereg = reg;  /* free registers */
 }
 
@@ -693,6 +1244,12 @@ static void lastlistfield (FuncState *fs, struct ConsControl *cc) {
 
 
 static void listfield (LexState *ls, struct ConsControl *cc) {
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (cc->proto && cc->proto->hasproxy == 0 && Settings(ls->H).emit_struct) {
+    type_error(ls, "Attempt to assign to number indexes on instances of "
+               "structure '%s' is not allowed.", cc->proto->name);
+  }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   expr(ls, &cc->v);
   luaY_checklimit(ls->fs, cc->na, MAX_INT, "items in a constructor");
   cc->na++;
@@ -700,15 +1257,40 @@ static void listfield (LexState *ls, struct ConsControl *cc) {
 }
 
 
+static int codeconstructor (LexState *ls, expdesc *t) {
+  FuncState *fs = ls->fs;
+  int pc;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (Settings(ls->H).emit_struct == 0 || ls->cons_proto == NULL)
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  {
+    pc = luaK_codeABC(fs, OP_NEWTABLE, 0, 0, 0);
+    init_typed_exp(t, VRELOCABLE, pc, LUA_TTABLE);
+  }
+#if HKSC_STRUCTURE_EXTENSION_ON
+  else {  /* constructing an struct instance */
+    StructProto *p = ls->cons_proto;
+    pc = luaK_codeABC(fs, OP_NEWSTRUCT, 0, 0, 0);
+    luaK_codeABx(fs, OP_DATA, 0, p->id);
+    init_typed_exp(t, VRELOCABLE, pc, LUA_TSTRUCT);
+    expproto(t) = p;
+    ls->cons_proto = NULL;
+  }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  return pc;
+}
+
+
 static void constructor (LexState *ls, expdesc *t) {
   /* constructor -> ?? */
   FuncState *fs = ls->fs;
   int line = ls->linenumber;
-  int pc = luaK_codeABC(fs, OP_NEWTABLE, 0, 0, 0);
+  int pc = codeconstructor(ls, t);
+  /*int pc = luaK_codeABC(fs, OP_NEWTABLE, 0, 0, 0);*/
   struct ConsControl cc;
   cc.na = cc.nh = cc.tostore = 0;
   cc.t = t;
-  init_typed_exp(t, VRELOCABLE, pc, LUA_TTABLE);
+  cc.proto = expproto(t);
   init_exp(&cc.v, VVOID, 0);  /* no value (yet) */
   luaK_exp2nextreg(ls->fs, t);  /* fix it at stack top (for gc) */
   checknext(ls, '{');
@@ -741,6 +1323,23 @@ static void constructor (LexState *ls, expdesc *t) {
   SETARG_C(fs->f->code[pc], luaO_int2fb(cc.nh));  /* set initial table size */
 }
 
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void makeconstructor (LexState *ls, expdesc *t) {
+  TString *name;
+  luaX_next(ls);  /* skip HMAKE */
+  name = str_checkname(ls);
+  if (Settings(ls->H).emit_struct) {
+    StructProto *p = luaR_getstructbyname(ls->H, name);
+    if (p == NULL)
+      type_error(ls, "Attempt to reference an undefined structure '%s'.", name);
+    ls->cons_proto = p;
+  }
+  constructor(ls, t);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 /* }====================================================================== */
 
 
@@ -756,9 +1355,19 @@ static void parlist (LexState *ls) {
       switch (ls->t.token) {
         case TK_NAME: {  /* param -> NAME */
           luaX_lookahead(ls);
-          if (ls->lookahead.token == ':')
-            typecheck_param(ls);
-          new_localvar(ls, str_checkname(ls), nparams++);
+          if (ls->lookahead.token == ':') {
+#if HKSC_STRUCTURE_EXTENSION_ON
+            TString *varname = str_checkname(ls);
+            luaX_next(ls);  /* skip `:' */
+            typedlocvar(ls, varname, str_checkname(ls), nparams);
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+            error_typedparam(ls);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+          }
+          else {
+            new_localvar(ls, str_checkname(ls), nparams);
+          }
+          nparams++;
           break;
         }
         case TK_DOTS: {  /* param -> `...' */
@@ -781,6 +1390,16 @@ static void parlist (LexState *ls) {
 }
 
 
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void parchecktype (LexState *ls) {
+  FuncState *fs = ls->fs;
+  int i;
+  for (i = 0; i < cast_int(fs->nactvar); i++)
+    luaK_checktype(fs, &fs->a->locvarstyping[i], i);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 static void body (LexState *ls, expdesc *e, int needself, int line) {
   /* body ->  `(' parlist `)' chunk END */
   FuncState new_fs;
@@ -793,7 +1412,10 @@ static void body (LexState *ls, expdesc *e, int needself, int line) {
   }
   parlist(ls);
   checknext(ls, ')');
-  handle_memo_testing_mode(ls);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  parchecktype(ls);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  check_memo_testing_mode(ls);
   chunk(ls);
   new_fs.f->lastlinedefined = ls->linenumber;
   check_match(ls, TK_END, TK_FUNCTION, line);
@@ -808,9 +1430,22 @@ static int explist1 (LexState *ls, expdesc *v) {
   expr(ls, v);
   while (testnext(ls, ',')) {
     luaK_exp2nextreg(ls->fs, v);
+#if HKSC_STRUCTURE_EXTENSION_ON
+    applytypeconstraint(ls->fs, v);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+    pushexptyping(ls->fs, v);
     expr(ls, v);
     n++;
   }
+  return n;
+}
+
+
+static int explist1_notyping (LexState *ls, expdesc *v) {
+  int n;
+  pushexplistentry(ls->fs);
+  n = explist1(ls, v);
+  popexplistentry(ls->fs);
   return n;
 }
 
@@ -829,7 +1464,7 @@ static void funcargs (LexState *ls, expdesc *f) {
       if (ls->t.token == ')')  /* arg list is empty? */
         args.k = VVOID;
       else {
-        explist1(ls, &args);
+        explist1_notyping(ls, &args);
         luaK_setmultret(fs, &args);
       }
       check_match(ls, ')', '(', line);
@@ -938,7 +1573,8 @@ static void primaryexp (LexState *ls, expdesc *v) {
 
 static void simpleexp (LexState *ls, expdesc *v) {
   /* simpleexp -> NUMBER | STRING | NIL | true | false | ... |
-                  constructor | FUNCTION body | primaryexp */
+                  HMAKE NAME constructor | constructor | FUNCTION body |
+                  primaryexp */
   switch (ls->t.token) {
     case TK_NUMBER: {
       init_typed_exp(v, VKNUM, 0, LUA_TNUMBER);
@@ -974,6 +1610,12 @@ static void simpleexp (LexState *ls, expdesc *v) {
       init_exp(v, VVARARG, luaK_codeABC(fs, OP_VARARG, 0, 1, 0));
       break;
     }
+#if HKSC_STRUCTURE_EXTENSION_ON
+    case TK_MAKE: {
+      makeconstructor(ls, v);
+      return;
+    }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     case '{': {  /* constructor */
       constructor(ls, v);
       return;
@@ -1184,13 +1826,25 @@ static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {
     assignment(ls, &nv, nvars+1);
   }
   else {  /* assignment -> `=' explist1 */
+    ExpListEntry *l;
     int nexps;
     checknext(ls, '=');
+    pushexplistentry(ls->fs);
     nexps = explist1(ls, &e);
+    l = gettopexplistentry(ls->fs);
     if (nexps != nvars) {
-      adjust_assign(ls, nvars, nexps, &e);
-      if (nexps > nvars)
-        ls->fs->freereg -= nexps - nvars;  /* remove extra values */
+      int filledwithnil = adjust_assign(ls, nvars, nexps, &e);
+      pushexptyping(ls->fs, &e);
+      if (nexps > nvars) {
+        int extra = nexps - nvars;
+        ls->fs->freereg -= extra;  /* remove extra values */
+        popnlisttyping(ls->fs, extra);  /* remove extra type info */
+      }
+      else {  /* nvars > nexps */
+        int filledtype = filledwithnil ? LUA_TNIL : LUA_TNONE;
+        for (; nexps < nvars; nexps++)
+          pushpaddedtyping(ls->fs, filledtype);
+      }
     }
     else {
       luaK_setoneret(ls->fs, &e);  /* close last expression */
@@ -1199,7 +1853,10 @@ static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {
     }
   }
   init_exp(&e, VNONRELOC, ls->fs->freereg-1);  /* default assignment */
+  popexptyping(ls->fs, &e);
   luaK_storevar(ls->fs, &lh->v, &e);
+  if (nvars == 1)
+    popexplistentry(ls->fs);
 }
 
 
@@ -1286,6 +1943,19 @@ static int exp1 (LexState *ls) {
 }
 
 
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void forbodychecktype (FuncState *fs, int nvars) {
+  int i;
+  lua_assert(fs->nactvar >= nvars);
+  for (i = 0; i < nvars; i++) {
+    int reg = fs->nactvar-i-1;
+    TypeInfo *t = &fs->a->locvarstyping[reg];
+    luaK_checktype(fs, t, reg);
+  }
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
   /* forbody -> DO block */
   BlockCnt bl;
@@ -1297,6 +1967,9 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
   enterblock(fs, &bl, 0);  /* scope for declared variables */
   adjustlocalvars(ls, nvars);
   luaK_reserveregs(fs, nvars);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  forbodychecktype(fs, nvars);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   block(ls);
   leaveblock(fs);  /* end of scope for declared variables */
   luaK_patchtohere(fs, prep);
@@ -1307,13 +1980,32 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
 }
 
 
-static void fornum (LexState *ls, TString *varname, int line) {
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void fornum (LexState *ls, TString *varname, TString *typename, int line)
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+static void fornum (LexState *ls, TString *varname, int line)
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+{
   /* fornum -> NAME = exp1,exp1[,exp1] forbody */
   FuncState *fs = ls->fs;
   int base = fs->freereg;
-  new_localvarliteral(ls, "(for index)", 0);
-  new_localvarliteral(ls, "(for limit)", 1);
-  new_localvarliteral(ls, "(for step)", 2);
+  new_typedlocalvarliteral(ls, "(for index)", 0, LUA_TNUMBER, NULL);
+  new_typedlocalvarliteral(ls, "(for limit)", 1, LUA_TNUMBER, NULL);
+  new_typedlocalvarliteral(ls, "(for step)", 2, LUA_TNUMBER, NULL);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (typename != NULL) {
+    TypeInfo t;
+    /* parse the type of the declaration; only "number" is allowed */
+    parsetype(ls, &t, typename);
+    if (t.type != LUA_TNONE && t.type != LUA_TNUMBER) {
+      const char *msg = luaO_pushfstring(ls->H, "Only 'number' is allowed as a"
+                " type for numeric FOR iterator. Got '%s'", getstr(typename));
+      luaX_syntaxerror(ls, msg);
+    }
+    new_typedlocalvar(ls, varname, 3, t.type, NULL);
+  }
+  else
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   new_localvar(ls, varname, 3);
   checknext(ls, '=');
   exp1(ls);  /* initial value */
@@ -1329,7 +2021,12 @@ static void fornum (LexState *ls, TString *varname, int line) {
 }
 
 
-static void forlist (LexState *ls, TString *indexname) {
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void forlist (LexState *ls, TString *indexname, TString *typename)
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+static void forlist (LexState *ls, TString *indexname)
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+{
   /* forlist -> NAME {,NAME} IN explist1 forbody */
   FuncState *fs = ls->fs;
   expdesc e;
@@ -1341,12 +2038,37 @@ static void forlist (LexState *ls, TString *indexname) {
   new_localvarliteral(ls, "(for state)", nvars++);
   new_localvarliteral(ls, "(for control)", nvars++);
   /* create declared variables */
+#if HKSC_STRUCTURE_EXTENSION_ON
+  if (typename != NULL)
+    typedlocvar(ls, indexname, typename, nvars++);
+  else
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   new_localvar(ls, indexname, nvars++);
-  while (testnext(ls, ','))
-    new_localvar(ls, str_checkname(ls), nvars++);
+  while (testnext(ls, ',')) {
+    /* I parse it in this order so that `near' token in the error message
+       matches exactly with Havok Script when structures are disabled */
+    TString *varname = str_getname(ls);
+    luaX_lookahead(ls);  /* lookahead for `:' */
+    if (ls->lookahead.token == ':') {
+#if HKSC_STRUCTURE_EXTENSION_ON
+      luaX_next(ls);  /* skip name */
+      luaX_next(ls);  /* skip `:' */
+      typedlocvar(ls, varname, str_checkname(ls), nvars);
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+      error_typedlocalvar(ls);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+    }
+    else {
+      luaX_next(ls);  /* advance over name */
+      new_localvar(ls, varname, nvars);
+    }
+    nvars++;
+  }
   checknext(ls, TK_IN);
   line = ls->linenumber;
+  pushexplistentry(fs);
   adjust_assign(ls, 3, explist1(ls, &e), &e);
+  popexplistentry(fs);
   luaK_checkstack(fs, 3);  /* extra space to call generator */
   forbody(ls, base, line, nvars - 3, 0);
 }
@@ -1357,21 +2079,34 @@ static void forstat (LexState *ls, int line) {
   FuncState *fs = ls->fs;
   TString *varname;
   BlockCnt bl;
+#if HKSC_STRUCTURE_EXTENSION_ON
+#define varname_arg varname, typename
+  TString *typename = NULL;
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+#define varname_arg varname
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip `for' */
-  check(ls, TK_NAME);
+  varname = str_getname(ls);
   luaX_lookahead(ls);
-  if (ls->lookahead.token == ':')
-    typecheck_locvar(ls);
-  varname = ls->t.seminfo.ts;  /* first variable name */
-  luaX_next(ls);
+  if (ls->lookahead.token == ':') {
+#if HKSC_STRUCTURE_EXTENSION_ON
+    luaX_next(ls);  /* skip name */
+    luaX_next(ls);  /* skip `:' */
+    typename = str_checkname(ls);
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+    error_typedlocalvar(ls);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  }
+  else luaX_next(ls);  /* advance over first variable name */
   switch (ls->t.token) {
-    case '=': fornum(ls, varname, line); break;
-    case ',': case TK_IN: forlist(ls, varname); break;
+    case '=': fornum(ls, varname_arg, line); break;
+    case ',': case TK_IN: forlist(ls, varname_arg); break;
     default: luaX_syntaxerror(ls, LUA_QL("=") " or " LUA_QL("in") " expected");
   }
   check_match(ls, TK_END, TK_FOR, line);
   leaveblock(fs);  /* loop scope (`break' jumps to this point) */
+#undef varname_arg
 }
 
 
@@ -1428,27 +2163,60 @@ static void localfunc (LexState *ls) {
 
 static void localstat (LexState *ls) {
   /* stat -> LOCAL NAME {`,' NAME} [`=' explist1] */
+  FuncState *fs = ls->fs;
   int nvars = 0;
   int nexps;
+  int seentypedvar = 0;
   expdesc e;
+  lua_assert(ls->fs->nlocalslhs == 0);
   do {
-    TString *varname;
-    check(ls, TK_NAME);
+    TypeInfo t;
+    TString *varname = str_getname(ls);
     luaX_lookahead(ls);
-    if (ls->lookahead.token == ':')
-      typecheck_locvar(ls);
-    varname = ls->t.seminfo.ts;
-    luaX_next(ls);
-    new_localvar(ls, varname, nvars++);
+    if (ls->lookahead.token == ':') {  /* LOCAL NAME : TYPE */
+#if HKSC_STRUCTURE_EXTENSION_ON
+      luaX_next(ls);  /* skip variable name */
+      luaX_next(ls);  /* skip `:' */
+      /* the type name is advanced over adter parsing the type info to match
+         the `near' token in error messages exactly with Havok Script */
+      parsetype(ls, &t, str_getname(ls));
+      luaX_next(ls);  /* advance over type name */
+      new_typedlocalvar(ls, varname, nvars, t.type, t.proto);
+#else /* !HKSC_STRUCTURE_EXTENSION_ON */
+      error_typedlocalvar(ls);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+    }
+    else {
+      luaX_next(ls);  /* advance over name */
+      new_localvar(ls, varname, nvars);
+      t.type = LUA_TNONE; t.proto = NULL; t.is_static = 0;
+    }
+    seentypedvar |= (t.is_static != 0);
+    pushlhstyping(ls, &t);
+    nvars++;
   } while (testnext(ls, ','));
-  if (testnext(ls, '='))
+  if (testnext(ls, '=')) {
+    pushexplistentry(fs);
+#if HKSC_STRUCTURE_EXTENSION_ON
+    if (seentypedvar) {
+      ExpListEntry *l = gettopexplistentry(fs);
+      int i;
+      for (i = fs->nlocalslhs-1; i >= 0; i--)
+        pushtypeconstraint(fs, l, &fs->a->lhstyping[i]);
+      l->hasconstraints = 1;
+    }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
     nexps = explist1(ls, &e);
+  }
   else {
     e.k = VVOID;
     nexps = 0;
   }
   adjust_assign(ls, nvars, nexps, &e);
   adjustlocalvars(ls, nvars);
+  fs->nlocalslhs = 0;
+  if (nexps)
+    popexplistentry(fs);
 }
 
 
@@ -1477,6 +2245,48 @@ static void funcstat (LexState *ls, int line) {
   luaK_storevar(ls->fs, &v, &b);
   luaK_fixline(ls->fs, line);  /* definition `happens' in the first line */
 }
+
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void structstat (LexState *ls) {
+  /* structstat -> HSTRUCTURE name structbody */
+  lu_byte seenregularslot = 0;
+  TString *name = structname(ls);
+  initstruct(ls, name);
+  /* parse the struct body */
+  while (ls->t.token != TK_END) {
+    TString *slotname, *slottype;
+    if (testnext(ls, ';'))
+      continue;
+    slotname = str_checkname(ls);
+    if (strcmp(getstr(slotname), "proxytable") == 0) {
+      if (seenregularslot) {
+        badslotorder:
+        luaX_semerror(ls,
+            "proxytable/meta definition must be at the start of the struct.");
+      }
+      addstructproxy(ls);
+    }
+    else if (strcmp(getstr(slotname), "meta") == 0) {
+      if (seenregularslot)
+        goto badslotorder;
+      checknext(ls, ':');
+      slottype = str_getname(ls);
+      addstructmeta(ls, slottype);
+      luaX_next(ls);
+    }
+    else {
+      seenregularslot = 1;
+      checknext(ls, ':');
+      slottype = str_getname(ls);
+      addstructslot(ls, slotname, slottype);
+      luaX_next(ls);
+    }
+  }
+  finalizestruct(ls);  /* add the struct to the Lua state */
+  luaX_next(ls);  /* skip END */
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
 
 static void exprstat (LexState *ls) {
@@ -1521,7 +2331,7 @@ static void retstat (LexState *ls) {
   if (block_follow(ls->t.token) || ls->t.token == ';')
     first = nret = 0;  /* return no values */
   else {
-    nret = explist1(ls, &e);  /* optional return values */
+    nret = explist1_notyping(ls, &e);  /* optional return values */
     if (hasmultret(e.k)) {
       luaK_setmultret(fs, &e);
       if (e.k == VCALL && nret == 1) {  /* tail call? */
@@ -1591,6 +2401,13 @@ static int statement (LexState *ls) {
       breakstat(ls);
       return 1;  /* must be last statement */
     }
+#if HKSC_STRUCTURE_EXTENSION_ON
+    case TK_STRUCT: {
+      luaX_next(ls);  /* skip HSTRUCTURE */
+      structstat(ls);
+      return 0;
+    }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 #ifdef LUA_CODIW6
     case TK_DELETE: {  /* stat -> deletestat */
       luaX_next(ls);  /* skip HDELETE */

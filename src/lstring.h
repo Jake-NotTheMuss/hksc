@@ -26,6 +26,8 @@
 #define MAINCHUNKNAME "(main chunk)"
 
 LUAI_FUNC void luaS_resize (hksc_State *H, int newsize);
+#define luaS_newproto(H,n) luaS_newudata(H,sizestruct(n),NULL)
+LUAI_FUNC Udata *luaS_newudata (hksc_State *H, size_t s, Table *e);
 LUAI_FUNC TString *luaS_newlstr (hksc_State *H, const char *str, size_t l);
 
 #ifdef LUA_CODT6

@@ -51,11 +51,6 @@
 #define hashstr(t,str)  hashpow2(t, (str)->tsv.hash)
 #define hashboolean(t,p)        hashpow2(t, p)
 
-#ifdef LUA_UI64_S
-#define hashui64(t,l)  hashpow2(t, (l).hi)
-#else
-#define hashui64(t,l)  hashpow2(t, (l))
-#endif
 
 /*
 ** for some types, it is better to avoid modulus by power of 2, as
@@ -78,7 +73,11 @@
 
 static const Node dummynode_ = {
   {{NULL}, LUA_TNIL},  /* value */
-  {{{NULL}, LUA_TNIL, NULL}}  /* key */
+  {{{NULL}, LUA_TNIL, NULL
+#ifdef HKSC_FROMSOFT_TTABLES
+  , NULL, NULL
+#endif
+  }}  /* key */
 };
 
 
@@ -96,6 +95,14 @@ static Node *hashnum (const Table *t, lua_Number n) {
 }
 
 
+/*
+** hash for keys which are not numbers or strings
+*/
+static Node *hashgeneric (const Table *t, void *p) {
+  lu_int32 hash = cast(lu_int32, cast(size_t, p) >> 3) * 0x9e3779b1u;
+  return gnode(t, hash % sizenode(t));
+}
+
 
 /*
 ** returns the `main' position of an element in a table (that is, the index
@@ -107,20 +114,14 @@ static Node *mainposition (const Table *t, const TValue *key) {
       return hashnum(t, nvalue(key));
     case LUA_TSTRING:
       return hashstr(t, rawtsvalue(key));
-    case LUA_TBOOLEAN:
-      return hashboolean(t, bvalue(key));
-    case LUA_TLIGHTUSERDATA:
-      return hashpointer(t, pvalue(key));
-    case LUA_TUI64:
-      return hashui64(t, ui64value(key));
     default:
-      return hashpointer(t, gcvalue(key));
+      return hashgeneric(t, key->value.p);
   }
 }
 
 
 /*
-** returns the index for `key' if `key' is an appropriate key to live in
+** return s the index for `key' if `key' is an appropriate key to live in
 ** the array part of the table, -1 otherwise.
 */
 static int arrayindex (const TValue *key) {
@@ -165,6 +166,34 @@ static int findindex (hksc_State *H, Table *t, StkId key) {
 }
 
 
+static int findnexthash (Table *t, StkId key, int i) {
+#ifdef HKSC_FROMSOFT_TTABLES
+  /* if i is 0 then the previous key was nil or the last array index, so use
+     t->lastinserted to start the search */
+  Node *n = i ? gkey(gnode(t, i-1))->previnserted : t->lastinserted;
+  if (n != NULL && t->node != dummynode) {
+    do {
+      if (!ttisnil(gval(n))) {
+        setobj2s(key, key2tval(n));
+        setobj2s(key+1, gval(n));
+        return 1;
+      }
+      n = gkey(n)->previnserted;
+    } while (n != NULL);
+  }
+#else
+  for (; i < sizenode(t); i++) {  /* then hash part */
+    if (!ttisnil(gval(gnode(t, i)))) {  /* a non-nil value? */
+      setobj2s(key, key2tval(gnode(t, i)));
+      setobj2s(key+1, gval(gnode(t, i)));
+      return 1;
+    }
+  }
+#endif
+  return 0;  /* no more elements */
+}
+
+
 int luaH_next (hksc_State *H, Table *t, StkId key) {
   int i = findindex(H, t, key);  /* find original element */
   for (i++; i < t->sizearray; i++) {  /* try first array part */
@@ -174,14 +203,8 @@ int luaH_next (hksc_State *H, Table *t, StkId key) {
       return 1;
     }
   }
-  for (i -= t->sizearray; i < sizenode(t); i++) {  /* then hash part */
-    if (!ttisnil(gval(gnode(t, i)))) {  /* a non-nil value? */
-      setobj2s(key, key2tval(gnode(t, i)));
-      setobj2s(key+1, gval(gnode(t, i)));
-      return 1;
-    }
-  }
-  return 0;  /* no more elements */
+  i -= t->sizearray;
+  return findnexthash(t, key, i);
 }
 
 
@@ -293,10 +316,16 @@ static void setnodevector (hksc_State *H, Table *t, int size) {
       gnext(n) = NULL;
       setnilvalue(gkey(n));
       setnilvalue(gval(n));
+#ifdef HKSC_FROMSOFT_TTABLES
+      gkey(n)->previnserted = gkey(n)->nextinserted = NULL;
+#endif
     }
   }
   t->lsizenode = cast_byte(lsize);
   t->lastfree = gnode(t, size);  /* all positions are free */
+#ifdef HKSC_FROMSOFT_TTABLES
+  t->lastinserted = NULL;
+#endif
 }
 
 
@@ -414,6 +443,11 @@ static TValue *newkey (hksc_State *H, Table *t, const TValue *key) {
       *n = *mp;  /* copy colliding node into free pos. (mp->next also goes) */
       gnext(mp) = NULL;  /* now `mp' is free */
       setnilvalue(gval(mp));
+#ifdef HKSC_FROMSOFT_TTABLES
+      /* the colliding node has moved locations; update the last inserted if it
+         points to the colliding node */
+      if (t->lastinserted == mp) t->lastinserted = n;
+#endif
     }
     else {  /* colliding node is in its own main position */
       /* new node will go into free position */
@@ -423,6 +457,13 @@ static TValue *newkey (hksc_State *H, Table *t, const TValue *key) {
     }
   }
   gkey(mp)->value = key->value; gkey(mp)->tt = key->tt;
+#ifdef HKSC_FROMSOFT_TTABLES
+  if (t->lastinserted != NULL) {
+    gkey(mp)->previnserted = t->lastinserted;
+    gkey(t->lastinserted)->nextinserted = mp;
+  }
+  t->lastinserted = mp;
+#endif
   lua_assert(ttisnil(gval(mp)));
   return gval(mp);
 }

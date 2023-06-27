@@ -38,6 +38,7 @@ typedef enum {
 
 
 #define exptype(e) ((e)->inferred_type)
+#define expproto(e)  ((e)->inferred_proto)
 
 #define expisnil(e)  (exptype(e) == LUA_TNIL)
 #define expisboolean(e)  (exptype(e) == LUA_TBOOLEAN)
@@ -57,17 +58,19 @@ typedef enum {
 typedef struct expdesc {
   expkind k;
   union {
-    struct { int info, aux; } s;
+    struct {
+      int info, aux;
+      /* data for VSLOT expressions */
+      struct StructProto *proto;  /* indexed structure */
+      TValue structindex;  /* index object */
+    } s;
     lua_Number nval;
     lu_int64 lval;
   } u;
   int t;  /* patch list of `exit when true' */
   int f;  /* patch list of `exit when false' */
   int inferred_type;
-#if 0
-  void *struct_lookup_chain;
-  void *inferred_proto;
-#endif
+  struct StructProto *inferred_proto;
 } expdesc;
 
 
@@ -84,6 +87,7 @@ struct BlockCnt;  /* defined in lparser.c */
 typedef struct FuncState {
   Proto *f;  /* current function header */
   Table *h;  /* table to find (and reuse) elements in `k' */
+  TypeAnalyzer *a;
   struct FuncState *prev;  /* enclosing function */
   struct LexState *ls;  /* lexical state */
   struct hksc_State *H;  /* copy of the Lua state */
@@ -95,6 +99,7 @@ typedef struct FuncState {
   int nk;  /* number of elements in `k' */
   int np;  /* number of elements in `p' */
   short nlocvars;  /* number of elements in `locvars' */
+  short nlocalslhs;  /* number of elements in `lhstyping' */
   lu_byte nactvar;  /* number of active local variables */
   upvaldesc upvalues[LUAI_MAXUPVALUES];  /* upvalues */
   unsigned short actvar[LUAI_MAXVARS];  /* declared-variable stack */
@@ -103,6 +108,7 @@ typedef struct FuncState {
 
 LUAI_FUNC Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff,
                                             const char *name);
+LUAI_FUNC void luaY_freetypeanalyzer (hksc_State *H, TypeAnalyzer *a);
 
 
 #endif

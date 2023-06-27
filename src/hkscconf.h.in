@@ -15,15 +15,6 @@
 #define HKSC_COMPATIBILITY_BIT_DOUBLES      3
 #define HKSC_COMPATIBILITY_BIT_NATIVEINT    4
 
-/*
-** NOTE for non-Call-of-Duty developers:
-** Because Call of Duty disables all compatibiliy flags, none of those features
-** are implemented in the compiler. If the game you are developing for enables
-** any of the compatibility features, you will need to find out which ones are
-** enabled and provide implementations for them. Also make sure to undefine the
-** macro `LUA_CODT6' if you are not developing for a Call of Duty game.
-*/
-
 /* LUA_COMPAT_VARARG does vary, at least between TA and non-TA */
 #if @LUACONFIG_COMPAT_VARARG@
 #undef HKSC_NO_COMPAT_VARARG
@@ -75,6 +66,13 @@
 #undef LUA_CODT7
 #endif
 
+/* matching table traversal order in the FromSoftware version */
+#if @LUACONFIG_FROMSOFT_TTABLES@
+#define HKSC_FROMSOFT_TTABLES
+#else
+#undef HKSC_FROMSOFT_TTABLES
+#endif
+
 /* multi-platform targeting */
 #if @LUACONFIG_MULTIPLAT@
 #define HKSC_MULTIPLAT
@@ -104,9 +102,6 @@
 #endif
 
 /* put here any errors that need to happen for unsupported configurations */
-#if HKSC_STRUCTURE_EXTENSION_ON
-#error "Structures not implemented"
-#endif
 
 #if HKSC_SELF
 #error "Self not implemented"

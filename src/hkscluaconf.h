@@ -446,6 +446,13 @@
 
 
 /*
+@@ LUAI_MAXSTRUCTS is the maximum number of structure prototypes per Lua state
+@* (maximum is 1024)
+*/
+#define LUAI_MAXSTRUCTS  1024
+
+
+/*
 @@ LUAL_BUFFERSIZE is the buffer size used by the lauxlib buffer system.
 */
 #define LUAL_BUFFERSIZE		BUFSIZ

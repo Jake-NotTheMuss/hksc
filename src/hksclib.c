@@ -439,7 +439,7 @@ LUA_API void hksI_CompilerSettings(hksc_CompilerSettings *settings) {
 # endif /* LUA_CODT7 */
 #endif /* LUA_CODT6 */
   settings->ignore_debug = 0;
-  settings->emit_struct = 0;
+  settings->emit_struct = HKSC_STRUCTURE_EXTENSION_ON;
 #if HKSC_GETGLOBAL_MEMOIZATION
   settings->emit_memo = 1;
   settings->skip_memo = 0;

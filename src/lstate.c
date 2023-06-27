@@ -37,17 +37,33 @@ typedef struct LG {
 } LG;
 
 
+#define createfixedstring(v,s) (v) = luaS_newliteral(H,s); luaS_fix(v)
+
 /*
 ** open parts that may cause memory-allocation errors
 */
 static void f_luaopen (hksc_State *H, void *ud) {
   global_State *g = G(H);
   UNUSED(ud);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  g->prototable = luaH_new(H, 0, MIN_PROTO_LIST_SIZE);
+  l_setbit(g->prototable->marked, FIXEDBIT);
+  g->protolist.list = luaM_newvector(H, MIN_PROTO_LIST_SIZE, StructProto *);
+  g->protolist.nuse = 0;
+  g->protolist.size = MIN_PROTO_LIST_SIZE;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   luaS_resize(H, MINSTRTABSIZE);  /* initial size of string table */
+  createfixedstring(g->tm_names[TM_INDEX], "__index");
+  createfixedstring(g->tm_names[TM_NEWINDEX], "__newindex");
+#if HKSC_STRUCTURE_EXTENSION_ON
+  g->slotnames[SLOT_RESERVED_NONE] = NULL;
+  createfixedstring(g->slotnames[SLOT_RESERVED_META], "__structmeta");
+  createfixedstring(g->slotnames[SLOT_RESERVED_PROXY], "__structbacking");
+  createfixedstring(g->slotnames[SLOT_RESERVED_INTERNAL], "__testdummy");
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   luaX_init(H);
   luaS_fix(luaS_newliteral(H, MEMERRMSG));
   luaS_fix(luaS_newliteral(H, MAINCHUNKNAME));
-  (void)g;
   g->GCthreshold = 4*g->totalbytes;
 }
 
@@ -72,6 +88,9 @@ static void close_state (hksc_State *H) {
   lua_assert(g->rootgc == obj2gco(H));
   lua_assert(g->strt.nuse == 0);
   luaM_freearray(H, G(H)->strt.hash, G(H)->strt.size, TString *);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  luaM_freearray(H, g->protolist.list, g->protolist.size, StructProto *);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   luaZ_freebuffer(H, &g->buff);
   lua_assert(g->totalbytes == sizeof(LG));
   (*g->frealloc)(g->ud, fromstate(H), state_size(LG), 0);
@@ -127,6 +146,11 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->debugLoadStateOpen = NULL;
   g->debugLoadStateClose = NULL;
 #endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
+#if HKSC_STRUCTURE_EXTENSION_ON
+  g->protolist.list = NULL;
+  g->protolist.nuse = g->protolist.size = 0;
+  g->prototable = NULL;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   if (luaD_rawrunprotected(H, f_luaopen, NULL) != 0) {
     /* memory allocation error: free partial state */
     close_state(H);

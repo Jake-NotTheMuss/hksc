@@ -38,6 +38,13 @@
 
 #define checkreg(pt,reg)  check((reg) < (pt)->maxstacksize)
 
+#define checktype(type)  check((type) >= LUA_TNIL && (type) <= LUA_TSTRUCT)
+
+/* check TYPE is a builtin type (excludes LUA_TSTRUCT) */
+#define checktypeb(type)  check((type) >= LUA_TNIL && (type) < LUA_TSTRUCT)
+
+#define checkslotposition(pos)  check((pos) >= 0 && (pos) < 256)
+
 
 
 static int precheck (const Proto *pt) {
@@ -238,6 +245,65 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         checkreg(pt, a+b-1);
         break;
       }
+#if HKSC_STRUCTURE_EXTENSION_ON
+      /* NOTE: certain codes are checked when serializing structures;
+         - OP_NEWSTRUCT is checked
+         - OP_CHECKTYPES and OP_CHECKTYPE_D are checked
+         - OP_SETSLOTS only needs args checked
+         - OP_SETSLOTMT only needs args and tag-chain codes checked */
+      case OP_CHECKTYPE: {
+        checktypeb(b);
+        break;
+      }
+      case OP_SETSLOT: {
+        check(pc+1 < pt->sizecode);  /* need data code */
+        check(GET_OPCODE(pt->code[pc+1]) == OP_DATA)
+        checktypeb(GETARG_Bx(pt->code[pc+1]));
+        /* fallthrough */
+      }
+      case OP_SETSLOTI:
+      case OP_SETSLOTS: {
+        checkslotposition(b);
+        break;
+      }
+      case OP_SETSLOTN: {
+        checkslotposition(c);
+        break;
+      }
+      case OP_GETSLOT:
+      case OP_GETSLOT_D: {
+        checkslotposition(c);
+        break;
+      }
+      case OP_SELFSLOT: {
+        checkslotposition(c);
+        checkreg(pt, a+1);
+        if (reg == a+1) last = pc;
+        break;
+      }
+      case OP_SETSLOTMT: {
+        checktype(GET_SLOTMT_TYPE(i));
+        /* fallthrougn */
+      }
+      case OP_GETSLOTMT:
+      case OP_SELFSLOTMT: {
+        int ntag = (op == OP_SETSLOTMT) ? GET_SLOTMT_TAGCHAIN(i) : c;
+        int extra = op == OP_SETSLOTMT && GET_SLOTMT_TYPE(i) == LUA_TSTRUCT;
+        int n;
+        check(pc+extra+1+ntag < pt->sizecode);
+        for (n = 0; n <= ntag; n++) {
+          Instruction data = pt->code[pc+extra+n+1];
+          check(GET_OPCODE(data) == OP_DATA);
+          checkslotposition(GETARG_A(data));
+          checkslotposition(GETARG_Bx(data));
+        }
+        if (op == OP_SELFSLOTMT) {
+          checkreg(pt, a+1);
+          if (reg == a+1) last = pc;
+        }
+        break;
+      }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
       default: break;
     }
   }

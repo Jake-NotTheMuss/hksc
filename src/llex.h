@@ -42,6 +42,9 @@ union max_token_length {
 
 /* array with token `names' */
 LUAI_DATA const char *const luaX_tokens [];
+LUAI_DATA const char *const luaX_typenames [];
+
+#define luaX_typename(t)  luaX_typenames[(t)+2]
 
 
 typedef union {
@@ -75,7 +78,28 @@ typedef struct LexState {
   Mbuffer *buff;  /* buffer for tokens */
   TString *source;  /* current source name */
   char decpoint;  /* locale decimal point */
+#if HKSC_STRUCTURE_EXTENSION_ON
+  struct {
+    StructProto p;
+    StructSlot s[MAX_STRUCT_SLOTS];
+  } current_proto;
+  StructProto *cons_proto;  /* structure in the current HMAKE expression */
+#endif
 } LexState;
+
+
+#ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
+/*
+** this is for matching Havok Script error messages which have unbalanced
+** quotations, such as "error: '%s does not match any builtin type"; this result
+** can be created by writing "error: " LUA_QL_U("%s") " does not" ...
+*/
+#define LUA_QL_U(s)  "'" s
+#define LUA_QS_U  "'%s"
+#else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
+#define LUA_QL_U(x)  LUA_QL(x)
+#define LUA_QS_U  LUA_QS
+#endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 
 
 LUAI_FUNC void luaX_init (hksc_State *H);
@@ -87,6 +111,7 @@ LUAI_FUNC void luaX_lookahead (LexState *ls);
 LUAI_FUNC void luaX_readfirsttoken (LexState *ls);
 LUAI_FUNC void luaX_lexerror (LexState *ls, const char *msg, int token);
 LUAI_FUNC void luaX_syntaxerror (LexState *ls, const char *s);
+#define luaX_semerror  luaX_inputerror
 LUAI_FUNC void luaX_inputerror (LexState *ls, const char *s);
 LUAI_FUNC const char *luaX_token2str (LexState *ls, int token);
 

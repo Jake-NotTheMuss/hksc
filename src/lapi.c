@@ -349,7 +349,7 @@ LUA_API void lua_print (hksc_State *H, int full) {
   api_check(H, H->last_result != NULL);
   luaC_checkGC(H);
   f = H->last_result;
-  luaU_print(f, full);
+  luaU_print(H, f, full);
   lua_unlock(H);
 }
 

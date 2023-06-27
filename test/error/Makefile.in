@@ -25,7 +25,11 @@ OTHER_TESTS=badassign.test badbreak.test badlhs.test earlybreak.test  \
 	earlyreturn.test literaloverflow.test lud.test utf8_identifier.test
 # error checks for when structures are enabled/disabled
 NOHSTRUCTURE_TESTS=hmake.test hstructure.test typedparam.test typedvar.test
-YESHSTRUCTURE_TESTS=
+YESHSTRUCTURE_TESTS=s_badmeta.test s_badmetatype.test s_badproxy.test  \
+	s_cons_array.test s_cons_meta.test s_dupmeta.test s_dupslot.test  \
+	s_param_type.test s_reserved_slot.test s_slot.test s_slot_type.test  \
+	s_slot_ui64.test s_slotlimit.test s_struct_type.test s_structlimit.test  \
+	s_unknownstruct.test s_unknowntype.test s_var_type.test
 
 NOUI64_TESTS=
 YESUI64_TESTS=ui64.test
@@ -33,7 +37,7 @@ YESUI64_TESTS=ui64.test
 STANDARD_TESTS= $(OTHER_TESTS) $(BOM_TESTS)
 
 ALL_ERROR_TESTS=$(STANDARD_TESTS) $(YESHSTRUCTURE_TESTS)  \
-	$(NOHSTRUCTURE_TESTS) $(YESUI64_TESTS) $(NOUI64_TESTS)
+	$(@WITH_STRUCTURES@HSTRUCTURE_TESTS) $(YESUI64_TESTS) $(NOUI64_TESTS)
 
 # HSTRUCTURE_ERROR_CHECK=@HSTRUCTURE_ERROR_CHECK@
 

@@ -90,6 +90,24 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
   return newlstr(H, str, l, h);  /* not found */
 }
 
+
+Udata *luaS_newudata (hksc_State *H, size_t s, Table *e) {
+  Udata *u;
+  if (s > MAX_SIZET - sizeof(Udata))
+    luaM_toobig(H);
+  u = cast(Udata *, luaM_malloc(H, s + sizeof(Udata)));
+  u->uv.marked = bitmask(TEMPBIT);
+  u->uv.tt = LUA_TUSERDATA;
+  u->uv.len = s;
+  u->uv.metatable = NULL;
+  u->uv.env = e;
+  /* chain it on udata list (after main thread) */
+  u->uv.next = G(H)->mainthread->next;
+  G(H)->mainthread->next = obj2gco(u);
+  return u;
+}
+
+
 /*
 ** Function name hashes (Cod extension)
 */

@@ -26,6 +26,21 @@ typedef struct stringtable {
 } stringtable;
 
 
+#define TM_INDEX  0
+#define TM_NEWINDEX  1
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+#define MIN_PROTO_LIST_SIZE  16
+
+
+typedef struct StructProtoList {
+  StructProto **list;
+  short nuse;  /* number of defined structure prototypes */
+  short size;
+} StructProtoList;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 /*
 ** `global state', shared by all threads of this state
 */
@@ -38,6 +53,10 @@ typedef struct global_State {
 #endif /* HKSC_MULTIPLAT */
   hksc_CompilerSettings settings; /* compiler/decompiler settings */
   stringtable strt;  /* hash table for strings */
+#if HKSC_STRUCTURE_EXTENSION_ON
+  StructProtoList protolist;  /* list of defined structure prototypes */
+  Table *prototable;  /* hashtable for searching structure prototypes by name */
+#endif
   lua_Alloc frealloc;  /* function to reallocate memory */
   void *ud;         /* auxiliary data to `frealloc' */
   lu_byte currentwhite;
@@ -56,6 +75,14 @@ typedef struct global_State {
 #endif /* LUA_CODT6 */
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
+  /* only `__index' and `__newindex' are needed by the compiler */
+  TString *tm_names[2];
+  /* cached type names used by the compiler */
+  TString *typenames[LUA_NUM_TYPE_OBJECTS+1];
+#if HKSC_STRUCTURE_EXTENSION_ON
+  /* cached reserved structure slot names */
+  TString *slotnames[NUM_SLOTS_RESERVED+1];
+#endif
 } global_State;
 
 /*
@@ -111,6 +138,7 @@ union GCObject {
 #ifdef HKSC_DECOMPILER
   struct Analyzer a;
 #endif /* HKSC_DECOMPILER */
+  struct TypeAnalyzer ta;
   struct UpVal uv;
   struct hksc_State th;  /* thread */
 };
@@ -127,6 +155,7 @@ union GCObject {
 #ifdef HKSC_DECOMPILER
 #define gco2a(o)	check_exp((o)->gch.tt == LUA_TANALYZER, &((o)->a))
 #endif /* HKSC_DECOMPILER */
+#define gco2ta(o)  check_exp((o)->gch.tt == LUA_TTYPEANALYZER, &((o)->ta))
 #define gco2uv(o)	check_exp((o)->gch.tt == LUA_TUPVAL, &((o)->uv))
 #define ngcotouv(o) \
 	check_exp((o) == NULL || (o)->gch.tt == LUA_TUPVAL, &((o)->uv))

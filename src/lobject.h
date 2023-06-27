@@ -29,6 +29,7 @@
 #define LUA_TUPVAL  (LAST_TAG+2)
 #define LUA_TDEADKEY  (LAST_TAG+3)
 #define LUA_TANALYZER  (LAST_TAG+4)
+#define LUA_TTYPEANALYZER  (LAST_TAG+5)
 
 
 /*
@@ -172,6 +173,10 @@ typedef struct lua_TValue {
   { const TValue *o2=(obj2); TValue *o1=(obj1); \
     o1->value = o2->value; o1->tt=o2->tt; }
 
+
+/* convert an integral type to and from a pointer */
+#define i2pvalue(i,t)  cast(void *, cast(size_t, cast(unsigned t, i)))
+#define pvalue2i(p,t)  cast(t, cast(size_t, p))
 
 /*
 ** different types of sets, according to destination
@@ -330,6 +335,104 @@ typedef struct Analyzer {
 #endif /* HKSC_DECOMPILER */
 
 
+struct StructProto;
+
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+
+/*
+** Structure Prototypes
+*/
+typedef struct StructProto {
+  size_t nslots;  /* number of slots in this structure definition */
+  lu_byte hasmeta;  /* true if a meta slot has been defined */
+  lu_byte hasproxy;  /* true if a proxy table slot has been defined */
+  short id;  /* unique structure id */
+  TString *name;  /* structure name */
+} StructProto;
+
+
+/* the maximum valid struct prototype id */
+#define LAST_STRUCT_ID ((LUAI_MAXSTRUCTS)-1)
+
+
+#define getproto(u)  cast(StructProto *, (u)+1)
+#define getprotoslots(p)  cast(StructSlot *, (p)+1)
+#define sizestruct(n) (sizeof(StructProto) + (n) * sizeof(StructSlot))
+
+#define id2pvalue(id)  i2pvalue(id, short)
+#define pvalue2id(o)  pvalue2i(pvalue(o), short)
+
+/*
+** reserved slot types
+*/
+#define SLOT_RESERVED_NONE  0  /* not a reserved slot */
+#define SLOT_RESERVED_META  1  /* meta slot */
+#define SLOT_RESERVED_PROXY  2  /* proxy table slot */
+#define SLOT_RESERVED_INTERNAL  3  /* struct prototype slot */
+#define NUM_SLOTS_RESERVED  3
+
+#define SLOT_INDEX_INTERNAL  0
+#define SLOT_INDEX_META  1
+#define SLOT_INDEX_PROXY  2
+
+#define getmetaslot(p)  getprotoslots(p)+SLOT_INDEX_META
+#define getproxytableslot(p)  getprotoslots(p)+SLOT_INDEX_PROXY
+
+/* maximum number of slot definitions allowed per structure prototype */
+#define MAX_STRUCT_SLOTS  224
+
+/*
+** Structure Slot Descriptors
+*/
+typedef struct StructSlot {
+  TString *name;  /* slot name */
+  short structid;  /* structure id if this slot is a structure type */
+  lu_byte typeid;  /* Lua type id of this slot */
+  lu_byte reserved;  /* if a reserved slot, a non-zero id, otherwise, zero */
+  lu_byte index;  /* slot index in its parent structure prototype */
+  lu_byte position;  /* slot position according to struct layout */
+} StructSlot;
+
+
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
+#define typeinfoinit(t,p,s) {(p), (t), (s)}
+
+typedef struct TypeInfo {
+  struct StructProto *proto;
+  int type;
+  lu_byte is_static;
+} TypeInfo;
+
+
+typedef struct ExpListEntry {
+  TypeInfo *types;
+  TypeInfo *constraints;
+  lu_byte hasconstraints;
+  int sizetypes;
+  int sizeconstraints;
+  int ntypes;
+  int nconstraints;
+} ExpListEntry;
+
+
+/*
+** allocated data used by a compiler per-function
+*/
+typedef struct TypeAnalyzer {
+  CommonHeader;
+  TypeInfo *locvarstyping;  /* local variables typing */
+  TypeInfo *lhstyping;  /* LHS assignment typing */
+  int sizelocvarstyping;
+  int sizelhstyping;
+  ExpListEntry *explists;  /* expression list stack */
+  int sizeexplists;
+  int nexplists;
+} TypeAnalyzer;
+
+
 
 /*
 ** Upvalues
@@ -388,6 +491,10 @@ typedef union TKey {
   struct {
     TValuefields;
     struct Node *next;  /* for chaining */
+#ifdef HKSC_FROMSOFT_TTABLES
+    /* linked list of new key insertions */
+    struct Node *previnserted, *nextinserted;
+#endif
   } nk;
   TValue tvk;
 } TKey;
@@ -407,6 +514,9 @@ typedef struct Table {
   TValue *array;  /* array part */
   Node *node;
   Node *lastfree;  /* any free position is before this position */
+#ifdef HKSC_FROMSOFT_TTABLES
+  Node *lastinserted;  /* the last inerted new key */
+#endif
   GCObject *gclist;
   int sizearray;  /* size of `array' array */
 } Table;

@@ -15,7 +15,11 @@
 #include "hksclua.h"
 
 #include "ldo.h"
+#include "lgc.h"
+#include "lopcodes.h"
 #include "lobject.h"
+#include "lstruct.h"
+#include "ltable.h"
 #include "lundump.h"
 
 
@@ -51,6 +55,10 @@ struct DumpState {
   DumpTargetInt dumpint;
   DumpTargetSize dumpsize;
 #endif /* HKSC_MULTIPLAT */
+#if HKSC_STRUCTURE_EXTENSION_ON
+  Table *protos;
+  lu_byte seenprotos;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 };
 
 #define DumpMem(b,n,size,D)	DumpBlock(b,(n)*(size),D)
@@ -423,9 +431,51 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 }
 
 
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void GetStructuresReferenced(const Proto *f, DumpState *D)
+{
+  hksc_State *H = D->H;
+  Table *t = D->protos;
+  TValue key, *val;
+  int i;
+  lua_assert(t != NULL);
+  for (i = 0; i < f->sizecode; i++) {
+    Instruction insn = f->code[i];
+    switch (GET_OPCODE(insn)) {
+      case OP_SETSLOTMT:
+        if (GET_SLOTMT_TYPE(insn) != LUA_TSTRUCT)
+          break;
+        /* fallthrough */
+      case OP_NEWSTRUCT:
+      case OP_SETSLOTS:
+        insn = f->code[++i];  /* the next code has the struct id */
+        lua_assert(GET_OPCODE(insn) == OP_DATA);
+        /* fallthrough */
+      case OP_CHECKTYPES:
+      case OP_CHECKTYPE_D: {
+        int id = GETARG_Bx(insn);
+        if (id != -1) {
+          setpvalue(&key, cast(void *, cast(size_t, id)));
+          val = luaH_set(H, t, &key);
+          if (!ttisboolean(val))
+            setbvalue(val, 1);
+          D->seenprotos = 1;
+        }
+        break;
+      }
+      default: break;
+    }
+  }
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 static void DumpFunction(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  GetStructuresReferenced(f, D);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   if (needfuncinfo(D)) {
     DumpInt(f->nups,D); /* number of upvalues */
     DumpInt(f->numparams,D); /* number of parameters */
@@ -457,6 +507,69 @@ static void DumpHeader(DumpState *D)
   }
 }
 
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void DumpProto(DumpState *D, Table *t, short id)
+{
+  size_t i;
+  TValue key, *val;
+  hksc_State *H = D->H;
+  StructProto *proto;
+  setpvalue(&key, id2pvalue(id));
+  val = luaH_set(H, t, &key);
+  if (ttisboolean(val))  /* already dumped this structure */
+    return;
+  setbvalue(val, 1);
+  proto = luaR_getstructbyid(H, id);
+  lua_assert(proto != NULL);
+  DumpString(proto->name, D);
+  DumpSize(cast(size_t, cast(unsigned short, proto->id)), D);
+  DumpInt(cast_int(proto->hasmeta), D);
+  DumpInt(cast_int(proto->hasproxy), D);
+  DumpSize(proto->nslots, D);
+  /* dump slots */
+  for (i = 0; i < proto->nslots; i++) {
+    StructSlot *slot = getprotoslots(proto)+i;
+    DumpString(slot->name, D);
+    DumpSize(cast(size_t, cast(unsigned short, slot->structid)), D);
+    DumpInt(cast_int(slot->typeid), D);
+    DumpInt(cast_int(slot->reserved), D);
+    DumpSize(cast(size_t, slot->position), D);
+  }
+  /* dump referenced prototypes */
+  for (i = 0; i < proto->nslots; i++) {
+    StructSlot *slot = getprotoslots(proto)+i;
+    if (slot->typeid == LUA_TSTRUCT)
+      DumpProto(D, t, slot->structid);
+  }
+}
+
+
+static void DumpStructures(DumpState *D)
+{
+  hksc_State *H = D->H;
+  Table *t = D->protos;
+  DumpInt(1,D);
+  if (D->seenprotos) {
+    Table *dumped_protos = luaH_new(H, 0, sizenode(t));
+    TValue s[2];  /* a stack for luaH_next */
+    StkId key = &s[0]; StkId val = &s[1];
+    setbvalue(key, 1);
+    /* insert [true] = dumped_protos */
+    val = luaH_set(H, t, key);
+    sethvalue(val, dumped_protos);
+    setnilvalue(key);
+    while (luaH_next(H, t, key)) {
+      if (ttislightuserdata(key))
+        DumpProto(D, dumped_protos, pvalue2id(key));
+    }
+    killtemp(obj2gco(dumped_protos));
+  }
+  DumpSize(0,D);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 /*
 ** Execute a protected bytecode dump.
 */
@@ -469,8 +582,16 @@ static void f_dump (hksc_State *H, void *ud) {
   struct SDump *sd = (struct SDump *)ud;
   DumpState *D = sd->D;
   const Proto *f = sd->f;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  D->protos = luaH_new(H, 0, 0);
+  D->seenprotos = 0;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   DumpHeader(D);
   DumpFunction(f,NULL,D);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  DumpStructures(D);
+  killtemp(obj2gco(D->protos));
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   UNUSED(H);
 }
 

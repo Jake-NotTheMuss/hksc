@@ -19,8 +19,11 @@
 #include "lfunc.h"
 #include "lmem.h"
 #include "lobject.h"
+#include "lopcodes.h"
 #include "lstate.h"
 #include "lstring.h"
+#include "lstruct.h"
+#include "ltable.h"
 #include "lundump.h"
 #include "lzio.h"
 
@@ -44,6 +47,9 @@ struct LoadState {
   LoadTargetInt loadint;
   LoadTargetSize loadsize;
 #endif /* HKSC_MULTIPLAT */
+#if HKSC_STRUCTURE_EXTENSION_ON
+  Table *protos;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 };
 
 #define BADHEADERMSG "Header mismatch when loading bytecode."
@@ -520,6 +526,96 @@ badheader:
 }
 
 
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void UpdateStructCodes(LoadState *S, Proto *f)
+{
+  Table *t = S->protos;
+  TValue key;
+  const TValue *val;
+  int i;
+  for (i = 0; i < f->sizecode; i++) {
+    Instruction insn = f->code[i];
+    switch (GET_OPCODE(insn)) {
+      case OP_SETSLOTMT:
+        if (GET_SLOTMT_TYPE(insn) != LUA_TSTRUCT)
+          break;
+        /* fallthrough */
+      case OP_NEWSTRUCT:
+      case OP_SETSLOTS:
+        if (i+1 >= f->sizecode)
+          luaG_runerror(S->H, "Malformed bytecode stream");
+        insn = f->code[++i];
+        if (GET_OPCODE(insn) != OP_DATA)
+          luaG_runerror(S->H, "Malformed bytecode stream");
+        /* fallthrough */
+      case OP_CHECKTYPES:
+      case OP_CHECKTYPE_D: {
+        int oldid = GETARG_Bx(insn);
+        int newid;
+        setpvalue(&key, i2pvalue(oldid, int));
+        val = luaH_get(t, &key);
+        if (!ttislightuserdata(val)) {
+          error(S, "Malformed opcode stream: not all referenced prototypes "
+                "serialized.");
+          return;
+        }
+        newid = pvalue2i(pvalue(val), int);
+        SETARG_Bx(f->code[i], newid);
+        break;
+      }
+      default: break;
+    }
+  }
+  for (i=0; i<f->sizep; i++) UpdateStructCodes(S,f->p[i]);
+}
+
+static void LoadStructures(LoadState *S)
+{
+  TString *name;
+  if (LoadInt(S) != 1) {
+    luaG_runerror(S->H, "Header mismatch when loading prototype declarations");
+    return;
+  }
+  /* load all structure prototypes */
+  while ((name = LoadString(S)) != NULL) {
+    size_t i;
+    Udata *pdata;  /* prototype userdata object */
+    StructProto *p;
+    short id = cast(short, LoadSize(S));
+    lu_byte hasmeta = cast_byte(LoadInt(S));
+    lu_byte hasproxy = cast_byte(LoadInt(S));
+    size_t nslots = LoadSize(S);
+    pdata = luaS_newproto(S->H, nslots);
+    p = getproto(pdata);
+    p->name = name;
+    p->id = id;
+    p->hasmeta = hasmeta;
+    p->hasproxy = hasproxy;
+    p->nslots = nslots;
+    /* load structure slots */
+    for (i = 0; i < nslots; i++) {
+      StructSlot *slot = getprotoslots(p)+i;
+      slot->name = LoadString(S);
+      slot->structid = cast(short, LoadSize(S));
+      slot->typeid = cast_byte(LoadInt(S));
+      slot->reserved = cast_byte(LoadInt(S));
+      slot->index = i;
+      slot->position = cast_byte(LoadSize(S));
+    }
+    {  /* add it to the table */
+      TValue key, *val;
+      setpvalue(&key, id2pvalue(id));
+      val = luaH_set(S->H, S->protos, &key);
+      setuvalue(val, pdata);
+    }
+  }
+  if (!luaR_checkconflicts(S->H, S->protos))
+    luaD_throw(S->H, LUA_ERRRUN);
+  luaR_mergeprototypes(S->H, S->protos);
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
 /*
 ** Execute a protected undump.
 */
@@ -534,6 +630,11 @@ static void f_undump (hksc_State *H, void *ud) {
   u->f = LoadFunction(u->S,luaS_newliteral(H,"=?"),u->debugS);
   if (!u->f->name)
     u->f->name = luaS_newliteral(H, MAINCHUNKNAME);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  LoadStructures(u->S);
+  UpdateStructCodes(u->S, u->f);
+  killtemp(obj2gco(u->S->protos));
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 }
 
 /*
@@ -561,6 +662,9 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   S.b=buff;
   S.pos=0;
   S.desc="precompiled chunk";
+#if HKSC_STRUCTURE_EXTENSION_ON
+  S.protos = luaH_new(H, 0, 0);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   /* set initial target values, any corrections are made in `LoadHeader' */
   luaU_target_info(H,&S.target);
   /* need some info in the header before initializing the COD debug reader */

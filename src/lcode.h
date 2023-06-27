@@ -53,6 +53,22 @@ enum DELETE_KIND {
 };
 #endif /* LUA_CODIW6 */
 
+
+/*
+** kinds of slot assignments in a VSLOT store opeation; these kinds determine
+** what code is generated for the store
+*/
+typedef enum SlotAssignmentKind {
+  ASSIGN_SLOT_NIL,  /* a `nil' slot assignment */
+  ASSIGN_SLOT_STATIC,  /* a statically typed slot assignment */
+  ASSIGN_SLOT_DYNAMIC,  /* a slot assignment that is type-checked at runtime */
+  ASSIGN_SLOT_GENERIC,  /* an assignment to an index that may resolve to a
+                           structure slot at runtime */
+  ASSIGN_SLOT_PROXYTABLE  /* an assignment to the backing table (for indices
+                             which cannot resolve to slots) */
+} SlotAssignmentType;
+
+
 #define getcode(fs,e)	((fs)->f->code[(e)->u.s.info])
 
 #define luaK_codeAsBx(fs,o,A,sBx)	luaK_codeABx(fs,o,A,(sBx)+MAXARG_sBx)
@@ -76,6 +92,16 @@ LUAI_FUNC int luaK_exp2RK (FuncState *fs, expdesc *e);
 LUAI_FUNC void luaK_self (FuncState *fs, expdesc *e, expdesc *key);
 LUAI_FUNC void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k);
 LUAI_FUNC void luaK_goiftrue (FuncState *fs, expdesc *e);
+#if HKSC_STRUCTURE_EXTENSION_ON
+LUAI_FUNC void luaK_setslot (FuncState *fs, StructSlot *slot, const TypeInfo *t,
+                             int reg, int key, int val, int kind);
+LUAI_FUNC int luaK_checkslotassignment (FuncState *fs, TString *name,
+                                        expdesc *e, const TypeInfo *t);
+LUAI_FUNC void luaK_getslottypeinfo (FuncState *fs, StructSlot *slot,
+                                     TypeInfo *t);
+LUAI_FUNC void luaK_checktype (FuncState *fs, TypeInfo *t, int reg);
+LUAI_FUNC void luaK_applytypecontraint (FuncState *fs, TypeInfo *t, expdesc *e);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
 LUAI_FUNC void luaK_storevar (FuncState *fs, expdesc *var, expdesc *e);
 #ifdef LUA_CODIW6
 LUAI_FUNC void luaK_delete (FuncState *fs, expdesc *var);

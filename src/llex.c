@@ -43,6 +43,13 @@ const char *const luaX_tokens [] = {
 #undef DEFTOK
 
 
+const char *const luaX_typenames [] = {
+  "object", "no value", "nil", "boolean", "luserdata", "number", "string",
+  "table", "invalid function", "userdata", "thread", "ifunction", "cfunction",
+  "ui64", "struct", NULL
+};
+
+
 #define save_and_next(ls) (save(ls, ls->current), next(ls))
 
 
@@ -66,6 +73,10 @@ void luaX_init (hksc_State *H) {
     luaS_fix(ts);  /* reserved words are never collected */
     lua_assert(strlen(luaX_tokens[i])+1 <= TOKEN_LEN);
     ts->tsv.reserved = cast_byte(i+1);  /* reserved word */
+  }
+  for (i=0; i<LUA_NUM_TYPE_OBJECTS+1; i++) {
+    G(H)->typenames[i] = luaS_new(H, luaX_typenames[i]);
+    luaS_fix(G(H)->typenames[i]);
   }
 }
 
@@ -202,6 +213,9 @@ void luaX_setinput (hksc_State *H, LexState *ls, ZIO *z, TString *source) {
   ls->lastline = 1;
   ls->source = source;
   ls->textmode = ASCII;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  ls->cons_proto = NULL;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   luaZ_resizebuffer(ls->H, ls->buff, LUA_MINBUFFER);  /* initialize buffer */
   next(ls);  /* read first char */
 }

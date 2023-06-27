@@ -133,6 +133,11 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 #define NO_REG    MAXARG_A
 
 
+#define SLOTMT_POS_TYPE (SIZE_B - 4)  /* need 4 bits for Lua types */
+#define SLOTMT_TAG_CHAIN_MASK ((1 << SLOTMT_POS_TYPE) - 1)
+#define GET_SLOTMT_TYPE(i) ((GETARG_B(i) >> SLOTMT_POS_TYPE) & 15)
+#define GET_SLOTMT_TAGCHAIN(i) (GETARG_B(i) & SLOTMT_TAG_CHAIN_MASK)
+
 #define DEFCODE(name,m,t,a,b,c,mr1,ur1,vr1) OP_##name,
 typedef enum {
 #include "lopcodes.def"

@@ -18,6 +18,7 @@
 #include "lgc.h"
 #include "lmem.h"
 #include "lobject.h"
+#include "lparser.h"
 #include "lstate.h"
 #include "lstring.h"
 #include "ltable.h"
@@ -32,6 +33,7 @@ static void freeobj (hksc_State *H, GCObject *o) {
 #ifdef HKSC_DECOMPILER
     case LUA_TANALYZER: luaA_freeanalyzer(H, gco2a(o)); break;
 #endif /* HKSC_DECOMPILER */
+    case LUA_TTYPEANALYZER: luaY_freetypeanalyzer(H, gco2ta(o)); break;
     case LUA_TPROTO: luaF_freeproto(H, gco2p(o)); break;
     case LUA_TTABLE: luaH_free(H, gco2h(o)); break;
     case LUA_TTHREAD: {
@@ -41,6 +43,10 @@ static void freeobj (hksc_State *H, GCObject *o) {
     case LUA_TSTRING: {
       G(H)->strt.nuse--;
       luaM_freemem(H, o, sizestring(gco2ts(o)));
+      break;
+    }
+    case LUA_TUSERDATA: {
+      luaM_freemem(H, o, sizeudata(gco2u(o)));
       break;
     }
     default: lua_assert(0);
