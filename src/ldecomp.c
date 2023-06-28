@@ -2984,7 +2984,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               /* the final jump in a while-loop will have its line fixed to the
                  start-line of the loop; if the line for this jump is greater
                  than the start-line, this cannot be a while-loop */
-              if (getline(fs->f, pc) > getline(fs->f, target))
+              if (fs->D->usedebuginfo &&
+                  getline(fs->f, pc) > getline(fs->f, target))
                 goto markrepeatstat;
               encountered1("while", target);
               set_ins_property(fs, target, INS_WHILESTAT);
