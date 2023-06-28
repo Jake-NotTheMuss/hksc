@@ -3416,8 +3416,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           closedloopreg = a;
           lua_assert(s.branch == NULL);
           lua_assert(s.block == NULL);
-          s.block = pushblock1(fs, &s, pc, a, 1);
-          s.block->u.bl.loop = 1;
+          pushblock1(fs, &s, pc, a, 1)->u.bl.loop = 1;
           break;
         }
         if (s.branch != NULL && s.branch->u.br.withblock &&
