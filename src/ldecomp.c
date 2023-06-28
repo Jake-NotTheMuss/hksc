@@ -3087,25 +3087,19 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               BlockNode *lastsibling;
               BlockNode *newblock;
               D(lprintf("fixing erroneous while-true-loop detection\n"));
-              finalizependingblocks1(fs, &s, &nextsibling);
-              /*if (block != NULL) {
-                D(lprintf("returning from block context before correcting "
-                          "while-loop\n"));
-                block->firstsibling = nextsibling;
-                block->correctingwhilepc = pc;
-                block->correctingwhile = 1;
-                return;
+              /* this loop is not actually a loop, so if it was though to have,
+                 upvalues, there is actually a do-block that needs to be made
+                 visible */
+              if (s.upval) {
+                /* get the first block state that was pushed, as that is the one
+                   which corresponds to the loop block in the case of the loop
+                   having upvalues */
+                BlockState *bl = &fs->a->pendingblocks.stk[s.stkbase];
+                lua_assert(bl->u.bl.loop);
+                bl->u.bl.loop = 0;  /* make it a separate block */
+                s.upval = 0;
               }
-              if (branch != NULL) {
-                D(lprintf("returning from branch context before correcting "
-                          "while-loop\n"));
-                branch->firstblock = nextsibling;
-                if (branch->potentialblock != NULL)
-                  branch->potentialblock->firstsibling = nextsibling;
-                branch->correctingwhilepc = pc;
-                branch->correctingwhile = 1;
-                return;
-              }*/
+              finalizependingblocks1(fs, &s, &nextsibling);
               lastsibling = nextsibling;
               D(lprintf("the while-loop thought to end at (%i) actually ends "
                         "at (%i) and is not nested\n", endpc, endpc+1));
@@ -3145,85 +3139,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                         fs->a->bllist.first));
               ca->testset.endpc = ca->testset.reg = -1;
               ca->curr = outer;
-              /* check if there is OP_CLOSE before the `if-false' starts; this
-                 would have been skipped over earlier due to being followed by
-                 a jump, so it needs to handled now before returning -
-                 the following code is handled here:
-                    while a do
-                        local a = 12;
-                        do
-                            local b = 34;
-                            local function c()
-                                b = b + 1;
-                            end
-                        end
-                        if false then
-                        end
-                    end
-                 */
-              if (newblock->type == BL_IF &&
-                  (lastsibling == NULL || lastsibling->endpc < endpc-1) &&
-                  GET_OPCODE(code[endpc-1]) == OP_CLOSE) {
-                int closereg = GETARG_A(code[endpc-1]);
-                int blockpc;
-                int nextblockchildend;
-                int wasbetweenchildren;
-                BlockNode *doblock;
-                BlockNode *blockchild = nextsibling;
-                BlockNode *blockprevsibling = NULL;
-                nextblockchildend = blockchild ? blockchild->endpc : -1;
-                CHECK(fs, closereg >= 0 && closereg < fs->f->maxstacksize,
-                      "invalid register operand in OP_CLOSE");
-                /* find the start of the block */
-                for (blockpc = pc; blockpc < endpc-1; blockpc++) {
-                  Instruction blockins = code[blockpc];
-                  OpCode blockop = GET_OPCODE(blockins);
-                  int blocka = GETARG_A(blockins);
-                  int blockb = GETARG_B(blockins);
-                  int blockc = GETARG_C(blockins);
-                  /* update previous sibling for the block */
-                  if (nextblockchildend+1 == blockpc) {
-                    lua_assert(blockchild != NULL);
-                    blockprevsibling = blockchild;
-                    blockchild = blockchild->nextsibling;
-                    nextblockchildend = blockchild ? blockchild->endpc : -1;
-                  }
-                  if (blocka == closereg &&
-                      beginseval(blockop, blocka, blockb, blockc, 0)) {
-                    break;
-                  }
-                }
-                /* if the start wasn't found, start the block at PC */
-                if (blockpc == endpc-1)
-                  blockpc = pc;
-                /* make sure the block doesn't start in the middle of a child */
-                if (blockchild != NULL && blockpc > blockchild->startpc) {
-                  blockpc = blockchild->startpc;
-                  wasbetweenchildren = 0;
-                }
-                else
-                  wasbetweenchildren = 1;
-                /* `addblnode1' will put this block first in the chain which is
-                   ok because it is the first child of the parent */
-                if (blockprevsibling == NULL) {
-                  doblock = addblnode1(fs, blockpc, endpc-1, BL_DO);
-                }
-                else {
-                  /* add the block into the chain explicitly to preserve the
-                     first child of the parent */
-                  BlockNode *nextinchain = blockprevsibling->next;
-                  doblock = newblnode(fs->H, blockpc, endpc-1, BL_DO);
-                  blockprevsibling->next = doblock;
-                  blockprevsibling->nextsibling = doblock;
-                  doblock->next = nextinchain;
-                }
-                if (wasbetweenchildren)
-                  doblock->nextsibling = blockchild;
-                else
-                  doblock->firstchild = blockchild;
-                set_ins_property(fs, blockpc, INS_DOSTAT);
-                set_ins_property(fs, endpc-1, INS_BLOCKEND);
-              }
               return;
             }
             else { /* jumping inside a branch-condition */
