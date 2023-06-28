@@ -128,7 +128,7 @@ $(HKSC_T): $(HKSC_O) $(STATICLIB)
 
 # standalone compiler/decompiler linked with shared library
 $(HKSC_SH): $(HKSC_O) $(SHAREDLIB)
-	$(CC) -o $@ $(MYLDFLAGS) $(HKSC_O) $(STATICLIB) $(LIBS) $(LINK_LIBHKSC)
+	$(CC) -o $@ $(MYLDFLAGS) $(HKSC_O) $(SHAREDLIB) $(LIBS) $(LINK_LIBHKSC)
 
 clean:
 	-$(RM) $(ALL_T) $(ALL_O) $(ALL_PIC_O) $(SHAREDLIB)

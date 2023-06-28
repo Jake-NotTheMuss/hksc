@@ -76,6 +76,7 @@ Advanced Options:
 Developer Options:
   --debug-pass=NUMBER      Debug decompiler pass NUMBER [1-2]
   --test-static            Only run the tests on the static binary
+  --test-both              Test statically linked and shared binaries
 EOF
 	exit $1
 }
@@ -83,7 +84,7 @@ EOF
 error()
 {
 	echo $0: error: $*
-	exit ${1-1}
+	exit 1
 }
 
 warn()
@@ -179,6 +180,7 @@ for opt; do
 		--no-testing | --not-testing) testing=0 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
 		--test-static) test_static=1;;
+		--test-both) test_static=0;;
 		*) echo "Unrecongnized option '$opt'"; exit 1;;
 	esac
 done
