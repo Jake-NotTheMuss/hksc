@@ -2739,7 +2739,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     BlockNode *futuresibling)
 {
   DecompState *D = fs->D;
-  struct stat1 outer;  /* the outer loop context, saved on the stack */
+  /* the outer loop context, saved on the stack */
+  struct stat1 outer = ca->curr;
   struct blockstates1 s;
   /* NEXTSIBLING is the next chronological block node that has been created */
   BlockNode *nextsibling = NULL;
@@ -2759,6 +2760,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
      returning */
   s.stkbase = fs->a->pendingblocks.used;
   s.upval = 0;
+  ca->curr.start = startpc; ca->curr.end = endpc; ca->curr.type = type;
   for (; ca->pc >= 0; ca->pc--) {
     struct LocVar *locvarhere;/* the first local vartable that starts at PC+1 */
     int nvars;  /* the number of variables that start at PC+1 */
