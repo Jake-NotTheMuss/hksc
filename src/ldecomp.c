@@ -2647,7 +2647,7 @@ static struct LocVar *updateactvar1(DFuncState *fs, int pc, int *nvars)
 ** return whether the line at PC was fixed to the start-line of a loop starting
 ** at TARGET
 */
-static int isjumpfixed(DFuncState *fs, int pc, int target, int defaultvalue)
+static int isjumplinefixed(DFuncState *fs, int pc, int target, int defaultvalue)
 {
   lua_assert(ispcvalid(fs, pc));
   lua_assert(ispcvalid(fs, target));
@@ -2958,7 +2958,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  pc that is past the end of the loop, which cannot happen unless
                  the next instruction after the end of the loop has a jump, but
                  that can be accounted for using instruction properties */
-              if (isjumpfixed(fs, pc, target, 1))
+              if (isjumplinefixed(fs, pc, target, 1))
                 goto markwhilestat;
               /* otherwise it is a branch with an optimized exit-jump */
               branchendpc = endpc-1;
