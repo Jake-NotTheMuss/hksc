@@ -205,7 +205,7 @@ static void print_config(void)
   fputs("  Multi-platform targeting   Disabled\n", stdout);
 #endif /* HKSC_MULTIPLAT */
   fputc('\n', stdout);
-  fputs("Call of Duty settings:\n", stdout);
+  fputs("Bytecode compatibility settings:\n", stdout);
 #ifdef LUA_CODT6
   fputs("  T6 extensions              Enabled\n", stdout);
 #else /* !LUA_CODT6 */
@@ -220,6 +220,11 @@ static void print_config(void)
   fputs("  IW6 extensions             Enabled\n", stdout);
 #else /* !LUA_CODIW6 */
   fputs("  IW6 extensions             Disabled\n", stdout);
+#endif /* LUA_CODIW6 */
+#ifdef HKSC_FROMSOFT_TTABLES
+  fputs("  FromSoftware hashtables    Enabled\n", stdout);
+#else /* !LUA_CODIW6 */
+  fputs("  FromSoftware hashtables    Disabled\n", stdout);
 #endif /* LUA_CODIW6 */
 }
 
