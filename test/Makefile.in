@@ -181,7 +181,7 @@ prepare: clean checkexpect
 
 checkexpect:
 	@if test ! -e expect.sum; then \
-		echo You need to generate expect.sum; \
+		echo 'You need to generate expect.sum (run make expectsum)'; \
 		exit 1; \
 	fi
 	@shasum -a1 -c expect.sum >/dev/null

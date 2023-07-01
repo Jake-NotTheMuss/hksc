@@ -288,7 +288,7 @@ esac
 
 # configure compatibility settings based on the build config type
 case $game in
-	t6|t7|none) ;;
+	t6|t7|none) HKSC_FROMSOFT_TTABLES=0 ;;
 	ds3|sekiro)
 		STRUCTURE_EXTENSION_ON=1
 		GETGLOBAL_MEMOIZATION=1
@@ -374,7 +374,7 @@ set10 lua_codt6 HKSC_GEN_DEBUG \
 # command for comparing profiling info
 # use diff for COD profile info because it is printed as text
 # otherwise use cmp to compare binary files
-set10 lua_codt6 HKSC_CMP_PROFILE "diff -u" "cmp -bl"
+set10 lua_codt6 HKSC_CMP_PROFILE "diff -u --strip-trailing-cr" "cmp -bl"
 HKSC_CMP_CODE="cmp -bl"
 HKSC_CMP_DEBUG="cmp -bl"
 set10 with_ui64 WITH_UI64_YESNO YES NO

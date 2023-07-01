@@ -85,7 +85,7 @@ yesui64: $(YESUI64_TESTS)
 	if $(HKSC) $(HKSCFLAGS) $$EXTRAFLAGS $(srcdir)/$*.lua >/dev/null 2>$@; \
 	then echo "$*.lua error check failed (no error was raised)"; exit 1; \
 	else \
-		if diff -u $< $@; then echo "$*.lua error check OK"; \
+		if diff -u --strip-trailing-cr $< $@; then echo "$*.lua error check OK"; \
 		else echo "$*.lua error check failed (output differs from expected)"; \
 			exit 1; \
 		fi; \
