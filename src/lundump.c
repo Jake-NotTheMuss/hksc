@@ -542,10 +542,10 @@ static void UpdateStructCodes(LoadState *S, Proto *f)
         /* fallthrough */
       case OP_NEWSTRUCT:
       case OP_SETSLOTS:
-        if (i+1 >= f->sizecode)
-          luaG_runerror(S->H, "Malformed bytecode stream");
-        insn = f->code[++i];
-        if (GET_OPCODE(insn) != OP_DATA)
+        /* check that there is at least 1 more instruction, and then check that
+           the next instruction is OP_DATA */
+        if (i+1 >= f->sizecode ||
+            (insn = f->code[++i], GET_OPCODE(insn) != OP_DATA))
           luaG_runerror(S->H, "Malformed bytecode stream");
         /* fallthrough */
       case OP_CHECKTYPES:
