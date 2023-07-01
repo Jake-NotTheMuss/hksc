@@ -281,7 +281,7 @@ static int doargs(int argc, char *argv[])
   int info=0;
   int a=0,b=0; /* uses of `-a' and `-b' */
   int explicit_dumping=0;
-  const char *opt_a, *opt_b;
+  const char *opt_a=NULL, *opt_b=NULL;
 #ifdef LUA_CODT6
   const char *opt_withdebug;
 #endif /* LUA_CODT6 */

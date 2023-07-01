@@ -117,7 +117,7 @@ static void DumpVector(const void *b, int n, size_t size, DumpState *D)
 
 static void DumpString(const TString *s, DumpState *D)
 {
-  if (s==NULL || getstr(s)==NULL)
+  if (s==NULL)
   {
     DumpSize(0,D);
   }

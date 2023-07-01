@@ -113,8 +113,8 @@ static lu_byte getslotsize(hksc_State *H) {
   size_t size;
   (void)H;
 #ifdef HKSC_MULTIPLAT
-  if (Settings(H).target_ws != HKSC_TARGET_WS_DEFAULT) {
-    int ws = Settings(H).target_ws;
+  if (G(H)->target_ws != HKSC_TARGET_WS_DEFAULT) {
+    int ws = G(H)->target_ws;
     size = ws == HKSC_TARGET_WS_16 ? 2 : ws == HKSC_TARGET_WS_32 ? 4 : 8;
   }
   else
@@ -208,7 +208,7 @@ int luaR_compareproto(StructProto *p1, StructSlot *s1, StructProto *p2,
       return 0;
     if (s1[i].index != s2[i].index)
       return 0;
-    if (s2[i].position != s2[i].position)
+    if (s1[i].position != s2[i].position)
       return 0;
   }
   return 1;
@@ -286,7 +286,7 @@ static int check_struct_conflict(hksc_State *H, Table *t, StructProto *v,
         loadedtype = getstr(p->name);
       }
       else if (loadedslot->typeid == LUA_TNIL)
-        vmtype = luaX_typename(LUA_TANY);
+        loadedtype = luaX_typename(LUA_TANY);
       else
         loadedtype = luaX_typename(loadedslot->typeid);
       luaD_setferror(H, "Conflict when loading structure prototype '%s': slot "

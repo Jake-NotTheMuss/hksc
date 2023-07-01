@@ -44,7 +44,7 @@ static hksc_State *lua_state = NULL;
 int islocked = 0;
 
 
-hksc_State *debug_newstate(hksc_StateSettings *settings)
+LUA_API hksc_State *debug_newstate(hksc_StateSettings *settings)
 {
   hksc_State *H;
   hksc_StateSettings default_settings;

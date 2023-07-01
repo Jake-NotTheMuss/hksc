@@ -1826,12 +1826,10 @@ static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {
     assignment(ls, &nv, nvars+1);
   }
   else {  /* assignment -> `=' explist1 */
-    ExpListEntry *l;
     int nexps;
     checknext(ls, '=');
     pushexplistentry(ls->fs);
     nexps = explist1(ls, &e);
-    l = gettopexplistentry(ls->fs);
     if (nexps != nvars) {
       int filledwithnil = adjust_assign(ls, nvars, nexps, &e);
       pushexptyping(ls->fs, &e);

@@ -135,7 +135,7 @@ GETGLOBAL_MEMOIZATION=0
 
 HKSC_FROMSOFT_TTABLES=0
 
-test -e "$config_file" && . "$config_file"
+test -e "$config_file" && . ./"$config_file"
 
 old_debug=$debug
 
@@ -191,21 +191,24 @@ case `(uname -s || echo unknown) 2>/dev/null` in
 		LIBSUF='.a'
 		DLLSUF='.dylib'
 		EXESUF=
+		CFLAGS_DLL=
 		LINK_LIBHKSC_TYPE=DYLIB ;;
 	Windows_NT|MINGW*|mingw*|CYGWIN*|Cygwin*|cygwin*)
 		prefix=${prefix-'C:/Program Files/hksc'}
-		AR=${AR-'$(CC) -shared -o'}
+		AR=${AR-ar rcs}
 		RANLIB=${RANLIB-'strip --strip-unneeded'}
 		CC=${CC-gcc}
-		CFLAGS="$CFLAGS -DLUA_BUILD_AS_DLL"
-		LIBSUF='.lib'
+		LIBSUF='.a'
 		DLLSUF='.dll'
 		EXESUF='.exe'
+		CFLAGS_DLL='-DLUA_BUILD_AS_DLL'
+		LDFLAGS="$LDFLAGS -static"
 		LINK_LIBHKSC_TYPE=DLL ;;
 	*)
 		LIBSUF='.a'
 		DLLSUF='.so'
 		EXESUF=
+		CFLAGS_DLL=
 		LINK_LIBHKSC_TYPE=SO ;;
 esac
 
@@ -388,7 +391,7 @@ printvar()
 
 logvar()
 {
-	eval echo $1=\$$1 | tee -a "$config_file"
+	eval echo $1=\\\"\$$1\\\" | tee -a "$config_file"
 }
 
 # install paths
@@ -530,6 +533,7 @@ config_makefile()
 			s&@INSTALL@&$INSTALL&;t t
 			s&@MKDIR@&$MKDIR&;t t
 			s&@CFLAGS@&$CFLAGS&;t t
+			s&@CFLAGS_DLL@&$CFLAGS_DLL&;t t
 			s&@LDFLAGS@&$LDFLAGS&;t t
 			s&@LIBS@&$LIBS&;t t
 			s&@LIBSUF@&$LIBSUF&;t t

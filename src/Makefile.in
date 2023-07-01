@@ -103,7 +103,7 @@ a:	$(ALL_A)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 .c.lo:
-	$(CC) -fPIC $(CFLAGS) -c -o $@ $<
+	$(CC) -fPIC $(CFLAGS) @CFLAGS_DLL@ -c -o $@ $<
 
 # static library
 $(CORE_T): $(CORE_O) $(AUX_O)

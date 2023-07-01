@@ -54,7 +54,7 @@ LUAI_DATA int Trick;
 
 void *debug_realloc (void *ud, void *block, size_t osize, size_t nsize);
 
-hksc_State *debug_newstate (hksc_StateSettings *settings);
+LUA_API hksc_State *debug_newstate (hksc_StateSettings *settings);
 
 #ifdef hksc_c
 # define hksI_newstate(settings) debug_newstate(settings)

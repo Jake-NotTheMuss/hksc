@@ -775,7 +775,7 @@ void luaU_target_info (hksc_State *H, struct target_info *target)
       break;
     default:
       lua_assert(0);
-      bigendian=0;
+      sizeint=sizesize=sizeinstr=bigendian=0;
   }
   switch (G(H)->target_ws) {
     case HKSC_TARGET_WS_16:

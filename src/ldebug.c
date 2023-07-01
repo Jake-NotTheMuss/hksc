@@ -188,7 +188,7 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
       case OP_FORLOOP:
       case OP_FORPREP:
         checkreg(pt, a+3);
-        /* go through */
+        /* fallthrough */
       case OP_JMP: {
         int dest = pc+1+b;
         /* not full check and jump is forward and do not skip `lastpc'? */
@@ -259,8 +259,8 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         check(pc+1 < pt->sizecode);  /* need data code */
         check(GET_OPCODE(pt->code[pc+1]) == OP_DATA)
         checktypeb(GETARG_Bx(pt->code[pc+1]));
-        /* fallthrough */
       }
+      /* fallthrough */
       case OP_SETSLOTI:
       case OP_SETSLOTS: {
         checkslotposition(b);
@@ -283,8 +283,8 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
       }
       case OP_SETSLOTMT: {
         checktype(GET_SLOTMT_TYPE(i));
-        /* fallthrougn */
       }
+      /* fallthrough */
       case OP_GETSLOTMT:
       case OP_SELFSLOTMT: {
         int ntag = (op == OP_SETSLOTMT) ? GET_SLOTMT_TAGCHAIN(i) : c;

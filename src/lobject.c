@@ -170,6 +170,23 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
 }
 
 
+int luaO_ptr2str(char *str, void *p) {
+  size_t s = cast(size_t, p);
+  if (sizeof(size_t) <= sizeof(long))
+    return sprintf(str, "%lx", cast(unsigned long, s));
+  else {
+    lu_int64 x;
+#ifdef LUA_UI64_S
+    x.hi = cast(lu_int32, s >> 32);
+    x.lo = cast(lu_int32, s & 0xFFFFFFFFul);
+#else /* !LUA_UI64_S */
+    x = cast(lu_int64, s);
+#endif /* LUA_UI64_S */
+    return lua_ui642str(str, x);
+  }
+}
+
+
 /*
 ** `stringbuilder' holds data needed by `luaO_pushvfstring'
 */
@@ -357,11 +374,9 @@ const char *luaO_generatechunkname(hksc_State *H, const char *filename) {
   const char *from = G(H)->prefix_map_from;
   const char *to = G(H)->prefix_map_to;
   size_t from_len;
-  size_t to_len;
   if (from == NULL && to == NULL)
     return luaO_pushfstring(H, "@%s", filename);
   from_len = strlen(from);
-  to_len = strlen(to);
   if (from != NULL) {
     if (strncmp(filename, from, from_len) == 0)
       name = filename + from_len;
