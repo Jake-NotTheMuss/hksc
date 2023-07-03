@@ -417,11 +417,11 @@ static BlockState *newblockstate(DFuncState *fs)
 {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
-  lua_assert(a->pendingblocks.used >= 0 &&
-             a->pendingblocks.used <= a->pendingblocks.total);
-  luaM_growvector(H, a->pendingblocks.stk, a->pendingblocks.used,
-      a->pendingblocks.total, BlockState, MAX_INT, "too many block contexts");
-  return &a->pendingblocks.stk[a->pendingblocks.used++];
+  lua_assert(a->pendingstk.used >= 0 &&
+             a->pendingstk.used <= a->pendingstk.total);
+  luaM_growvector(H, a->pendingstk.u.s1, a->pendingstk.used,
+      a->pendingstk.total, BlockState, MAX_INT, "too many block contexts");
+  return &a->pendingstk.u.s1[a->pendingstk.used++];
 }
 
 
@@ -506,10 +506,11 @@ static ExpNode *newexp(DFuncState *fs)
 {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
-  lua_assert(a->expstack.used >= 0 && a->expstack.used <= a->expstack.total);
-  luaM_growvector(H, a->expstack.stk, a->expstack.used, a->expstack.total,
+  lua_assert(a->pendingstk.used >= 0 &&
+             a->pendingstk.used <= a->pendingstk.total);
+  luaM_growvector(H, a->pendingstk.u.s2, a->pendingstk.used, a->pendingstk.total,
                   ExpNode, MAX_INT, "too many expression nodes");
-  return &a->expstack.stk[a->expstack.used++];
+  return &a->pendingstk.u.s2[a->pendingstk.used++];
 }
 
 
@@ -520,9 +521,9 @@ static int exp2index(DFuncState *fs, ExpNode *exp)
   if (exp == NULL)
     return 0;
   else {
-    lua_assert(exp >= fs->a->expstack.stk &&
-               exp < fs->a->expstack.stk+fs->a->expstack.used);
-    return exp-fs->a->expstack.stk+1;
+    lua_assert(exp >= fs->a->pendingstk.u.s2 &&
+               exp < fs->a->pendingstk.u.s2+fs->a->pendingstk.used);
+    return exp-fs->a->pendingstk.u.s2+1;
   }
 }
 
@@ -532,7 +533,7 @@ static ExpNode *index2exp(DFuncState *fs, int index)
   if (index == 0)
     return NULL;
   else
-    return fs->a->expstack.stk+(index-1);
+    return fs->a->pendingstk.u.s2+(index-1);
 }
 
 
@@ -541,24 +542,24 @@ static ExpNode *index2exp(DFuncState *fs, int index)
 
 static ExpNode *getfirstexp(DFuncState *fs)
 {
-  int used = fs->a->expstack.used;
+  int used = fs->a->pendingstk.used;
   if (used == 0)
     return NULL;
   else {
     lua_assert(used > 0);
-    return &fs->a->expstack.stk[0];
+    return &fs->a->pendingstk.u.s2[0];
   }
 }
 
 
 static ExpNode *gettopexp(DFuncState *fs)
 {
-  int used = fs->a->expstack.used;
+  int used = fs->a->pendingstk.used;
   if (used == 0)
     return NULL;
   else {
     lua_assert(used > 0);
-    return &fs->a->expstack.stk[used-1];
+    return &fs->a->pendingstk.u.s2[used-1];
   }
 }
 
@@ -804,10 +805,6 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->sizeregproperties = f->maxstacksize; /* flags for each register */
   a->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
   memset(a->regproperties, 0, a->sizeregproperties * sizeof(SlotDesc));
-  /* allocate stack for expression nodes */
-  a->expstack.total = 4;
-  a->expstack.used = 0;
-  a->expstack.stk = luaM_newvector(H, a->expstack.total, ExpNode);
   if (D->usedebuginfo)
     marklocvarendings(fs);
 #ifdef HKSC_DECOMP_HAVE_PASS2
@@ -1899,8 +1896,8 @@ static BlockState *getlastbranch1(DFuncState *fs, struct blockstates1 *s)
       return NULL;
     lua_assert(block->u.bl.lastbranch >= 0);
     branch = block - block->u.bl.lastbranch;
-    lua_assert(branch >= &fs->a->pendingblocks.stk[s->stkbase] &&
-               branch < &fs->a->pendingblocks.stk[fs->a->pendingblocks.used]);
+    lua_assert(branch >= &fs->a->pendingstk.u.s1[s->stkbase] &&
+               branch < &fs->a->pendingstk.u.s1[fs->a->pendingstk.used]);
     lua_assert(branch->branch);
     return branch;
   }
@@ -1916,7 +1913,7 @@ static BlockState *getparentblock1(DFuncState *fs, BlockState *branch)
   lua_assert(branch != NULL);
   lua_assert(branch->branch);
   if (branch->u.br.parentblock)
-    return &fs->a->pendingblocks.stk[branch->u.br.parentblock-1];
+    return &fs->a->pendingstk.u.s1[branch->u.br.parentblock-1];
   else
     return NULL;
 }
@@ -1927,8 +1924,8 @@ static BlockState *getparentblock1(DFuncState *fs, BlockState *branch)
 */
 static BlockState *popblockstate1(DFuncState *fs)
 {
-  lua_assert(fs->a->pendingblocks.used > 0);
-  return &fs->a->pendingblocks.stk[--fs->a->pendingblocks.used];
+  lua_assert(fs->a->pendingstk.used > 0);
+  return &fs->a->pendingstk.u.s1[--fs->a->pendingstk.used];
 }
 
 
@@ -1941,10 +1938,10 @@ static BlockState *prevblockstate1(DFuncState *fs, struct blockstates1 *s,
                                    BlockState *bl)
 {
   int base = s->stkbase;
-  int index = bl - fs->a->pendingblocks.stk;
+  int index = bl - fs->a->pendingstk.u.s1;
   lua_assert(base >= 0);
-  lua_assert(fs->a->pendingblocks.used >= base);
-  lua_assert(index >= 0 && index < fs->a->pendingblocks.used);
+  lua_assert(fs->a->pendingstk.used >= base);
+  lua_assert(index >= 0 && index < fs->a->pendingstk.used);
   if (index <= base)
     return NULL;
   else
@@ -1971,12 +1968,12 @@ static BlockState *updateblockstates1(DFuncState *fs, struct blockstates1 *s) {
     /* also pop the block context that was created with the branch */
     top = popblockstate1(fs);
   lua_assert(base >= 0);
-  lua_assert(fs->a->pendingblocks.used >= base);
-  if (fs->a->pendingblocks.used == base) {
+  lua_assert(fs->a->pendingstk.used >= base);
+  if (fs->a->pendingstk.used == base) {
     s->block = s->branch = NULL;
     return oldstate;
   }
-  lua_assert(fs->a->pendingblocks.used > base);
+  lua_assert(fs->a->pendingstk.used > base);
   top--;
   if (top->branch) {
     s->block = NULL;
@@ -2012,7 +2009,7 @@ static BlockState *pushblock1(DFuncState *fs, struct blockstates1 *s, int endpc,
     if (s->branch == NULL)
       lastbranch = 0;
     else
-      lastbranch = fs->a->pendingblocks.used-(s->branch-fs->a->pendingblocks.stk);
+      lastbranch = fs->a->pendingstk.used-(s->branch-fs->a->pendingstk.u.s1);
   }
   block = newblockstate(fs);
   UNUSED(prev);  /* pointer may be invalid past this point */
@@ -2059,7 +2056,7 @@ static BlockState *pushbranch1(DFuncState *fs, struct blockstates1 *s,
     /* the next parent block is that of the parent branch state */
     parentblock = getparentblock1(fs, prev);
     if (prev->u.br.withblock)
-      parentbranchwithblock = prev-fs->a->pendingblocks.stk+1;
+      parentbranchwithblock = prev-fs->a->pendingstk.u.s1+1;
     else
       parentbranchwithblock = prev->u.br.parentbranchwithblock;
   }
@@ -2246,7 +2243,7 @@ static BlockNode *finalizebranch1(DFuncState *fs, BlockState *branch,
     }
     if (branch->u.br.parentbranchwithblock) {
       int endpc = branch->endpc;
-      BlockState *br = &fs->a->pendingblocks.stk
+      BlockState *br = &fs->a->pendingstk.u.s1
       [branch->u.br.parentbranchwithblock-1];
       lua_assert(br->branch);
       lua_assert(br->u.br.withblock);
@@ -2390,8 +2387,8 @@ static void finalizependingblocks1(DFuncState *fs, struct blockstates1 *s,
 {
   BlockNode *nextsibling = *siblingchain;
   lu_byte prevbranch = 0;
-  lua_assert(s->stkbase >= 0 && s->stkbase <= fs->a->pendingblocks.used);
-  while (fs->a->pendingblocks.used > s->stkbase) {
+  lua_assert(s->stkbase >= 0 && s->stkbase <= fs->a->pendingstk.used);
+  while (fs->a->pendingstk.used > s->stkbase) {
     BlockNode *result;
     if (s->branch != NULL) {
       BlockState *branch = s->branch;
@@ -2784,19 +2781,19 @@ static void innerloop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
 {
   struct BlockNode *new_node;
   /* get the index for block/branch pointers because the stack may grow */
-  int branchidx = s->branch ? s->branch - fs->a->pendingblocks.stk + 1 : 0;
-  int blockidx = s->block ? s->block - fs->a->pendingblocks.stk + 1 : 0;
-  lua_assert(branchidx >= 0 && branchidx <= fs->a->pendingblocks.used);
-  lua_assert(blockidx >= 0 && blockidx <= fs->a->pendingblocks.used);
+  int branchidx = s->branch ? s->branch - fs->a->pendingstk.u.s1 + 1 : 0;
+  int blockidx = s->block ? s->block - fs->a->pendingstk.u.s1 + 1 : 0;
+  lua_assert(branchidx >= 0 && branchidx <= fs->a->pendingstk.used);
+  lua_assert(blockidx >= 0 && blockidx <= fs->a->pendingstk.used);
   loop1(ca, fs, startpc, type, *nextsibling);
   new_node = fs->a->bllist.first;
   lua_assert(new_node != *nextsibling);
   if (new_node->nextsibling == NULL) addsibling1(new_node, *nextsibling);
   /* update the branch/block pointers */
-  lua_assert(branchidx <= fs->a->pendingblocks.used);
-  lua_assert(blockidx <= fs->a->pendingblocks.used);
-  s->branch = branchidx ? &fs->a->pendingblocks.stk[branchidx-1] : NULL;
-  s->block = blockidx ? &fs->a->pendingblocks.stk[blockidx-1] : NULL;
+  lua_assert(branchidx <= fs->a->pendingstk.used);
+  lua_assert(blockidx <= fs->a->pendingstk.used);
+  s->branch = branchidx ? &fs->a->pendingstk.u.s1[branchidx-1] : NULL;
+  s->block = blockidx ? &fs->a->pendingstk.u.s1[blockidx-1] : NULL;
   /* update block/branch states */
   updateprevsibling1(fs, s, new_node);
   *nextsibling = new_node;
@@ -2827,7 +2824,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   /* each loop context has a local stack base, any block states below this base
      position are outside of the current loop and will be handled after
      returning */
-  s.stkbase = fs->a->pendingblocks.used;
+  s.stkbase = fs->a->pendingstk.used;
   s.upval = 0;
   s.haveblocksibling = 0;
   ca->curr.start = startpc; ca->curr.end = endpc; ca->curr.type = type;
@@ -3164,7 +3161,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 /* get the first block state that was pushed, as that is the one
                    which corresponds to the loop block in the case of the loop
                    having upvalues */
-                BlockState *bl = &fs->a->pendingblocks.stk[s.stkbase];
+                BlockState *bl = &fs->a->pendingstk.u.s1[s.stkbase];
                 lua_assert(bl->u.bl.loop);
                 bl->u.bl.loop = 0;  /* make it a separate block */
                 s.upval = 0;
@@ -3434,7 +3431,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 parentblock = s.branch->u.br.parentblock;
               else if (s.block != NULL)
                 /* compute the stack index of s.block */
-                parentblock = s.block - fs->a->pendingblocks.stk + 1;
+                parentblock = s.block - fs->a->pendingstk.u.s1 + 1;
               else
                 /* no parent block exists currently */
                 parentblock = 0;
@@ -3535,8 +3532,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
              block, and the loop itself does not have upvalues */
           else if (a < closedloopreg) {
             BlockState *bl;
-            lua_assert(s.stkbase < fs->a->pendingblocks.used);
-            bl = &fs->a->pendingblocks.stk[s.stkbase];
+            lua_assert(s.stkbase < fs->a->pendingstk.used);
+            bl = &fs->a->pendingstk.u.s1[s.stkbase];
             lua_assert(bl->branch == 0);
             lua_assert(bl->u.bl.loop);
             bl->u.bl.loop = 0;
@@ -3886,6 +3883,41 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
 
 
 /*
+** initialize memory for first pass
+*/
+static void initpass1(DFuncState *fs)
+{
+  Analyzer *a = fs->a;
+  lua_assert(a->decomppass == 1);
+  a->pendingstk.total = 4;
+  a->pendingstk.used = 0;
+  a->pendingstk.u.s1 = luaM_newvector(fs->H, a->pendingstk.total, BlockState);
+}
+
+
+/*
+** free memory for first pass
+*/
+static void cleanuppass1(DFuncState *fs)
+{
+  Analyzer *a = fs->a;
+  lua_assert(a->decomppass == 1);
+  /* free the pending block stack, it is no longer needed */
+  luaM_freearray(fs->H, a->pendingstk.u.s1, a->pendingstk.total, BlockState);
+  a->pendingstk.total = 0;
+  a->pendingstk.used = 0;
+  a->pendingstk.u.s1 = NULL;
+  /* resize the open expression and regnote arrays */
+  luaM_reallocvector(fs->H, a->opencalls, a->sizeopencalls, fs->nopencalls,
+                     OpenExpr);
+  a->sizeopencalls = fs->nopencalls;
+  luaM_reallocvector(fs->H, a->regnotes, a->sizeregnotes, fs->nregnotes,
+                     RegNote);
+  a->sizeregnotes = fs->nregnotes;
+}
+
+
+/*
 ** The code analyzer works in the first pass and detects the beginnings and ends
 ** of loops (and determines the type of each loop), the ends of blocks, branch
 ** jumps, break jumps, and the beginnings of for-loop control variable
@@ -3902,6 +3934,7 @@ static void pass1(const Proto *f, DFuncState *fs)
   ca.testset.endpc = ca.testset.reg = -1;
   ca.code = f->code;
   /*preparepass1(fs);*/
+  initpass1(fs);
   loop1(&ca, fs, 0, BL_FUNCTION, NULL);
   lua_assert(fs->a->bllist.first != NULL);
   lua_assert(fs->a->bllist.first->nextsibling == NULL);
@@ -3909,14 +3942,9 @@ static void pass1(const Proto *f, DFuncState *fs)
   if (f->sizecode > 1)
     set_ins_property(fs, f->sizecode-2, INS_BLOCKEND);
   D(lprintf("ca.pc == (%d)\n", ca.pc));
-  luaM_reallocvector(fs->H, fs->a->opencalls, fs->a->sizeopencalls,
-                     fs->nopencalls, OpenExpr);
-  fs->a->sizeopencalls = fs->nopencalls;
-  luaM_reallocvector(fs->H, fs->a->regnotes, fs->a->sizeregnotes, fs->nregnotes,
-                     RegNote);
-  fs->a->sizeregnotes = fs->nregnotes;
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
+  cleanuppass1(fs);
 }
 
 
@@ -4258,8 +4286,8 @@ static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
      function uses the register for one of its arguments), sp make sure AUX
      points to NULL instead of one of the function arguments */
   prevcall = index2exp(fs, fs->lastcallexp);
-  lua_assert(prevcall == NULL || (prevcall >= fs->a->expstack.stk &&
-             prevcall < &fs->a->expstack.stk[fs->a->expstack.used]));
+  lua_assert(prevcall == NULL || (prevcall >= fs->a->pendingstk.u.s2 &&
+             prevcall < &fs->a->pendingstk.u.s2[fs->a->pendingstk.used]));
   if (prevcall != NULL && prevcall->kind == ECALL) {
     int reg = exp->u.store.srcreg;
     int firstretreg = prevcall->info;
@@ -4556,12 +4584,12 @@ static void flushpendingexp2(DFuncState *fs)
   int newfirstfree = fs->nactvar;
 #ifdef LUA_DEBUG
   int i;
-  for (i = 0; i < fs->a->expstack.used; i++) {
-    ExpNode *exp = &fs->a->expstack.stk[i];
+  for (i = 0; i < fs->a->pendingstk.used; i++) {
+    ExpNode *exp = &fs->a->pendingstk.u.s2[i];
     lua_assert(exp->pending == 0);
   }
 #endif /* LUA_DEBUG */
-  fs->a->expstack.used = 0;
+  fs->a->pendingstk.used = 0;
   D(lprintf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
             fs->nactvar));
   lua_assert(oldfirstfree >= newfirstfree);
@@ -6387,6 +6415,32 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
 }
 
 
+/*
+** initialize memory for second pass
+*/
+static void initpass2(DFuncState *fs)
+{
+  Analyzer *a = fs->a;
+  a->decomppass = 2;
+  a->pendingstk.total = 4;
+  a->pendingstk.used = 0;
+  a->pendingstk.u.s2 = luaM_newvector(fs->H, a->pendingstk.total, ExpNode);
+}
+
+
+/*
+** free memory for second pass
+*/
+static void cleanuppass2(DFuncState *fs)
+{
+  Analyzer *a = fs->a;
+  lua_assert(a->decomppass == 2);
+  luaM_freearray(fs->H, a->pendingstk.u.s2, a->pendingstk.total, ExpNode);
+  a->pendingstk.u.s2 = NULL;
+  a->pendingstk.total = a->pendingstk.used = 0;
+}
+
+
 static void pass2(const Proto *f, DFuncState *fs)
 {
   BlockNode *functionblock = fs->a->bllist.first;
@@ -6404,6 +6458,7 @@ static void pass2(const Proto *f, DFuncState *fs)
   fs->nactvar = 0;
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->type == BL_FUNCTION);
+  initpass2(fs);
   initfirstfree2(fs, f); /* set the first free reg for this function */
   fs->lastfirstfree = fs->firstfree;
   updatenextopenexpr2(&sa, fs);
@@ -6416,6 +6471,7 @@ static void pass2(const Proto *f, DFuncState *fs)
     checktreevisited(functionblock);
   }
 #endif /* LUA_DEBUG */
+  cleanuppass2(fs);
 }
 
 

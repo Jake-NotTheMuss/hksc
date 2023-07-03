@@ -315,21 +315,18 @@ typedef struct Analyzer {
   int sizelineinfo;
   int sizelocvars;
   int sizeupvalues;
-  /*int pass;*/
+  int decomppass;  /* which decompiler pass */
   struct {
     struct BlockNode *first, *last;
   } bllist;
   struct {
-    /*union { struct BlockState *stk1; struct ExpNode *stk2; } stk;*/
-    struct ExpNode *stk;  /* base stack pointer */
-    int total;  /* total number of elements in the stack */
+    /* the first pass keeps a stack of pending block states, the second pass
+       keeps a stack of pending expression nodes; both stacks only live within
+       their respective decompiler passes */
+    union { struct BlockState *s1; struct ExpNode *s2; } u;
+    int total;  /* number of allocated elements in the stack */
     int used;  /* number of used elements in the stack */
-  } expstack;
-  struct {
-    struct BlockState *stk;
-    int total;
-    int used;
-  } pendingblocks;
+  } pendingstk;
 } Analyzer;
 
 #endif /* HKSC_DECOMPILER */
