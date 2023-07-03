@@ -119,14 +119,11 @@ typedef struct DFuncState {
   lu_byte nactvar;
   int sizelocvars;
   int sizeupvalues;
-  int instatement;
   int lastclosurepc;  /* PC of last OP_CLOSURE */
   int firstclob;  /* first pc that clobbers register A */
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int firstfree;
-  int lastfirstfree;
   int lastcallexp;  /* exp index of last function call node */
-  int upvalcount;  /* number of upvalues encountered so far */
   int nopencalls;  /* number of OpenExpr entries created */
   int nregnotes;  /* number of RegNote entries created */
 } DFuncState;
@@ -763,7 +760,6 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->idx = D->funcidx++;
   fs->nlocvars = 0;
   fs->nactvar = 0;
-  fs->instatement = 0;
   if (f->name)
     D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
              getstr(f->name)));
@@ -790,13 +786,11 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
     fs->upvalues = a->upvalues;
     fs->sizeupvalues = a->sizeupvalues;
   }
-  fs->upvalcount = 0;
   fs->nopencalls = 0;
   fs->nregnotes = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
   fs->firstfree = -1;
-  fs->lastfirstfree = -1;
   fs->lastcallexp = 0;
   /* allocate vectors for instruction and register properties */
   a->sizeinsproperties = f->sizecode; /* flags for each instruction */
@@ -1103,14 +1097,6 @@ static void updateline2(DFuncState *fs, int line, DecompState *D)
     beginline2(fs, lines_needed, D);
     lua_assert(D->linenumber == line);
   }
-}
-
-
-static void maybebeginline2(DFuncState *fs, DecompState *D)
-{
-  lua_assert(fs->instatement >= 0);
-  if (fs->instatement == 0)
-    beginline2(fs, 1, D);
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
@@ -4358,7 +4344,6 @@ static void checklineneeded2(DecompState *D, DFuncState *fs, ExpNode *exp)
   int line = exp->line;
   lua_assert(line >= D->linenumber);
   updateline2(fs, line, D);
-  (void)maybebeginline2;
 }
 
 /******************************************************************************/
@@ -6416,7 +6401,6 @@ static void pass2(const Proto *f, DFuncState *fs)
   lua_assert(functionblock->type == BL_FUNCTION);
   initpass2(fs);
   initfirstfree2(fs, f); /* set the first free reg for this function */
-  fs->lastfirstfree = fs->firstfree;
   updatenextopenexpr2(&sa, fs);
   blnode2(&sa, fs, functionblock);
 #ifdef LUA_DEBUG
