@@ -605,7 +605,7 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
           break;
         case LUA_TLIGHTUSERDATA: {
           char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-          sprintf(s, "0x%zxhi", cast(size_t, pvalue(o)));
+          luaO_ptr2str(s, pvalue(o));
           lprintf("%s", s);
           break;
         }
@@ -764,7 +764,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->nlocvars = 0;
   fs->nactvar = 0;
   fs->instatement = 0;
-  if (f->name && getstr(f->name))
+  if (f->name)
     D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
              getstr(f->name)));
   else
@@ -989,7 +989,7 @@ static void DumpTValue(const TValue *o, DecompState *D)
       break;
     case LUA_TLIGHTUSERDATA: {
       char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      sprintf(s, "0x%zuhi", cast(size_t, pvalue(o)));
+      luaO_ptr2str(s, pvalue(o));
       DumpString(s,D);
       break;
     }
@@ -1361,6 +1361,7 @@ static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
       int sbx = GETARG_sBx(i);
       lua_assert(sbx >= 0);
       lua_assert(pc + 1 + sbx <= jumplimit);
+      (void)sbx;
       return 0;
     }
     case OP_LOADBOOL:
@@ -1901,6 +1902,7 @@ static BlockState *getlastbranch1(DFuncState *fs, struct blockstates1 *s)
     lua_assert(branch->branch);
     return branch;
   }
+  (void)fs;
   (void)getbranchroot1;
 }
 
@@ -2242,7 +2244,6 @@ static BlockNode *finalizebranch1(DFuncState *fs, BlockState *branch,
       rescansiblingchain1(prevsibling, NULL);
     }
     if (branch->u.br.parentbranchwithblock) {
-      int endpc = branch->endpc;
       BlockState *br = &fs->a->pendingstk.u.s1
       [branch->u.br.parentbranchwithblock-1];
       lua_assert(br->branch);
@@ -2252,7 +2253,7 @@ static BlockNode *finalizebranch1(DFuncState *fs, BlockState *branch,
         lua_assert(block->branch == 0);
         lua_assert(block->u.bl.opaque);
         lua_assert(block->u.bl.upval);
-        lua_assert(block->endpc == endpc);
+        lua_assert(block->endpc == branch->endpc);
         if (block->u.bl.rcnt.startpc == midpc)
           /* make it still true, but a BlockNode does not need to be created for
              it (this if-false block is sufficient to generate matching code) */
@@ -2409,10 +2410,8 @@ static void finalizependingblocks1(DFuncState *fs, struct blockstates1 *s,
     }
     else {
       BlockState *block = s->block;
-      int startpc;
       lua_assert(block != NULL);
       block->u.bl.rcnt = block->u.bl.pcnt;
-      startpc = block->u.bl.rcnt.startpc;
       result = finalizeblock1(fs, block);
       if (result != NULL)
         postfinalizeblock1(block, result, &nextsibling);
@@ -2853,7 +2852,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         updateactvar1(fs, pc, &nvars);
         goto traverseforlistprep;
       }
-      lprintf("encountered start of new local variable at next pc (%i)\n", pc+1);
+      D(lprintf("encountered start of new local variable at next pc (%i)\n", pc+1));
       locvarexpr1(ca, fs, nvars);
       goto poststat;
     }
@@ -3743,6 +3742,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         a = GETARG_A(i);
         b = GETARG_B(i);
         c = GETARG_C(i);
+        /* fallthrough */
       default:
         if (beginseval(o, a, b, c, 0)) {
           set_ins_property(fs, pc, INS_CLOBBER);
@@ -3803,37 +3803,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             }
             break;
           }
-#if 0
-          if (s.block != NULL ||
-              (s.branch != NULL &&
-               (s.branch->u.br.parentblock || s.branch->u.br.withblock))) {
-            int occluded;
-            struct BlockState *bl;
-            struct siblingsnapshot1 siblingsnapshot;
-            if (s.block != NULL) {
-              bl = s.block;
-              occluded = 0;
-            }
-            else {
-              if (s.branch->u.br.parentblock)
-                bl = getparentblock1(fs, s.branch);
-              else
-                bl = s.branch-1;
-              /* if there is a branch context within a block context, the block
-                 is occluded, unless the block was created with the branch
-                 context because there was an OP_CLOSE code before the end of
-                 the if-part */
-              occluded = (bl->u.bl.opaque == 0);
-            }
-            /* the current sibling snapshot; nextsibling is nextsibling,
-               prevsibling is unknown currently and therefore NULL */
-            siblingsnapshot.nextsibling = nextsibling;
-            siblingsnapshot.prevsibling = NULL;
-            /* update pending block contexts */
-            recordblockstateforpc1(fs, bl, locvarhere, pc, occluded,
-                                   &siblingsnapshot, fs->f->sizecode-1);
-          }
-#endif
         }
 
         break;
@@ -4168,7 +4137,7 @@ static void assertblvalid(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
   int endpc = bn->endpc;
   int type = bn->type;
   BlockNode *nextsibling = bn->nextsibling;
-  lua_assert(startpc > endpc == bn->isempty);
+  lua_assert((startpc > endpc) == bn->isempty);
   lua_assert(type >= 0 && type < MAX_BLTYPE);
   if (sa->intailemptyblock) {
     lua_assert(sa->pc+1 == startpc);
@@ -4923,7 +4892,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         initexplistiter2(&iter, fs, exp->info+1+(firstexp->kind == ESELF),
                          firstexp);
         if (firstexp->kind == ESELF) {
-          lprintf("firstexp->nextregindex = %d\n", firstexp->nextregindex);
+          D(lprintf("firstexp->nextregindex = %d\n", firstexp->nextregindex));
         }
         for (i = 0; i < narg; i++) {
           if (i != 0)
@@ -4941,7 +4910,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       struct ExpListIterator iter;
       ExpNode *firstexp;
       int firstindex = exp->u.concat.firstindex;
-      int lastindex = exp->u.concat.lastindex;
       int nexps = exp->aux;
       int i;
       int needparen;
@@ -4959,7 +4927,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       initexplistiter2(&iter, fs, firstexp->info, firstexp);
       dumpexp2(D, fs, firstexp, priority[OPR_CONCAT].left);
       D(lprintf("nexps = %d (firstindex = %d, lastindex = %d)\n", nexps,
-                firstindex, lastindex));
+                firstindex, exp->u.concat.lastindex));
       lua_assert(nexps >= 2);
       for (i = 1; i < nexps; i++) {
         CheckSpaceNeeded(D);
@@ -5182,18 +5150,6 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
       lastexp = exp;
     }
   }
-#if 0
-  if (currexp != NULL) {
-    lua_assert(currexp->pending);
-    /* this is the last expression, check if parens need to be added to preserve
-       line info */
-    printf("currexp->pending = %d\n", currexp->pending);
-    if (firstexp->line != currexp->line)
-      currexp->closeparenline = firstexp->line;
-    DumpComma(D);
-    dumpexp2(D, fs, currexp, 0);
-  }
-#endif
 }
 
 
@@ -5249,7 +5205,7 @@ static void addkvalue2buff(hksc_State *H, Mbuffer *b, TValue *o)
       break;
     case LUA_TLIGHTUSERDATA: {
       char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      sprintf(s, "0x%zuhi", cast(size_t, pvalue(o)));
+      luaO_ptr2str(s, pvalue(o));
       addstr2buff(H,b,s,strlen(s));
       break;
     }
@@ -6303,7 +6259,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
     b = GETARG_B(i);
     c = GETARG_C(i);
     bx = GETARG_Bx(i);
-    sbx = GETARG_sBx(i);
+    sbx = GETARG_sBx(i); (void)sbx;
 #ifdef HKSC_DECOMP_DEBUG_PASS1
     visitinsn2(fs, bn, pc, i); /* visit this instruction */
     /* make sure to run the first pass on all nested closures */

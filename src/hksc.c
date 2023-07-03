@@ -293,10 +293,10 @@ static int doargs(int argc, char *argv[])
   int explicit_dumping=0;
   const char *opt_a=NULL, *opt_b=NULL;
 #ifdef LUA_CODT6
-  const char *opt_withdebug;
+  const char *opt_withdebug=NULL;
 #endif /* LUA_CODT6 */
 #ifdef HKSC_DECOMPILER
-  const char *opt_compile, *opt_decompile;
+  const char *opt_compile=NULL, *opt_decompile=NULL;
 #endif /* HKSC_DECOMPILER */
   if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
   for (i=1; i<argc; i++)
