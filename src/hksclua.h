@@ -254,8 +254,7 @@ LUA_API void (lua_setmode) (hksc_State *H, int mode);
 LUA_API lua_Alloc (lua_getallocf) (hksc_State *H, void **ud);
 LUA_API void (lua_setallocf) (hksc_State *H, lua_Alloc f, void *ud);
 
-LUA_API void (lua_setprefixmap) (hksc_State *H, const char *from,
-                                 const char *to);
+LUA_API void (lua_addprefixmap) (hksc_State *H, const char *arg);
 
 #if defined(LUA_CODT6)
 LUA_API const char *(lua_getdebugfile) (hksc_State *H);

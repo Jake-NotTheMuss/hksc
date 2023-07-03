@@ -26,6 +26,17 @@ typedef struct stringtable {
 } stringtable;
 
 
+typedef struct fileprefixmap {
+  TString *from, *to;
+} fileprefixmap;
+
+typedef struct fileprefixmaparray {
+  int nuse;
+  int size;
+  fileprefixmap *array;
+} fileprefixmaparray;
+
+
 #define TM_INDEX  0
 #define TM_NEWINDEX  1
 
@@ -66,6 +77,7 @@ typedef struct global_State {
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem GCthreshold;
   lu_mem totalbytes;  /* number of bytes currently allocated */
+  fileprefixmaparray prefixmaps;
   const char *prefix_map_from;  /* OLD value in file prefix map */
   const char *prefix_map_to;  /* NEW value in file prefix map */
   lua_CFunction panic;  /* to be called in unprotected errors */

@@ -197,11 +197,35 @@ LUA_API void lua_setallocf (hksc_State *H, lua_Alloc f, void *ud) {
 }
 
 
-LUA_API void lua_setprefixmap (hksc_State *H, const char *from, const char *to)
+LUA_API void lua_addprefixmap (hksc_State *H, const char *arg)
 {
+  const char *eq;  /* equals sign in ARG */
   lua_lock(H);
-  G(H)->prefix_map_from = from;
-  G(H)->prefix_map_to = to;
+  eq = strchr(arg, '=');
+  if (eq != NULL) {
+    size_t l = cast(size_t, eq-arg);
+    int i, found=0;
+    fileprefixmap *map;
+    TString *from, *to;
+    from = luaS_newlstr(H, arg, l);
+    luaS_fix(from);
+    to = luaS_new(H, eq+1);
+    luaS_fix(to);
+    for (i = 0; i < G(H)->prefixmaps.nuse; i++) {
+      if (G(H)->prefixmaps.array[i].from == from &&
+          G(H)->prefixmaps.array[i].to == to) {
+        found = 1;
+        break;
+      }
+    }
+    if (found == 0) {
+      luaM_growvector(H, G(H)->prefixmaps.array, G(H)->prefixmaps.nuse,
+                      G(H)->prefixmaps.size, fileprefixmap, MAX_INT, "");
+      map = &G(H)->prefixmaps.array[G(H)->prefixmaps.nuse++];
+      map->from = from;
+      map->to = to;
+    }
+  }
   lua_unlock(H);
 }
 

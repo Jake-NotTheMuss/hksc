@@ -369,24 +369,19 @@ void luaO_chunkid (char *out, const char *source, size_t bufflen) {
 }
 
 
-const char *luaO_generatechunkname(hksc_State *H, const char *filename) {
-  const char *name; /* the part to keep in filename */
-  const char *from = G(H)->prefix_map_from;
-  const char *to = G(H)->prefix_map_to;
-  size_t from_len;
-  if (from == NULL && to == NULL)
-    return luaO_pushfstring(H, "@%s", filename);
-  from_len = strlen(from);
-  if (from != NULL) {
-    if (strncmp(filename, from, from_len) == 0)
-      name = filename + from_len;
-    else
-      return luaO_pushfstring(H, "@%s", filename);
+const char *luaO_generatechunkname (hksc_State *H, const char *filename) {
+  global_State *g = G(H);
+  int i;
+  for (i = 0; i < g->prefixmaps.nuse; i++) {
+    size_t from_len;
+    TString *from = g->prefixmaps.array[i].from;
+    TString *to = g->prefixmaps.array[i].to;
+    lua_assert(from != NULL && to != NULL);
+    from_len = from->tsv.len;
+    if (strncmp(filename, getstr(from), from_len) == 0) {
+      /* remove the `from' part */
+      return luaO_pushfstring(H, "@%s%s", getstr(to), filename + from_len);
+    }
   }
-  else { /* to != NULL */
-    name = filename;
-  }
-  lua_assert(name != NULL);
-  if (to == NULL) to = "";
-  return luaO_pushfstring(H, "@%s%s", to, name);
+  return luaO_pushfstring(H, "@%s", filename);
 }

@@ -54,7 +54,12 @@ int profilefile_arg=0;
 
 static int ignore_debug=0;
 
-static const char *file_prefix_map_arg=NULL;
+#define STRINGIFYARG(x) #x
+#define STRINGIFY(x) STRINGIFYARG(x)
+
+#define MAX_PREFIX_MAPS 32
+static int nprefixmaps = 0;
+static const char *file_prefix_maps[MAX_PREFIX_MAPS];
 
 static void fatal(const char *message)
 {
@@ -380,7 +385,18 @@ static int doargs(int argc, char *argv[])
       badliteralarg:
       usage("invalid int literal type given with '-L'");
     }
-    CHECK_LONG_OPT("--file-prefix-map", file_prefix_map_arg);
+    else if (HAS("--file-prefix-map"))
+    {
+      const char *prefixmaparg;
+      DO_ARG("--file-prefix-map", prefixmaparg);
+      if (strchr(prefixmaparg, '=') == NULL)
+        usage("invalid use of '--file-prefix-map'");
+      if (nprefixmaps < MAX_PREFIX_MAPS)
+        file_prefix_maps[nprefixmaps++] = prefixmaparg;
+      else
+        fatal("too many file prefix maps (maximum of "
+              STRINGIFY(MAX_PREFIX_MAPS) " allowed)");
+    }
     CHECK_OPT("-o", "--output", output);
 #ifdef HKSC_MULTIPLAT
     else if (HAS("-m"))
@@ -583,7 +599,6 @@ static int dofiles (hksc_State *H, int argc, char *argv[]) {
 
 int main(int argc, char *argv[])
 {
-  const char *old_prefix, *new_prefix;
   hksc_StateSettings settings;
   hksc_State *H;
   int status;
@@ -602,23 +617,14 @@ int main(int argc, char *argv[])
 #endif /* LUA_CODT6 */
   }
   hksI_StateSettings(&settings);
-  if (file_prefix_map_arg) {
-    old_prefix = file_prefix_map_arg;
-    new_prefix = strrchr(file_prefix_map_arg, '=');
-    if (!new_prefix)
-      usage("invalid value for '--file-prefix-map'");
-    *((char *)new_prefix) = '\0';
-    new_prefix++;
-  }
-  else
-    new_prefix = old_prefix = NULL;
 #ifdef HKSC_MULTIPLAT
   settings.target_plat = target_plat;
   settings.target_ws = target_ws;
 #endif /* HKSC_MULTIPLAT */
   H = hksI_newstate(&settings);
   if (H==NULL) fatal("cannot create state: not enough memory");
-  lua_setprefixmap(H, old_prefix, new_prefix);
+  for (i = 0; i < nprefixmaps; i++)
+    lua_addprefixmap(H, file_prefix_maps[i]);
   lua_setmode(H, mode);
   lua_setintliteralsenabled(H,literals_enabled);
 #ifdef LUA_CODT6
