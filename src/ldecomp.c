@@ -402,6 +402,14 @@ static BlockNode *newblnode(hksc_State *H, int startpc, int endpc, int type) {
 
 
 /*
+** re-calculate the emptiness of a block
+*/
+static void recalcemptiness(BlockNode *node) {
+  node->isempty = (node->endpc < node->startpc);
+}
+
+
+/*
 ** returns the next free expression in the expression node stack and increment
 ** the number of stack elements in use
 */
@@ -1451,8 +1459,10 @@ struct stat1 {
 
 struct blockstates1 {
   BlockState *block, *branch;
+  BlockNode *blocksibling;
   int stkbase;  /* the stack position when the current loop was entered */
   lu_byte upval;  /* this refers to the current loop; does it have upvalues */
+  lu_byte haveblocksibling;
 };
 
 
@@ -2319,10 +2329,50 @@ static void postfinalizeblock1(BlockState *block, BlockNode *result,
 
 
 static void postfinalizebranch1(DFuncState *fs, BlockState *branch,
-                                BlockNode *result)
+                                BlockNode *result, BlockNode *earliestsibling)
 {
   BlockState *block = getparentblock1(fs, branch);
   int n = 0;
+  lua_assert(result != NULL);
+  /* note: RESULT can be a BL_DO block */
+  if (result->type == BL_IF && earliestsibling != NULL) {
+    /* get the preceding sibling of RESULT */
+    BlockNode *prevsibling = earliestsibling;
+    while (prevsibling != NULL && prevsibling->nextsibling != result)
+      prevsibling = prevsibling->nextsibling;
+    /* when 2 branches have the same exit PC, the earlier one can be inferred as
+       having an optimized exit, and actually ending before the second one
+       begins, where the exit originally would have jumped to the exit-jump of
+       the second branch, thus allowing for optimization, but if the second
+       branch is an IF-branch, the first branch cannot logically end on the jump
+       instruction that exits the second branch, because that jump is part of
+       the second branch and cannot be part of both branches; in this case, the
+       first branch must enclose the second branch as a child block */
+    if (prevsibling != NULL && prevsibling->type == BL_IF &&
+        /* the startpc of an if-block is 1 after the JMP instruction; if
+           PREVSIBLING ends on that jump, the relationship is illogical */
+        prevsibling->endpc+1 == result->startpc) {
+      /* make PREVSIBLING the parent of RESULT; it encloses RESULT and must use
+         its endpc */
+      prevsibling->endpc = result->endpc;
+      recalcemptiness(prevsibling);
+      /* PREVSIBLING acquires the next sibling of RESULT */
+      prevsibling->nextsibling = result->nextsibling;
+      if (prevsibling->firstchild != NULL) {
+        /* get the last child of PREVSIBLING to append RESULT to the chain */
+        BlockNode *child = prevsibling->firstchild;
+        while (child != NULL && child->nextsibling != NULL)
+          child = child->nextsibling;
+        child->nextsibling = result;
+      }
+      /* PREVSIBLING has no children; simply make RESULT its child */
+      else prevsibling->firstchild = result;
+      /* update RESULT now that it is c child of PREVSIBLING */
+      result->nextsibling = NULL;
+      /* now the block to process is PREVSIBLING as it encloses RESULT */
+      result = prevsibling;
+    }
+  }
   for (; block != NULL; block = prevdoblockstate1(block)) {
     n |= updateblockstatenodes1(block, result);
     /* if a FIRSTCHILD and PREVSIBLING field have both been updated, stop */
@@ -2347,7 +2397,7 @@ static void finalizependingblocks1(DFuncState *fs, struct blockstates1 *s,
       BlockState *branch = s->branch;
       /*int i;*/
       result = finalizebranch1(fs, branch, NULL);
-      postfinalizebranch1(fs, branch, result);
+      postfinalizebranch1(fs, branch, result, nextsibling);
       /* the hierarchical structure for branches that have no if-parts is
          inverse to the stack, so the top item is actually the outermost (or
          earliest) branch in its group; therefore, if this was the first branch
@@ -2462,6 +2512,36 @@ static int recordblockstateforpc1(DFuncState *fs, BlockState *bl, LocVar *var,
 
 
 /*
+** returns the first local variable that starts at PC; also sets the number of
+** active local variables at PC for P_NACTVAR, and sets NVARS to the number of
+** variables that start at PC
+*/
+static struct LocVar *getactvar1(DFuncState *fs, int pc, int *nvars,
+                                 lu_byte *nactvar)
+{
+  DecompState *D = fs->D;
+  struct LocVar *retvar = NULL;  /* first local that starts at PC */
+  int i,n=0;  /* N = number of variables that start on PC */
+  lu_byte nact = 0;  /* number of active locals at PC */
+  lua_assert(ispcvalid(fs, pc));
+  if (D->usedebuginfo == 0)
+    return NULL;
+  for (i = fs->sizelocvars-1; i >= 0; i--) {
+    struct LocVar *var = &fs->locvars[i];
+    if (var->startpc <= pc && pc <= var->endpc)
+      nact++;
+    if (var->startpc == pc) {
+      retvar = var;
+      n++;
+    }
+  }
+  if (nactvar) *nactvar = nact;
+  if (nvars) *nvars = n;
+  return retvar;
+}
+
+
+/*
 ** rescan an instruction range and stop on the first pc where the state of a
 ** given block is updated
 */
@@ -2474,6 +2554,7 @@ static int updateblockstateinrange1(DFuncState *fs, BlockState *block,
   int pc;
   initsiblingsnapshot1(&s, nextnode);
   for (pc = startpc; pc < endpc; pc++) {
+    LocVar *var;
     /* skip over existing block nodes that start inside this do-block */
     if (pc == nextnodestart) {
       pc = nextnode->endpc;
@@ -2482,7 +2563,9 @@ static int updateblockstateinrange1(DFuncState *fs, BlockState *block,
       continue;
     }
     getsiblingsforpc1(&s, pc);
-    if (recordblockstateforpc1(fs, block, NULL, pc, occluded, &s, startpc-1)) {
+    /* get the first local variable that started at PC */
+    var = getactvar1(fs, pc, NULL, NULL);
+    if (recordblockstateforpc1(fs, block, var, pc, occluded, &s, startpc-1)) {
       updatedblock = 1;
       break;
     }
@@ -2525,6 +2608,10 @@ static void rescanblocksfornewbranch1(DFuncState *fs, struct blockstates1 *s,
          happen if there the OP_CLOSE code was before the last OP_JMP in a loop
         */
       if (lastbl->u.bl.loop) s->upval = 0;
+      if (s->haveblocksibling == 0) {
+        s->blocksibling = lastbl->nextsibling;
+        s->haveblocksibling = 1;
+      }
       /* this branch has upvalues; the block is redundant */
       updateblockstates1(fs, s);
       block = s->block;
@@ -2604,7 +2691,7 @@ static int updateblocksfornewbranch1(DFuncState *fs, struct blockstates1 *s,
        inverse to the stack, i.e. the top branch in its group is the earliest
        one */
     result = popbranch1(fs, s, NULL, prevbranch ? NULL : siblingchain);
-    postfinalizebranch1(fs, branch, result);
+    postfinalizebranch1(fs, branch, result, *siblingchain);
     prevbranch = (nested != 0);
     /* check again for nested block contexts that need to be finalized first */
     rescanblocksfornewbranch1(fs, s, maxendpc, siblingchain);
@@ -2620,26 +2707,7 @@ static int updateblocksfornewbranch1(DFuncState *fs, struct blockstates1 *s,
 */
 static struct LocVar *updateactvar1(DFuncState *fs, int pc, int *nvars)
 {
-  DecompState *D = fs->D;
-  struct LocVar *retvar = NULL;
-  int i,n=0;
-  lu_byte nactvar = 0;
-  lua_assert(ispcvalid(fs, pc));
-  lua_assert(nvars != NULL);
-  if (D->usedebuginfo == 0)
-    return NULL;
-  for (i = fs->sizelocvars-1; i >= 0; i--) {
-    struct LocVar *var = &fs->locvars[i];
-    if (var->startpc <= pc && pc <= var->endpc)
-      nactvar++;
-    if (var->startpc == pc) {
-      retvar = var;
-      n++;
-    }
-  }
-  fs->nactvar = nactvar;
-  *nvars = n;
-  return retvar;
+  return getactvar1(fs, pc, nvars, &fs->nactvar);
 }
 
 
@@ -2755,11 +2823,13 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   const Instruction *code = ca->code;
   endpc = ca->pc--;
   s.branch = s.block = NULL;
+  s.blocksibling = NULL;
   /* each loop context has a local stack base, any block states below this base
      position are outside of the current loop and will be handled after
      returning */
   s.stkbase = fs->a->pendingblocks.used;
   s.upval = 0;
+  s.haveblocksibling = 0;
   ca->curr.start = startpc; ca->curr.end = endpc; ca->curr.type = type;
   for (; ca->pc >= 0; ca->pc--) {
     struct LocVar *locvarhere;/* the first local vartable that starts at PC+1 */
@@ -3171,7 +3241,14 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       (target == branch->u.br.midpc || tailbranchjump)) {
                     /* the end of the if-part */
                     branchendpc = branch->u.br.midpc-1;
-                    issingle = 0; /* there is an else-block */
+                    if (tailbranchjump &&
+                        (GET_OPCODE(code[endpc-1]) != OP_JMP ||
+                         endpc+GETARG_sBx(code[endpc-1]) != startpc)) {
+                      issingle = 1;
+                    }
+                    else
+                      issingle = 0;
+                    /*issingle = tailbranchjump;*/ /* there is an else-block */
                   }
                   else {
                     if (tailbranchjump && branch == NULL)
@@ -3228,8 +3305,16 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   lua_assert(new_node != NULL);
                   D(lprintf("BRANCH BLOCK - %B\n", new_node));
                   if (issingle || s.branch == NULL ||
-                      nextsibling != s.branch->result)
+                      nextsibling != s.branch->result) {
                     rescansiblingchain1(new_node, &nextsibling);
+                    /* re-attach the next sibling for the block context that was
+                       finalized because it is actually part of this branch */
+                    if (s.haveblocksibling)
+                      new_node->nextsibling = s.blocksibling;
+                  }
+                  /* discharge saved values from finalized erroneous blocks */
+                  s.haveblocksibling = 0;
+                  s.blocksibling = NULL;
                   /* connect the if and else parts */
                   if (s.branch != NULL)
                     new_node->nextsibling = s.branch->result;
@@ -3392,6 +3477,13 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  they were thought to be siblings when they were created, but
                  now they need to be demoted to children of this else-block */
               rescansiblingchain1(s.branch->result, &nextsibling);
+              /* re-attach the next sibling from the finalized block that was
+                 finalized because it is actually part of this new block */
+              if (s.haveblocksibling)
+                result->nextsibling = s.blocksibling;
+              /* discharge saved values from the finalized erroneous block */
+              s.haveblocksibling = 0;
+              s.blocksibling = NULL;
               nextsibling = s.branch->result;
               nextstat = ca->pc;  /* else-stat or if-stat */
             }
