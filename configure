@@ -391,7 +391,11 @@ printvar()
 
 logvar()
 {
-	eval echo $1=\\\"\$$1\\\" | tee -a "$config_file"
+	eval val=\$$1
+	case $val in
+		*[\ \	]*) echo "$1=\"$val\"" | tee -a "$config_file" ;;
+		*) echo "$1=$val" | tee -a "$config_file" ;;
+	esac
 }
 
 # install paths
