@@ -3888,7 +3888,6 @@ static void pass1(const Proto *f, DFuncState *fs)
   ca.inopenexpr = 0;
   ca.testset.endpc = ca.testset.reg = -1;
   ca.code = f->code;
-  /*preparepass1(fs);*/
   initpass1(fs);
   loop1(&ca, fs, 0, BL_FUNCTION, NULL);
   lua_assert(fs->a->bllist.first != NULL);
@@ -3896,7 +3895,6 @@ static void pass1(const Proto *f, DFuncState *fs)
   lua_assert(fs->a->bllist.first->type == BL_FUNCTION);
   if (f->sizecode > 1)
     set_ins_property(fs, f->sizecode-2, INS_BLOCKEND);
-  D(lprintf("ca.pc == (%d)\n", ca.pc));
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
   cleanuppass1(fs);
