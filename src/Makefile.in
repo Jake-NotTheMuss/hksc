@@ -30,6 +30,7 @@ BUILDCONFIGFLAGS=$(@BUILDCONFIGTYPE@)
 
 CC=@CC@
 AR=@AR@
+ARFLAGS=@ARFLAGS@
 RANLIB=@RANLIB@
 RM=@RM@
 MYCFLAGS=@CFLAGS@
@@ -107,7 +108,7 @@ a:	$(ALL_A)
 
 # static library
 $(CORE_T): $(CORE_O) $(AUX_O)
-	$(AR) $@ $?
+	$(AR) $(ARFLAGS) $@ $?
 	$(RANLIB) $@
 
 # rules for $(SHAREDLIB)

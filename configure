@@ -36,6 +36,7 @@ Standard Options:
   --mandir=DIR             Install man pages in DIR
   --program-prefix=PREFIX  Prepend PREFIX to installed program names
   --program-suffix=SUFFIX  Append SUFFIX to installed program names
+  --uname=UNAME            Override result of invoking uname
 
 Havok Script Compatibility Options:
   --game=GAME              Configure compability settings for GAME
@@ -154,6 +155,7 @@ for opt; do
 		--mandir=*) mandir=${opt#*=} ;;
 		--program-prefix=*) program_prefix=${opt#*=} ;;
 		--program-suffix=*) program_suffix=${opt#*=} ;;
+		--uname=*) uname=${opt#*=} ;;
 		--game=*) game=${opt#*=} ;;
 # compatibility features
 		--with-structures) STRUCTURE_EXTENSION_ON=1;;
@@ -185,8 +187,10 @@ for opt; do
 	esac
 done
 
+test x$uname = x && uname=`uname -s || echo unknown`
+
 # shared library extension
-case `(uname -s || echo unknown) 2>/dev/null` in
+case $uname in
 	Darwin* | darwin*)
 		LIBSUF='.a'
 		DLLSUF='.dylib'
@@ -195,7 +199,8 @@ case `(uname -s || echo unknown) 2>/dev/null` in
 		LINK_LIBHKSC_TYPE=DYLIB ;;
 	Windows_NT|MINGW*|mingw*|CYGWIN*|Cygwin*|cygwin*)
 		prefix=${prefix-'C:/Program Files/hksc'}
-		AR=${AR-ar rcs}
+		AR=${AR-ar}
+		ARFLAGS=${ARFLAGS-rcs}
 		RANLIB=${RANLIB-'strip --strip-unneeded'}
 		CC=${CC-gcc}
 		LIBSUF='.a'
@@ -224,7 +229,8 @@ mandir=${mandir-$sharedir/man}
 pkgconfigdir=$libdir/pkgconfig
 
 CC=${CC-cc}
-AR=${AR-ar rcu}
+AR=${AR-ar}
+ARFLAGS=${ARFLAGS-rcu}
 RANLIB=${RANLIB-ranlib}
 CP=${CP-cp -p}
 RM=${RM-rm -f}
@@ -530,6 +536,7 @@ config_makefile()
 			s&@pkgconfigdir@&$pkgconfigdir&;t t
 			s&@CC@&$CC&;t t
 			s&@AR@&$AR&;t t
+			s&@ARFLAGS@&$ARFLAGS&;t t
 			s&@RANLIB@&$RANLIB&;t t
 			s&@CP@&$CP&;t t
 			s&@RM@&$RM&;t t
