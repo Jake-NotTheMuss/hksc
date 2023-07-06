@@ -3705,6 +3705,10 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         }
         goto postexpr;
       }
+      case OP_CHECKTYPE:
+      case OP_CHECKTYPES:
+        newregnote(fs, REG_NOTE_CHECKTYPE, pc, a);
+        break;
       case OP_DATA:
         break;
       case OP_NEWTABLE:
