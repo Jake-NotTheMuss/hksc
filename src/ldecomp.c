@@ -1512,7 +1512,8 @@ static void applyregnote(DFuncState *fs, int firstreg, int pc, OpCode o, int a,
 ** are treated differently than other calls, however, so recursion does happen
 ** in that case since VOIDPREP expressions are not recorded)
 */
-static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
+static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
+                      struct LocVar *locvar)
 {
   const Instruction *code = ca->code;
   int endpc = ca->pc;
@@ -1522,7 +1523,32 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
      a particular opcode that ends the expression (e.g. OP_RETURN), and that
      opcode has already been visited in those cases */
   if (kind != VOIDPREP) ca->pc--;
-  else endpc++;  /* endpc needs to be (ca->pc+1) in all cases */
+  else {
+    /* if this is a local variable expression and the local variable ends 1
+       after the endpc of the expression, such as the following case:
+          if a then
+              local a = 12;
+          end
+       keep the endpc as it is (in the above case, the LOADK instruction), so
+       that the jump for `if a' does not get included as part of the expression;
+       this has the side effect of a false positive in cases such as the
+       following:
+          local a = a and 12; -- generates same code as above
+       the above code would be detected as an if-block because the local
+       variable `a' ends on the same pc as the jump target, so the jump will
+       not be counted as part of the expression. This is usually okay because
+       the decompiler will still generate matching debug for it anyway (whether
+       a branch or a confitional expression, the variable will have the same
+       lifespan in either case); it is a problem if the conditional tests a
+       constant, e.g.:
+          local a = 1 or 5;
+       this would be detected as an if-statement, but it would generate
+       different code when re-compiled because of optimization; constant tests
+       are optimized in if-statements, but not in conditional expressions; this
+       is handled after the code analysis is done */
+    if (locvar == NULL || locvar->endpc != endpc+1)
+      endpc++;  /* endpc needs to be (ca->pc+1) in all cases */
+  }
   ca->inopenexpr++;
   for (pc = ca->pc; pc >= 0; pc--) {
     Instruction i = code[pc];
@@ -1544,7 +1570,7 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
       case OP_CALL_M:
       case OP_CONCAT:
         if (kind == VOIDPREP) {
-          openexpr1(ca, fs, a, o == OP_CONCAT ? CONCATPREP : CALLPREP);
+          openexpr1(ca, fs, a, o == OP_CONCAT ? CONCATPREP : CALLPREP, NULL);
           goto postrecursion;
         }
         else
@@ -1558,7 +1584,7 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
         continue;
       case OP_SETLIST:
         if (kind == VOIDPREP) {
-          openexpr1(ca, fs, a, SETLISTPREP);
+          openexpr1(ca, fs, a, SETLISTPREP, NULL);
           postrecursion:
           pc = ca->pc;
           i = code[pc];
@@ -1619,14 +1645,15 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind)
 /*
 ** traverse a local variable initialized expression
 */
-static void locvarexpr1(CodeAnalyzer *ca, DFuncState *fs, int nvars)
+static void locvarexpr1(CodeAnalyzer *ca, DFuncState *fs, int nvars,
+                        struct LocVar *var)
 {
   int reg;  /* register of first local variable that is initialized */
   lua_assert(nvars > 0);
   lua_assert(fs->nactvar >= nvars);
   reg = fs->nactvar-nvars;
   D(lprintf("entering VOIDPREP for local variable in reg %d\n", reg));
-  openexpr1(ca, fs, reg, VOIDPREP);
+  openexpr1(ca, fs, reg, VOIDPREP, var);
   fs->nactvar -= nvars;
 }
 
@@ -1650,7 +1677,7 @@ static int storeexpr1(CodeAnalyzer *ca, DFuncState *fs, int reg)
   lua_assert(isregvalid(fs, reg));
   D(lprintf("entering VOIDPREP for stored register %d\n", reg));
   ca->pc--;  /* advance over the store code */
-  openexpr1(ca, fs, reg, VOIDPREP);
+  openexpr1(ca, fs, reg, VOIDPREP, NULL);
   return 1;
 }
 
@@ -2842,7 +2869,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         goto traverseforlistprep;
       }
       D(lprintf("encountered start of new local variable at next pc (%i)\n", pc+1));
-      locvarexpr1(ca, fs, nvars);
+      locvarexpr1(ca, fs, nvars, locvarhere);
       goto poststat;
     }
     printf("nactvar: %d\n", fs->nactvar);
@@ -2868,7 +2895,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           break;  /* this jump is part of a boolean expression */
         if (test_ins_property(fs, pc+1, INS_FORLIST)) {
           traverseforlistprep:
-          openexpr1(ca, fs, GETARG_A(code[pc+1+sbx]), FORLISTPREP);
+          openexpr1(ca, fs, GETARG_A(code[pc+1+sbx]), FORLISTPREP, NULL);
           goto poststat;
         }
         if (pc == 0) {
@@ -3616,7 +3643,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_CALL_C:
       case OP_CALL_M: {
         int nret = c-1;  /* number of return values used */
-        openexpr1(ca, fs, a, CALLPREP);
+        openexpr1(ca, fs, a, CALLPREP, NULL);
         if (nret == 0)  /* call is a statement */
           goto poststat;
         goto postexpr;
@@ -3626,10 +3653,10 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_TAILCALL_I_R1:
       case OP_TAILCALL_C:
       case OP_TAILCALL_M:  /* a function call expression */
-        openexpr1(ca, fs, a, CALLPREP);
+        openexpr1(ca, fs, a, CALLPREP, NULL);
         goto poststat;
       case OP_CONCAT:  /* a concat expression */
-        openexpr1(ca, fs, b, CONCATPREP);
+        openexpr1(ca, fs, b, CONCATPREP, NULL);
         if (D->usedebuginfo) {
           if (a < fs->nactvar) goto poststat;
         }
@@ -3641,7 +3668,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
              as either an open expression or a returned local variable */
           if (D->usedebuginfo) {
             if (a >= fs->nactvar) {  /* returns a non-local register */
-              openexpr1(ca, fs, a, RETPREP);
+              openexpr1(ca, fs, a, RETPREP, NULL);
             }
           }
           else if (pc > 0)
@@ -3650,7 +3677,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             set_ins_property(fs, pc-1, INS_PRERETURN1);
         }
         else if (nret != 0) {  /* returns an open expression */
-          openexpr1(ca, fs, a, RETPREP);
+          openexpr1(ca, fs, a, RETPREP, NULL);
         }
         goto poststat;
       }
@@ -3662,11 +3689,11 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         CHECK(fs, GET_OPCODE(code[target]) == OP_FORLOOP, "unexpected target "
               "code for OP_FORPREP (expected to jump to OP_FORLOOP)");
         lua_assert(test_ins_property(fs, target, INS_LOOPEND));
-        openexpr1(ca, fs, a, FORNUMPREP);
+        openexpr1(ca, fs, a, FORNUMPREP, NULL);
         goto poststat;
       }
       case OP_SETLIST:
-        openexpr1(ca, fs, a, SETLISTPREP);
+        openexpr1(ca, fs, a, SETLISTPREP, NULL);
         goto postexpr;
       case OP_TESTSET: /* a testset expression */
         if (ca->testset.reg == -1)
