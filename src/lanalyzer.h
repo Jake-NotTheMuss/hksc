@@ -61,9 +61,8 @@ enum BLTYPE {
   DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
-  DEFINSFLAG(MINHASHEND) \
-  DEFINSFLAG(TESTSETTARGET) \
-  DEFINSFLAG(LOCVAREND)  /* endpc of a local variable */ \
+  DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
+  DEFINSFLAG(LOCVAREXPR)  /* start of a local varible initialization */ \
   DEFINSFLAG(CLOBBER) \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
@@ -102,6 +101,12 @@ typedef struct BlockNode {
   int endpc;  /* endpc of the block */
   int type;  /* the type of the block */
   lu_byte isempty;  /* true if the block has zero instructions */
+  /* this is my lazy way of specifying whether a do-block closes its variblaes;
+     the main first pass analyzer only generates do-blocks from OP_CLOSE codes,
+     and then the post-processor generates do-blocks to preserve debug info if
+     needed; augmentedbyp1 is true if the post-processor generated this
+     do-block */
+  lu_byte augmentedbyp1;
 #ifdef LUA_DEBUG
   lu_byte visited;  /* has this block been visited in pass2 */
 #endif
