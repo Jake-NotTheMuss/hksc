@@ -100,7 +100,8 @@ static void print_usage(void)
    "  -g, --with-debug        Load/dump debug information with input/output "
    "files\n"
 #endif
-   "  -i, --ignore-debug      Ignore debug info when loading bytecode\n"
+   "  -i, --ignore-debug      Ignore debug info when loading, listing, and "
+   "decompiling bytecode\n"
    , stderr);
   fputs(
    "\nInput/Output options:\n"
@@ -638,12 +639,6 @@ int main(int argc, char *argv[])
   lua_setbytecodestrippinglevel(H,striplevel);
   lua_setignoredebug(H, ignore_debug);
 #endif /* LUA_CODT6 */
-/*  if (listing)
-    dumpf = hksc_dump_l;
-  else if (!dumping)
-    dumpf = hksc_dump_p;
-  else
-    dumpf = hksc_dump_default;*/
   status = dofiles(H, argc, argv);
   hksI_close(H);
   return status ? EXIT_FAILURE : EXIT_SUCCESS;
