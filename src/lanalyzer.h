@@ -163,6 +163,7 @@ typedef enum {
   FORNUMPREP,  /* numeric for-loop preparation code */
   FORLISTPREP,  /* list for-loop preparation code */
   SETLISTPREP,  /* code evaluating items in a table constructor */
+  HASHTABLEPREP,  /* code construction a table with only hash items */
   EMPTYTABLE,  /* empty table constructors are their own category because they
                   may or may not clobber an open register */
   RETPREP  /* return statement preparation code */
@@ -204,18 +205,20 @@ typedef enum {
   EFALSE,  /* `false' */
   EVARARG,  /* `...' */
   ELITERAL,  /* a constant number or string */
-  ECON,  /* a table constructor */
+  ECONSTRUCTOR,  /* a table constructor */
   ECLOSURE,  /* a Lua function */
   ELOCAL,  /* a local variable */
   EUPVAL,  /* an upvalue */
   EGLOBAL,  /* a global variable */
   EINDEXED,  /* a table index */
   ESELF,  /* a table index called as a method */
+  ECOMP,  /* a binary comparison operation */
   EBINOP,  /* a binary operation */
   EUNOP,  /* a unary operation */
   ECALL,  /* a function call */
   ETAILCALL,  /* a tail function call */
   ECONCAT,  /* a concatenation */
+  ECONDITIONAL,  /* a conditional expression */
   ESTORE  /* encodes an L-value in an assignment list */
 } expnodekind;
 
@@ -226,8 +229,17 @@ typedef struct ExpNode {
     TValue *k;  /* constant value */
     TString *name;  /* variable name */
     int token;  /* token ID, e.g. TK_TRUE for `true' */
-    struct { int arrsize, hashsize; int est; } con;
+    struct {
+      int arrsize, hashsize;
+      int firstarrayitem, firsthashitem, lasthashitem;
+      int est;
+    } con;
     const Proto *p;  /* Lua closure */
+    struct {
+      int e1, e2;  /* exp indices of operands */
+      lu_byte goiftrue;  /* OPR_AND if 1, else OPR_OR */
+      int pc;  /* jump target */
+    } cond;
     struct {
       int b, c;  /* B and C operands from the instruction */
       /* these 2 fields are needed if B and/or C reference a pending expression
@@ -281,6 +293,7 @@ typedef struct ExpNode {
   lu_byte dependondest; /* does this node use its destination as a source */
   lu_byte leftside; /* is this node the left operand in a binary operation */
   lu_byte pending;  /* true if this expression has not yet been emitted */
+  lu_byte goiftrue;
 } ExpNode;
 
 

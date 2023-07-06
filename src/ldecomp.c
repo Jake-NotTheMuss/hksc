@@ -124,6 +124,7 @@ typedef struct DFuncState {
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int firstfree;
   int lastcallexp;  /* exp index of last function call node */
+  int curr_constructor;  /* exp index of current table constructor */
   int nopencalls;  /* number of OpenExpr entries created */
   int nregnotes;  /* number of RegNote entries created */
 } DFuncState;
@@ -653,6 +654,7 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
     case EUPVAL:
       lprintf("upval=%s", getstr(exp->u.name));
       break;
+    case ECOMP:
     case EBINOP:
       lprintf("[BINOP %s  %d, %d]", getbinoprstring(exp->u.binop.op),
               exp->u.binop.b, exp->u.binop.c);
@@ -661,12 +663,26 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
       lprintf("[UNOP %s  %d]", getunoprstring(exp->u.unop.op),
               exp->u.unop.b);
       break;
-    case ECON:
+    case ECONSTRUCTOR:
       lprintf("'{}' %d, %d", exp->u.con.arrsize, exp->u.con.hashsize);
       break;
     case ESTORE:
       lprintf("STORE (from %d)", exp->u.store.srcreg);
       break;
+    case ECONDITIONAL: {
+      int i;
+      lprintf("[CONDITIONAL '%s']\n", getbinoprstring(exp->u.cond.goiftrue ?
+                                                      OPR_AND : OPR_OR));
+      for (i=0;i<=indent;i++)
+        lprintf("  ");
+      lprintf("- ");
+      debugexp(fs, index2exp(fs, exp->u.cond.e1), indent+1);
+      for (i=0;i<=indent;i++)
+        lprintf("  ");
+      lprintf("- ");
+      debugexp(fs, index2exp(fs, exp->u.cond.e2), indent+1);
+      return;
+    }
     default:
       break;
   }
@@ -794,6 +810,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->firstclobnonparam = -1;
   fs->firstfree = -1;
   fs->lastcallexp = 0;
+  fs->curr_constructor = 0;
   /* allocate vectors for instruction and register properties */
   a->sizeinsproperties = f->sizecode; /* flags for each instruction */
   a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
@@ -1196,6 +1213,7 @@ static void debugopenexpr(const OpenExpr *e)
     "PREFORNUM",
     "PREFORLIST",
     "PRESETLIST",
+    "HASHTABLEPREP",
     "EMPTYTABLE",
     "PRERETURN"
   };
@@ -1657,7 +1675,7 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
           if (c) {
             /* walk back up the code vector to find the earliest possible end of
                this constructor */
-            scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, SETLISTPREP),
+            scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, HASHTABLEPREP),
                               luaO_fb2int(c-1)+1, a, NULL);
           }
           else
@@ -1803,7 +1821,7 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
   int numhashitems = 0;  /* number of hash items found so far */
   lua_assert(minhashsize > 0);
   lua_assert(e != NULL);
-  lua_assert(e->kind == SETLISTPREP);
+  lua_assert(e->kind == HASHTABLEPREP);
   lua_assert(ispcvalid(fs, e->startpc));
   lua_assert(GET_OPCODE(code[e->startpc]) == OP_NEWTABLE);
   lua_assert(GETARG_B(code[e->startpc]) == 0);
@@ -3815,7 +3833,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         if (c) {
           /* walk back up the code vector to find the earliest possible end of
              this constructor */
-          scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, SETLISTPREP),
+          scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, HASHTABLEPREP),
                             luaO_fb2int(c-1)+1, a, &nextsibling);
           adjustnextbranch1(fs, nextsibling, &nextbranch, &nextbranchtarget);
         }
@@ -4368,6 +4386,9 @@ typedef struct StackAnalyzer {
   const Instruction *code;
   BlockNode *currbl;
   int laststore;  /* exp index of last store node */
+  struct {
+    int e, target, pc;
+  } lastcond;
   int pc;
   int sizecode;
   int maxstacksize;
@@ -4391,6 +4412,12 @@ static void DecompileFunction(DecompState *D, const Proto *f);
 
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
+
+
+static int istempreg(DFuncState *fs, int rk)
+{
+  return !ISK(rk) && !test_reg_property(fs, rk, REG_LOCAL);
+}
 
 
 /*
@@ -4993,10 +5020,30 @@ static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
 }
 
 
+static void setfirstfree(DFuncState *fs, int newfirstfree)
+{
+  int numfree = fs->firstfree - newfirstfree;
+  lua_assert(numfree >= 0);
+  /* firstfree does not need to be an accessible slot as it can be equal to
+     maxstacksize */
+  if (isregvalid(fs, newfirstfree))
+    memset(getslotdesc(fs, newfirstfree), 0, numfree * sizeof(SlotDesc));
+  if (newfirstfree > 0) {
+    ExpNode *lastreg = getexpinreg2(fs, newfirstfree-1);
+    if (lastreg) {
+      lastreg->nextregindex = 0;
+      /* if the last used reg holds the current table constructor, then reset
+         its firstarrayitem as it now points to a free register */
+      if (lastreg->kind == ECONSTRUCTOR)
+        lastreg->u.con.firstarrayitem = 0;
+    }
+  }
+  fs->firstfree = newfirstfree;
+}
+
+
 static void flushpendingexp2(DFuncState *fs)
 {
-  int oldfirstfree = fs->firstfree;
-  int newfirstfree = fs->nactvar;
 #ifdef LUA_DEBUG
   int i;
   for (i = 0; i < fs->a->pendingstk.used; i++) {
@@ -5007,15 +5054,9 @@ static void flushpendingexp2(DFuncState *fs)
   fs->a->pendingstk.used = 0;
   D(lprintf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
             fs->nactvar));
-  lua_assert(oldfirstfree >= newfirstfree);
-  /* firstfree does not need to be an accessible slot as it can be equal to
-     maxstacksize */
-  if (isregvalid(fs, newfirstfree))
-  /* clear all pending data */
-  memset(getslotdesc(fs, newfirstfree), 0,
-         (oldfirstfree-newfirstfree) * sizeof(SlotDesc));
-  fs->firstfree = newfirstfree;
+  setfirstfree(fs, fs->nactvar);
   fs->lastcallexp = 0;
+  fs->curr_constructor = 0;
 }
 
 
@@ -5107,6 +5148,35 @@ static void dumpcloseparen2(DecompState *D, DFuncState *fs, ExpNode *exp)
 }
 
 
+static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  int isfield;
+  int rkkey;
+  lua_assert(exp->kind == ESTORE);
+  isfield = exp->u.store.rootop == OP_SETFIELD;
+  rkkey = exp->u.store.aux2;
+  if (isfield && ISK(rkkey) && ttisstring(&fs->f->k[INDEXK(rkkey)])) {
+    CheckSpaceNeeded(D);
+    DumpTString(rawtsvalue(&fs->f->k[INDEXK(rkkey)]), D);
+  }
+  else {
+    struct HoldItem bracket;
+    addliteralholditem2(D, &bracket, "[", 0);
+    if (istempreg(fs, rkkey))
+      dumpexpoperand2(D, fs, index2exp(fs, exp->prevregindex), exp, 0);
+    else
+      dumpRK2(D, fs, rkkey, 0);
+    DumpLiteral("]",D);
+  }
+  DumpLiteral(" =",D);
+  D->needspace = 1;
+  if (exp->aux)
+    dumpexpoperand2(D, fs, index2exp(fs, exp->aux), exp, 0);
+  else
+    dumpRK2(D, fs, exp->u.store.srcreg, exp);
+}
+
+
 /*
 ** `ExpListIterator' helps properly iterate through a complete expression list
 */
@@ -5172,10 +5242,10 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
   lua_assert(exp != NULL);
   lua_assert(exp->pending);
   exp->pending = 0;
-  if (index2exp(fs, exp->prevregindex))
+/*  if (index2exp(fs, exp->prevregindex))
     index2exp(fs, exp->prevregindex)->nextregindex = exp->previndex;
   if (index2exp(fs, exp->nextregindex))
-    index2exp(fs, exp->nextregindex)->prevregindex = exp->previndex;
+    index2exp(fs, exp->nextregindex)->prevregindex = exp->previndex;*/
   switch (exp->kind) {
     case EUNOP: { /* unary operation */
       ExpNode *o; /* the operand if it is a pending expression */
@@ -5209,6 +5279,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       D->needspace = 1;
       break;
     }
+    case ECOMP:
     case EBINOP: { /* binary operation */
       ExpNode *o1, *o2;
       BinOpr op = exp->u.binop.op;
@@ -5260,6 +5331,18 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         dumpRK2(D, fs, c, exp); /* second operand */
       if (needparen || needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
+      D->needspace = 1;
+      break;
+    }
+    case ECONDITIONAL: {
+      ExpNode *o1 = index2exp(fs, exp->u.cond.e1);
+      ExpNode *o2 = index2exp(fs, exp->u.cond.e2);
+      BinOpr op = exp->u.cond.goiftrue ? OPR_AND : OPR_OR;
+      dumpexpoperand2(D, fs, o1, exp, priority[op].left);
+      DumpSpace(D);
+      DumpBinOpr(op,D);
+      D->needspace = 1;
+      dumpexpoperand2(D, fs, o2, exp, priority[op].right);
       D->needspace = 1;
       break;
     }
@@ -5318,6 +5401,56 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         DumpLiteral("]",D);
       if (needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
+      break;
+    }
+    case ECONSTRUCTOR: {
+      struct ExpListIterator iter;
+      int needparen = (limit == SUBEXPR_PRIORITY || needparenforlineinfo);
+      int totalitems = exp->u.con.arrsize + exp->u.con.hashsize;
+      if (needparen)
+        addliteralholditem2(D, &holdparen, "({", 0);
+      else
+        addliteralholditem2(D, &holdparen, "{", 0);
+      if (totalitems) {
+        int i;
+        int reg;
+        ExpNode *nextarrayitem = index2exp(fs, exp->u.con.firstarrayitem);
+        ExpNode *nexthashitem = index2exp(fs, exp->u.con.firsthashitem);
+        lua_assert(nextarrayitem != NULL || nexthashitem != NULL);
+        if (nextarrayitem != NULL)
+          initexplistiter2(&iter, fs, exp->info+1, nextarrayitem);
+        for (i = reg =0; i < totalitems; i++) {
+          int dumparray;
+          if (i != 0)
+            DumpLiteral(",",D);
+          if (nexthashitem == NULL)
+            dumparray = 1;
+          else if (nextarrayitem == NULL)
+            dumparray = 0;
+          else if (nexthashitem > nextarrayitem)
+            dumparray = 1;
+          else
+            dumparray = 0;
+          if (dumparray == 0) {
+            lua_assert(nexthashitem != NULL);
+            lua_assert(nexthashitem->kind == ESTORE);
+            dumphashitem2(D, fs, nexthashitem);
+            nexthashitem = index2exp(fs, nexthashitem->nextregindex);
+          }
+          else {
+            dumpexp2(D, fs, nextarrayitem, 0);
+            reg++;
+            if (isregvalid(fs, iter.firstreg+reg))
+              nextarrayitem = getnextexpinlist2(&iter, reg);
+            else
+              nextarrayitem = NULL;
+          }
+        }
+      }
+      DumpLiteral("}",D);
+      if (needparen)
+        dumpcloseparen2(D, fs, exp);
+      fs->curr_constructor = exp->aux;
       break;
     }
     case ECALL: {
@@ -5468,7 +5601,7 @@ static void emitbreakstat2(DFuncState *fs, int pc)
 {
   DecompState *D = fs->D;
   int line = getline(fs->f, pc);
-  int needblock = (test_ins_property(fs, pc, INS_BLOCKEND) == 0);
+  int needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
   updateline2(fs, line, D);
   CheckSpaceNeeded(D);
   if (needblock) DumpLiteral("do ",D);
@@ -5497,7 +5630,7 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
     if (top != NULL && line != top->line)
       top->closeparenline = line;
   }
-  needblock = (test_ins_property(fs, pc, INS_BLOCKEND) == 0);
+  needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
   if (pc == fs->f->sizecode-1)
     return;  /* final return is augmented by the compiler */
   if (nret == 0) {
@@ -5945,6 +6078,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
              test_reg_property(fs, exp->u.store.srcreg, REG_LOCAL)) {
       if (i != 0)
         DumpComma(D);
+      predumpexp2(D,fs,exp);
       dumplocvar2(D,fs,exp->u.store.srcreg);
     }
     else {
@@ -6131,6 +6265,13 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
 {
   lua_assert(isregvalid(fs, reg));
   lua_assert(exp->kind != ESTORE);
+  if (exp->kind == ECONSTRUCTOR) {
+    int e = exp2index(fs, exp);
+    if (e == fs->curr_constructor)
+      return exp;
+    exp->aux = fs->curr_constructor;
+    fs->curr_constructor = e;
+  }
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
     int link, lastreg;
     if (exp->kind == ENIL || exp->kind == ESELF)
@@ -6146,7 +6287,9 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
                 fs->firstfree, lastreg+1));
       fs->firstfree = lastreg+1;
     }
-    if (exp->kind == ECALL || exp->kind == ETAILCALL)
+    if (exp->kind == ECONDITIONAL)
+      link =0 ;
+    else if (exp->kind == ECALL || exp->kind == ETAILCALL)
       link = 1;  /* linking is needed to access the called expression */
     else if (exp->kind == ENIL) {
       /* check if the next open expression uses this nil expression */
@@ -6238,6 +6381,57 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
 }
 
 
+static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
+{
+  exp->info = reg;
+  exp->aux = 0;
+  exp->previndex = exp2index(fs, NULL);
+  if (reg == 0)
+    exp->prevregindex = exp2index(fs, NULL);
+  else
+    exp->prevregindex = exp2index(fs, getexpinreg2(fs, reg-1));
+  exp->nextregindex = exp2index(fs, NULL);
+  exp->line = getline(fs->f,pc);
+  exp->closeparenline = exp->line;
+  exp->leftside = 0;
+  exp->pending = 1;
+  exp->goiftrue = 0;
+}
+
+
+static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
+{
+  ExpNode *prevreg = index2exp(fs, exp->prevregindex);
+  sa->lastexpindex = exp2index(fs, exp);
+  if (prevreg) {
+    prevreg->nextregindex = sa->lastexpindex;
+    if (prevreg->kind == ECONSTRUCTOR && prevreg->u.con.firstarrayitem == 0)
+      prevreg->u.con.firstarrayitem = sa->lastexpindex;
+  }
+}
+
+
+static ExpNode *addboolexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc,
+                            int b)
+{
+  ExpNode *exp = newexp(fs);
+  initexp2(fs, exp, reg, pc);
+  exp->kind = b ? ETRUE : EFALSE;
+  linkexp2(sa, fs, exp);
+  return exp;
+}
+
+
+static ExpNode *addnilexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc)
+{
+  ExpNode *exp = newexp(fs);
+  initexp2(fs, exp, reg, pc);
+  exp->kind = ENIL;
+  linkexp2(sa, fs, exp);
+  return exp;
+}
+
+
 static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
                         int a, int b, int c, int bx)
 {
@@ -6245,18 +6439,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   ExpNode *exp = &node;
   const Proto *f = fs->f;
   lua_assert(ispcvalid(fs, pc));
-  exp->info = a;
-  exp->aux = 0;
-  exp->previndex = exp2index(fs, NULL);
-  if (a == 0)
-    exp->prevregindex = exp2index(fs, NULL);
-  else
-    exp->prevregindex = exp2index(fs, getexpinreg2(fs, a-1));
-  exp->nextregindex = exp2index(fs, NULL);
-  exp->line = getline(f,pc);
-  exp->closeparenline = exp->line;
-  exp->leftside = 0;
-  exp->pending = 1;
+  initexp2(fs, exp, a, pc);
   switch (o) {
     case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
       exp->kind = EGLOBAL;
@@ -6273,6 +6456,10 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.name = rawtsvalue(&f->k[bx]);
       break;
     case OP_LOADBOOL:
+      if (test_ins_property(fs, pc, INS_BOOLLABEL)) {
+        return NULL;
+        return index2exp(fs, sa->lastcond.e);
+      }
       exp->kind = b ? ETRUE : EFALSE;
       exp->aux = c;
       break;
@@ -6291,11 +6478,17 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.name = fs->upvalues[b];
       break;
     case OP_NEWTABLE:
-      exp->kind = ECON;
+      exp->kind = ECONSTRUCTOR;
       exp->u.con.arrsize = luaO_fb2int(b);
       exp->u.con.hashsize = luaO_fb2int(c);
       exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16);
+      exp->u.con.firstarrayitem = 0;
+      exp->u.con.firsthashitem = 0;
+      exp->u.con.lasthashitem = 0;
       break;
+    case OP_SETLIST:
+      /* return the existing table constructor node */
+      return index2exp(fs, fs->curr_constructor);
     case OP_CLOSURE:
       exp->kind = ECLOSURE;
       exp->aux = pc;
@@ -6333,9 +6526,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->kind = EUNOP;
       exp->u.unop.b = b;
       exp->u.unop.op = OPR_LEN;
-      break;
-    case OP_TESTSET:
-      /* todo */
       break;
     case OP_SELF:
       exp->kind = ESELF;
@@ -6460,11 +6650,35 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.binop.op = OPR_BIT_OR;
       break;
 #endif /* LUA_CODT7 */
+    case OP_EQ: case OP_EQ_BK:
+    case OP_LT: case OP_LT_BK:
+    case OP_LE: case OP_LE_BK: {
+      OpCode comp = o - (o % 2);  /* remove BK bit */
+      BinOpr op;
+      exp->kind = ECOMP;
+      if (comp == OP_EQ)
+        op = a ? OPR_EQ : OPR_NE;
+      else {
+        if (istempreg(fs, b) && istempreg(fs, c) && b > c) {
+          int temp = b; b = c; c = temp;
+          a = !a;
+        }
+        if (comp == OP_LT)
+          op = a ? OPR_LT : OPR_GT;
+        else /* OP_LE */
+          op = a ? OPR_LE : OPR_GE;
+      }
+      exp->u.binop.b = b;
+      exp->u.binop.c = c;
+      exp->u.binop.op = op;
+      exp->info = -1;
+      break;
+    }
     /* the remaining operations do not clobber A */
     default:
       return NULL;
   }
-  if (exp->kind == EBINOP) {
+  if (exp->kind == EBINOP || exp->kind == ECOMP) {
     exp->dependondest = (a == b || a == c);
     if (!ISK(b) && !test_reg_property(fs, b, REG_LOCAL)) {
       /* B references a pending expression in register B, save the index of the
@@ -6504,13 +6718,11 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   else
     exp->dependondest = 0;
   /* discharge stores now before pushing a new expression node */
-  if (exp->kind != ESTORE)
+  if (exp->kind != ESTORE && pc >= sa->lastcond.target)
     checkdischargestores2(sa,fs);
   exp = newexp(fs);
   *exp = node;
-  sa->lastexpindex = exp2index(fs, exp);
-  if (index2exp(fs, exp->prevregindex))
-    index2exp(fs, exp->prevregindex)->nextregindex = sa->lastexpindex;
+  linkexp2(sa, fs, exp);
   if (exp->kind == ESTORE) {
     exp->pending = 0;
     updatelaststore2(sa, fs, exp);
@@ -6521,20 +6733,93 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
 }
 
 
+static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
+                               int jumptarget)
+{
+  int targetbool = test_ins_property(fs, jumptarget, INS_BOOLLABEL);
+  int e;
+  int reg = -1;
+  lu_byte goiftrue;
+  ExpNode *exp = gettopexp(fs);
+  if (exp != NULL && exp->kind == ECOMP) {
+    if (targetbool) {
+      /* see which bool label is targeted; if false, then this is a go-if-true
+         node, e.g. `a == b and 1', because the boolean result of the first node
+         will be used only if it is false */
+      goiftrue = !GETARG_B(fs->f->code[jumptarget]);
+      exp->info = GETARG_A(fs->f->code[jumptarget]);
+    }
+    else
+      goiftrue = (!test_ins_property(fs, pc, INS_BRANCHFAIL) &&
+                  !test_ins_property(fs, pc, INS_LOOPFAIL));
+  }
+  else {
+    const Instruction *jc = getjumpcontrol(fs, pc);
+    if (jc != NULL) {
+      /* simply use the C arg in the test opcode; C=1 means jump if equivalent
+         to false, i.e. go if true */
+      goiftrue = !GETARG_C(*jc);
+      if (GET_OPCODE(*jc) == OP_TESTSET)
+        /*reg = GETARG_A(*jc);*/;
+    }
+    else if (exp == NULL) {
+      if (targetbool) {
+        int b = GETARG_B(fs->f->code[jumptarget]);
+        exp = addboolexp2(sa, fs, GETARG_A(fs->f->code[jumptarget]), pc, b);
+        goiftrue = !b;
+      }
+      else {
+        exp = addnilexp2(sa, fs, pc, 0);
+        goiftrue =1;
+      }
+    }
+    else
+      goiftrue = exp->goiftrue;
+  }
+  exp->goiftrue = goiftrue;
+  /*exp->previndex = sa->lastcond.e;*/
+  e = exp2index(fs, exp);
+  if (sa->laststore == e)
+    sa->laststore = exp->previndex;
+  if (reg == -1) reg = exp->info;
+  if (sa->lastcond.e) {
+    ExpNode *prev = index2exp(fs, sa->lastcond.e);
+    if (prev->kind == ECONDITIONAL)
+      goiftrue = index2exp(fs, prev->u.cond.e2)->goiftrue;
+    else
+      goiftrue = prev->goiftrue;
+    exp = newexp(fs);
+    initexp2(fs, exp, reg, pc);
+    exp->kind = ECONDITIONAL;
+    exp->u.cond.e1 = sa->lastcond.e;
+    exp->u.cond.e2 = e;
+    exp->u.cond.goiftrue = exp->goiftrue = goiftrue;
+    exp->u.cond.pc = pc;
+    linkexp2(sa, fs, exp);
+    e = exp2index(fs, exp);
+  }
+  addexptoreg2(sa, fs, reg, exp, NULL);
+  sa->lastcond.e = e;
+  sa->lastcond.target = jumptarget;
+  sa->lastcond.pc = pc;
+}
+
+
 static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
                      int b, int c, int bx)
 {
   ExpNode *exp;
+  OpCode rootop;
   int srcreg;
   int info;
+  int aux1, aux2;
   switch (o) {
     case OP_SETFIELD: case OP_SETFIELD_R1:
-      exp = newexp(fs);
       /* OP_SETFIELD is used as the root if it should be written as a field */
       if (rawtsvalue(&fs->f->k[b])->tsv.reserved > 0)
-        exp->u.store.rootop = OP_SETTABLE;
+        rootop = OP_SETTABLE;
       else
-        exp->u.store.rootop = OP_SETFIELD;
+        rootop = OP_SETFIELD;
       b = RKASK(b);
       goto addstoretable;
     case OP_SETTABLE:
@@ -6543,41 +6828,47 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
     case OP_SETTABLE_S_BK:
     case OP_SETTABLE_N:
     case OP_SETTABLE_N_BK:
-      exp = newexp(fs);
-      exp->u.store.rootop = OP_SETTABLE;
+      rootop = OP_SETTABLE;
       addstoretable:
       srcreg = c;
       info = a;
-      exp->u.store.aux1 = a;  /* table register */
-      exp->u.store.aux2 = b;  /* index register */
+      aux1 = a;  /* table register */
+      aux2 = b;  /* index register */
       break;
     case OP_SETGLOBAL:
       CHECK(fs, isregvalid(fs, a),
             "invalid register referenced in OP_SETGLOBAL");
-      exp = newexp(fs);
       srcreg = a;
       info = -1;
-      exp->u.store.rootop = OP_SETGLOBAL;
-      exp->u.store.aux1 = bx;
-      exp->u.store.aux2 = 0;
+      rootop = OP_SETGLOBAL;
+      aux1 = bx;
+      aux2 = 0;
       break;
     case OP_SETUPVAL:
     case OP_SETUPVAL_R1:
       CHECK(fs, isregvalid(fs, a),
             "invalid register referenced in OP_SETUPVAL");
-      exp = newexp(fs);
       srcreg = a;
       info = -1;
-      exp->u.store.rootop = OP_SETUPVAL;
-      exp->u.store.aux1 = b;
-      exp->u.store.aux2 = 0;
+      rootop = OP_SETUPVAL;
+      aux1 = b;
+      aux2 = 0;
       break;
     default:
       return 0;
   }
+  if (!ISK(srcreg) && test_reg_property(fs, srcreg, REG_LOCAL)) {
+    ExpNode *top = gettopexp(fs);
+    if (top != NULL && top->kind != ESTORE)
+      checkdischargestores2(sa, fs);
+  }
+  exp = newexp(fs);
   exp->kind = ESTORE;
   exp->info = info;
-  if (ISK(srcreg) || test_reg_property(fs, srcreg, REG_LOCAL))
+  exp->u.store.aux1 = aux1;
+  exp->u.store.aux2 = aux2;
+  exp->u.store.rootop = rootop;
+  if (!istempreg(fs, srcreg))
     exp->aux = 0;
   else
     exp->aux = getslotdesc(fs, srcreg)->u.expindex;
@@ -6593,9 +6884,62 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
 }
 
 
+static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
+                             int c)
+{
+  ExpNode *exp;
+  OpCode rootop;
+  int info, aux1, aux2, srcreg;
+  switch (o) {
+    case OP_SETFIELD: case OP_SETFIELD_R1:
+      /* OP_SETFIELD is used as the root if it should be written as a field */
+      if (rawtsvalue(&fs->f->k[b])->tsv.reserved > 0)
+        rootop = OP_SETTABLE;
+      else
+        rootop = OP_SETFIELD;
+      b = RKASK(b);
+      goto addstoretable;
+    case OP_SETTABLE:
+    case OP_SETTABLE_BK:
+    case OP_SETTABLE_S:
+    case OP_SETTABLE_S_BK:
+    case OP_SETTABLE_N:
+    case OP_SETTABLE_N_BK:
+      rootop = OP_SETTABLE;
+      addstoretable:
+      srcreg = c;
+      info = a;
+      aux1 = a;  /* table register */
+      aux2 = b;  /* index register */
+      break;
+    default:
+      return NULL;
+  }
+  exp = newexp(fs);
+  exp->kind = ESTORE;
+  exp->info = info;
+  exp->u.store.aux1 = aux1;
+  exp->u.store.aux2 = aux2;
+  exp->u.store.rootop = rootop;
+  if (!istempreg(fs, srcreg))
+    exp->aux = 0;
+  else
+    exp->aux = getslotdesc(fs, srcreg)->u.expindex;
+  exp->line = getline(fs->f, pc);
+  exp->closeparenline = exp->line;
+  exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+  exp->dependondest = 0;
+  exp->leftside = 0;
+  exp->pending = 0;
+  exp->u.store.srcreg = srcreg;
+  return exp;
+}
+
+
 static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
 {
   const OpenExpr *e = sa->nextopenexpr;
+  int limit;  /* pc limit */
   lua_assert(e != NULL);
   lua_assert(sa->nextopenreg != -1);
   lua_assert(e->endpc >= sa->pc);
@@ -6605,7 +6949,9 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
   if (sa->openexprnildebt)
     dischargenildebt2(sa, fs, sa->nextopenreg);
   updatenextopenexpr2(sa, fs);  /* discharge this one now */
-  for (; sa->pc < e->endpc; sa->pc++) {
+  /* HASHTABLEPREP expressions don't have a termination code */
+  limit = e->endpc + (e->kind == HASHTABLEPREP);
+  for (; sa->pc < limit; sa->pc++) {
     int pc = sa->pc;
     Instruction i = sa->code[pc];
     OpCode o = GET_OPCODE(i);
@@ -6632,6 +6978,32 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
         debugexp(fs, exp,0);
         D(lprintf("---------------------------\n"));
         addexptoreg2(sa, fs, a, exp, NULL);
+      }
+      else if ((exp = addhashitem2(fs, pc, o, a, b, c))) {
+        /* a is the table in the current constructor */
+        ExpNode *tab = getexpinreg2(fs, a);
+        /* this should always be true, but if its not checked, malformed code
+           could cause a crash */
+        if (tab && tab->kind == ECONSTRUCTOR) {
+          ExpNode *last = index2exp(fs, tab->u.con.lasthashitem);
+          int e = exp2index(fs, exp);
+          if (last) {
+            lua_assert(last->kind == ESTORE);
+            /* `nextregindex' is not used in ESTORE nodes, so I use it to
+               chain hash items in a constructor */
+            last->nextregindex = e;
+          }
+          else {
+            tab->u.con.firsthashitem = e;
+          }
+          tab->u.con.lasthashitem = e;
+          /* similarly, I use `prevregindex' to save the exp index of the
+             current node in registre B if it is a temporary register */
+          if (istempreg(fs, exp->u.store.aux2)) {
+            exp->prevregindex = exp2index(fs, getexpinreg2(fs, b));
+            setfirstfree(fs, exp->u.store.aux2);
+          }
+        }
       }
     }
     UNUSED(sbx);
@@ -6705,7 +7077,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
     b = GETARG_B(i);
     c = GETARG_C(i);
     bx = GETARG_Bx(i);
-    sbx = GETARG_sBx(i); (void)sbx;
+    sbx = GETARG_sBx(i);
 #ifdef HKSC_DECOMP_DEBUG_PASS1
     visitinsn2(fs, bn, pc, i); /* visit this instruction */
     /* make sure to run the first pass on all nested closures */
@@ -6725,6 +7097,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
        INS_PRERETURN
        INS_PRERETURN1 */
     if (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
+      int ishashtable = sa->nextopenexpr->kind == HASHTABLEPREP;
       sa->currbl = bn;
       openexpr2(sa, fs);
       pc = sa->pc;
@@ -6735,10 +7108,12 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
       c = GETARG_C(i);
       bx = GETARG_Bx(i);
       sbx = GETARG_sBx(i);
+      if (ishashtable && (numvars = varstartsatpc2(fs, pc)) > 0)
+        initlocvars2(fs, fs->nactvar, numvars);
       numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
     }
     visitinsn2(fs, bn, pc, i); /* visit this instruction */
-    if (testAMode(o)) { /* A is a register */
+    if (testAMode(o) || testTMode(o)) { /* A is a register */
       ExpNode *exp;
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
       exp = addexp2(sa, fs, pc, o, a, b, c, bx);
@@ -6748,7 +7123,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
         D(lprintf("---------------------------\n"));
         debugexp(fs, exp,0);
         D(lprintf("---------------------------\n"));
-        if (exp->kind != ESTORE)
+        if (exp->kind != ESTORE && exp->info != -1)
           exp = addexptoreg2(sa, fs, a, exp, &splitnil);
         if (exp->kind == ECALL && exp->u.call.nret == 0)
           emitcallstat2(fs, exp);
@@ -6768,6 +7143,12 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
             else
               exp->closeparenline = retline;
           }
+        }
+        if (pc+1 == sa->lastcond.target) {
+           addconditionalnode2(sa, fs, pc, sa->lastcond.target);
+           sa->lastcond.e = 0;
+           sa->lastcond.target = -1;
+           sa->lastcond.pc = -1;
         }
         if (numvars > 0) {
           checkdischargestores2(sa, fs);
@@ -6789,12 +7170,19 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
       }
     }
     else {
-      checkdischargestores2(sa, fs);
-      if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
-        lua_assert(o == OP_JMP);
-        lua_assert(bn->type >= BL_WHILE && bn->type <= BL_FORLIST);
-        emitbreakstat2(fs, pc);
+      if (o == OP_JMP) {
+        int target = pc+1+sbx;
+        if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
+          checkdischargestores2(sa, fs);
+          lua_assert(bn->type >= BL_WHILE && bn->type <= BL_FORLIST);
+          emitbreakstat2(fs, pc);
+        }
+        else {
+          addconditionalnode2(sa, fs, pc, target);
+        }
       }
+      else
+        checkdischargestores2(sa, fs);
     }
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
     if (pc == endpc)
@@ -6855,6 +7243,9 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.inheadercondition = 0;
   sa.lastexpindex = 0;
   sa.laststore = 0;
+  sa.lastcond.e = 0;
+  sa.lastcond.target = -1;
+  sa.lastcond.pc = -1;
   sa.openexprkind = -1;
   sa.openexprnildebt = 0;
   fs->nactvar = 0;
