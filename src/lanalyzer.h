@@ -232,7 +232,7 @@ typedef struct ExpNode {
     struct {
       int arrsize, hashsize;
       int firstarrayitem, firsthashitem, lasthashitem;
-      int est;
+      int narray, nhash;
     } con;
     const Proto *p;  /* Lua closure */
     struct {

@@ -5406,7 +5406,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
     case ECONSTRUCTOR: {
       struct ExpListIterator iter;
       int needparen = (limit == SUBEXPR_PRIORITY || needparenforlineinfo);
-      int totalitems = exp->u.con.arrsize + exp->u.con.hashsize;
+      int totalitems = exp->u.con.narray + exp->u.con.nhash;
       if (needparen)
         addliteralholditem2(D, &holdparen, "({", 0);
       else
@@ -5450,7 +5450,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       DumpLiteral("}",D);
       if (needparen)
         dumpcloseparen2(D, fs, exp);
-      fs->curr_constructor = exp->aux;
       break;
     }
     case ECALL: {
@@ -6266,11 +6265,11 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
   lua_assert(isregvalid(fs, reg));
   lua_assert(exp->kind != ESTORE);
   if (exp->kind == ECONSTRUCTOR) {
-    int e = exp2index(fs, exp);
-    if (e == fs->curr_constructor)
+    /*int e = exp2index(fs, exp);*/
+    if (exp2index(fs, exp) == fs->curr_constructor)
       return exp;
-    exp->aux = fs->curr_constructor;
-    fs->curr_constructor = e;
+   /* exp->aux = fs->curr_constructor;
+    fs->curr_constructor = e;*/
   }
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
     int link, lastreg;
@@ -6481,14 +6480,27 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->kind = ECONSTRUCTOR;
       exp->u.con.arrsize = luaO_fb2int(b);
       exp->u.con.hashsize = luaO_fb2int(c);
-      exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16);
+      exp->u.con.narray = exp->u.con.nhash = 0;
+      /*exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16)*/;
       exp->u.con.firstarrayitem = 0;
       exp->u.con.firsthashitem = 0;
       exp->u.con.lasthashitem = 0;
       break;
-    case OP_SETLIST:
+    case OP_SETLIST: {
+      ExpNode *tab = getexpinreg2(fs, a);
+      /* should always be non-NULL, but a lone OP_SETLIST can crash the program
+         if this isn't checked */
+      if (tab != NULL || tab->kind != ECONSTRUCTOR) {
+        if (b == 0) {  /* b == 0 means set up to stack top */
+          /* get number of array expressions pushed */
+          b = fs->firstfree-(tab->info+1);
+        }
+        tab->u.con.narray += b;
+        fs->curr_constructor = exp2index(fs, tab);
+      }
       /* return the existing table constructor node */
-      return index2exp(fs, fs->curr_constructor);
+      return tab;
+    }
     case OP_CLOSURE:
       exp->kind = ECLOSURE;
       exp->aux = pc;
@@ -7003,6 +7015,7 @@ static void openexpr2(StackAnalyzer *sa, DFuncState *fs)
             exp->prevregindex = exp2index(fs, getexpinreg2(fs, b));
             setfirstfree(fs, exp->u.store.aux2);
           }
+          tab->u.con.nhash++;
         }
       }
     }
@@ -7096,7 +7109,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
        INS_PREFORNUM
        INS_PRERETURN
        INS_PRERETURN1 */
-    if (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
+    while (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
       int ishashtable = sa->nextopenexpr->kind == HASHTABLEPREP;
       sa->currbl = bn;
       openexpr2(sa, fs);
@@ -7108,6 +7121,11 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *bn)
       c = GETARG_C(i);
       bx = GETARG_Bx(i);
       sbx = GETARG_sBx(i);
+      /* all open expressions beside hashtables have a final opcode that ends
+         the expression and provides an instruction-worth of breathing room for
+         the main loop to catch new variables and emit them, but hashtables
+         don't have a terminal opcode, so variables can start at the pc right
+         after the hashtable evluation */
       if (ishashtable && (numvars = varstartsatpc2(fs, pc)) > 0)
         initlocvars2(fs, fs->nactvar, numvars);
       numvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
