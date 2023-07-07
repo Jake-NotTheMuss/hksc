@@ -792,10 +792,9 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
     fs->upvalues = f->upvalues;
   }
   else {
-    fs->sizelocvars = f->maxstacksize;
+    fs->sizelocvars = 0;
     a->sizelocvars = fs->sizelocvars;
-    a->locvars = luaM_newvector(H, a->sizelocvars, struct LocVar);
-    memset(a->locvars, 0, a->sizelocvars * sizeof(struct LocVar));
+    a->locvars = NULL;
     fs->locvars = a->locvars;
     fs->sizeupvalues = f->nups;
     a->sizeupvalues = fs->sizeupvalues;
@@ -1236,8 +1235,10 @@ static void debugopenexprsummary(DFuncState *fs)
 static void debugregnotesummary(DFuncState *fs)
 {
   static const char *const typenames[] = {
+    "REG_NOTE_CLOSED",
     "REG_NOTE_UPVALUE",
-    "REG_NOTE_NONRELOC"
+    "REG_NOTE_NONRELOC",
+    "REG_NOTE_CHECKTYPE"
   };
   RegNote *regnote;
   int i;
@@ -2207,9 +2208,6 @@ static BlockState *pushbranch1(DFuncState *fs, struct blockstates1 *s,
 /*
 ** create a do-block node from a do-block state
 */
-#define createdoblockfromstate1(fs,blstate) \
-  createdoblock1(fs, (blstate)->u.bl.rcnt.startpc, (blstate)->endpc)
-
 static BlockNode *createdoblock1(DFuncState *fs, int startpc, int endpc)
 {
   BlockNode *node;
@@ -2218,6 +2216,15 @@ static BlockNode *createdoblock1(DFuncState *fs, int startpc, int endpc)
   node = addblnode1(fs, startpc, endpc, BL_DO);
   set_ins_property(fs, startpc, INS_DOSTAT);
   set_ins_property(fs, endpc, INS_BLOCKEND);
+  return node;
+}
+
+
+static BlockNode *createdoblockfromstate1(DFuncState *fs, BlockState *bl)
+{
+  int startpc = bl->u.bl.rcnt.startpc;
+  BlockNode *node = createdoblock1(fs, startpc, bl->endpc);
+  newregnote(fs, REG_NOTE_CLOSED, startpc, bl->u.bl.reg);
   return node;
 }
 
@@ -4309,6 +4316,276 @@ static void markfollowblock1(DFuncState *fs, BlockNode *node)
   }
 }
 
+enum GENVARNOTE {
+  GENVAR_TRIVIAL,
+  GENVAR_FILL,
+  GENVAR_UNCERTAIN,
+  GENVAR_CERTAIN,
+  GENVAR_NECESSARY,
+  GENVAR_PARAM,
+  GENVAR_FORNUM,  /* augmented numeric for-loop variables */
+  GENVAR_FORLIST  /* augmented list for-loop variables */
+};
+
+typedef struct {
+  const BlockNode *currnode;
+  DFuncState *fs;
+  const Instruction *code;
+  const OpenExpr *nextexpr;
+  const RegNote *nextnote;
+  int nregnote, nopenexpr;
+  int pc;
+  OpCode o;
+  int a, b, c;
+  int currvarlimit;
+  int varendpc;
+  short nlocvars;
+  lu_byte nactvar;
+  unsigned short actvar[LUAI_MAXVARS];  /* declared-variable stack */
+} DebugGenerator;
+
+static int getvarnote1(struct LocVar *var)
+{
+  return cast_int(cast(size_t, var->varname));
+}
+
+static void setvarnote1(DebugGenerator *s, int r, int note)
+{
+  unsigned short i = s->actvar[r];
+  s->fs->a->locvars[i].varname = cast(TString *, cast(size_t, note));
+}
+
+static void addvar1(DebugGenerator *s, int r, int startpc, int endpc, int note)
+{
+  Analyzer *a = s->fs->a;
+  struct LocVar *var;
+  luaM_growvector(s->fs->H, a->locvars, s->nlocvars, a->sizelocvars,
+                  LocVar, SHRT_MAX, "too many local variables");
+  var = &a->locvars[s->nlocvars];
+  var->startpc = startpc;
+  var->endpc = endpc;
+  var->varname = cast(TString *, cast(size_t, note));
+  s->actvar[r] = s->nlocvars++;
+  lua_assert(r == s->nactvar);
+  s->nactvar++;
+}
+
+static void updatenextopenexpr1(DebugGenerator *s)
+{
+  if (s->nopenexpr < 0) {
+    s->nextexpr = NULL;
+    s->currvarlimit = s->fs->f->maxstacksize;
+  }
+  else {
+    const OpenExpr *e = &s->fs->a->opencalls[s->nopenexpr--];
+    s->nextexpr = e;
+    if (e->startpc < s->currnode->endpc)
+      s->currvarlimit = e->firstreg;
+    else
+      s->currvarlimit = s->fs->f->maxstacksize;
+  }
+}
+
+static void updatenextregnote1(DebugGenerator *s)
+{
+  lua_assert(s->nregnote >= 0);
+  if (s->nregnote >= s->fs->nregnotes) s->nextnote = NULL;
+  else s->nextnote = &s->fs->a->regnotes[s->nregnote++];
+}
+
+
+static void advance1(DebugGenerator *s)
+{
+  Instruction i = s->code[++s->pc];
+  OpCode o = GET_OPCODE(i);
+  int b, c = 0;
+  s->o = o;
+  s->a = GETARG_A(i);
+  if (getOpMode(o) == iABC) { b = GETARG_B(i); c = GETARG_C(i); }
+  else if (getOpMode(o) == iABx) b = GETARG_Bx(i);
+  else b = GETARG_sBx(i);
+  s->b = b;
+  s->c = c;
+}
+
+
+static int maybeaddvar1(DebugGenerator *s, int r, int pc, int pclimit)
+{
+  /* see if register A can possibly be a local variable in this block */
+  if (r < s->currvarlimit) {
+    /* check reg notes and see if this is a good time to create a local
+       variable at A */
+    int startpc = pc+1;
+    int note;
+    int i;
+    for (i = s->nactvar; i < r; i++)
+      addvar1(s, i, startpc, s->varendpc, GENVAR_FILL);
+    if (s->nextnote == NULL)
+      note = GENVAR_TRIVIAL;
+    else if (s->nextnote->pc < pclimit && s->nextnote->reg <= r)
+      note = GENVAR_CERTAIN;
+    else
+      note = GENVAR_UNCERTAIN;
+    addvar1(s, r, startpc, s->varendpc, note);
+    return 1;
+  }
+  return 0;
+}
+
+
+static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
+{
+  const BlockNode *prevnode = s->currnode;
+  BlockNode *nextchild = node->firstchild;
+  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
+  int nextpclimit = nextchildstartpc != -1 ? nextchildstartpc : node->endpc+1;
+  const int varendpc = s->varendpc;
+  const lu_byte nactvar = s->nactvar;
+  int r1 = -1, rstreak = 0;
+  s->currnode = node;
+  s->varendpc = getnaturalvarendpc(node);
+  if (isforloop(node)) {
+    int isnum = node->type == BL_FORNUM;
+    int note = isnum ? GENVAR_FORNUM : GENVAR_FORLIST;
+    int i,nvars;
+    /* reserve space for augmented vars */
+    addvar1(s, s->nactvar, node->startpc-1, node->endpc+1, note);
+    addvar1(s, s->nactvar, node->startpc-1, node->endpc+1, note);
+    addvar1(s, s->nactvar, node->startpc-1, node->endpc+1, note);
+    nvars = isnum ? 1 : GETARG_C(s->code[node->endpc-1]);
+    /* todo: how do you handle the for-loop parser bug */
+    for (i = 0; i < nvars; i++)
+      addvar1(s, s->nactvar, node->startpc, s->varendpc, GENVAR_NECESSARY);
+  }
+  for (s->pc = node->startpc; s->pc <= node->endpc; advance1(s)) {
+    int pc = s->pc;
+    OpCode o = s->o;
+    if (pc == nextchildstartpc) {
+      genblockdebug1(s, nextchild);
+      nextchild = nextchild->nextsibling;
+      nextchildstartpc = nextchild ? nextchild->startpc : -1;
+      nextpclimit = nextchildstartpc != -1 ? nextchildstartpc : node->endpc+1;
+      continue;
+    }
+    if (s->nextexpr && pc == s->nextexpr->startpc) {
+      s->pc = s->nextexpr->endpc;
+      updatenextopenexpr1(s);
+      continue;
+    }
+    if (beginseval(o, s->a, s->b, s->c, 0)) {
+      int r = s->a;
+      if (r != r1) rstreak = 0;
+      else rstreak++;
+      r1 = r;
+      if (r >= s->nactvar) {  /* clobbering a free register */
+        /* see if register A can possibly be a local variable in this block */
+        int newvar = maybeaddvar1(s, r, pc, nextpclimit);
+        if (newvar && (o == OP_LOADNIL || o == OP_VARARG)) {
+          int i, lastreg = o == OP_LOADNIL ? s->b : r + s->b - 2;
+          for (i = r+1; i <= lastreg; i++) {
+            if (!maybeaddvar1(s, i, pc, nextpclimit))
+              break;
+          }
+        }
+      }
+    }
+    else if (o != OP_DATA) {
+      r1 = -1;
+      rstreak = 0;
+    }
+  }
+  s->currnode = prevnode;
+  s->nactvar = nactvar;
+  s->varendpc = varendpc;
+  (void)getvarnote1; (void)setvarnote1;
+}
+
+
+static TString *genvarname1(DFuncState *fs, int i, int ispar)
+{
+  char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC)];
+  const char *fmt = ispar ? "f%d_par%d" : "f%d_local%d";
+  sprintf(buff, fmt, fs->idx, i);
+  return luaS_new(fs->H, buff);
+}
+
+
+static int createvarnames1(DFuncState *fs, int nvars, struct LocVar *vars)
+{
+  static const char *const forloop_names[] = {
+    "(for index)", "(for limit)", "(for step)",
+    "(for generator)", "(for state)", "(for control)"
+  };
+  int i;
+  for (i = 0; i < nvars; i++) {
+    struct LocVar *var = &vars[i];
+    int note = getvarnote1(var);
+    if (note == GENVAR_FORNUM || note == GENVAR_FORLIST) {
+      int j = (note == GENVAR_FORNUM) ? 0 : 3;
+      int k = j+ 3;
+      for (; j < k; i++, j++) {
+        vars[i].varname = luaS_new(fs->H, forloop_names[j]);
+        lua_assert(ispcvalid(fs, vars[i].startpc));
+        lua_assert(ispcvalid(fs, vars[i].endpc));
+      }
+    }
+    else {
+      vars[i].varname = genvarname1(fs, i, note == GENVAR_PARAM);
+    }
+  }
+  return nvars;
+}
+
+
+static void createparams1(DebugGenerator *s)
+{
+  int i;
+  for (i = 0; i < s->fs->f->numparams; i++)
+    addvar1(s, i, 0, s->fs->f->sizecode-1, GENVAR_PARAM);
+}
+
+
+static void debugdebug1(DFuncState *fs)
+{
+  int i;
+  printf("Local variables\n");
+  printf("--------------------------\n");
+  for (i = 0; i < fs->sizelocvars; i++) {
+    LocVar *var = &fs->locvars[i];
+    lprintf("(%i)  %s  (%i-%i)\n", i, getstr(var->varname), var->startpc, var->endpc);
+  }
+  printf("--------------------------\n");
+}
+
+
+static void gendebug1(DFuncState *fs, const BlockNode *startnode)
+{
+  int newsizelocvars;
+  DebugGenerator s;
+  Analyzer *a = fs->a;
+  s.fs = fs;
+  s.currnode = startnode;
+  s.code = fs->f->code;
+  s.nregnote = 0;
+  s.nopenexpr = fs->nopencalls-1;
+  s.nactvar = 0;
+  s.nlocvars = 0;
+  s.pc = -1;
+  /* FS must be using the analyzer data to generate variables */
+  lua_assert(fs->locvars == a->locvars);
+  advance1(&s);
+  updatenextopenexpr1(&s);
+  updatenextregnote1(&s);
+  createparams1(&s);
+  genblockdebug1(&s, startnode);
+  newsizelocvars = createvarnames1(fs, s.nlocvars, a->locvars);
+  luaM_reallocvector(fs->H, a->locvars, a->sizelocvars, newsizelocvars, LocVar);
+  a->sizelocvars = newsizelocvars;
+  fs->sizelocvars = a->sizelocvars;
+  fs->locvars = a->locvars;
+  debugdebug1(fs);
+}
+
 
 /*
 ** initialize memory for first pass
@@ -4372,6 +4649,8 @@ static void pass1(const Proto *f, DFuncState *fs)
   lua_assert(func->type == BL_FUNCTION);
   lua_assert(ca.pc <= 0);
   lua_assert(ca.testset.endpc == -1 && ca.testset.reg == -1);
+  if (fs->D->usedebuginfo == 0)
+    gendebug1(fs, func);
   /* add post-processing functions here */
   addnillabels1(fs, func);
   if (fs->D->usedebuginfo)
@@ -4426,13 +4705,10 @@ static int istempreg(DFuncState *fs, int rk)
 */
 static int varstartsatpc2(DFuncState *fs, int pc)
 {
-  DecompState *D = fs->D;
   struct LocVar *var;
   int i = fs->nlocvars;
   int n = 0;
   lua_assert(ispcvalid(fs, pc));
-  if (D->usedebuginfo == 0)
-    return -1;
   while (i < fs->sizelocvars && (var = &fs->locvars[i])->startpc == pc) {
     i = ++fs->nlocvars;
     n++;
@@ -4448,7 +4724,7 @@ static LocVar *addlocvar2(DFuncState *fs, int startpc, int endpc, int param)
   int i = fs->nactvar++;
   lua_assert(i >= 0 && i < fs->sizelocvars);
   var = &fs->locvars[i];
-  if (fs->D->usedebuginfo) { /* variable information already exists */
+  if (1 || fs->D->usedebuginfo) { /* variable information already exists */
     lua_assert(ispcvalid(fs, var->startpc));
     lua_assert(ispcvalid(fs, var->endpc));
     lua_assert(var->varname != NULL);

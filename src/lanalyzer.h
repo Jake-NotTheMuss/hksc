@@ -180,6 +180,7 @@ typedef struct OpenExpr {
 /* when debug info is not used, the decompiler makes note of how registers are
    used in the program */
 enum NOTEWORTHY_TYPE {
+  REG_NOTE_CLOSED,  /* first pc/reg in a do-block with OP_CLOSE */
   REG_NOTE_UPVALUE, /* is used as an upvalue for a child function */
   REG_NOTE_NONRELOC, /* is the source in an OP_MOVE inside an open expression */
   REG_NOTE_CHECKTYPE, /* is type-checked */
