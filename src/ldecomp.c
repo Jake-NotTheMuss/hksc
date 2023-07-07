@@ -1624,7 +1624,7 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
       endpc++;  /* endpc needs to be (ca->pc+1) in all cases */
   }
   ca->inopenexpr++;
-  for (pc = ca->pc; pc >= 0; pc--) {
+  for (pc = ca->pc; (pc = ca->pc) >= 0; ca->pc--) {
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
