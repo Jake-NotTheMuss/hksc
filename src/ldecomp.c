@@ -6490,6 +6490,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
     /* no expressions have been dumped, but the items in the hold need to be
        discharged and the line needs to be updated */
     firstexp->pending = 0;
+    D->needspace = 0;
     predumpexp2(D,fs,firstexp);
     postdumpexp2(D,fs,firstexp);
   }
