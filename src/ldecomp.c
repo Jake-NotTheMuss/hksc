@@ -7058,7 +7058,7 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
         goiftrue = !b;
       }
       else {
-        exp = addnilexp2(sa, fs, pc, 0);
+        exp = addnilexp2(sa, fs, 0, pc);
         goiftrue =1;
       }
     }
