@@ -81,8 +81,8 @@ enum INSFLAG {
   DEFREGFLAG(HASNOTE)  /* used by first pass to avoid creating redunadnt \
                           RegNote entries */ \
   DEFREGFLAG(PENDING)  /* a register being used in a temporary expression */ \
-  DEFREGFLAG(LOCAL)     /* a register which holds an active local variable */ \
   DEFREGFLAG(CONTROL)   /* a register which holds a loop control variable */ \
+  DEFREGFLAG(LOCAL)     /* a register which holds an active local variable */ \
   DEFREGFLAG(UPVAL)     /* a register used as an upvalue */
 
 #define DEFREGFLAG(e)  REG_##e,
