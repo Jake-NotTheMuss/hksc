@@ -4113,7 +4113,6 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
 {
   /* variables for the most recently processed child block and the next child
      block to process for the current NODE */
-  BlockNode *prevchild = NULL;
   BlockNode *nextchild = node->firstchild;
   int nextchildstartpc = nextchild ? nextchild->startpc : -1;
   /* the last pc marked LOCVAREXPR (start of local variable initialization) */
@@ -4133,7 +4132,6 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
     if (pc == nextchildstartpc) {
       fixblockendings1(fs, nextchild);
       pc = nextchild->endpc;
-      prevchild = nextchild;
       nextchild = nextchild->nextsibling;
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
       continue;
@@ -4560,6 +4558,7 @@ static void createparams1(DebugGenerator *s)
 }
 
 
+#ifdef LUA_DEBUG
 static void debugdebug1(DFuncState *fs)
 {
   int i;
@@ -4571,6 +4570,7 @@ static void debugdebug1(DFuncState *fs)
   }
   printf("--------------------------\n");
 }
+#endif /* LUA_DEBUG */
 
 
 static void gendebug1(DFuncState *fs, const BlockNode *startnode)
@@ -4598,7 +4598,9 @@ static void gendebug1(DFuncState *fs, const BlockNode *startnode)
   a->sizelocvars = newsizelocvars;
   fs->sizelocvars = a->sizelocvars;
   fs->locvars = a->locvars;
+#ifdef LUA_DEBUG
   debugdebug1(fs);
+#endif /* LUA_DEBUG */
   memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
 }
 
@@ -7182,8 +7184,9 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
       /* simply use the C arg in the test opcode; C=1 means jump if equivalent
          to false, i.e. go if true */
       goiftrue = !GETARG_C(*jc);
-      if (GET_OPCODE(*jc) == OP_TESTSET)
+      if (GET_OPCODE(*jc) == OP_TESTSET) {
         /*reg = GETARG_A(*jc);*/;
+      }
     }
     else if (exp == NULL) {
       if (targetbool) {
