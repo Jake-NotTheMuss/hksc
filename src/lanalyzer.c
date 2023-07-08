@@ -39,6 +39,8 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->sizelocvars = 0;
   a->upvalues = NULL;
   a->sizeupvalues = 0;
+  a->actvar = NULL;
+  a->sizeactvar = 0;
   a->decomppass = 1;  /* starts on the first pass */
   a->bllist.first = a->bllist.last = NULL;
   a->pendingstk.u.s1 = NULL;
@@ -57,6 +59,7 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   luaM_freearray(H, a->lineinfo, a->sizelineinfo, int);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
   luaM_freearray(H, a->upvalues, a->sizeupvalues, TString *);
+  luaM_freearray(H, a->actvar, a->sizeactvar, unsigned short);
   bn = a->bllist.first;
   while (bn != NULL) {
     struct BlockNode *next = bn->next;

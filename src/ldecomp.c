@@ -803,6 +803,9 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
     fs->upvalues = a->upvalues;
     fs->sizeupvalues = a->sizeupvalues;
   }
+  a->sizeactvar = f->maxstacksize;
+  a->actvar = luaM_newvector(H, a->sizeactvar, unsigned short);
+  memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
   fs->nopencalls = 0;
   fs->nregnotes = 0;
   fs->firstclob = -1;
@@ -4364,8 +4367,9 @@ static void addvar1(DebugGenerator *s, int r, int startpc, int endpc, int note)
   var->startpc = startpc;
   var->endpc = endpc;
   var->varname = cast(TString *, cast(size_t, note));
-  s->actvar[r] = s->nlocvars++;
   lua_assert(r == s->nactvar);
+  lua_assert(r < s->fs->f->maxstacksize);
+  s->actvar[r] = s->nlocvars++;
   s->nactvar++;
 }
 
@@ -4583,6 +4587,7 @@ static void gendebug1(DFuncState *fs, const BlockNode *startnode)
   fs->sizelocvars = a->sizelocvars;
   fs->locvars = a->locvars;
   debugdebug1(fs);
+  memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
 }
 
 
@@ -6411,10 +6416,8 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   addliteral2buff(H, b, "local ");
   lastreg = firstreg+nvars-1;
   for (i = firstreg; i <= lastreg; i++) {
-    struct LocVar *var;
     size_t len;
-    lua_assert(fs->nactvar < fs->sizelocvars);
-    var = &fs->locvars[fs->nactvar+(i-firstreg)];
+    struct LocVar *var = getlocvar2(fs, fs->nactvar+(i-firstreg));
     lua_assert(var->varname != NULL);
     len = var->varname->tsv.len;
     addstr2buff(H, b, getstr(var->varname), len);
@@ -6447,7 +6450,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   D(lprintf("firstreg = %d, lastreg = %d\n", firstreg, lastreg));
   for (i = firstreg; i <= lastreg; i++) {
     ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
-    setreglocal2(fs, i, &fs->locvars[fs->nactvar++]);
+    setreglocal2(fs, i, getlocvar2(fs, fs->nactvar++));
     if (nvars > 1 && firstexp->kind == ENIL && firstexp->aux == lastreg)
       continue; /* don't write  */
     else if (exp != NULL) {

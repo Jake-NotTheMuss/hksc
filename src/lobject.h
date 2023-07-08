@@ -308,12 +308,14 @@ typedef struct Analyzer {
   int *lineinfo;  /* map from opcodes to source lines */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
+  unsigned short *actvar;
   int sizeinsproperties;
   int sizeopencalls;
   int sizeregnotes;
   int sizeregproperties;
   int sizelineinfo;
   int sizelocvars;
+  int sizeactvar;
   int sizeupvalues;
   int decomppass;  /* which decompiler pass */
   struct {
