@@ -7588,14 +7588,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
     actualnumvars = ispcvalid(fs, pc+1) ? varstartsatpc2(fs, pc+1) : -1;
     numvars = clamptoreg(fs->nactvar, actualnumvars, sa->nextforloopbase);
-    /* todo: need to check if this instruction begins preparation code:
-       the following properties need to be checked:
-       INS_PRECALL
-       INS_PRECONCAT
-       INS_PREFORLIST
-       INS_PREFORNUM
-       INS_PRERETURN
-       INS_PRERETURN1 */
+    /* check if this instruction begins preparation code */
     while (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
       int kind = sa->nextopenexpr->kind;
       int isfor = (kind == FORNUMPREP || kind == FORLISTPREP);
