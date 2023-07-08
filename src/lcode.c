@@ -56,6 +56,10 @@ void luaK_nil (FuncState *fs, int from, int n) {
       }
     }
   }
+#ifdef HKSC_TEST_WITH_STANDARD_LUA
+  else if (fs->pc > fs->lasttarget && fs->pc == 0)
+    return;  /* positions are already clean */
+#endif  /* HKSC_TEST_WITH_STANDARD_LUA */
   luaK_codeABC(fs, OP_LOADNIL, from, from+n-1, 0);  /* else no optimization */
 }
 

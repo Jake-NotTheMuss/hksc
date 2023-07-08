@@ -78,6 +78,10 @@ Developer Options:
   --debug-pass=NUMBER      Debug decompiler pass NUMBER [1-2]
   --test-static            Only run the tests on the static binary
   --test-both              Test statically linked and shared binaries
+  --standard-lua           Generate LOADNIL and while-loop line mappings like
+                           standard Lua 5.1 (this should only be enabled for
+                           testing reasons)
+  --no-standard-lua
 EOF
 	exit $1
 }
@@ -136,6 +140,8 @@ GETGLOBAL_MEMOIZATION=0
 
 HKSC_FROMSOFT_TTABLES=0
 
+HKSC_TEST_WITH_STANDARD_LUA=0
+
 test -e "$config_file" && . ./"$config_file"
 
 old_debug=$debug
@@ -180,6 +186,8 @@ for opt; do
 		--release) debug=0 ;;
 		--testing) testing=1 ;;
 		--no-testing | --not-testing) testing=0 ;;
+		--standard-lua) HKSC_TEST_WITH_STANDARD_LUA=1 ;;
+		--no-standard-lua) HKSC_TEST_WITH_STANDARD_LUA=0 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
 		--test-static) test_static=1;;
 		--test-both) test_static=0;;
@@ -442,6 +450,8 @@ logvar WITHDOUBLES
 
 logvar HKSC_FROMSOFT_TTABLES
 
+logvar HKSC_TEST_WITH_STANDARD_LUA
+
 printvar CC
 printvar CFLAGS
 printvar LDFLAGS
@@ -618,6 +628,7 @@ s/@HKSC_SELF@/$SELF/g
 s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
 s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
 s/@HKSC_TESTING@/$testing/g
+s/@HKSC_TEST_WITH_STANDARD_LUA@/$HKSC_TEST_WITH_STANDARD_LUA/g
 s/@HKSC_DEBUG_PASS@/$debug_pass/g
 " > "$config_h_TMP"
 

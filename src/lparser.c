@@ -1898,7 +1898,9 @@ static void whilestat (LexState *ls, int line) {
   checknext(ls, TK_DO);
   block(ls);
   luaK_patchlist(fs, luaK_jump(fs), whileinit);
+#ifndef HKSC_TEST_WITH_STANDARD_LUA
   luaK_fixline(fs, line);
+#endif /* HKSC_TEST_WITH_STANDARD_LUA */
   check_match(ls, TK_END, TK_WHILE, line);
   leaveblock(fs);
   luaK_patchtohere(fs, condexit);  /* false conditions finish the loop */
