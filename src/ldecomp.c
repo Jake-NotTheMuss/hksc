@@ -7611,9 +7611,9 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
          after the hashtable evluation */
       {
         int numvars = varstartsatpc2(fs, pc);
-        if (isfor) numvars -= 3;
         if (numvars > 0) {
           addlocalvars2(fs, numvars);
+          if (isfor) numvars -= 3;
           initlocvars2(fs, fs->nactvar, numvars);
         }
       }
