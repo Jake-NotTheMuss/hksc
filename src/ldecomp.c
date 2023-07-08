@@ -1701,12 +1701,11 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
     if (pc == 0)
       break;
   }
-  ca->pc = pc;
-  if (ca->pc < 0) ca->pc = 0;
+  if (pc < 0) pc = 0;
   if (kind != VOIDPREP) {
-    if (pc >= 0)
-      newopenexpr(fs, firstreg, pc, endpc, kind);
+    newopenexpr(fs, firstreg, pc, endpc, kind);
   }
+  ca->pc = pc;
   ca->inopenexpr--;
   if (ca->inopenexpr == 0) {
     int i;
