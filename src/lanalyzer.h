@@ -210,7 +210,6 @@ typedef enum {
   EBINOP,  /* a binary operation */
   EUNOP,  /* a unary operation */
   ECALL,  /* a function call */
-  ETAILCALL,  /* a tail function call */
   ECONCAT,  /* a concatenation */
   ECONDITIONAL,  /* a conditional expression */
   ESTORE  /* encodes an L-value in an assignment list */

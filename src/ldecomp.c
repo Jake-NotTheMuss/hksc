@@ -663,7 +663,6 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
       break;
     }
     case ECALL:
-    case ETAILCALL:
       lprintf("[CALL %d,  %d ret, %d arg]", exp->info, exp->u.call.nret,
               exp->u.call.narg);
       break;
@@ -6483,7 +6482,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
         ; /* vararg has already been emitted */
       else if (i != 0 && lastsrc->kind == ENIL && lastsrc->aux == lastsrcreg)
         ; /* invisible nil's */
-      else if (lastsrc->kind == ECALL || lastsrc->kind == ETAILCALL)
+      else if (lastsrc->kind == ECALL)
         ;
       else if (lastsrc->kind == ENIL) {
         lastsrc->pending = 1;
@@ -6675,7 +6674,7 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     }
     if (exp->kind == ECONDITIONAL)
       link =0 ;
-    else if (exp->kind == ECALL || exp->kind == ETAILCALL)
+    else if (exp->kind == ECALL)
       link = 1;  /* linking is needed to access the called expression */
     else if (exp->kind == ENIL) {
       /* check if the next open expression uses this nil expression */
@@ -6954,17 +6953,12 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     case OP_CALL_I_R1:
     case OP_CALL_C:
     case OP_CALL_M:
-      exp->kind = ECALL;
-      goto setcallinfo;
     case OP_TAILCALL:
     case OP_TAILCALL_I:
     case OP_TAILCALL_I_R1:
     case OP_TAILCALL_C:
     case OP_TAILCALL_M:
-      exp->kind = ETAILCALL;
-      CHECK(fs, sa->openexprkind == -1, "unexpected OP_TAILCALL in open "
-            " expression");
-      setcallinfo:
+      exp->kind = ECALL;
       exp->u.call.op = o;
       exp->u.call.nret = c-1;
       exp->u.call.narg = b-1;
@@ -7103,7 +7097,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     exp->pending = 0;
     updatelaststore2(sa, fs, exp);
   }
-  else if (exp->kind == ECALL || exp->kind == ETAILCALL)
+  else if (exp->kind == ECALL)
     fs->lastcallexp = exp2index(fs, exp);  /* update last call node */
   return exp;
 }
