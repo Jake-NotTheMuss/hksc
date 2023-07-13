@@ -275,8 +275,10 @@ typedef struct ExpNode {
   int previndex;  /* if a store node, the previous store node in the chain,
                      otherwise, the previous ExpNode that clobbered the same
                      register */
-  int prevregindex;  /* stack index of ExpNode in the previous register */
-  int nextregindex;  /* stack index of ExpNode in the next register */
+  int auxlistprev;  /* auxiliary backward link for expression kinds to use for
+                       whatever purpose */
+  int auxlistnext;  /* auxiliary forward link for expression kinds to use for
+                       whatever purpose */
   /*int type_checked;*/  /* if type-checked, which type */
   int info;
   int aux;

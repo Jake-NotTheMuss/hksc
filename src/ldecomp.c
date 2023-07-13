@@ -5360,7 +5360,7 @@ static void setfirstfree(DFuncState *fs, int newfirstfree)
   if (newfirstfree > 0) {
     ExpNode *lastreg = getexpinreg2(fs, newfirstfree-1);
     if (lastreg) {
-      lastreg->nextregindex = 0;
+      lastreg->auxlistnext = 0;
       /* if the last used reg holds the current table constructor, then reset
          its firstarrayitem as it now points to a free register */
       if (lastreg->kind == ECONSTRUCTOR)
@@ -5492,7 +5492,7 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
     struct HoldItem bracket;
     addliteralholditem2(D, &bracket, "[", 0);
     if (istempreg(fs, rkkey))
-      dumpexpoperand2(D, fs, index2exp(fs, exp->prevregindex), exp, 0);
+      dumpexpoperand2(D, fs, index2exp(fs, exp->auxlistprev), exp, 0);
     else
       dumpRK2(D, fs, rkkey, 0);
     DumpLiteral("]",D);
@@ -5541,7 +5541,7 @@ static ExpNode *getnextexpinlist2(struct ExpListIterator *iter, int i)
   lua_assert(iter->nextexp != NULL);
   iter->lastexp = iter->nextexp;
   /* first try to follow the next expression chained to the current one */
-  nextexp = index2exp(iter->fs, iter->nextexp->nextregindex);
+  nextexp = index2exp(iter->fs, iter->nextexp->auxlistnext);
   if (nextexp == NULL)
     /* if NULL, the previous expression is more than one register removed; see
        if there is a pending expression in the next register explicitly */
@@ -5769,7 +5769,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
             lua_assert(nexthashitem != NULL);
             lua_assert(nexthashitem->kind == ESTORE);
             dumphashitem2(D, fs, nexthashitem);
-            nexthashitem = index2exp(fs, nexthashitem->nextregindex);
+            nexthashitem = index2exp(fs, nexthashitem->auxlistnext);
           }
           else {
             dumpexp2(D, fs, nextarrayitem, 0);
@@ -5817,7 +5817,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         initexplistiter2(&iter, fs, exp->info+1+(firstexp->kind == ESELF),
                          firstexp);
         if (firstexp->kind == ESELF) {
-          D(lprintf("firstexp->nextregindex = %d\n", firstexp->nextregindex));
+          D(lprintf("firstexp->auxlistnext = %d\n", firstexp->auxlistnext));
         }
         for (i = 0; i < narg; i++) {
           if (i != 0)
@@ -6753,7 +6753,7 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
   lua_assert(sa->openexprnildebt > 0);
   exp = newexp(fs);
   exp->kind = ENIL;
-  exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+  exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->info = reg;
   exp->aux = exp->info + sa->openexprnildebt-1;
   exp->line = getline(fs->f, sa->pc);
@@ -6773,10 +6773,10 @@ static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
   exp->aux = 0;
   exp->previndex = exp2index(fs, NULL);
   if (reg <= 0)
-    exp->prevregindex = exp2index(fs, NULL);
+    exp->auxlistprev = exp2index(fs, NULL);
   else
-    exp->prevregindex = exp2index(fs, getexpinreg2(fs, reg-1));
-  exp->nextregindex = exp2index(fs, NULL);
+    exp->auxlistprev = exp2index(fs, getexpinreg2(fs, reg-1));
+  exp->auxlistnext = exp2index(fs, NULL);
   exp->line = getline(fs->f,pc);
   exp->closeparenline = exp->line;
   exp->leftside = 0;
@@ -6788,10 +6788,10 @@ static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
 
 static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
 {
-  ExpNode *prevreg = index2exp(fs, exp->prevregindex);
+  ExpNode *prevreg = index2exp(fs, exp->auxlistprev);
   sa->lastexpindex = exp2index(fs, exp);
   if (prevreg) {
-    prevreg->nextregindex = sa->lastexpindex;
+    prevreg->auxlistnext = sa->lastexpindex;
     if (prevreg->kind == ECONSTRUCTOR)
       prevreg->u.cons.firstarrayitem = sa->lastexpindex;
   }
@@ -6880,7 +6880,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
           /* get number of array expressions pushed */
           b = fs->firstfree-(tab->info+1);
         }
-        tab->nextregindex = 0;
+        tab->auxlistnext = 0;
         tab->u.cons.narray += b;
         fs->curr_constructor = exp2index(fs, tab);
       }
@@ -7276,11 +7276,11 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
     /* combine the current pending node and this new node as the 2 operands of a
        logical operation */
     exp = reducecondition2(sa, fs, sa->pendingcond.e, e, reg, pc);
-    exp->prevregindex = index2exp(fs, sa->pendingcond.e)->prevregindex;
+    exp->auxlistprev = index2exp(fs, sa->pendingcond.e)->auxlistprev;
     e = exp2index(fs, exp);  /* update the expression index */
   }
   else {
-    exp->prevregindex = sa->pendingcond.e;
+    exp->auxlistprev = sa->pendingcond.e;
   }
   sa->pendingcond.e = e;
   if (reg != -1)
@@ -7302,7 +7302,7 @@ finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
   ExpNode *exp1 = index2exp(fs, e);
   ExpNode *exp2;
   lua_assert(exp1 != NULL);
-  sa->pendingcond.e = exp1->prevregindex;
+  sa->pendingcond.e = exp1->auxlistprev;
   if (sa->pendingcond.e)
     prevtarget = index2exp(fs, sa->pendingcond.e)->endlabel;
   else
@@ -7404,7 +7404,7 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
     exp->aux = getslotdesc(fs, srcreg)->u.expindex;
   exp->line = getline(fs->f, pc);
   exp->closeparenline = exp->line;
-  exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+  exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->dependondest = 0;
   exp->leftside = 0;
   exp->pending = 0;
@@ -7457,7 +7457,7 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
     exp->aux = getslotdesc(fs, srcreg)->u.expindex;
   exp->line = getline(fs->f, pc);
   exp->closeparenline = exp->line;
-  exp->previndex = exp->prevregindex = exp->nextregindex = 0;
+  exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->dependondest = 0;
   exp->leftside = 0;
   exp->pending = 0;
@@ -7522,9 +7522,7 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
           int e = exp2index(fs, exp);
           if (last) {
             lua_assert(last->kind == ESTORE);
-            /* `nextregindex' is not used in ESTORE nodes, so I use it to
-               chain hash items in a constructor */
-            last->nextregindex = e;
+            last->auxlistnext = e;
           }
           else {
             tab->u.cons.firsthashitem = e;
@@ -7535,9 +7533,7 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
             if (!istempreg(fs, reg))
               reg = exp->u.store.srcreg;
             else
-              /* similarly, I use `prevregindex' to save the exp index of the
-                 current node in registre B if it is a temporary register */
-              exp->prevregindex = exp2index(fs, getexpinreg2(fs, b));
+              exp->auxlistprev = exp2index(fs, getexpinreg2(fs, b));
             if (istempreg(fs, reg))
               setfirstfree(fs, reg);
           }
@@ -7616,7 +7612,7 @@ dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   DumpComma(D);
   /* dump step expression */
   exp = getnextexpinlist2(&iter, 2);
-  /*exp = index2exp(fs, exp->nextregindex);*/
+  /*exp = index2exp(fs, exp->auxlistnext);*/
   dumpexp2(D, fs, exp, 0);
   DumpLiteral(" do", D);
   D->needspace = 1;
