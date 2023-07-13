@@ -207,7 +207,6 @@ typedef enum {
   EGLOBAL,  /* a global variable */
   EINDEXED,  /* a table index */
   ESELF,  /* a table index called as a method */
-  ECOMP,  /* a binary comparison operation */
   EBINOP,  /* a binary operation */
   EUNOP,  /* a unary operation */
   ECALL,  /* a function call */
@@ -233,7 +232,6 @@ typedef struct ExpNode {
     struct {
       int e1, e2;  /* exp indices of operands */
       lu_byte goiftrue;  /* OPR_AND if 1, else OPR_OR */
-      int pc;  /* jump target */
     } cond;
     struct {
       int b, c;  /* B and C operands from the instruction */
@@ -285,6 +283,7 @@ typedef struct ExpNode {
   int aux;
   int line;  /* which line is this on */
   int closeparenline;
+  int endlabel;  /* next conditional jump target or -1 */
   lu_byte dependondest; /* does this node use its destination as a source */
   lu_byte leftside; /* is this node the left operand in a binary operation */
   lu_byte pending;  /* true if this expression has not yet been emitted */

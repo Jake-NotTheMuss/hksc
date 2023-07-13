@@ -416,6 +416,20 @@ static int haselsepart(const BlockNode *node) {
 }
 
 
+static int istailblock(const BlockNode *parent, const BlockNode *child) {
+  int hasendcode;
+  if (child->nextsibling != NULL)
+    return 0;
+  switch (parent->type) {
+    case BL_FUNCTION: case BL_REPEAT: return 0;
+    case BL_DO: case BL_ELSE: hasendcode = 0; break;
+    case BL_IF: hasendcode = haselsepart(parent); break;
+    default: hasendcode = 1; break;
+  }
+  return (child->endpc + hasendcode == parent->endpc);
+}
+
+
 static int getforloopbase(const Instruction *code, const BlockNode *node) {
   lua_assert(isforloop(node));
   if (node->type == BL_FORNUM)
@@ -663,7 +677,6 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
     case EUPVAL:
       lprintf("upval=%s", getstr(exp->u.name));
       break;
-    case ECOMP:
     case EBINOP:
       lprintf("[BINOP %s  %d, %d]", getbinoprstring(exp->u.binop.op),
               exp->u.binop.b, exp->u.binop.c);
@@ -4750,12 +4763,27 @@ static void pass1(const Proto *f, DFuncState *fs)
 typedef struct StackAnalyzer {
   const Instruction *code;
   BlockNode *currbl;
+  BlockNode *currparent;
   struct HoldItem *currheader;  /* current block header hold item */
   int laststore;  /* exp index of last store node */
+  int deferleaveblock;  /* how many child blocks have deferred to the parent to
+                           leave their block */
   struct {
-    int e, target, pc;
-  } lastcond;
+    int e, target;
+  } pendingcond;
+  SlotDesc tempslot;  /* a place to put conditional expressions that do not live
+                         in a register, such as comparison operations in branch
+                         and loop conditions, or testing local registers in
+                         branch and loop conditions */
   int numforloopvars;
+  /* this field accounts for a compiler bug in Lua 5.1 and Havok Script where
+     a new local variable declares at the start of a for-loop which has more
+     then 3 initializer expressions will have its value written to the wrong
+     register, a register N greater than the correct one, where N is the bias,
+     and can be calculated from the number of intializer expressions, the base
+     register of the for-loop control vaiables, and the number of iterator
+     variables declared in the loop headerx */
+  int forloopbias;
   int nextforloopbase;
   int pc;
   int sizecode;
@@ -5577,7 +5605,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       D->needspace = 1;
       break;
     }
-    case ECOMP:
     case EBINOP: { /* binary operation */
       ExpNode *o1, *o2;
       BinOpr op = exp->u.binop.op;
@@ -5636,11 +5663,21 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       ExpNode *o1 = index2exp(fs, exp->u.cond.e1);
       ExpNode *o2 = index2exp(fs, exp->u.cond.e2);
       BinOpr op = exp->u.cond.goiftrue ? OPR_AND : OPR_OR;
+      int needparen;
+      o1->leftside = 1;
+      if (exp->leftside)
+        needparen = (priority[op].right < limit);
+      else
+        needparen = (priority[op].left <= limit);
+      if (needparen || needparenforlineinfo)
+        addliteralholditem2(D, &holdparen, "(", 0);
       dumpexpoperand2(D, fs, o1, exp, priority[op].left);
       DumpSpace(D);
       DumpBinOpr(op,D);
       D->needspace = 1;
       dumpexpoperand2(D, fs, o2, exp, priority[op].right);
+      if (needparen || needparenforlineinfo)
+        dumpcloseparen2(D, fs, exp);
       D->needspace = 1;
       break;
     }
@@ -5943,52 +5980,6 @@ static void commitcontrolvars2(DFuncState *fs, int base, int n)
   fs->nactvar += n;
   if (fs->firstfree < fs->nactvar)
     fs->firstfree = fs->nactvar;
-}
-
-
-static ExpNode *addnilexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc);
-
-
-static void
-dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
-  DecompState *D = fs->D;
-  struct ExpListIterator iter;
-  struct HoldItem initvar, initeq;
-  struct HoldItem *loopheader = sa->currheader;
-  struct LocVar *var;
-  /* get the base control register */
-  int base = GETARG_A(fs->f->code[node->endpc]);
-  /* get the pending initial expression before creating the control variables */
-  ExpNode *exp = getexpinreg2(fs, base);
-  if (exp == NULL) {
-    exp = addnilexp2(sa, fs, base, node->startpc - (node->startpc > 0));
-    exp->aux = base+2;
-  }
-  /* create the control variables */
-  commitcontrolvars2(fs, base, 3);
-  /* create the loop variable */
-  pushlocalvars2(fs, base+3, 1);
-  var = getlocvar2(fs, base+3);
-  /* add hold items for for-loop header */
-  addliteralholditem2(D, loopheader, "for", 1);
-  addholditem2(D, &initvar, getstr(var->varname), var->varname->tsv.len, 1);
-  addliteralholditem2(D, &initeq, "=", 1);
-  /* dump initializer expression */
-  initexplistiter2(&iter, fs, base, exp);
-  dumpexp2(D, fs, exp, 0);
-  DumpComma(D);
-  /* dump limit expression */
-  exp = getnextexpinlist2(&iter, 1);
-  dumpexp2(D, fs, exp, 0);
-  DumpComma(D);
-  /* dump step expression */
-  exp = getnextexpinlist2(&iter, 2);
-  /*exp = index2exp(fs, exp->nextregindex);*/
-  dumpexp2(D, fs, exp, 0);
-  DumpLiteral(" do", D);
-  D->needspace = 1;
-  flushpendingexp2(fs);
 }
 
 
@@ -6529,8 +6520,8 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   Mbuffer *b;
   struct HoldItem lhs;
   lua_assert(isregvalid(fs, firstreg));
-  lua_assert(isregvalid(fs, firstreg+nvars-1));
   lua_assert(nvars > 0);
+  lua_assert(isregvalid(fs, firstreg+nvars-1));
   b = &D->buff;
   luaZ_resetbuffer(b);
   addliteral2buff(H, b, "local ");
@@ -6665,6 +6656,8 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
   lua_assert(exp->kind != ESTORE);
   if (exp->kind == ECONSTRUCTOR && exp2index(fs, exp) == fs->curr_constructor)
     return exp;
+  if (exp2index(fs, exp) == sa->pendingcond.e)
+    return exp;
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
     int link, lastreg;
     if (exp->kind == ENIL || exp->kind == ESELF)
@@ -6776,10 +6769,11 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
 
 static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
 {
+  lua_assert(ispcvalid(fs, pc));
   exp->info = reg;
   exp->aux = 0;
   exp->previndex = exp2index(fs, NULL);
-  if (reg == 0)
+  if (reg <= 0)
     exp->prevregindex = exp2index(fs, NULL);
   else
     exp->prevregindex = exp2index(fs, getexpinreg2(fs, reg-1));
@@ -6789,6 +6783,7 @@ static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
   exp->leftside = 0;
   exp->pending = 1;
   exp->goiftrue = 0;
+  exp->endlabel = -1;
 }
 
 
@@ -6849,10 +6844,8 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.name = rawtsvalue(&f->k[bx]);
       break;
     case OP_LOADBOOL:
-      if (test_ins_property(fs, pc, INS_BOOLLABEL)) {
-        return NULL;
-        return index2exp(fs, sa->lastcond.e);
-      }
+      if (test_ins_property(fs, pc, INS_BOOLLABEL))
+        return c ? NULL : getexpinreg2(fs, a);
       exp->kind = b ? ETRUE : EFALSE;
       exp->aux = c;
       break;
@@ -7057,35 +7050,11 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.binop.op = OPR_BIT_OR;
       break;
 #endif /* LUA_CODT7 */
-    case OP_EQ: case OP_EQ_BK:
-    case OP_LT: case OP_LT_BK:
-    case OP_LE: case OP_LE_BK: {
-      OpCode comp = o - (o % 2);  /* remove BK bit */
-      BinOpr op;
-      exp->kind = ECOMP;
-      if (comp == OP_EQ)
-        op = a ? OPR_EQ : OPR_NE;
-      else {
-        if (istempreg(fs, b) && istempreg(fs, c) && b > c) {
-          int temp = b; b = c; c = temp;
-          a = !a;
-        }
-        if (comp == OP_LT)
-          op = a ? OPR_LT : OPR_GT;
-        else /* OP_LE */
-          op = a ? OPR_LE : OPR_GE;
-      }
-      exp->u.binop.b = b;
-      exp->u.binop.c = c;
-      exp->u.binop.op = op;
-      exp->info = -1;
-      break;
-    }
     /* the remaining operations do not clobber A */
     default:
       return NULL;
   }
-  if (exp->kind == EBINOP || exp->kind == ECOMP) {
+  if (exp->kind == EBINOP) {
     exp->dependondest = (a == b || a == c);
     if (!ISK(b) && !test_reg_property(fs, b, REG_LOCAL)) {
       /* B references a pending expression in register B, save the index of the
@@ -7125,7 +7094,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   else
     exp->dependondest = 0;
   /* discharge stores now before pushing a new expression node */
-  if (exp->kind != ESTORE && pc >= sa->lastcond.target)
+  if (exp->kind != ESTORE && pc >= sa->pendingcond.target)
     checkdischargestores2(sa,fs);
   exp = newexp(fs);
   *exp = node;
@@ -7140,76 +7109,236 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
 }
 
 
-static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
-                               int jumptarget)
+/*
+** create a new ECONDITIONAL expression node from 2 operands, which may be any
+** kind of expression; the 2 operands correspond to `a' and `b' in the binary
+** operation `a [and/or] b'
+*/
+static ExpNode *
+reducecondition2(StackAnalyzer *sa, DFuncState *fs, int e1, int e2, int reg,
+                 int pc)
 {
-  int targetbool = test_ins_property(fs, jumptarget, INS_BOOLLABEL);
-  int e;
-  int reg = -1;
+  ExpNode *exp;
   lu_byte goiftrue;
-  ExpNode *exp = gettopexp(fs);
-  if (exp != NULL && exp->kind == ECOMP) {
-    if (targetbool) {
-      /* see which bool label is targeted; if false, then this is a go-if-true
-         node, e.g. `a == b and 1', because the boolean result of the first node
-         will be used only if it is false */
-      goiftrue = !GETARG_B(fs->f->code[jumptarget]);
-      exp->info = GETARG_A(fs->f->code[jumptarget]);
-    }
-    else
-      goiftrue = (!test_ins_property(fs, pc, INS_BRANCHFAIL) &&
-                  !test_ins_property(fs, pc, INS_LOOPFAIL));
-  }
-  else {
-    const Instruction *jc = getjumpcontrol(fs, pc);
-    if (jc != NULL) {
-      /* simply use the C arg in the test opcode; C=1 means jump if equivalent
-         to false, i.e. go if true */
-      goiftrue = !GETARG_C(*jc);
-      if (GET_OPCODE(*jc) == OP_TESTSET) {
-        /*reg = GETARG_A(*jc);*/;
-      }
-    }
-    else if (exp == NULL) {
-      if (targetbool) {
-        int b = GETARG_B(fs->f->code[jumptarget]);
-        exp = addboolexp2(sa, fs, GETARG_A(fs->f->code[jumptarget]), pc, b);
-        goiftrue = !b;
-      }
-      else {
-        exp = addnilexp2(sa, fs, 0, pc);
-        goiftrue =1;
-      }
-    }
-    else
-      goiftrue = exp->goiftrue;
-  }
-  exp->goiftrue = goiftrue;
-  /*exp->previndex = sa->lastcond.e;*/
-  e = exp2index(fs, exp);
-  if (sa->laststore == e)
-    sa->laststore = exp->previndex;
-  if (reg == -1) reg = exp->info;
-  if (sa->lastcond.e) {
-    ExpNode *prev = index2exp(fs, sa->lastcond.e);
+  {  /* compute the logical operator to use for this new conditional node */
+    ExpNode *prev = index2exp(fs, e1);
     if (prev->kind == ECONDITIONAL)
       goiftrue = index2exp(fs, prev->u.cond.e2)->goiftrue;
     else
       goiftrue = prev->goiftrue;
-    exp = newexp(fs);
-    initexp2(fs, exp, reg, pc);
-    exp->kind = ECONDITIONAL;
-    exp->u.cond.e1 = sa->lastcond.e;
-    exp->u.cond.e2 = e;
-    exp->u.cond.goiftrue = exp->goiftrue = goiftrue;
-    exp->u.cond.pc = pc;
-    linkexp2(sa, fs, exp);
-    e = exp2index(fs, exp);
   }
-  addexptoreg2(sa, fs, reg, exp, NULL);
-  sa->lastcond.e = e;
-  sa->lastcond.target = jumptarget;
-  sa->lastcond.pc = pc;
+  exp = newexp(fs);
+  initexp2(fs, exp, reg, pc);
+  exp->kind = ECONDITIONAL;
+  exp->endlabel = sa->pendingcond.target;
+  exp->u.cond.e1 = e1;
+  exp->u.cond.e2 = e2;
+  exp->u.cond.goiftrue = exp->goiftrue = goiftrue;
+  linkexp2(sa, fs, exp);
+  return exp;
+}
+
+
+/*
+** create an expression node for a comparison operation
+*/
+static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
+                            Instruction i, lu_byte goiftrue)
+{
+  OpCode o = GET_OPCODE(i);
+  int a, b, c;
+  OpCode comp = o - (o % 2);  /* remove BK bit */
+  BinOpr op;
+  ExpNode *exp;
+  a = GETARG_A(i); b = GETARG_B(i); c = GETARG_C(i);
+  exp = newexp(fs);
+  initexp2(fs, exp, reg, pc);
+  exp->kind = EBINOP;
+  linkexp2(sa, fs, exp);
+  if (istempreg(fs, b)) {
+    exp->u.binop.b = -1;
+    exp->u.binop.bindex = getslotdesc(fs, b)->u.expindex;
+  }
+  else {
+    exp->u.binop.b = b;
+    exp->u.binop.bindex = 0;
+  }
+  if (istempreg(fs, c)) {
+    exp->u.binop.c = -1;
+    exp->u.binop.cindex = getslotdesc(fs, c)->u.expindex;
+  }
+  else {
+    exp->u.binop.c = c;
+    exp->u.binop.cindex = 0;
+  }
+  if (goiftrue)
+    a = !a;
+  if (comp == OP_EQ)
+    op = a ? OPR_EQ : OPR_NE;
+  else {
+    if (istempreg(fs, b) && istempreg(fs, c) && b > c) {
+      int temp = b; b = c; c = temp;
+      a = !a;
+    }
+    if (comp == OP_LT)
+      op = a ? OPR_LT : OPR_GT;
+    else /* OP_LE */
+      op = a ? OPR_LE : OPR_GE;
+  }
+  exp->u.binop.op = op;
+  return exp;
+}
+
+
+/*
+** update the pending conditional expression after a new jump; only call when
+** encountering a jump inside a conditional expression
+*/
+static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
+                               int jumptarget)
+{
+  int targetbool = test_ins_property(fs, jumptarget, INS_BOOLLABEL);
+  /* SKIPSBOOLLABEL is true for non-VJMP expressions, which skip over 2 bool
+     labels with an uncinditional jump after */
+  int skipsboollabel = (!test_ins_property(fs, pc, INS_BOOLLABEL) &&
+                        test_ins_property(fs, pc+1, INS_BOOLLABEL) &&
+                        jumptarget == pc+3);
+  /* E is the index of EXP */
+  int e, reg;
+  lu_byte goiftrue;
+  ExpNode *exp;
+  const Instruction *jc = getjumpcontrol(fs, pc);
+  if (jc != NULL) {
+    OpCode o = GET_OPCODE(*jc);
+    if (testAMode(o) == 0) {  /* a comparison */
+      if (targetbool) {
+        /* see which bool label is targeted; if false, then this is a go-if-true
+           node, e.g. `a == b and 1', because the boolean result of the first
+           node will be used only if it is false */
+        goiftrue = !GETARG_B(fs->f->code[jumptarget]);
+        reg = GETARG_A(fs->f->code[jumptarget]);
+      }
+      else {
+        goiftrue = (test_ins_property(fs, pc, INS_BRANCHFAIL) ||
+                    test_ins_property(fs, pc, INS_LOOPFAIL));
+        reg = -1;
+      }
+      exp = addcompare2(sa, fs, pc-1, reg, *jc, goiftrue);
+    }
+    else {  /* (testAMode(o) != 0) */
+      int src;
+      if (o == OP_TESTSET) {
+        src = GETARG_B(*jc);
+        reg = GETARG_A(*jc);
+      }
+      else {
+        reg = src = GETARG_A(*jc);
+      }
+      if (!istempreg(fs, src)) {
+        exp = newexp(fs);
+        if (reg == src)
+          reg = -1;
+        initexp2(fs, exp, reg, pc);
+        exp->kind = ELOCAL;
+        exp->aux = src;
+        linkexp2(sa, fs, exp);
+      }
+      else {  /* src is a temporary register */
+        exp = getexpinreg2(fs, src);
+        /* if OP_TESTSET, move the expression to the destination register */
+        if (src != reg) {
+          popexp2(fs, src);
+          exp->info = reg;
+        }
+      }
+      goiftrue = !GETARG_C(*jc);
+    }
+  }
+  else if (skipsboollabel) {
+    exp = gettopexp(fs);
+    goiftrue = exp->goiftrue;
+    reg = exp->info;
+  }
+  else {  /* jc == NULL */
+    int b;
+    if (targetbool) {
+      b = GETARG_B(fs->f->code[jumptarget]);
+      reg = GETARG_A(fs->f->code[jumptarget]);
+    }
+    else {
+      /* this is an unconditional jump which does not skip over bool labels and
+         does not target bool labels; this is a necessary jump for a go-if-true
+         directive; the operand is `false' because the jump is always taken */
+      b = 0;
+      reg = -1;
+    }
+    exp = addboolexp2(sa, fs, reg, pc, b);
+    goiftrue = !b;
+  }
+  exp->goiftrue = goiftrue;
+  exp->endlabel = jumptarget;
+  e = exp2index(fs, exp);
+  sa->pendingcond.target = jumptarget;
+  if (sa->pendingcond.e && index2exp(fs, sa->pendingcond.e)->info == reg) {
+    /* combine the current pending node and this new node as the 2 operands of a
+       logical operation */
+    exp = reducecondition2(sa, fs, sa->pendingcond.e, e, reg, pc);
+    exp->prevregindex = index2exp(fs, sa->pendingcond.e)->prevregindex;
+    e = exp2index(fs, exp);  /* update the expression index */
+  }
+  else {
+    exp->prevregindex = sa->pendingcond.e;
+  }
+  sa->pendingcond.e = e;
+  if (reg != -1)
+    addexptoreg2(sa, fs, reg, exp, NULL);
+  else
+    sa->tempslot.u.expindex = e;
+}
+
+
+/*
+** close the pending conditional expression; call this once the end-label for
+** the expression has been reached
+*/
+static ExpNode *
+finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
+{
+  int prevtarget;
+  int e = sa->pendingcond.e;
+  ExpNode *exp1 = index2exp(fs, e);
+  ExpNode *exp2;
+  lua_assert(exp1 != NULL);
+  sa->pendingcond.e = exp1->prevregindex;
+  if (sa->pendingcond.e)
+    prevtarget = index2exp(fs, sa->pendingcond.e)->endlabel;
+  else
+    prevtarget = -1;
+  if (exp1->info != -1) {
+    if (istempreg(fs, exp1->info))
+      exp2 = getexpinreg2(fs, exp1->info);
+    else {
+      exp2 = index2exp(fs, sa->laststore);
+      if (exp2) sa->laststore = exp2->previndex;
+    }
+  }
+  else
+    exp2 = index2exp(fs, sa->tempslot.u.expindex);
+  /* do final reduction on the conditional node if needed */
+  if (exp2 != NULL && exp2 != exp1) {
+    exp1 = reducecondition2(sa, fs, e, exp2index(fs, exp2), exp1->info, pc);
+    e = exp2index(fs, exp1);
+    if (isregvalid(fs, exp1->info))
+      exp1 = addexptoreg2(sa, fs, exp1->info, exp1, NULL);
+    else {
+      exp1->previndex = sa->tempslot.u.expindex;
+      sa->tempslot.u.expindex = e;
+    }
+  }
+  else if (isregvalid(fs, exp1->info) && !istempreg(fs, exp1->info))
+    exp1 = addexptoreg2(sa, fs, exp1->info, exp1, NULL);
+  sa->pendingcond.target = prevtarget;
+  return exp1;
 }
 
 
@@ -7378,6 +7507,9 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
     /* todo: may want to check for unexpected opcodes such as OP_RETURN, but
        I only want to do that if it would prevent a crash, otherwise I won't
        bother */
+    if (pc == sa->pendingcond.target) {
+       finalizeconditionalnode2(sa, fs, pc);
+    }
     if (testAMode(o)) { /* A is a register */
       ExpNode *exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
@@ -7420,7 +7552,10 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
         }
       }
     }
-    UNUSED(sbx);
+    else if (o == OP_JMP) {
+      int target = pc+1+sbx;
+      addconditionalnode2(sa, fs, pc, target);
+    }
   }
   sa->openexprkind = -1;
   return limit - e->startpc;
@@ -7442,6 +7577,160 @@ static int getnvarstartatpc2(DFuncState *fs, int pc, int reglimit) {
     return clamptoreg(fs->nactvar, nvars, reglimit);
   }
   return -1;
+}
+
+
+static ExpNode *getforloopbasenode2(StackAnalyzer *sa, DFuncState *fs,
+                                    BlockNode *node, int base, int bias)
+{
+  ExpNode *exp = getexpinreg2(fs, base);
+  if (exp == NULL) {
+    exp = addnilexp2(sa, fs, base, node->startpc - (node->startpc > 0));
+    exp->aux = base+2+bias;
+  }
+  return exp;
+}
+
+
+static void
+dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  struct ExpListIterator iter;
+  struct HoldItem initvar, initeq;
+  struct HoldItem *loopheader = sa->currheader;
+  struct LocVar *var;
+  /* get the base control register */
+  const int base = GETARG_A(fs->f->code[node->endpc]);
+  /* get the pending initial expression before creating the control variables */
+  ExpNode *exp = getforloopbasenode2(sa, fs, node, base, 0);
+  /* create the control variables */
+  commitcontrolvars2(fs, base, 3);
+  /* create the loop variable */
+  pushlocalvars2(fs, base+3, 1);
+  var = getlocvar2(fs, base+3);
+  /* add hold items for for-loop header */
+  addliteralholditem2(D, loopheader, "for", 1);
+  addholditem2(D, &initvar, getstr(var->varname), var->varname->tsv.len, 1);
+  addliteralholditem2(D, &initeq, "=", 1);
+  /* dump initializer expression */
+  initexplistiter2(&iter, fs, base, exp);
+  dumpexp2(D, fs, exp, 0);
+  DumpComma(D);
+  /* dump limit expression */
+  exp = getnextexpinlist2(&iter, 1);
+  dumpexp2(D, fs, exp, 0);
+  DumpComma(D);
+  /* dump step expression */
+  exp = getnextexpinlist2(&iter, 2);
+  /*exp = index2exp(fs, exp->nextregindex);*/
+  dumpexp2(D, fs, exp, 0);
+  DumpLiteral(" do", D);
+  D->needspace = 1;
+  flushpendingexp2(fs);
+}
+
+
+static void
+dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  hksc_State *H = fs->H;
+  DecompState *D = fs->D;
+  struct ExpListIterator iter;
+  struct HoldItem *header = sa->currheader;
+  Mbuffer *b = &D->buff;
+  /* get the base control register */
+  const int base = GETARG_A(fs->f->code[node->endpc-1]);
+  /* get the number of expressions to list */
+  const int nexp = (fs->firstfree - base) >= 3 ? (fs->firstfree - base) : 3;
+  const int bias = nexp - 3;
+  const int lastvar = base + 3 + sa->numforloopvars - 1;
+  /* get the pending initial expression before creating the control variables */
+  ExpNode *exp = getforloopbasenode2(sa, fs, node, base, bias);
+  int i, singleexp;
+  /* create the control variables */
+  commitcontrolvars2(fs, base, 3);
+  /* create the loop variables */
+  pushlocalvars2(fs, base+3, sa->numforloopvars);
+  /* create the for-loop header string */
+  luaZ_resetbuffer(b);
+  addliteral2buff(H, b, "for ");
+  for (i = base + 3; i <= lastvar; i++) {
+    size_t len;
+    struct LocVar *var = getlocvar2(fs, i);
+    lua_assert(var->varname != NULL);
+    len = var->varname->tsv.len;
+    addstr2buff(H, b, getstr(var->varname), len);
+    if (i != lastvar)
+      addliteral2buff(H, b, ", ");
+  }
+  addliteral2buff(H, b, " in ");
+  addholditem2(D, header, luaZ_buffer(b), luaZ_bufflen(b), 0);
+  singleexp = (exp->kind == ENIL && exp->aux == base+2) ||
+              (exp->kind == EVARARG && exp->info + exp->aux - 2 == base+2) ||
+              (exp->kind == ECALL && exp->info + exp->u.call.nret-1 == base+2);
+  /* dump expression list */
+  initexplistiter2(&iter, fs, base, exp);
+  dumpexp2(D, fs, exp, 0);
+  if (singleexp == 0) {
+    for (i = 1; i < nexp; i++) {
+      DumpComma(D);
+      exp = getnextexpinlist2(&iter, i);
+      dumpexp2(D, fs, exp, 0);
+      if ((exp->kind == EVARARG && exp->info + exp->aux - 1 == base+nexp) ||
+          (exp->kind == ECALL && exp->info + exp->u.call.nret == base+nexp))
+        break;
+    }
+  }
+  DumpLiteral(" do", D);
+  D->needspace = 1;
+  flushpendingexp2(fs);
+  sa->forloopbias = bias;
+}
+
+
+static void
+dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  if (sa->pendingcond.e) {
+    ExpNode *exp;
+    addliteralholditem2(D, sa->currheader, "if", 1);
+    exp = finalizeconditionalnode2(sa, fs, sa->pc - (sa->pc > 0));
+    dumpexp2(D, fs, exp, 0);
+    if (exp->info == -1) {
+      sa->tempslot.u.expindex = 0;
+    }
+  }
+  else {
+    int line, nextline;
+    line = D->linenumber;
+    nextline = getline(fs->f, node->startpc);
+    if (nextline - 1 > line)
+      line = nextline - 1;
+    updateline2(fs, line, D);
+    CheckSpaceNeeded(D);
+    DumpLiteral("if true ", D);
+  }
+  CheckSpaceNeeded(D);
+  DumpLiteral("then", D);
+  D->needspace = 1;
+  flushpendingexp2(fs);
+}
+
+
+static void dumpheaderstring2(DFuncState *fs, BlockNode *node, const char *str)
+{
+  DecompState *D = fs->D;
+  int line, nextline;
+  line = D->linenumber;
+  nextline = getline(fs->f, node->startpc);
+  if (nextline - 1 > line)
+    line = nextline - 1;
+  updateline2(fs, line, D);
+  CheckSpaceNeeded(D);
+  DumpString(str, D);
+  D->needspace = 1;
 }
 
 
@@ -7478,20 +7767,95 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
       }
       break;
     }
-    case BL_REPEAT: addliteralholditem2(D, blockheader, "repeat", 1); break;
-    case BL_FORNUM: {
+    case BL_REPEAT:
+    case BL_DO:
+      dumpheaderstring2(fs, node, node->type == BL_REPEAT ? "repeat" : "do");
+      break;
+    case BL_FORNUM:
       dumpfornumheader2(sa, fs, node);
       break;
-    }
-    case BL_DO: addliteralholditem2(D, blockheader, "do", 1); break;
+    case BL_FORLIST:
+      dumpforlistheader2(sa, fs, node);
+      break;
+    case BL_WHILE:
+      addliteralholditem2(D, blockheader, "while", 1);
+      sa->inheadercondition = 1;
+      break;
+    case BL_IF:
+      dumpbranchheader2(sa, fs, node);
+      break;
   }
   sa->numforloopvars = 0;  /* discharge */
+  sa->currheader = NULL;
+}
+
+
+static int
+calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node, int mainfunc)
+{
+  DecompState *D = fs->D;
+  int line, nextline;
+  lua_assert(ispcvalid(fs, node->endpc+1));
+  nextline = getline(fs->f, node->endpc+1);
+  line = D->linenumber;
+  if (line + (sa->deferleaveblock + 1) <= nextline) {
+    if (mainfunc && node->endpc+1 == fs->f->sizecode-1)
+      line = nextline;
+    else
+      line = line + 1;
+  }
+  return line;
 }
 
 
 static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
-  UNUSED(sa); UNUSED(fs); UNUSED(node);
+  const char *token;
+  DecompState *D = fs->D;
+  int mainfunc = (fs->prev == NULL);
+  if (mainfunc && node->type == BL_FUNCTION)
+    return;
+  lua_assert(D->indentlevel >= 0);
+  switch (node->type) {
+    case BL_REPEAT:
+      token = "until";
+      break;
+    case BL_FUNCTION:
+      token = "end";
+      /* advance to the line of the final return */
+      updateline2(fs, getline(fs->f, node->endpc), D);
+      break;
+    default:
+      lua_assert(sa->currparent != NULL);
+      if (istailblock(sa->currparent, node)) {
+        sa->deferleaveblock++;
+        return;
+      }
+      else if (sa->deferleaveblock) {
+        D->indentlevel += sa->deferleaveblock;
+        do {
+          updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+          CheckSpaceNeeded(D);
+          DumpLiteral("end", D);
+          D->needspace = 1;
+          D->indentlevel--;
+        } while (--sa->deferleaveblock);
+      }
+      token = (node->type == BL_IF && haselsepart(node)) ? "else" : "end";
+      updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+      break;
+  }
+  CheckSpaceNeeded(D);
+  DumpString(token, D);
+  D->needspace = 1;
+}
+
+
+static void addparams(DFuncState *fs, const Proto *f)
+{
+  fs->nlocvars = f->numparams;
+  if (f->numparams)
+    pushlocalvars2(fs, 0, f->numparams);
 }
 
 
@@ -7537,12 +7901,16 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     int numvars; /* number of variables which start at PC+1 */
     int actualnumvars;
     if (sa->pc == nextchildstartpc) {
+      BlockNode *prevparent;
       /* save NEXTCHILD->ISEMPTY to use after updating NEXTCHILD */
       int waschildempty;
       processnextchild:
+      prevparent = sa->currparent;
+      sa->currparent = node;
       lua_assert(nextchild != NULL);
       waschildempty = nextchild->isempty;
       blnode2(sa, fs, nextchild);
+      sa->currparent = prevparent;
       nextchild = updatenextchild2(sa, node, nextchild, &nextchildstartpc);
       if (sa->intailemptyblock) {
         sa->intailemptyblock = 0;
@@ -7594,6 +7962,9 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         bx = GETARG_Bx(i);
         sbx = GETARG_sBx(i);
       }
+      if (pc == sa->pendingcond.target) {
+         finalizeconditionalnode2(sa, fs, pc);
+      }
       /* all open expressions beside hashtables have a final opcode that ends
          the expression and provides an instruction-worth of breathing room for
          the main loop to catch new variables and emit them, but hashtables
@@ -7604,7 +7975,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         if (numvars > 0) {
           addlocalvars2(fs, numvars);
           if (isfor) numvars -= 3;
-          initlocvars2(fs, fs->nactvar, numvars);
+          if (numvars > 0)
+            initlocvars2(fs, fs->nactvar, numvars);
         }
       }
       if (isfor) {
@@ -7620,7 +7992,10 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     }
     addlocalvars2(fs, actualnumvars);
     visitinsn2(fs, node, pc, i); /* visit this instruction */
-    if (testAMode(o) || testTMode(o)) { /* A is a register */
+    if (pc == sa->pendingcond.target) {
+       finalizeconditionalnode2(sa, fs, pc);
+    }
+    if (testAMode(o)) { /* A is a register */
       ExpNode *exp;
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
       exp = addexp2(sa, fs, pc, o, a, b, c, bx);
@@ -7630,7 +8005,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         D(lprintf("---------------------------\n"));
         debugexp(fs, exp,0);
         D(lprintf("---------------------------\n"));
-        if (exp->kind != ESTORE && exp->info != -1)
+        lua_assert(isregvalid(fs, exp->info));
+        if (exp->kind != ESTORE)
           exp = addexptoreg2(sa, fs, a, exp, &splitnil);
         if (exp->kind == ECALL && exp->u.call.nret == 0)
           emitcallstat2(fs, exp);
@@ -7651,11 +8027,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
               exp->closeparenline = retline;
           }
         }
-        if (pc+1 == sa->lastcond.target) {
-           addconditionalnode2(sa, fs, pc, sa->lastcond.target);
-           sa->lastcond.e = 0;
-           sa->lastcond.target = -1;
-           sa->lastcond.pc = -1;
+        if (pc+1 == sa->pendingcond.target) {
+           finalizeconditionalnode2(sa, fs, pc);
         }
         if (numvars > 0) {
           checkdischargestores2(sa, fs);
@@ -7683,6 +8056,14 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           checkdischargestores2(sa, fs);
           lua_assert(node->type >= BL_WHILE && node->type <= BL_FORLIST);
           emitbreakstat2(fs, pc);
+        }
+        else if (pc == endpc) {
+          /* do nothing */
+        }
+        else if (sa->numforloopvars > 0) {
+          /* do nothing */
+          lua_assert(nextchild != NULL && isforloop(nextchild) &&
+                     nextchildstartpc == pc+1);
         }
         else {
           addconditionalnode2(sa, fs, pc, target);
@@ -7712,14 +8093,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
   debugleaveblock2(sa, fs, node);
   fs->nactvar = nactvar;
-}
-
-
-static void addparams(DFuncState *fs, const Proto *f)
-{
-  fs->nlocvars = f->numparams;
-  if (f->numparams)
-    pushlocalvars2(fs, 0, f->numparams);
+  flushpendingexp2(fs);
 }
 
 
@@ -7753,6 +8127,9 @@ static void pass2(const Proto *f, DFuncState *fs)
 {
   BlockNode *functionblock = fs->a->bllist.first;
   StackAnalyzer sa;
+  sa.currparent = NULL;
+  sa.deferleaveblock = 0;
+  sa.inheadercondition = 0;
   sa.pc = 0;
   sa.code = f->code;
   sa.sizecode = f->sizecode;
@@ -7761,12 +8138,12 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.inheadercondition = 0;
   sa.lastexpindex = 0;
   sa.laststore = 0;
-  sa.lastcond.e = 0;
-  sa.lastcond.target = -1;
-  sa.lastcond.pc = -1;
+  sa.pendingcond.e = 0;
+  sa.pendingcond.target = -1;
   sa.openexprkind = -1;
   sa.openexprnildebt = 0;
   sa.numforloopvars = 0;
+  memset(&sa.tempslot, 0, sizeof(SlotDesc));
   fs->nactvar = 0;
   lua_assert(fs->firstfree == 0);
   lua_assert(functionblock != NULL);
