@@ -100,12 +100,7 @@ typedef struct BlockNode {
   int endpc;  /* endpc of the block */
   int type;  /* the type of the block */
   lu_byte isempty;  /* true if the block has zero instructions */
-  /* this is my lazy way of specifying whether a do-block closes its variblaes;
-     the main first pass analyzer only generates do-blocks from OP_CLOSE codes,
-     and then the post-processor generates do-blocks to preserve debug info if
-     needed; augmentedbyp1 is true if the post-processor generated this
-     do-block */
-  lu_byte augmentedbyp1;
+  lu_byte upval;
 #ifdef LUA_DEBUG
   lu_byte visited;  /* has this block been visited in pass2 */
 #endif

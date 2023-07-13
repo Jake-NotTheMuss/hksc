@@ -395,7 +395,7 @@ static BlockNode *newblnode(hksc_State *H, int startpc, int endpc, int type) {
   node->endpc = endpc;
   node->type = type;
   node->isempty = (endpc < startpc);
-  node->augmentedbyp1 = 0;
+  node->upval = 0;
   D(node->visited = 0);
   return node;
 }
@@ -2234,6 +2234,7 @@ static BlockNode *createdoblockfromstate1(DFuncState *fs, BlockState *bl)
 {
   int startpc = bl->u.bl.rcnt.startpc;
   BlockNode *node = createdoblock1(fs, startpc, bl->endpc);
+  node->upval = 1;
   newregnote(fs, REG_NOTE_CLOSED, startpc, bl->u.bl.reg);
   return node;
 }
@@ -2374,10 +2375,12 @@ static BlockNode *finalizebranch1(DFuncState *fs, BlockState *branch,
         lua_assert(block->u.bl.opaque);
         lua_assert(block->u.bl.upval);
         lua_assert(block->endpc == branch->endpc);
-        if (block->u.bl.rcnt.startpc == midpc)
+        if (block->u.bl.rcnt.startpc == midpc) {
           /* make it still true, but a BlockNode does not need to be created for
              it (this if-false block is sufficient to generate matching code) */
           br->u.br.withblock = 2;
+          node2->upval = 1;
+        }
       }
     }
   }
@@ -2632,28 +2635,36 @@ static int recordblockstateforpc1(DFuncState *fs, BlockState *bl, LocVar *var,
 ** active local variables at PC for P_NACTVAR, and sets NVARS to the number of
 ** variables that start at PC
 */
-static struct LocVar *getactvar1(DFuncState *fs, int pc, int *nvars,
-                                 lu_byte *nactvar)
+static struct LocVar *getactvar(DFuncState *fs, int pc, int *nv, lu_byte *na)
 {
-  DecompState *D = fs->D;
-  struct LocVar *retvar = NULL;  /* first local that starts at PC */
-  int i,n=0;  /* N = number of variables that start on PC */
-  lu_byte nact = 0;  /* number of active locals at PC */
+  int i,n=0;
+  lu_byte nact=0;
+  LocVar *firstvar = NULL;
   lua_assert(ispcvalid(fs, pc));
-  if (D->usedebuginfo == 0)
-    return NULL;
   for (i = fs->sizelocvars-1; i >= 0; i--) {
     struct LocVar *var = &fs->locvars[i];
     if (var->startpc <= pc && pc <= var->endpc)
       nact++;
     if (var->startpc == pc) {
-      retvar = var;
+      firstvar = var;
       n++;
     }
   }
-  if (nactvar) *nactvar = nact;
-  if (nvars) *nvars = n;
-  return retvar;
+  if (nv) *nv = n;
+  if (na) *na = nact;
+  return firstvar;
+}
+
+
+/*
+** use this version in `loop1', before local variable info is generated when not
+** using loaded debug info; after `gendebug1' runs, you should use `getactvar'
+*/
+static struct LocVar *getactvar1(DFuncState *fs, int pc, int *nv, lu_byte *na)
+{
+  if (fs->D->usedebuginfo == 0)
+    return NULL;
+  return getactvar(fs, pc, nv, na);
 }
 
 
@@ -3119,7 +3130,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               else { /* a repeat-loop fail-jump */
                 if (type == BL_REPEAT && target == startpc) {
                   lua_assert(test_ins_property(fs, target, INS_REPEATSTAT));
-                  if (nextstat == -1 && finalnactvar == fs->nactvar)
+                  if (fs->D->usedebuginfo &&
+                      nextstat == -1 && finalnactvar == fs->nactvar)
                     /* no statement has been seen yet and no local variables
                        have died; the loops can be combined */
                     break;
@@ -3394,7 +3406,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     issingle = 1;
                     if (nextsibling != NULL && nextsibling->type == BL_IF) {
                       lua_assert(ispcvalid(fs, nextstat));
-                      if (nextsibling->endpc == branchendpc &&
+                      if (fs->D->usedebuginfo &&
+                          nextsibling->endpc == branchendpc &&
                           nextstat+1 >= nextsibling->startpc) {
                         new_node = nextsibling;
                         nextsibling = new_node->nextsibling;
@@ -3427,6 +3440,9 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                     if (s.haveblocksibling)
                       new_node->nextsibling = s.blocksibling;
                   }
+                  /* record whether there was an OP_CLOSE for this block */
+                  if (s.haveblocksibling)
+                    new_node->upval = 1;
                   /* discharge saved values from finalized erroneous blocks */
                   s.haveblocksibling = 0;
                   s.blocksibling = NULL;
@@ -3594,8 +3610,10 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               rescansiblingchain1(s.branch->result, &nextsibling);
               /* re-attach the next sibling from the finalized block that was
                  finalized because it is actually part of this new block */
-              if (s.haveblocksibling)
+              if (s.haveblocksibling) {
                 result->nextsibling = s.blocksibling;
+                result->upval = 1;
+              }
               /* discharge saved values from the finalized erroneous block */
               s.haveblocksibling = 0;
               s.blocksibling = NULL;
@@ -3970,7 +3988,11 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   finalizependingblocks1(fs, &s, &nextsibling);
   /* create a new block node */
   /* `nextsibling' will end up being the first child of this new block */
-  addblnode1(fs, startpc, endpc, type)->firstchild = nextsibling;
+  {
+    BlockNode *new_node = addblnode1(fs, startpc, endpc, type);
+    new_node->firstchild = nextsibling;
+    new_node->upval = s.upval;
+  }
 }
 
 
@@ -3986,6 +4008,7 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
   BlockNode *nextchild = node->firstchild;
   int nextchildstartpc = nextchild ? nextchild->startpc : -1;
   int pc;
+  int naturaldebuginfo = fs->D->usedebuginfo;
   for (pc = node->startpc; pc <= node->endpc; pc++) {
     if (pc == nextchildstartpc) {
       addnillabels1(fs, nextchild);
@@ -4017,6 +4040,46 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
         new_node->nextsibling = nextchild;
       }
     }
+    /* OP_LOADK is optimized differently depending on if it is part of an
+       if-statement condition or a conditional expression; if part of an
+       if-statement, the branch is optimized to always go through, i.e. no jump
+       is emitted, but if part of a conditional expression such as the
+       following:
+          local a = 1 or 5;
+       the conditional jump is not optimized to go through; because of this
+       distinction, the analyzer needs to check OP_LOADK codes that are followed
+       by branches, and see if the source code that it would generate will
+       compile to the same code; if the LOADK uses a temporary register, then
+       the generated source code will be of the form `if <constant> then' and it
+       will compile to different code, so the branch is removed from the chain
+       so that the code can be interpreted as an expression in pass 2 */
+    if (naturaldebuginfo && GET_OPCODE(fs->f->code[pc]) == OP_LOADK &&
+        (GET_OPCODE(fs->f->code[pc+1]) == OP_TEST ||
+         GET_OPCODE(fs->f->code[pc+1]) == OP_TEST_R1)) {
+      if (nextchild != NULL && nextchild->type == BL_IF &&
+          nextchild->startpc == pc+3) {
+        int reg = GETARG_A(fs->f->code[pc]);
+        lu_byte nactvar;
+        getactvar(fs, pc+1, NULL, &nactvar);
+        if (reg >= nactvar) {
+          BlockNode *sibling = nextchild->nextsibling;
+          BlockNode *child = nextchild->firstchild;
+          if (child == NULL)
+            child = sibling;
+          if (child) {
+            nextchild = child;
+            if (prevchild)
+              prevchild->nextsibling = child;
+            else
+              node->firstchild = child;
+          }
+          else if (prevchild)
+            prevchild->nextsibling = NULL;
+          else
+            node->firstchild = NULL;
+        }
+      }
+    }
   }
 }
 
@@ -4028,7 +4091,6 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
 static struct LocVar *getnextlocvaratpc1(DFuncState *fs, int pc)
 {
   lua_assert(ispcvalid(fs, pc));
-  lua_assert(fs->D->usedebuginfo);
   if (fs->nlocvars < fs->sizelocvars) {
     struct LocVar *var = &fs->locvars[fs->nlocvars];
     if (var->startpc == pc) {
@@ -4069,16 +4131,21 @@ static int getfirstindentedpc(DFuncState *fs, const BlockNode *node)
 */
 static int getnaturalvarendpc(const BlockNode *node)
 {
+  int pc;
   switch (node->type) {
-    case BL_REPEAT: return node->endpc+1;
-    case BL_FORLIST: return node->endpc-1;
-    case BL_IF: return node->endpc+!haselsepart(node);
+    /* repeat-loops without upvalues have variables end 1 after the endpc,
+       whereas repeat-loops with upvalues have variables end on the OP_CLOSE,
+       which is 1 before the endpc */
+    case BL_REPEAT: return node->endpc+1 - 2*node->upval;
+    case BL_FORLIST: pc = node->endpc-1; break;
+    case BL_IF: pc = node->endpc+!haselsepart(node); break;
     /* variables in do-blocks that have upvalues end on the OP_CLOSE code, while
        variables in do-blocks that don't have upvalues end 1 after the last pc
        in the block */
-    case BL_DO: return node->endpc+node->augmentedbyp1;
-    default: /* FUNCTION, WHILE, FORNUM, ELSE */ return node->endpc;
+    case BL_DO: pc = node->endpc+1; break;
+    default: /* FUNCTION, WHILE, FORNUM, ELSE */ pc = node->endpc; break;
   }
+  return pc - node->upval;
 }
 
 
@@ -4088,19 +4155,21 @@ static int getnaturalvarendpc(const BlockNode *node)
 */
 static int getblockfollowpc(const BlockNode *node)
 {
+  int pc;
   switch (node->type) {
     /* for REPEAT, it needs to be calculated with stack analysis */
     case BL_REPEAT: return -1;
     /* for-list ends with TFORLOOP and JMP; subtract 2 from endpc */
-    case BL_FORLIST: return node->endpc-2;
+    case BL_FORLIST: pc = node->endpc-2; break;
     /* for do-blocks which have OP_CLOSE, subtract 1 from endpc */
-    case BL_DO: return node->endpc-!node->augmentedbyp1;
+    case BL_DO: pc = node->endpc; break;
     /* if-blocks with else parts end with JMP; subtract 1 if needed */
-    case BL_IF: return node->endpc-haselsepart(node);
-    case BL_ELSE: return node->endpc;
+    case BL_IF: pc = node->endpc-haselsepart(node); break;
+    case BL_ELSE: pc = node->endpc; break;
     /* the rest have single termination code; subtract 1 */
-    default: /* FUNCTION, WHILE, FORNUM */ return node->endpc-1;
+    default: /* FUNCTION, WHILE, FORNUM */ pc = node->endpc-1; break;
   }
+  return pc - node->upval;
 }
 
 
@@ -4124,7 +4193,6 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
      local variable) */
   int endpc = (node->type == BL_FUNCTION) ? node->endpc-1 : node->endpc;
   int pc;
-  lua_assert(fs->D->usedebuginfo);
   for (pc = node->startpc; pc <= endpc; pc++) {
     struct LocVar *var;
     if (pc == nextchildstartpc) {
@@ -4201,9 +4269,6 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
           else
             new_node_startpc = getfirstindentedpc(fs, node);
           new_node = createdoblock2(fs, new_node_startpc, var->endpc-1);
-          /* this is my lazy way of saying this do-block doesn't have
-             upvalues */
-          new_node->augmentedbyp1 = 1;
           {  /* make NEW_NODE a child of NODE */
             /* find the surrounding child nodes for NEW_NODE */
             BlockNode *prevchild = NULL;
@@ -4242,6 +4307,7 @@ static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
   BlockNode *nextchild = node->firstchild;
   int nextchildstartpc = nextchild ? nextchild->startpc : -1;
   int pc;
+  int followblockpc = -1;
   int lastreturn;
   lu_byte state = 0;  /* state-machine variable */
   lua_assert(node->type == BL_REPEAT);
@@ -4274,15 +4340,19 @@ static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
         const Instruction *jc;
         lua_assert(GET_OPCODE(fs->f->code[pc]) == OP_JMP);
         jc = getjumpcontrol(fs,pc);
-        if (jc == NULL)  /* unconditional jump */
-          return pc-1;  /* the last pc is the follow-block pc */
+        if (jc == NULL)  /* unconditional jump */ {
+          followblockpc = pc-1;  /* the last pc is the follow-block pc */
+          break;
+        }
         else {  /* conditional jump */
           int r, r2;
           int numregs = getregstested(*jc, &r, &r2);
           if (numregs == 1)
             r2 = r;
-          if (numregs == 0 || (r < nactvar && r2 < nactvar))
-            return pc-2;  /* pc before TEST and JMP */
+          if (numregs == 0 || (r < nactvar && r2 < nactvar)) {
+            followblockpc = pc-2;  /* pc before TEST and JMP */
+            break;
+          }
           /* find the lowest temporary register of the 2 that are tested */
           if (r < nactvar)
             r = r2;
@@ -4297,12 +4367,13 @@ static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
             if (!beginseval(o, a, b, c, 0) || a < nactvar)
               break;  /* found a code that is not part of the condition */
           }
-          return pc;
+          followblockpc = pc;
+          break;
         }
       }
     }
   }
-  return -1;
+  return followblockpc == -1 ? -1 : followblockpc - node->upval;
 }
 
 
@@ -4313,7 +4384,7 @@ static void markfollowblock1(DFuncState *fs, BlockNode *node)
 {
   BlockNode *child = node->firstchild;
   int followblockpc = getblockfollowpc(node);
-  if (!ispcvalid(fs, followblockpc))
+  if (!ispcvalid(fs, followblockpc) && node->type == BL_REPEAT)
     followblockpc = findrepeatfollowblock1(fs, node);
   if (ispcvalid(fs, followblockpc))
     set_ins_property(fs, followblockpc, INS_BLOCKFOLLOW);
@@ -4669,8 +4740,7 @@ static void pass1(const Proto *f, DFuncState *fs)
     gendebug1(fs, func);
   /* add post-processing functions here */
   addnillabels1(fs, func);
-  if (fs->D->usedebuginfo)
-    fixblockendings1(fs, func);
+  fixblockendings1(fs, func);
   markfollowblock1(fs, func);
   /* end of pass1 post-processing */
   cleanuppass1(fs);
