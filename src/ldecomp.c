@@ -7708,6 +7708,29 @@ dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
+static void
+dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  if (sa->pendingcond.e) {
+    struct HoldItem until;  /* `until' */
+    ExpNode *exp;
+    addliteralholditem2(D, &until, "until", 1);
+    exp = finalizeconditionalnode2(sa, fs, sa->pc);
+    dumpexp2(D, fs, exp, 0);
+    if (exp->info == -1)
+      sa->tempslot.u.expindex = 0;
+  }
+  else {
+    updateline2(fs, getline(fs->f, node->endpc), D);
+    CheckSpaceNeeded(D);
+    DumpLiteral("until false", D);
+  }
+  DumpSemi(D);
+  D->needspace = 1;
+}
+
+
 static void dumpheaderstring2(DFuncState *fs, BlockNode *node, const char *str)
 {
   DecompState *D = fs->D;
@@ -7807,8 +7830,8 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   lua_assert(D->indentlevel >= 0);
   switch (node->type) {
     case BL_REPEAT:
-      token = "until";
-      break;
+      dumprepeatfooter2(sa, fs, node);
+      return;
     case BL_FUNCTION:
       token = "end";
       /* advance to the line of the final return */
@@ -8046,7 +8069,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           lua_assert(node->type >= BL_WHILE && node->type <= BL_FORLIST);
           emitbreakstat2(fs, pc);
         }
-        else if (pc == endpc) {
+        else if (pc == endpc && node->type != BL_REPEAT) {
           /* do nothing */
         }
         else if (sa->numforloopvars > 0) {
