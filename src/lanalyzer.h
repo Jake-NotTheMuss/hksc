@@ -53,7 +53,6 @@ enum BLTYPE {
   DEFINSFLAG(BLOCKEND)  /* last pc in a non-loop block */ \
   DEFINSFLAG(BRANCHBEGIN)  /* start of branch block */ \
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
-  DEFINSFLAG(TESTSETEND) /* last pc in a OP_TESTSET expression */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
   DEFINSFLAG(AUGBREAK)  /* augmented break in a repeat-loop with upvalues */ \
   DEFINSFLAG(AUGCONT)  /* augmented continue in a repeat-loop with upvalues */ \

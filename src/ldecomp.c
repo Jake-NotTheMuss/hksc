@@ -3016,7 +3016,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         if (prevop == OP_TESTSET) {/* a jump after OP_TESTSET is not a branch */
           if (ca->testset.endpc == -1) { /* no pending testset expression */
             ca->testset.endpc = target; /* create a new testset expression */
-            init_ins_property(fs, target-1, INS_TESTSETEND);
             /* Some testset expressions can end with non-testset-controlled
                jumps, i.e. jumps that follow a test instruction that is not
                OP_TESTSET. For example:
