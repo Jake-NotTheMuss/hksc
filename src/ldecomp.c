@@ -252,7 +252,7 @@ static void printregflags(DFuncState *fs, int reg, const char *preamble)
   int i;
   lprintf("%sreg (%d):", preamble, reg);
   for (i = 0; i < MAX_REGFLAG; i++) {
-    if (fs->a->insproperties[reg] & (1 << i))
+    if (fs->a->regproperties[reg].flags & (1 << i))
       lprintf("  %R", i);
   }
   lprintf("\n");
