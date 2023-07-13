@@ -4831,97 +4831,6 @@ static int varstartsatpc2(DFuncState *fs, int pc)
 }
 
 
-#if 0
-static LocVar *addlocvar2(DFuncState *fs, int startpc, int endpc, int param)
-{
-  struct LocVar *var;
-  int i = fs->nactvar++;
-  lua_assert(i >= 0 && i < fs->sizelocvars);
-  var = &fs->locvars[i];
-  if (1 || fs->D->usedebuginfo) { /* variable information already exists */
-    lua_assert(ispcvalid(fs, var->startpc));
-    lua_assert(ispcvalid(fs, var->endpc));
-    lua_assert(var->varname != NULL);
-    if (param) {
-      lua_assert(var->startpc == startpc);
-      lua_assert(var->endpc == endpc);
-    }
-    lua_assert(fs->nactvar <= fs->nlocvars);
-  }
-  else { /* generate a variable name */
-    char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC)];
-    const char *fmt = param ? "f%d_arg%d" : "f%d_local%d";
-    var->startpc = startpc;
-    var->endpc = endpc;
-    sprintf(buff, fmt, fs->idx, i);
-    var->varname = luaS_new(fs->H, buff);
-  }
-  D(lprintf("added new %s named '%s'\n", getstr(var->varname)));
-  return var;
-}
-
-
-static void addlocvar2reg2(DFuncState *fs, int startpc, int endpc, int param,
-                           int reg)
-{
-  struct LocVar *var = addlocvar2(fs, startpc, endpc, param);
-  lua_assert(isregvalid(fs, reg));
-  /* only REG_PENDING should be set */
-  lua_assert(test_reg_property(fs, reg, REG_PENDING) ||
-             getslotdesc(fs, reg)->flags == 0);
-  unset_reg_property(fs, reg, REG_PENDING);
-  set_reg_property(fs, reg, REG_LOCAL);
-  getslotdesc(fs, reg)->u.locvar = var;  /* REG holds VAR */
-}
-#endif
-
-
-/*
-** find the initial first free register for a function and initialize register
-** flags for the non-free registers
-*/
-#if 0
-static void initfirstfree2(DFuncState *fs, const Proto *f)
-{
-  int i;
-/*  int firstfree;
-  int firstclobnonparam = fs->firstclobnonparam;
-  lua_assert(firstclobnonparam == -1 || ispcvalid(fs, firstclobnonparam));*/
-  /* in regular Lua, initial OP_LOADNILs are removed, so the real first free
-     register is equal to however many variable start at pc 0 */
-  for (i = f->numparams; i < fs->sizelocvars; i++) {
-    if (fs->locvars[i].startpc != 0)
-      break;
-  }
-  fs->firstfree = i;
-/*  if (firstclobnonparam != -1)
-    firstfree = GETARG_A(f->code[firstclobnonparam]);
-  else
-    firstfree = f->numparams;*/
-  /* should be CHECKed earlier */
-  lua_assert(firstfree <= f->maxstacksize);
-  lua_assert(firstfree >= f->numparams);
-  /* set these explicitly to avoid a debug message for each set */
-#ifdef LUA_DEBUG
-  lprintf("marking %d parameter%s as %R\n", f->numparams, 
-            firstfree == 1 ? "" : "s", REG_LOCAL);
-  if (firstfree > f->numparams) {
-    int numlocvars = firstfree - f->numparams;
-    lprintf("marking %d more local variable%s as %R\n", numlocvars,
-            numlocvars == 1 ? "" : "s", REG_LOCAL);
-  }
-#endif /* LUA_DEBUG */
-  addlocalvars2(fs, firstfree);
-  for (i = 0; i < f->numparams; i++)
-    addlocvar2reg2(fs, 0, f->sizecode-1, 1, i); /* add param */
-  fs->nactvar = 
-  for (; i < firstfree; i++)
-    addlocvar2reg2(fs, 0, f->sizecode-1, 0, i); /* add local variable */
-  fs->firstfree = firstfree;
-}
-#endif
-
-
 static void updatenextopenexpr2(StackAnalyzer *sa, DFuncState *fs)
 {
   OpenExpr *next;
@@ -5635,10 +5544,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
   lua_assert(exp != NULL);
   lua_assert(exp->pending);
   exp->pending = 0;
-/*  if (index2exp(fs, exp->prevregindex))
-    index2exp(fs, exp->prevregindex)->nextregindex = exp->previndex;
-  if (index2exp(fs, exp->nextregindex))
-    index2exp(fs, exp->nextregindex)->prevregindex = exp->previndex;*/
   switch (exp->kind) {
     case EUNOP: { /* unary operation */
       ExpNode *o; /* the operand if it is a pending expression */
