@@ -841,7 +841,6 @@ static void close_func (DecompState *D) {
   D->funcidx--;
   UNUSED(fs->locvars);
   UNUSED(fs->sizelocvars);
-  UNUSED(fs->D->usedebuginfo);
   D->fs = fs->prev;
   killtemp(obj2gco(fs->a)); /* make analyzer collectable */
   UNUSED(fs->a);
