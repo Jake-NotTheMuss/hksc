@@ -226,12 +226,12 @@ typedef struct ExpNode {
       int arrsize, hashsize;
       int firstarrayitem, firsthashitem, lasthashitem;
       int narray, nhash;
-    } con;
+    } cons;  /* table constructor */
     const Proto *p;  /* Lua closure */
     struct {
       int e1, e2;  /* exp indices of operands */
       lu_byte goiftrue;  /* OPR_AND if 1, else OPR_OR */
-    } cond;
+    } cond;  /* condition expression */
     struct {
       int b, c;  /* B and C operands from the instruction */
       /* these 2 fields are needed if B and/or C reference a pending expression

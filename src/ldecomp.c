@@ -685,7 +685,7 @@ static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
               exp->u.unop.b);
       break;
     case ECONSTRUCTOR:
-      lprintf("'{}' %d, %d", exp->u.con.arrsize, exp->u.con.hashsize);
+      lprintf("'{}' %d, %d", exp->u.cons.arrsize, exp->u.cons.hashsize);
       break;
     case ESTORE:
       lprintf("STORE (from %d)", exp->u.store.srcreg);
@@ -5364,7 +5364,7 @@ static void setfirstfree(DFuncState *fs, int newfirstfree)
       /* if the last used reg holds the current table constructor, then reset
          its firstarrayitem as it now points to a free register */
       if (lastreg->kind == ECONSTRUCTOR)
-        lastreg->u.con.firstarrayitem = 0;
+        lastreg->u.cons.firstarrayitem = 0;
     }
   }
   fs->firstfree = newfirstfree;
@@ -5740,7 +5740,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
     case ECONSTRUCTOR: {
       struct ExpListIterator iter;
       int needparen = (limit == SUBEXPR_PRIORITY || needparenforlineinfo);
-      int totalitems = exp->u.con.narray + exp->u.con.nhash;
+      int totalitems = exp->u.cons.narray + exp->u.cons.nhash;
       if (needparen)
         addliteralholditem2(D, &holdparen, "({", 0);
       else
@@ -5748,8 +5748,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       if (totalitems) {
         int i;
         int reg;
-        ExpNode *nextarrayitem = index2exp(fs, exp->u.con.firstarrayitem);
-        ExpNode *nexthashitem = index2exp(fs, exp->u.con.firsthashitem);
+        ExpNode *nextarrayitem = index2exp(fs, exp->u.cons.firstarrayitem);
+        ExpNode *nexthashitem = index2exp(fs, exp->u.cons.firsthashitem);
         lua_assert(nextarrayitem != NULL || nexthashitem != NULL);
         if (nextarrayitem != NULL)
           initexplistiter2(&iter, fs, exp->info+1, nextarrayitem);
@@ -6793,7 +6793,7 @@ static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
   if (prevreg) {
     prevreg->nextregindex = sa->lastexpindex;
     if (prevreg->kind == ECONSTRUCTOR)
-      prevreg->u.con.firstarrayitem = sa->lastexpindex;
+      prevreg->u.cons.firstarrayitem = sa->lastexpindex;
   }
 }
 
@@ -6864,13 +6864,12 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       break;
     case OP_NEWTABLE:
       exp->kind = ECONSTRUCTOR;
-      exp->u.con.arrsize = luaO_fb2int(b);
-      exp->u.con.hashsize = c > 0 ? luaO_fb2int(c-1)+1 : 0;
-      exp->u.con.narray = exp->u.con.nhash = 0;
-      /*exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16)*/;
-      exp->u.con.firstarrayitem = 0;
-      exp->u.con.firsthashitem = 0;
-      exp->u.con.lasthashitem = 0;
+      exp->u.cons.arrsize = luaO_fb2int(b);
+      exp->u.cons.hashsize = c > 0 ? luaO_fb2int(c-1)+1 : 0;
+      exp->u.cons.narray = exp->u.cons.nhash = 0;
+      exp->u.cons.firstarrayitem = 0;
+      exp->u.cons.firsthashitem = 0;
+      exp->u.cons.lasthashitem = 0;
       break;
     case OP_SETLIST: {
       ExpNode *tab = getexpinreg2(fs, a);
@@ -6882,7 +6881,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
           b = fs->firstfree-(tab->info+1);
         }
         tab->nextregindex = 0;
-        tab->u.con.narray += b;
+        tab->u.cons.narray += b;
         fs->curr_constructor = exp2index(fs, tab);
       }
       /* return the existing table constructor node */
@@ -7519,7 +7518,7 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
         /* this should always be true, but if its not checked, malformed code
            could cause a crash */
         if (tab && tab->kind == ECONSTRUCTOR) {
-          ExpNode *last = index2exp(fs, tab->u.con.lasthashitem);
+          ExpNode *last = index2exp(fs, tab->u.cons.lasthashitem);
           int e = exp2index(fs, exp);
           if (last) {
             lua_assert(last->kind == ESTORE);
@@ -7528,9 +7527,9 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
             last->nextregindex = e;
           }
           else {
-            tab->u.con.firsthashitem = e;
+            tab->u.cons.firsthashitem = e;
           }
-          tab->u.con.lasthashitem = e;
+          tab->u.cons.lasthashitem = e;
           {
             int reg = exp->u.store.aux2;
             if (!istempreg(fs, reg))
@@ -7542,7 +7541,7 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
             if (istempreg(fs, reg))
               setfirstfree(fs, reg);
           }
-          tab->u.con.nhash++;
+          tab->u.cons.nhash++;
         }
       }
     }
