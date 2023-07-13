@@ -5738,12 +5738,25 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           else {
             dumpexp2(D, fs, nextarrayitem, 0);
             reg++;
-            if (isregvalid(fs, iter.firstreg+reg))
-              nextarrayitem = getnextexpinlist2(&iter, reg);
+            if (isregvalid(fs, iter.firstreg+reg)) {
+              ExpNode *nextnextarrayitem = getnextexpinlist2(&iter, reg);
+              if (nextnextarrayitem != nextarrayitem)
+                nextarrayitem = nextnextarrayitem;
+              else {
+                /* getnextexpinlist2 resets pending in this case */
+                nextarrayitem->pending = 0;
+                nextarrayitem = NULL;
+              }
+            }
             else
               nextarrayitem = NULL;
           }
         }
+      }
+      else {  /* totalitems == 0 */
+        /* discharge hold items */
+        predumpexp2(D, fs, exp);
+        postdumpexp2(D, fs, exp);
       }
       DumpLiteral("}",D);
       if (needparen)
@@ -6650,13 +6663,8 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
 {
   lua_assert(isregvalid(fs, reg));
   lua_assert(exp->kind != ESTORE);
-  if (exp->kind == ECONSTRUCTOR) {
-    /*int e = exp2index(fs, exp);*/
-    if (exp2index(fs, exp) == fs->curr_constructor)
-      return exp;
-   /* exp->aux = fs->curr_constructor;
-    fs->curr_constructor = e;*/
-  }
+  if (exp->kind == ECONSTRUCTOR && exp2index(fs, exp) == fs->curr_constructor)
+    return exp;
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
     int link, lastreg;
     if (exp->kind == ENIL || exp->kind == ESELF)
@@ -6790,7 +6798,7 @@ static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
   sa->lastexpindex = exp2index(fs, exp);
   if (prevreg) {
     prevreg->nextregindex = sa->lastexpindex;
-    if (prevreg->kind == ECONSTRUCTOR && prevreg->u.con.firstarrayitem == 0)
+    if (prevreg->kind == ECONSTRUCTOR)
       prevreg->u.con.firstarrayitem = sa->lastexpindex;
   }
 }
@@ -6865,7 +6873,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     case OP_NEWTABLE:
       exp->kind = ECONSTRUCTOR;
       exp->u.con.arrsize = luaO_fb2int(b);
-      exp->u.con.hashsize = luaO_fb2int(c);
+      exp->u.con.hashsize = c > 0 ? luaO_fb2int(c-1)+1 : 0;
       exp->u.con.narray = exp->u.con.nhash = 0;
       /*exp->u.con.est = (exp->u.con.arrsize == 0 && exp->u.con.hashsize > 16)*/;
       exp->u.con.firstarrayitem = 0;
@@ -6881,6 +6889,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
           /* get number of array expressions pushed */
           b = fs->firstfree-(tab->info+1);
         }
+        tab->nextregindex = 0;
         tab->u.con.narray += b;
         fs->curr_constructor = exp2index(fs, tab);
       }
@@ -7396,11 +7405,16 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
             tab->u.con.firsthashitem = e;
           }
           tab->u.con.lasthashitem = e;
-          /* similarly, I use `prevregindex' to save the exp index of the
-             current node in registre B if it is a temporary register */
-          if (istempreg(fs, exp->u.store.aux2)) {
-            exp->prevregindex = exp2index(fs, getexpinreg2(fs, b));
-            setfirstfree(fs, exp->u.store.aux2);
+          {
+            int reg = exp->u.store.aux2;
+            if (!istempreg(fs, reg))
+              reg = exp->u.store.srcreg;
+            else
+              /* similarly, I use `prevregindex' to save the exp index of the
+                 current node in registre B if it is a temporary register */
+              exp->prevregindex = exp2index(fs, getexpinreg2(fs, b));
+            if (istempreg(fs, reg))
+              setfirstfree(fs, reg);
           }
           tab->u.con.nhash++;
         }
