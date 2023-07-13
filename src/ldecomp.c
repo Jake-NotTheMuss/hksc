@@ -6712,14 +6712,14 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     exp->previndex = sa->laststore;
     sa->laststore = exp2index(fs, exp);
     if (exp->kind == ENIL && exp->aux >= fs->nactvar) {
-      ExpNode *new;
+      ExpNode *new_exp;
       ExpNode node = *exp;  /* the node starts as local; the stack is about to
                                be discharged; add it to the stack after */
       node.info = fs->nactvar;  /* start this node at the first pending */
       exp->aux = fs->nactvar-1;  /* end the original node at the last local */
       dischargestores2(sa, fs);  /* store some of the nil's */
-      new = newexp(fs);  /* put the rest of the nil's in a new pending node */
-      *new = node;
+      new_exp = newexp(fs);/* put the rest of the nil's in a new pending node */
+      *new_exp = node;
       /* if this node loads nil into the first open register, change its line so
          that it gets emitted with the first opcode of the open expression,
          which is likely how it was in the source code; this has to be done here
@@ -6731,12 +6731,12 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
           sa->nextopenexpr->startpc == sa->pc+1 &&
           fs->nactvar == sa->nextopenreg) {
         lua_assert(ispcvalid(fs, sa->pc+1));
-        new->line = getline(fs->f, sa->pc+1);
-        new->closeparenline = new->line;
+        new_exp->line = getline(fs->f, sa->pc+1);
+        new_exp->closeparenline = new_exp->line;
       }
       if (splitnil != NULL) *splitnil = 1;
       lua_assert(!test_reg_property(fs, fs->nactvar, REG_LOCAL));
-      return addexptoreg2(sa, fs, new->info, new, NULL);
+      return addexptoreg2(sa, fs, new_exp->info, new_exp, NULL);
     }
     if (splitnil != NULL) *splitnil = 0;
     return exp;
