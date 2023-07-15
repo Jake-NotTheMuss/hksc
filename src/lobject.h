@@ -305,7 +305,6 @@ typedef struct Analyzer {
   struct OpenExpr *opencalls;
   struct RegNote *regnotes;
   struct SlotDesc *regproperties;  /* register properties */
-  int *lineinfo;  /* map from opcodes to source lines */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
   unsigned short *actvar;
@@ -313,7 +312,6 @@ typedef struct Analyzer {
   int sizeopencalls;
   int sizeregnotes;
   int sizeregproperties;
-  int sizelineinfo;
   int sizelocvars;
   int sizeactvar;
   int sizeupvalues;

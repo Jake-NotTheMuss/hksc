@@ -33,8 +33,6 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
   a->sizeregnotes = 0;
   a->regproperties = NULL;
   a->sizeregproperties = 0;
-  a->lineinfo = NULL;
-  a->sizelineinfo = 0;
   a->locvars = NULL;
   a->sizelocvars = 0;
   a->upvalues = NULL;
@@ -56,7 +54,6 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   luaM_freearray(H, a->opencalls, a->sizeopencalls, struct OpenExpr);
   luaM_freearray(H, a->regnotes, a->sizeregnotes, struct RegNote);
   luaM_freearray(H, a->regproperties, a->sizeregproperties, SlotDesc);
-  luaM_freearray(H, a->lineinfo, a->sizelineinfo, int);
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
   luaM_freearray(H, a->upvalues, a->sizeupvalues, TString *);
   luaM_freearray(H, a->actvar, a->sizeactvar, unsigned short);
