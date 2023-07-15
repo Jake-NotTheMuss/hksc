@@ -416,6 +416,7 @@ static int haselsepart(const BlockNode *node) {
 }
 
 
+#ifdef HKSC_DECOMP_HAVE_PASS2
 static int istailblock(const BlockNode *parent, const BlockNode *child) {
   int hasendcode;
   if (child->nextsibling != NULL)
@@ -428,6 +429,7 @@ static int istailblock(const BlockNode *parent, const BlockNode *child) {
   }
   return (child->endpc + hasendcode == parent->endpc);
 }
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 static int getforloopbase(const Instruction *code, const BlockNode *node) {
@@ -8109,7 +8111,9 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
   debugleaveblock2(sa, fs, node);
   fs->nactvar = nactvar;
+#ifdef HKSC_DECOMP_HAVE_PASS2
   flushpendingexp2(fs);
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 }
 
 
