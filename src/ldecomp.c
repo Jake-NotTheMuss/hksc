@@ -4383,6 +4383,10 @@ static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
           break;
         }
       }
+      else if (pc+1 == node->endpc && lastreturn == pc) {
+        followblockpc = lastreturn;
+        break;
+      }
     }
   }
   return followblockpc == -1 ? -1 : followblockpc - node->upval;
