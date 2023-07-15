@@ -4496,21 +4496,6 @@ static void setvarnote1(DebugGenerator *s, int r, int note)
   s->fs->a->locvars[i].varname = cast(TString *, cast(size_t, note));
 }
 
-static void addvar1(DebugGenerator *s, int r, int startpc, int endpc, int note)
-{
-  Analyzer *a = s->fs->a;
-  struct LocVar *var;
-  luaM_growvector(s->fs->H, a->locvars, s->nlocvars, a->sizelocvars,
-                  LocVar, SHRT_MAX, "too many local variables");
-  var = &a->locvars[s->nlocvars];
-  var->startpc = startpc;
-  var->endpc = endpc;
-  var->varname = cast(TString *, cast(size_t, note));
-  lua_assert(r == s->nactvar);
-  lua_assert(r < s->fs->f->maxstacksize);
-  s->actvar[r] = s->nlocvars++;
-  s->nactvar++;
-}
 
 static void updatenextopenexpr1(DebugGenerator *s)
 {
@@ -4536,6 +4521,33 @@ static void updatenextregnote1(DebugGenerator *s)
 }
 
 
+static void addvar1(DebugGenerator *s, int r, int startpc, int endpc, int note)
+{
+  Analyzer *a = s->fs->a;
+  struct LocVar *var;
+  luaM_growvector(s->fs->H, a->locvars, s->nlocvars, a->sizelocvars,
+                  LocVar, SHRT_MAX, "too many local variables");
+  var = &a->locvars[s->nlocvars];
+  var->startpc = startpc;
+  var->endpc = endpc;
+  var->varname = cast(TString *, cast(size_t, note));
+  lua_assert(r == s->nactvar);
+  lua_assert(r < s->fs->f->maxstacksize);
+  s->actvar[r] = s->nlocvars++;
+  s->nactvar++;
+  while (s->nextnote && s->nextnote->reg < s->nactvar)
+    updatenextregnote1(s);
+}
+
+
+static LocVar *getlastvar1(DebugGenerator *s)
+{
+  if (s->nlocvars == 0)
+    return NULL;
+  return &s->fs->a->locvars[s->nlocvars-1];
+}
+
+
 static void advance1(DebugGenerator *s)
 {
   Instruction i = s->code[++s->pc];
@@ -4548,6 +4560,8 @@ static void advance1(DebugGenerator *s)
   else b = GETARG_sBx(i);
   s->b = b;
   s->c = c;
+  while (s->nextnote && s->nextnote->pc < s->pc)
+    updatenextregnote1(s);
 }
 
 
@@ -4575,6 +4589,27 @@ static int maybeaddvar1(DebugGenerator *s, int r, int pc, int pclimit)
 }
 
 
+static int fixvarendpc1(DebugGenerator *s, int pc, int laststat)
+{
+  LocVar *var = getlastvar1(s);
+  if (var != NULL && var->startpc-1 > laststat) {
+    int oldstartpc = var->startpc;
+    int newstartpc = pc+1;
+    int i = cast_int(var - s->fs->a->locvars);
+    var->startpc = newstartpc;
+    while (i--) {
+      var--;
+      if (var->startpc == oldstartpc)
+        var->startpc = newstartpc;
+      else
+        break;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+
 static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
 {
   const BlockNode *prevnode = s->currnode;
@@ -4584,6 +4619,7 @@ static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
   const int varendpc = s->varendpc;
   const lu_byte nactvar = s->nactvar;
   int r1 = -1, rstreak = 0;
+  int laststat = -1;
   s->currnode = node;
   s->varendpc = getnaturalvarendpc(node);
   if (isforloop(node)) {
@@ -4607,38 +4643,66 @@ static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
       nextchild = nextchild->nextsibling;
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
       nextpclimit = nextchildstartpc != -1 ? nextchildstartpc : node->endpc+1;
+      laststat = s->pc;
       continue;
     }
     if (s->nextexpr && pc == s->nextexpr->startpc) {
-      s->pc = s->nextexpr->endpc;
+      int exprendpc = s->nextexpr->endpc;
+      if (s->nextexpr->kind == CALLPREP) {
+        OpCode op = GET_OPCODE(s->code[exprendpc]);
+        if (IS_OP_CALL(op) && GETARG_C(s->code[exprendpc]) == 1)
+          laststat = exprendpc;
+      }
+      else if (s->nextexpr->kind == RETPREP)
+        laststat = exprendpc;
+      pc = exprendpc;
       updatenextopenexpr1(s);
       continue;
     }
-    if (beginseval(o, s->a, s->b, s->c, 0)) {
+    if (beginseval(o, s->a, s->b, s->c, 0) || o == OP_SETLIST) {
       int r = s->a;
       if (r != r1) rstreak = 0;
       else rstreak++;
       r1 = r;
       if (r >= s->nactvar) {  /* clobbering a free register */
         /* see if register A can possibly be a local variable in this block */
-        /*if (o == OP_MOVE && s->b > s->a) {
-          
-        }*/
-        int newvar = maybeaddvar1(s, r, pc, nextpclimit);
-        if (newvar && (o == OP_LOADNIL || o == OP_VARARG)) {
-          int i, lastreg = o == OP_LOADNIL ? s->b : r + s->b - 2;
-          for (i = r+1; i <= lastreg; i++) {
+        if (maybeaddvar1(s, r, pc, nextpclimit)) {
+          if (o == OP_LOADNIL || o == OP_VARARG) {
+            int i, lastreg = o == OP_LOADNIL ? s->b : r + s->b - 2;
+            for (i = r+1; i <= lastreg; i++) {
+              if (!maybeaddvar1(s, i, pc, nextpclimit))
+                break;
+            }
+          }
+        }
+        else if (!beginseval(o, s->a, s->b, s->c, 1)) {
+          fixvarendpc1(s, pc, laststat);
+        }
+        else {
+          laststat = pc-1;
+        }
+      }
+      else {
+        if (o == OP_LOADNIL && s->b >= s->nactvar) {
+          int i;
+          for (i = s->nactvar; i <= s->b; i++) {
             if (!maybeaddvar1(s, i, pc, nextpclimit))
               break;
           }
         }
+        if (r+1 != s->nactvar || !fixvarendpc1(s, pc, laststat))
+          laststat = pc;
       }
+    }
+    else if (isstorecode(o)) {
+      laststat = pc;
     }
     else if (o != OP_DATA) {
       r1 = -1;
       rstreak = 0;
     }
   }
+  /* restore previous values */
   s->currnode = prevnode;
   s->nactvar = nactvar;
   s->varendpc = varendpc;
@@ -4690,6 +4754,29 @@ static void createparams1(DebugGenerator *s)
 }
 
 
+static void createinitiallocals1(DebugGenerator *s)
+{
+  DFuncState *fs = s->fs;
+  if (fs->firstclobnonparam != -1) {
+    int reg = GETARG_A(fs->f->code[fs->firstclobnonparam]);
+    int i = fs->f->numparams;
+    int pc;
+    for (pc = fs->firstclob; pc < fs->firstclobnonparam; pc++) {
+      if (GET_OPCODE(fs->f->code[pc]) == OP_LOADNIL) {
+        int a = GETARG_A(fs->f->code[pc]);
+        int b = GETARG_B(fs->f->code[pc]);
+        if (a < fs->f->numparams && b >= fs->f->numparams) {
+          for (; i <= b; i++)
+            addvar1(s, i, pc+1, fs->f->sizecode-1, GENVAR_NECESSARY);
+        }
+      }
+    }
+    for (; i < reg; i++)
+      addvar1(s, i, 0, fs->f->sizecode-1, GENVAR_NECESSARY);
+  }
+}
+
+
 #ifdef LUA_DEBUG
 static void debugdebug1(DFuncState *fs)
 {
@@ -4698,7 +4785,7 @@ static void debugdebug1(DFuncState *fs)
   printf("--------------------------\n");
   for (i = 0; i < fs->sizelocvars; i++) {
     LocVar *var = &fs->locvars[i];
-    lprintf("(%i)  %s  (%i-%i)\n", i, getstr(var->varname), var->startpc, var->endpc);
+    lprintf("  (%i)  %s  (%i-%i)\n", i, getstr(var->varname), var->startpc, var->endpc);
   }
   printf("--------------------------\n");
 }
@@ -4720,11 +4807,13 @@ static void gendebug1(DFuncState *fs, const BlockNode *startnode)
   s.pc = -1;
   /* FS must be using the analyzer data to generate variables */
   lua_assert(fs->locvars == a->locvars);
-  advance1(&s);
   updatenextopenexpr1(&s);
   updatenextregnote1(&s);
+  advance1(&s);
   createparams1(&s);
+  createinitiallocals1(&s);
   genblockdebug1(&s, startnode);
+  /* finalize variable info */
   newsizelocvars = createvarnames1(fs, s.nlocvars, a->locvars);
   luaM_reallocvector(fs->H, a->locvars, a->sizelocvars, newsizelocvars, LocVar);
   a->sizelocvars = newsizelocvars;
@@ -4733,6 +4822,7 @@ static void gendebug1(DFuncState *fs, const BlockNode *startnode)
 #ifdef LUA_DEBUG
   debugdebug1(fs);
 #endif /* LUA_DEBUG */
+  /* reset variable stack for second pass */
   memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
 }
 
