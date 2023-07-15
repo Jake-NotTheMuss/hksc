@@ -1578,7 +1578,7 @@ typedef struct CodeAnalyzer {
 
 
 static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
-                        int minhashsize, int firstreg, BlockNode **chain);
+                              int argC, int firstreg, BlockNode **chain);
 
 
 static void addregnote1(DFuncState *fs, int note, int pc, int reg)
@@ -1702,16 +1702,23 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
             /* walk back up the code vector to find the earliest possible end of
                this constructor */
             scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, HASHTABLEPREP),
-                              luaO_fb2int(c-1)+1, a, NULL);
+                              c, a, NULL);
           }
           else
             newopenexpr(fs, a, pc, pc, EMPTYTABLE);
         }
         break;
+      CASE_OP_SETTABLE:
+        if (kind == VOIDPREP && locvar != NULL) {
+          openexpr1(ca, fs, a, HASHTABLEPREP, NULL);
+          goto postrecursion;
+        }
+        break;
       default:
         break;
     }
-    if (kind == SETLISTPREP && o == OP_NEWTABLE && a == firstreg)
+    if ((kind == SETLISTPREP || kind == HASHTABLEPREP) &&
+        o == OP_NEWTABLE && a == firstreg)
       break;  /* found start of table */
     applyregnote(fs, firstreg, pc, o, a, b, c);
     if (beginstempexpr(fs, i, pc, firstreg, endpc, &nextpossiblestart)) {
@@ -1839,11 +1846,15 @@ static void adjustnextbranch1(DFuncState *fs, BlockNode *nextsibling,
 ** due to the conversion with `luaO_fb2int')
 */
 static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
-                        int minhashsize, int firstreg, BlockNode **chain)
+                              int argC, int firstreg, BlockNode **chain)
 {
   const Instruction *code = ca->code;
+  int minendpc, endpc;
   int pc;  /* iterator */
   int numhashitems = 0;  /* number of hash items found so far */
+  int minhashsize = luaO_fb2int(argC-1)+1;
+  int maxhashsize = luaO_fb2int(argC);
+  lua_assert(argC > 0);
   lua_assert(minhashsize > 0);
   lua_assert(e != NULL);
   lua_assert(e->kind == HASHTABLEPREP);
@@ -1860,14 +1871,7 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
       clearblocksatpc1(fs, chain, pc);
     applyregnote(fs, firstreg, pc, o, a, b, c);
     /* check if this opcode sets a table index */
-    if (o == OP_SETFIELD ||
-             o == OP_SETFIELD_R1 ||
-             o == OP_SETTABLE ||
-             o == OP_SETTABLE_BK ||
-             o == OP_SETTABLE_N ||
-             o == OP_SETTABLE_N_BK ||
-             o == OP_SETTABLE_S ||
-             o == OP_SETTABLE_S_BK) {
+    if (IS_OP_SETTABLE(o)) {
       /* check if a RegNote entry can be added for the source register */
       if (c < firstreg) {
         addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
@@ -1879,7 +1883,39 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
       }
     }
   }
-  e->endpc = pc;
+  minendpc = endpc = pc;
+  for (; pc < fs->f->sizecode-1 && numhashitems < maxhashsize; pc++) {
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    int b = GETARG_B(i);
+    int c = GETARG_C(i);
+    if (o == OP_MOVE && b == firstreg) {
+      /* found the end */
+      for (pc = minendpc; pc < endpc; pc++) {
+        i = code[pc];
+        o = GET_OPCODE(i);
+        a = GETARG_A(i);
+        b = GETARG_B(i);
+        c = GETARG_C(i);
+        clearblocksatpc1(fs, chain, pc);
+        applyregnote(fs, firstreg, pc, o, a, b, c);
+      }
+      break;
+    }
+    /* check if this opcode sets a table index */
+    if (IS_OP_SETTABLE(o)) {
+      /* check if a RegNote entry can be added for the source register */
+      if (c < firstreg) {
+        addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
+      }
+      if (a == firstreg) {
+        numhashitems++;
+        endpc = pc;
+      }
+    }
+  }
+  e->endpc = endpc;
 }
 
 
@@ -2961,6 +2997,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   int closedloopreg = -1;
   lu_byte finalnactvar = fs->nactvar;  /* number of active locals at the end of
                                           this loop */
+  lu_byte inwhileheader = 0;  /* true if in a while-loop condition */
   const Instruction *code = ca->code;
   endpc = ca->pc--;
   s.branch = s.block = NULL;
@@ -3136,6 +3173,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                   /* this is an optimized jump from a loop test that would
                      otherwise jump to the very end of an enclosing loop */
                   init_ins_property(fs, pc, INS_LOOPFAIL);
+                  inwhileheader = 1;
                 }
                 else { /* a repeat-loop fail-jump */
                   goto markrepeatstat;
@@ -3246,9 +3284,11 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               if (GET_OPCODE(siblingjump) == OP_JMP) {
                 siblingtarget = siblingstartpc+1+GETARG_sBx(siblingjump);
                 if (target == siblingtarget) { /* optimized jump? */
-                  if (ca->prevTMode || (pc == startpc && type == BL_WHILE))
+                  if (ca->prevTMode || (pc == startpc && type == BL_WHILE)) {
                     /* loop-exit */
                     init_ins_property(fs, pc, INS_LOOPFAIL);
+                    inwhileheader = 1;
+                  }
                   else /* break */
                     init_ins_property(fs, pc, INS_BREAKSTAT);
                   break;
@@ -3287,6 +3327,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       (test_ins_property(fs, target, INS_OPTLOOPFAILTARGET)))) {
               lua_assert(outer.end != -1);
               init_ins_property(fs, pc, INS_LOOPFAIL);
+              inwhileheader = 1;
             }
             /* before assuming this is an if-branch, check the jump target and
                the enclosing loops to see if there has been an erroneous
@@ -3756,6 +3797,10 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_SETSLOTS:
       case OP_SETSLOTMT:
         /* instructions that use C as a source in a store operation */
+        if (inwhileheader) {
+          openexpr1(ca, fs, a, HASHTABLEPREP, NULL);
+          goto postexpr;
+        }
         nextstat = pc;  /* encountered an assignment statement */
         if (storeexpr1(ca, fs, c))
           goto poststat;
@@ -3882,7 +3927,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           /* walk back up the code vector to find the earliest possible end of
              this constructor */
           scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, HASHTABLEPREP),
-                            luaO_fb2int(c-1)+1, a, &nextsibling);
+                            c, a, &nextsibling);
           adjustnextbranch1(fs, nextsibling, &nextbranch, &nextbranchtarget);
         }
         else

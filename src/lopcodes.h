@@ -212,12 +212,23 @@ LUAI_FUNC Instruction luaP_setarg_b(Instruction *i, int b);
   case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1: \
   case OP_TAILCALL_C: case OP_TAILCALL_M
 
-#define isOpCall(o) \
+#define IS_OP_CALL(o) \
   ((o) == OP_CALL || (o) == OP_CALL_I || (o) == OP_CALL_I_R1 || \
-   (o) == OP_CALL_C || (o) == OP_CALL_M || isOpTailCall(o))
+   (o) == OP_CALL_C || (o) == OP_CALL_M || IS_OP_TAILCALL(o))
 
-#define isOpTailCall(o) \
+#define IS_OP_TAILCALL(o) \
   ((o) == OP_TAILCALL || (o) == OP_TAILCALL_I || (o) == OP_TAILCALL_I_R1 || \
    (o) == OP_TAILCALL_C || (o) == OP_TAILCALL_M)
+
+
+#define IS_OP_SETTABLE(o) \
+  ((o) == OP_SETFIELD || (o) == OP_SETFIELD_R1 || (o) == OP_SETTABLE || \
+   (o) == OP_SETTABLE_BK || (o) == OP_SETTABLE_N || (o) == OP_SETTABLE_N_BK || \
+   (o) == OP_SETTABLE_S || (o) == OP_SETTABLE_S_BK)
+
+#define CASE_OP_SETTABLE \
+  case OP_SETFIELD: case OP_SETFIELD_R1: case OP_SETTABLE: \
+  case OP_SETTABLE_BK: case OP_SETTABLE_N: case OP_SETTABLE_N_BK: \
+  case OP_SETTABLE_S: case OP_SETTABLE_S_BK
 
 #endif
