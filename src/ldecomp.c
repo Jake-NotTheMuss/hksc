@@ -8801,6 +8801,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   D->indentlevel--;
   block2finished:
 #ifdef HKSC_DECOMP_HAVE_PASS2
+  checkdischargestores2(sa, fs);
   leaveblock2(sa, fs, node);
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
   debugleaveblock2(sa, fs, node);
