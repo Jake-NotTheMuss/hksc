@@ -7670,10 +7670,16 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
           }
           tab->u.cons.lasthashitem = e;
           {
+            /* check if the key and/or the source expression are pushed to the
+               stack, i.e. are temporary values; key is pushed first, then the
+               source, so if key is not a temporary, than the source expression
+               is the lowest free register if it is a temporary */
             int reg = exp->u.store.aux2;
             if (!istempreg(fs, reg))
               reg = exp->u.store.srcreg;
             else
+              /* use AUXLISTPREV to hold the index of the pending key expression
+              */
               exp->auxlistprev = exp2index(fs, getexpinreg2(fs, b));
             if (istempreg(fs, reg))
               setfirstfree(fs, reg);
