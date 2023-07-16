@@ -1335,6 +1335,20 @@ static void checktreevisited(BlockNode *node)
 #endif /* LUA_DEBUG */
 
 
+static int isstorecode(OpCode o)
+{
+  switch (o) {
+    CASE_OP_SETTABLE:
+    case OP_SETGLOBAL:
+    case OP_SETUPVAL:
+    case OP_SETUPVAL_R1:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+
 /*
 ** Check if the given operation O clobbers register A without depending on what
 ** was previously in register A. if CHECKDEP is false, the check will not take
