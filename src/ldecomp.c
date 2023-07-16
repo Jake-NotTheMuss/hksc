@@ -8207,7 +8207,6 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         int target = pc+1+sbx;
         if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
           checkdischargestores2(sa, fs);
-          lua_assert(node->type >= BL_WHILE && node->type <= BL_FORLIST);
           emitbreakstat2(fs, pc);
         }
         else if (pc == endpc && node->type != BL_REPEAT) {
