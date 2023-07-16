@@ -5425,6 +5425,17 @@ static void postdumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp)
 }
 
 
+static void dumpexpbool2(DecompState *D, DFuncState *fs, ExpNode *exp)
+{
+  predumpexp2(D,fs,exp);
+  if (exp->kind == ETRUE)
+    DumpLiteral("true",D);
+  else
+    DumpLiteral("false",D);
+  postdumpexp2(D,fs,exp);
+}
+
+
 /* dump a constant (literal) expression */
 static void dumpexpk2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
@@ -6121,6 +6132,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
     case ESTORE:
       lua_assert(0);
       break;
+    case ETRUE:
+    case EFALSE:
     case ELITERAL:
     case ENIL:
     case EVARARG:
@@ -6128,7 +6141,9 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       int needparen = (limit == SUBEXPR_PRIORITY || needparenforlineinfo);
       if (needparen)
         addliteralholditem2(D, &holdparen, "(", 0);
-      if (exp->kind == ELITERAL)
+      if (exp->kind == ETRUE || exp->kind == EFALSE)
+        dumpexpbool2(D,fs,exp);
+      else if (exp->kind == ELITERAL)
         dumpexpk2(D,fs,exp); /* dump literal */
       else if (exp->kind == ENIL)
         dumpexpnil2(D,fs,exp); /* dump nil */
