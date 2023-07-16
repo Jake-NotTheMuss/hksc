@@ -3440,7 +3440,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                       /* a single (possibly child) if-statement */
                       branchendpc = target-1;
                     else
-                      branchendpc = branch->u.br.midpc-1;
+                      branchendpc = branch->u.br.midpc-2;
                     /* NEXTBRANCH is used to check if this branch and the next
                        branch have the same target and endpc, in which case they
                        can be merged as one if-statement with multiple
