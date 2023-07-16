@@ -5255,39 +5255,28 @@ static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
 }
 
 
-#if 0
-static void updateline2(DFuncState *fs, int pc)
-{
-  DecompState *D = fs->D;
-  int line;
-  lua_assert(ispcvalid(fs, pc));
-  line = getline(fs->f,pc);
-  D(lprintf("updating decompilation line\n"));
-  D(lprintf("  opcode line = (%d)\n"
-            "  decomp line = (%d)\n", line, D->linenumber));
-  if (line > 0 && D->matchlineinfo) {
-    int lines_needed = line - D->linenumber;
-    beginline2(fs, lines_needed, D);
-  }
-  else {
-    /* without using line info, see if a new line is needed */
-    maybebeginline2(fs, D);
-  }
-}
-#endif
-
-
-/*static struct LocVar *newlocvaratreg2(DFuncState *fs, int reg)
-{
-  ExpNode *exp;
-  struct LocVar *var;
-  lua_assert(isregvalid(fs, reg));
-  exp = getslotdesc(fs, reg)->u.exp;
-  while (exp->prev)
-    exp = exp->prev;
-
-}
+/*
+** returns true if EXP is an expression which, in a constructor, would only
+** generate code when being closed as a list field
 */
+static int issimplelistfield(ExpNode *exp)
+{
+  switch (exp->kind) {
+    /* the following expressions will only generate a single code after the
+       parser has advanced to the close brace */
+    case ENIL: case ETRUE: case EFALSE: case ELITERAL:
+    case ELOCAL: case EUPVAL: case EGLOBAL:
+      return 1;
+    /* a table index may generate some code before the parser advances if the
+       table or key are temporary expressions */
+    case EINDEXED:
+      return (exp->u.indexed.b != -1 && exp->u.indexed.c != -1);
+    /* closures and vararg generate an opcode before `closelistfield' is
+       called */
+    default:
+      return 0;
+  }
+}
 
 
 static const char *getunoprstring(UnOpr op)
@@ -5682,6 +5671,7 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
   isfield = exp->u.store.rootop == OP_SETFIELD;
   rkkey = exp->u.store.aux2;
   if (isfield && ISK(rkkey) && ttisstring(&fs->f->k[INDEXK(rkkey)])) {
+    checklineneeded2(D, fs, exp);
     CheckSpaceNeeded(D);
     DumpTString(rawtsvalue(&fs->f->k[INDEXK(rkkey)]), D);
   }
@@ -5690,8 +5680,10 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
     addliteralholditem2(D, &bracket, "[", 0);
     if (istempreg(fs, rkkey))
       dumpexpoperand2(D, fs, index2exp(fs, exp->auxlistprev), exp, 0);
-    else
+    else {
+      checklineneeded2(D, fs, exp);
       dumpRK2(D, fs, rkkey, 0);
+    }
     DumpLiteral("]",D);
   }
   DumpLiteral(" =",D);
@@ -5945,11 +5937,37 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       if (totalitems) {
         int i;
         int reg;
+        int linestep, bracketline;
+        ExpNode *firstitem;
         ExpNode *nextarrayitem = index2exp(fs, exp->u.cons.firstarrayitem);
         ExpNode *nexthashitem = index2exp(fs, exp->u.cons.firsthashitem);
         lua_assert(nextarrayitem != NULL || nexthashitem != NULL);
-        if (nextarrayitem != NULL)
+        if (nextarrayitem != NULL) {
           initexplistiter2(&iter, fs, exp->info+1, nextarrayitem);
+          firstitem = nextarrayitem;
+        }
+        else
+          firstitem = nexthashitem;
+        if (D->matchlineinfo) {
+          if (firstitem) {
+            bracketline = exp->line;
+            linestep = exp->line < firstitem->line;
+          }
+          else
+            linestep = 0;
+        }
+        else {
+          linestep = (totalitems > 3);
+          bracketline = D->nextlinenumber;
+        }
+        if (linestep) {
+          updateline2(fs, bracketline, D);
+          dischargeholditems2(D);
+          D->indentlevel++;
+        }
+        else if (D->matchlineinfo) {
+          checklineneeded2(D, fs, exp);
+        }
         for (i = reg =0; i < totalitems; i++) {
           int dumparray;
           if (i != 0)
@@ -5965,26 +5983,50 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           if (dumparray == 0) {
             lua_assert(nexthashitem != NULL);
             lua_assert(nexthashitem->kind == ESTORE);
+            if (D->matchlineinfo == 0) {
+              nexthashitem->line = D->nextlinenumber += linestep;
+              nexthashitem->closeparenline = nexthashitem->line;
+            }
             dumphashitem2(D, fs, nexthashitem);
             nexthashitem = index2exp(fs, nexthashitem->auxlistnext);
           }
           else {
-            dumpexp2(D, fs, nextarrayitem, 0);
-            reg++;
-            if (isregvalid(fs, iter.firstreg+reg)) {
-              ExpNode *nextnextarrayitem = getnextexpinlist2(&iter, reg);
-              if (nextnextarrayitem != nextarrayitem)
-                nextarrayitem = nextnextarrayitem;
-              else {
-                /* getnextexpinlist2 resets pending in this case */
-                nextarrayitem->pending = 0;
-                nextarrayitem = NULL;
+            if (i == totalitems - 1) {
+              if (D->matchlineinfo && linestep) {
+                /* if the final array item is mapped to the same line as the
+                   close brace, see if it can be written one line earlier, which
+                   is usually the case in source code */
+                if (exp->aux && nextarrayitem->line == exp->aux) {
+                  /* check if this array item would have only generated code
+                     after the parser advanced to the close brace line */
+                  if (issimplelistfield(nextarrayitem) &&
+                      nextarrayitem->line - 1 > D->linenumber) {
+                    nextarrayitem->closeparenline = --nextarrayitem->line;
+                  }
+                }
               }
             }
-            else
+            if (D->matchlineinfo == 0) {
+              nextarrayitem->line = D->nextlinenumber += linestep;
+              nextarrayitem->closeparenline = nextarrayitem->line;
+            }
+            dumpexp2(D, fs, nextarrayitem, 0);
+            reg++;
+            if (i == totalitems - 1) {
               nextarrayitem = NULL;
+              break;
+            }
+            nextarrayitem = getnextexpinlist2(&iter, reg);
           }
         }
+        if (linestep) {
+          D->indentlevel--;
+          if (D->matchlineinfo == 0)
+            exp->aux = D->nextlinenumber += linestep;
+        }
+        /* exp->aux has the line mapping for OP_SETLIST if present */
+        if (exp->aux)
+          updateline2(fs, exp->aux, D);
       }
       else {  /* totalitems == 0 */
         /* discharge hold items */
@@ -7093,6 +7135,8 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
         tab->u.cons.narray += b;
         fs->curr_constructor = exp2index(fs, tab);
       }
+      if (fs->D->matchlineinfo)
+        tab->aux = getline(fs->f, pc);
       /* return the existing table constructor node */
       return tab;
     }
