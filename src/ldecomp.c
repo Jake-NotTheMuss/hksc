@@ -5545,6 +5545,24 @@ static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
 }
 
 
+/*
+** clear references to pending expressions in slot REG, up to N slots, without
+** clearing the slot flags; call this when expressions in these slots should no
+** longer be reachable through the SlotDesc entry
+*/
+static void clearslots2(DFuncState *fs, int reg, int n)
+{
+  int i;
+  lua_assert(isregvalid(fs, reg));
+  lua_assert(n > 0);
+  lua_assert(isregvalid(fs, reg + n - 1));
+  lua_assert(istempreg(fs, reg));
+  for (i = reg; i < reg + n; i++) {
+    getslotdesc(fs, reg)->u.expindex = exp2index(fs, NULL);
+  }
+}
+
+
 static void setfirstfree(DFuncState *fs, int newfirstfree)
 {
   int numfree = fs->firstfree - newfirstfree;
@@ -6947,6 +6965,10 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
         CHECK(fs, lastvareg >= i, "")*/
         continue; /* vararg has already been emitted */
       }
+      else if (lastexp->kind == ECALL &&
+               (lastexp->info + lastexp->u.call.nret) > i) {
+        continue; /* function call has already been emitted */
+      }
       else if (nvars > 1 && lastexp->kind == ENIL && lastexp->aux == lastreg) {
         continue; /* only nil's remain; don't print them */
       }
@@ -7029,6 +7051,8 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
       lastreg = exp->aux;
     else if (exp->kind == EVARARG && exp->aux > 1)
       lastreg = exp->info + exp->aux-2;
+    else if (exp->kind == ECALL && exp->u.call.nret > 1)
+      lastreg = exp->info + exp->u.call.nret - 1;
     else
       lastreg = reg;
     lua_assert(isregvalid(fs, lastreg));
@@ -7322,13 +7346,16 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       /* should always be non-NULL, but a lone OP_SETLIST can crash the program
          if this isn't checked */
       if (tab != NULL || tab->kind != ECONSTRUCTOR) {
-        if (b == 0) {  /* b == 0 means set up to stack top */
+        int nitems = b;
+        if (nitems == 0) {  /* b == 0 means set up to stack top */
           /* get number of array expressions pushed */
-          b = fs->firstfree-(tab->info+1);
+          nitems = fs->firstfree-(tab->info+1);
         }
         tab->auxlistnext = 0;
-        tab->u.cons.narray += b;
+        tab->u.cons.narray += nitems;
         fs->curr_constructor = exp2index(fs, tab);
+        /* clear stack space of array items */
+        clearslots2(fs, tab->info+1, nitems);
       }
       if (fs->D->matchlineinfo)
         tab->aux = getline(fs->f, pc);
@@ -7423,6 +7450,12 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
         CHECK(fs, sa->openexprkind == -1, "unexpected call statement in open "
               "expression (call returns 0 values)");
       }
+      if (exp->u.call.narg != 0) {
+        int narg = exp->u.call.narg;
+        if (narg == -1) narg = 1;
+        /* clear stack space of the arguments */
+        clearslots2(fs, exp->info+1, narg);
+      }
       exp->aux = exp2index(fs, getexpinreg2(fs, a+exp->u.call.narg));
       break;
     case OP_CONCAT:
@@ -7430,6 +7463,8 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.concat.firstindex = exp2index(fs, getexpinreg2(fs, b));
       exp->u.concat.lastindex =exp2index(fs, getexpinreg2(fs, c));
       exp->aux = c+1-b;  /* number of expressions in concat */
+      /* clear stack space of operands */
+      clearslots2(fs, b, exp->aux);
       break;
     /* arithmetic operations */
     case OP_ADD: case OP_ADD_BK:
