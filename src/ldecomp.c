@@ -122,6 +122,8 @@ typedef struct DFuncState {
   TString **upvalues;
   short nlocvars;  /* number of local variables created so far */
   lu_byte nactvar;
+  lu_byte seenstatinblock;  /* true if a simple statement has been encountered
+                               in the current block node */
   int sizelocvars;
   int sizeupvalues;
   int firstclob;  /* first pc that clobbers register A */
@@ -400,6 +402,7 @@ static BlockNode *newblnode(hksc_State *H, int startpc, int endpc, int type) {
   node->type = type;
   node->isempty = (endpc < startpc);
   node->upval = 0;
+  node->iselseif = 0;
   D(node->visited = 0);
   return node;
 }
@@ -5601,6 +5604,7 @@ static void flushpendingexp2(DFuncState *fs)
   fs->lastcallexp = 0;
   fs->curr_constructor = 0;
   fs->D->nextlinenumber++;
+  fs->seenstatinblock = 1;
 }
 
 
@@ -8254,9 +8258,24 @@ static void
 dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
   DecompState *D = fs->D;
+  int iselseif;
+  lua_assert(sa->currparent != NULL);
+  if (sa->currparent->type == BL_ELSE && node->endpc == sa->currparent->endpc)
+    iselseif = fs->seenstatinblock == 0;
+  else
+    iselseif = 0;
+  if (iselseif) {
+    node->iselseif = 1;
+    D->indentlevel--;
+  }
   if (sa->pendingcond.e) {
     ExpNode *exp;
-    addliteralholditem2(D, sa->currheader, "if", 1);
+    if (iselseif) {
+      DumpLiteral("if", D);  /* tag `if' onto `else' */
+      D->needspace = 1;
+    }
+    else
+      addliteralholditem2(D, sa->currheader, "if", 1);
     exp = finalizeconditionalnode2(sa, fs, sa->pc - (sa->pc > 0));
     dumpexp2(D, fs, exp, 0);
     if (exp->info == -1) {
@@ -8264,8 +8283,13 @@ dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     }
   }
   else {
-    updateheaderline2(sa, fs, node);
-    CheckSpaceNeeded(D);
+    if (iselseif) {
+      D->needspace = 0;
+    }
+    else {
+      updateheaderline2(sa, fs, node);
+      CheckSpaceNeeded(D);
+    }
     DumpLiteral("if true ", D);
   }
   CheckSpaceNeeded(D);
@@ -8520,6 +8544,11 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   int mainfunc = (fs->prev == NULL);
   if (mainfunc && node->type == BL_FUNCTION)
     return;
+  if (node->iselseif) {
+    lua_assert(node->type == BL_IF);
+    D->indentlevel++;
+    return;
+  }
   lua_assert(D->indentlevel >= 0);
   switch (node->type) {
     case BL_REPEAT:
@@ -8601,6 +8630,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   /* mark this block as visited */
   lua_assert(node->visited == 0);
   D(node->visited = 1);
+  fs->seenstatinblock = 0;
   if (node->isempty) /* block has no instructions */
     goto block2finished;
   D->indentlevel++;

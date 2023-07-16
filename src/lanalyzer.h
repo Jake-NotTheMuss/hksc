@@ -101,6 +101,7 @@ typedef struct BlockNode {
   int type;  /* the type of the block */
   lu_byte isempty;  /* true if the block has zero instructions */
   lu_byte upval;
+  lu_byte iselseif;
 #ifdef LUA_DEBUG
   lu_byte visited;  /* has this block been visited in pass2 */
 #endif
