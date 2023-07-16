@@ -98,10 +98,15 @@ typedef struct {
   int funcidx;  /* n for the nth function that is being decompiled */
   int indentlevel;  /* indentation level counter */
   int linenumber;  /* output line counter */
+  int nextlinenumber;  /* used when not using line info */
   int needspace;  /* for adding space between tokens */
   struct HoldItem *holdfirst;  /* first hold item in the chain */
   struct HoldItem *holdlast;  /* last hold item in the chain */
   Mbuffer buff;  /* buffer for building strings */
+  struct {
+    TString *name;
+    int pc, line, haveself;
+  } lastcl;
 } DecompState;
 
 
@@ -119,7 +124,6 @@ typedef struct DFuncState {
   lu_byte nactvar;
   int sizelocvars;
   int sizeupvalues;
-  int lastclosurepc;  /* PC of last OP_CLOSURE */
   int firstclob;  /* first pc that clobbers register A */
   int firstclobnonparam;  /* first pc that clobbers non-parameter register A */
   int firstfree;
@@ -746,13 +750,14 @@ static SlotDesc *getslotdesc(DFuncState *fs, int reg)
 */
 static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
 {
+  DecompState *D = fs->D;
   const Instruction *code;
   int i, pc;
   lua_assert(parent != NULL && parent->f != NULL);
   code = parent->f->code;
-  lua_assert(ispcvalid(parent, parent->lastclosurepc));
-  lua_assert(GET_OPCODE(code[parent->lastclosurepc]) == OP_CLOSURE);
-  pc = parent->lastclosurepc+1;
+  lua_assert(ispcvalid(parent, D->lastcl.pc));
+  lua_assert(GET_OPCODE(code[D->lastcl.pc]) == OP_CLOSURE);
+  pc = D->lastcl.pc+1;
   i = 0;
   while (1) {
     TString *upvalue;
@@ -787,6 +792,28 @@ static int varisaugmented(struct LocVar *var) {
   lua_assert(name != NULL);
   return (*getstr(name) == '(');
 }
+
+
+/*
+** call this version before debug info is generated in pass1
+*/
+static int getline1(DFuncState *fs, int pc) {
+  return getline(fs->f, pc);
+}
+
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
+/*
+** call this version after debug info is generated
+*/
+static int getline2(DFuncState *fs, int pc) {
+  lua_assert(ispcvalid(fs, pc));
+  if (fs->D->matchlineinfo)
+    return fs->f->lineinfo[pc];
+  else
+    return fs->D->nextlinenumber;
+}
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
@@ -2900,8 +2927,8 @@ static int isjumplinefixed(DFuncState *fs, int pc, int target, int defaultvalue)
   if (fs->D->usedebuginfo == 0)
     return defaultvalue;
   else {
-    int pcline = getline(fs->f, pc);
-    int targetline = getline(fs->f, target);
+    int pcline = getline1(fs, pc);
+    int targetline = getline1(fs, target);
     if (pcline > targetline)
       return 0;  /* line was not fixed */
     else if (pcline < targetline)
@@ -2909,7 +2936,7 @@ static int isjumplinefixed(DFuncState *fs, int pc, int target, int defaultvalue)
     else {
       int i;
       for (i = target+1; i < pc; i++) {
-        if (getline(fs->f, i) > targetline)
+        if (getline1(fs, i) > targetline)
           return 1;  /* line was fixed */
       }
       return 0;  /* line may have been fixed but it does not manifest */
@@ -3236,7 +3263,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                  start-line of the loop; if the line for this jump is greater
                  than the start-line, this cannot be a while-loop */
               if (fs->D->usedebuginfo &&
-                  getline(fs->f, pc) > getline(fs->f, target))
+                  getline1(fs, pc) > getline1(fs, target))
                 goto markrepeatstat;
               encountered1("while", target);
               set_ins_property(fs, target, INS_WHILESTAT);
@@ -4925,6 +4952,8 @@ typedef struct StackAnalyzer {
      variables declared in the loop headerx */
   int forloopbias;
   int nextforloopbase;
+  int whilestatbodystart;
+  int numblockstartatpc;
   int pc;
   int sizecode;
   int maxstacksize;
@@ -5190,7 +5219,7 @@ static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
      this store is mapped to */
   if (fs->D->matchlineinfo && prevlaststore == 0) {
     ExpNode *prev = index2exp(fs, exp2index(fs, exp)-1);
-    if (prev != NULL && prev->line != exp->line)
+    if (prev != NULL && prev->line != exp->line && prev->line != 0)
       prev->closeparenline = exp->line;
   }
   /* this store may reference a register that holds the second or greater
@@ -5444,12 +5473,24 @@ static void dumpexpva2(DecompState *D, DFuncState *fs, ExpNode *exp)
 /* dump a child function */
 static void dumpexpfunc2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
-  /* do not update the line */
-  dischargeholditems2(D);
-  CheckSpaceNeeded(D);
-  fs->lastclosurepc = exp->aux;
-  DecompileFunction(D, exp->u.p);
+  D->lastcl.pc = exp->aux;
+  D->lastcl.name = exp->u.cl.name;
+  D->lastcl.line = exp->line;
+  D->lastcl.haveself = exp->u.cl.haveself;
+  DecompileFunction(D, exp->u.cl.p);
   postdumpexp2(D,fs,exp);
+  if (D->matchlineinfo == 0) {
+    int i;
+    /* update lines for pending expressions after the line number may have been
+       changed by the child function */
+    for (i = 1; i <= fs->a->pendingstk.used; i++) {
+      ExpNode *exp = index2exp(fs, i);
+      if (exp->pending) {
+        exp->line = D->nextlinenumber;
+        exp->closeparenline = D->nextlinenumber;
+      }
+    }
+  }
 }
 
 
@@ -5527,6 +5568,7 @@ static void flushpendingexp2(DFuncState *fs)
   setfirstfree(fs, fs->nactvar);
   fs->lastcallexp = 0;
   fs->curr_constructor = 0;
+  fs->D->nextlinenumber++;
 }
 
 
@@ -6144,7 +6186,7 @@ static void emitcallstat2(DFuncState *fs, ExpNode *call)
 static void emitbreakstat2(DFuncState *fs, int pc)
 {
   DecompState *D = fs->D;
-  int line = getline(fs->f, pc);
+  int line = getline2(fs, pc);
   int needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
   updateline2(fs, line, D);
   CheckSpaceNeeded(D);
@@ -6162,7 +6204,7 @@ static void emitbreakstat2(DFuncState *fs, int pc)
 static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
 {
   DecompState *D = fs->D;
-  int line = getline(fs->f, pc);
+  int line = getline2(fs, pc);
   int needblock;
   lua_assert(isregvalid(fs, reg));
   if (D->matchlineinfo && nret != 0) {
@@ -6872,8 +6914,14 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
           sa->nextopenexpr->startpc == sa->pc+1 &&
           fs->nactvar == sa->nextopenreg) {
         lua_assert(ispcvalid(fs, sa->pc+1));
-        new_exp->line = getline(fs->f, sa->pc+1);
-        new_exp->closeparenline = new_exp->line;
+        if (GET_OPCODE(fs->f->code[sa->pc+1]) != OP_CLOSURE) {
+          new_exp->line = getline2(fs, sa->pc+1);
+          new_exp->closeparenline = new_exp->line;
+        }
+        else if (sa->nextopenexpr->kind == CALLPREP) {
+          new_exp->line = getline2(fs, sa->nextopenexpr->endpc);
+          new_exp->closeparenline = new_exp->line;
+        }
       }
       if (splitnil != NULL) *splitnil = 1;
       lua_assert(!test_reg_property(fs, fs->nactvar, REG_LOCAL));
@@ -6897,8 +6945,14 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->info = reg;
   exp->aux = exp->info + sa->openexprnildebt-1;
-  exp->line = getline(fs->f, sa->pc);
-  exp->closeparenline = exp->line;
+  if (GET_OPCODE(fs->f->code[sa->pc]) != OP_CLOSURE) {
+    exp->line = getline2(fs, sa->pc);
+    exp->closeparenline = exp->line;
+  }
+  else if (sa->nextopenexpr->kind == CALLPREP) {
+    exp->line = getline2(fs, sa->nextopenexpr->endpc);
+    exp->closeparenline = exp->line;
+  }
   exp->dependondest = 0;
   exp->leftside = 0;
   exp->pending = 1;
@@ -6918,7 +6972,7 @@ static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
   else
     exp->auxlistprev = exp2index(fs, getexpinreg2(fs, reg-1));
   exp->auxlistnext = exp2index(fs, NULL);
-  exp->line = getline(fs->f,pc);
+  exp->line = getline2(fs, pc);
   exp->closeparenline = exp->line;
   exp->leftside = 0;
   exp->pending = 1;
@@ -7031,7 +7085,10 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     case OP_CLOSURE:
       exp->kind = ECLOSURE;
       exp->aux = pc;
-      exp->u.p = f->p[bx];
+      exp->u.cl.p = f->p[bx];
+      exp->u.cl.name = NULL;
+      exp->u.cl.haveself = 0;
+      exp->line = exp->closeparenline = 0;
       break; /* todo */
     case OP_VARARG:
       exp->kind = EVARARG;
@@ -7228,8 +7285,15 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   else
     exp->dependondest = 0;
   /* discharge stores now before pushing a new expression node */
-  if (exp->kind != ESTORE && pc >= sa->pendingcond.target)
-    checkdischargestores2(sa,fs);
+  if (exp->kind != ESTORE && pc >= sa->pendingcond.target) {
+    if (sa->laststore) {
+      dischargestores2(sa,fs);
+      if (fs->D->matchlineinfo == 0)
+        /* use LINENUMBER, not NEXTLINENUMBER, because a statement has just
+           ended and NEXTLINENUMBER has already advanced */
+        exp->line = exp->closeparenline = fs->D->nextlinenumber;
+    }
+  }
   exp = newexp(fs);
   *exp = node;
   linkexp2(sa, fs, exp);
@@ -7543,7 +7607,7 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
     exp->aux = 0;
   else
     exp->aux = getslotdesc(fs, srcreg)->u.expindex;
-  exp->line = getline(fs->f, pc);
+  exp->line = getline2(fs, pc);
   exp->closeparenline = exp->line;
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->dependondest = 0;
@@ -7596,7 +7660,7 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
     exp->aux = 0;
   else
     exp->aux = getslotdesc(fs, srcreg)->u.expindex;
-  exp->line = getline(fs->f, pc);
+  exp->line = getline2(fs, pc);
   exp->closeparenline = exp->line;
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->dependondest = 0;
@@ -7825,6 +7889,79 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
+/*
+** get an appropriate line for the given PC
+*/
+static int getvalidline2(DecompState *D, DFuncState *fs, int pc)
+{
+  int line = getline2(fs, pc);
+  /* OP_CLOSURE is mapped to the final line of the nested function and is not
+     appropriate to use as an estimation of how much room exists until PC */
+  if (GET_OPCODE(fs->f->code[pc]) == OP_CLOSURE) {
+    const Proto *f;
+    int i, bx;
+    /* two line numbers are computed that can possibly give a valid if not
+       correct line to dump the header on; the first is the next instruction
+       after OP_CLOSURE; if it is a store code and it is storing the closure
+       directly to a global variable, upvalue, or table index the line-mapping
+       may be the line of the header if the function is named; the second line
+       is computed from the first line-mapping in the closure refernced by the
+       OP_CLOSURE code; the analyzer will traverse the list of child functions
+       until the first code of a function is not OP_CLOSURE */
+    int line1 = 0, line2 = 0;
+    int reg = GETARG_A(fs->f->code[pc]);
+    /* see how this closure is being stored; if being assigned, the line-mapping
+       for the store code may give the correct line for the function header, but
+       only if the function is named, i.e. `function g()' intead of
+       `g = function()'; if there is no store code, as is the case when the
+       function is a local variable, or the closure is the RHS of a local
+       definition, and then the local is stored to another variable, the
+       line-mapping does not give correct line fo the header */
+    if (fs->nlocvars >= fs->sizelocvars ||
+        fs->locvars[fs->nlocvars].startpc > pc+1) {
+      OpCode o = GET_OPCODE(fs->f->code[pc+1]);
+      if ((o == OP_SETGLOBAL || o == OP_SETUPVAL || o == OP_SETUPVAL_R1 ||
+           IS_OP_SETTABLE(o)) && GETARG_A(fs->f->code[pc+1]) == reg) {
+        line2 = getline2(fs, pc+1);
+        if (line2 >= line) line2 = 0;
+      }
+    }
+    i = 0;
+    f = fs->f;
+    bx = GETARG_Bx(f->code[pc]);
+    do {
+      f = f->p[bx];
+      bx = GETARG_Bx(f->code[0]);
+      i++;
+      line1 = f->lineinfo[0];
+    } while (GET_OPCODE(f->code[0]) == OP_CLOSURE);
+    line1 -= i;
+    if ((line2 != 0) && line2 < line1)
+      line1 = line2;
+    if (line1 < D->linenumber)
+      return D->linenumber;
+    return line1;
+  }
+  return line;
+}
+
+
+static void
+updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  int line = D->linenumber;
+  int nextline;
+  if (D->matchlineinfo)
+    nextline = getvalidline2(D, fs, node->startpc);
+  else
+    nextline = fs->D->nextlinenumber;
+  if (nextline - sa->numblockstartatpc > line)
+    line = nextline - sa->numblockstartatpc;
+  updateline2(fs, line, D);
+}
+
+
 static void
 dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
@@ -7839,17 +7976,87 @@ dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     }
   }
   else {
-    int line, nextline;
-    line = D->linenumber;
-    nextline = getline(fs->f, node->startpc);
-    if (nextline - 1 > line)
-      line = nextline - 1;
-    updateline2(fs, line, D);
+    updateheaderline2(sa, fs, node);
     CheckSpaceNeeded(D);
     DumpLiteral("if true ", D);
   }
   CheckSpaceNeeded(D);
   DumpLiteral("then", D);
+  D->needspace = 1;
+  flushpendingexp2(fs);
+}
+
+
+static void
+dumpwhilestatheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  int pclimit = getfirstindentedpc(fs, node);
+  int startline;
+  lua_assert(sa->pc == node->startpc);
+  if (D->matchlineinfo) {
+    /* in Havok Script, the final line is fixed to the start line; in regular
+       Lua, you can just set this to zero and an appropriate line will be
+       computed for the loop header */
+    startline = getline(fs->f, node->endpc);
+    if (startline > getline(fs->f, node->startpc))
+      startline = 0;
+  }
+  else {
+    startline = 0;
+  }
+  for (; sa->pc < pclimit; sa->pc++) {
+    int pc = sa->pc;
+    Instruction i; OpCode o; int a, b, c, bx;
+    while (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == pc) {
+      sa->currbl = node;
+      openexpr2(sa, fs);
+      pc = sa->pc;
+    }
+    i = sa->code[pc];
+    o = GET_OPCODE(i);
+    a = GETARG_A(i);
+    b = GETARG_B(i);
+    c = GETARG_C(i);
+    bx = GETARG_Bx(i);
+    visitinsn2(fs, node, pc, i);
+    if (testAMode(o)) { /* A is a register */
+      ExpNode *exp = addexp2(sa, fs, pc, o, a, b, c, bx);
+      if (exp != NULL) {
+        D(lprintf("created new expression node\n"));
+        D(lprintf("---------------------------\n"));
+        debugexp(fs, exp,0);
+        D(lprintf("---------------------------\n"));
+        addexptoreg2(sa, fs, a, exp, NULL);
+      }
+    }
+    else if (o == OP_JMP) {
+      int target = pc+1+GETARG_sBx(i);
+      addconditionalnode2(sa, fs, pc, target);
+    }
+  }
+  if (pclimit != node->startpc && sa->pendingcond.e) {
+    struct HoldItem header;
+    ExpNode *exp = finalizeconditionalnode2(sa, fs, sa->pc);
+    addliteralholditem2(D, &header, "while", 1);
+    if (startline != 0) {
+      updateline2(fs, startline, D);
+      dischargeholditems2(D);
+    }
+    dumpexp2(D, fs, exp, 0);
+    if (exp->info == -1)
+      sa->tempslot.u.expindex = 0;
+    CheckSpaceNeeded(D);
+  }
+  else {
+    if (startline != 0)
+      updateline2(fs, startline, D);
+    else
+      updateheaderline2(sa, fs, node);
+    CheckSpaceNeeded(D);
+    DumpLiteral("while true ", D);
+  }
+  DumpLiteral("do", D);
   D->needspace = 1;
   flushpendingexp2(fs);
 }
@@ -7869,7 +8076,8 @@ dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
       sa->tempslot.u.expindex = 0;
   }
   else {
-    updateline2(fs, getline(fs->f, node->endpc), D);
+    /* this should never happen for correct code, but is here as a fail-safe */
+    updateline2(fs, getline2(fs, node->endpc), D);
     CheckSpaceNeeded(D);
     DumpLiteral("until false", D);
   }
@@ -7878,18 +8086,60 @@ dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static void dumpheaderstring2(DFuncState *fs, BlockNode *node, const char *str)
+static void dumpheaderstring2(StackAnalyzer *sa, DFuncState *fs,
+                              BlockNode *node, const char *str)
 {
   DecompState *D = fs->D;
-  int line, nextline;
-  line = D->linenumber;
-  nextline = getline(fs->f, node->startpc);
-  if (nextline - 1 > line)
-    line = nextline - 1;
-  updateline2(fs, line, D);
+  updateheaderline2(sa, fs, node);
   CheckSpaceNeeded(D);
   DumpString(str, D);
   D->needspace = 1;
+}
+
+
+static void dumpfuncheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  int i, haveself;
+  struct HoldItem funcname;
+  DecompState *D = fs->D;
+  addliteralholditem2(D, sa->currheader, "function", 1);
+  /* add function name if needed */
+  if (D->lastcl.name != NULL) {
+    addholditem2(D, &funcname, getstr(D->lastcl.name),
+                 D->lastcl.name->tsv.len, 0);
+  }
+  if (D->lastcl.line == 0)
+    updateheaderline2(sa, fs, node);
+  else
+    updateline2(fs, D->lastcl.line, D);
+  dischargeholditems2(D);
+  CheckSpaceNeeded(D);
+  DumpLiteral("(", D);
+  D->needspace = 0;
+  haveself = D->lastcl.haveself != 0;
+  for (i = haveself; i < fs->f->numparams; i++) {
+    if (i != haveself) DumpComma(D);
+    CheckSpaceNeeded(D);
+    DumpTString(getlocvar2(fs, i)->varname, D);
+    /* todo: emit type names for statically typed variables */
+  }
+  if (fs->f->is_vararg) {
+    if (i != haveself) DumpComma(D);
+    CheckSpaceNeeded(D);
+    DumpLiteral("...", D);
+  }
+  DumpLiteral(")", D);
+  D->needspace = 1;
+}
+
+
+static void calcnumblockstartatpc2(StackAnalyzer *sa, BlockNode *node)
+{
+  int pc = sa->pc;
+  int n = 1;
+  while((node = node->firstchild) != NULL && node->startpc == pc)
+    n++;
+  sa->numblockstartatpc = n;
 }
 
 
@@ -7902,9 +8152,16 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
   if (node->type != BL_FUNCTION || fs->prev != NULL)
     lua_assert(D->indentlevel >= 0);
   sa->currheader = blockheader;
+  if (sa->numblockstartatpc == -1) {
+    calcnumblockstartatpc2(sa, node);
+    if (fs->prev != NULL)
+      D->nextlinenumber += sa->numblockstartatpc;
+  }
   switch (node->type) {
     case BL_FUNCTION: {
       int numvars, actualnumvars;
+      if (fs->prev != NULL)
+        dumpfuncheader2(sa, fs, node);
       lua_assert(fs->nlocvars == fs->f->numparams);
       actualnumvars = varstartsatpc2(fs, 0);
       numvars = clamptoreg(fs->nactvar, actualnumvars, sa->nextforloopbase);
@@ -7919,16 +8176,20 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
         /* see if there is room for a line feed, so that this declaration has a
            chance of being on its own line (otherwise it will be on the same
            line as the statement after it) */
-        if (getline(fs->f, 0) > D->linenumber)
+        if (getline2(fs, 0) > D->linenumber &&
+            GET_OPCODE(fs->f->code[0]) != OP_CLOSURE)
           beginline2(fs, 1, D);
         initlocvars2(fs, fs->nactvar, numvars);
         D->indentlevel--;
       }
       break;
     }
+    case BL_WHILE:
+      dumpwhilestatheader2(sa, fs, node);
+      break;
     case BL_REPEAT:
     case BL_DO:
-      dumpheaderstring2(fs, node, node->type == BL_REPEAT ? "repeat" : "do");
+      dumpheaderstring2(sa, fs, node, node->type == BL_REPEAT ? "repeat":"do");
       break;
     case BL_FORNUM:
       dumpfornumheader2(sa, fs, node);
@@ -7936,14 +8197,13 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
     case BL_FORLIST:
       dumpforlistheader2(sa, fs, node);
       break;
-    case BL_WHILE:
-      addliteralholditem2(D, blockheader, "while", 1);
-      sa->inheadercondition = 1;
-      break;
     case BL_IF:
       dumpbranchheader2(sa, fs, node);
       break;
   }
+  sa->numblockstartatpc--;
+  if (sa->numblockstartatpc == 0)
+    sa->numblockstartatpc = -1;
   sa->numforloopvars = 0;  /* discharge */
   sa->currheader = NULL;
 }
@@ -7955,7 +8215,7 @@ calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node, int mainfunc)
   DecompState *D = fs->D;
   int line, nextline;
   lua_assert(ispcvalid(fs, node->endpc+1));
-  nextline = getline(fs->f, node->endpc+1);
+  nextline = getline2(fs, node->endpc+1);
   line = D->linenumber;
   if (line + (sa->deferleaveblock + 1) <= nextline) {
     if (mainfunc && node->endpc+1 == fs->f->sizecode-1)
@@ -7982,26 +8242,32 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     case BL_FUNCTION:
       token = "end";
       /* advance to the line of the final return */
-      updateline2(fs, getline(fs->f, node->endpc), D);
+      updateline2(fs, getline2(fs, node->endpc), D);
       break;
     default:
       lua_assert(sa->currparent != NULL);
-      if (istailblock(sa->currparent, node)) {
-        sa->deferleaveblock++;
-        return;
-      }
-      else if (sa->deferleaveblock) {
-        D->indentlevel += sa->deferleaveblock;
-        do {
-          updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
-          CheckSpaceNeeded(D);
-          DumpLiteral("end", D);
-          D->needspace = 1;
-          D->indentlevel--;
-        } while (--sa->deferleaveblock);
-      }
       token = (node->type == BL_IF && haselsepart(node)) ? "else" : "end";
-      updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+      if (D->matchlineinfo) {
+        if (istailblock(sa->currparent, node)) {
+          sa->deferleaveblock++;
+          return;
+        }
+        else if (sa->deferleaveblock) {
+          D->indentlevel += sa->deferleaveblock;
+          do {
+            updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+            CheckSpaceNeeded(D);
+            DumpLiteral("end", D);
+            D->needspace = 1;
+            D->indentlevel--;
+          } while (--sa->deferleaveblock);
+        }
+        updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+      }
+      else {
+        beginline2(fs, 1, D);
+        D->nextlinenumber = D->linenumber;
+      }
       break;
   }
   CheckSpaceNeeded(D);
@@ -8173,10 +8439,10 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
            line than this expression, wrap this expression in parens and put
            the closing paren on the line that the return is mapped to; this
            preserves line info when recompiling */
-        if (D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
-          int retline = getline(fs->f, pc+1);
+        if (fs->prev == NULL && D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
+          int retline = getline2(fs, pc+1);
           lua_assert(GET_OPCODE(code[pc+1]) == OP_RETURN);
-          if (retline != exp->line) {
+          if (retline != exp->line && exp->line != 0) {
             D(lprintf("splitnil = %d\n", splitnil));
             if (splitnil) {
               lua_assert(exp->kind == ENIL);
@@ -8303,6 +8569,8 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.openexprkind = -1;
   sa.openexprnildebt = 0;
   sa.numforloopvars = 0;
+  sa.whilestatbodystart = 0;
+  sa.numblockstartatpc = -1;
   memset(&sa.tempslot, 0, sizeof(SlotDesc));
   fs->nactvar = 0;
   lua_assert(fs->firstfree == 0);
@@ -8314,6 +8582,7 @@ static void pass2(const Proto *f, DFuncState *fs)
   updatenextopenexpr2(&sa, fs);
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
   blnode2(&sa, fs, functionblock);
+  fs->D->nextlinenumber = fs->D->linenumber;
 #ifdef LUA_DEBUG
   { /* debug: make sure all instructions were visited */
     int pc;
@@ -8369,9 +8638,13 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.funcidx=0;
   D.indentlevel=-1;
   D.linenumber=1;
+  D.nextlinenumber=1;
   D.needspace=0;
   D.holdfirst = NULL;
   D.holdlast = NULL;
+  D.lastcl.name = NULL;
+  D.lastcl.pc = -1;
+  D.lastcl.line = D.lastcl.haveself = 0;
   D.usedebuginfo = (!Settings(H).ignore_debug && f->sizelineinfo > 0);
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
   luaZ_initbuffer(H, &D.buff);

@@ -227,7 +227,11 @@ typedef struct ExpNode {
       int firstarrayitem, firsthashitem, lasthashitem;
       int narray, nhash;
     } cons;  /* table constructor */
-    const Proto *p;  /* Lua closure */
+    struct {
+      const Proto *p;
+      TString *name;  /* non-NULL if the function needs to be named */
+      int haveself;
+    } cl;  /* Lua closure */
     struct {
       int e1, e2;  /* exp indices of operands */
       lu_byte goiftrue;  /* OPR_AND if 1, else OPR_OR */
