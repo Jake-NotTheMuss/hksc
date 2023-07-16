@@ -7075,6 +7075,74 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
   else {
     lua_assert(fs->nactvar > 0);
     lua_assert(exp->info < fs->nactvar);
+    /* handle LOADNIL with multiple local registers, where the single code is
+       shared by multiple separate assignment statements */
+    if (exp->kind == ENIL && exp->aux > exp->info) {
+      /* `dischargestores2' will free all pending expressions, and EXP will be
+         cloned for each store that needs to be emitted */
+      ExpNode node = *exp;
+      /* NEXTLINE is the line that the decompiler can generate statements up to
+       */
+      int nextline;
+      int line = node.line;
+      int i = exp->info;
+      /* LASTNILREG is the last register clobbered by OP_LOADNIL */
+      int lastnilreg = exp->aux;
+      /* LASTSTOREREG is the limit on when to stop emitting stores, based on
+         what makes sense; if OP_LOADNIL clobbers a temporary register as well,
+         the limit will be set to the first temporary register that is
+         clobbered; otherwise, it will be set to the last local register to
+         emit a store for; it is computed such that the final node left before
+         the recrusive tailcall will include either only a local register or
+         only temporary registers, ensuring the recursive call does not get here
+      */
+      int laststorereg = exp->aux < fs->nactvar ? exp->aux : fs->nactvar;
+      if (fs->D->matchlineinfo) {
+        if (GET_OPCODE(fs->f->code[sa->pc+1]) != OP_CLOSURE)
+          nextline = getline2(fs, sa->pc+1);
+        else
+          nextline = exp->line;
+      }
+      else
+        /* compute a line number that gives each assignment its own line */
+        nextline = line + exp->aux - exp->info;
+      /* emit a store for each local register clobbered by OP_LOADNIL */
+      do {
+        /* isolate the nil expression to just the next register to store */
+        exp->info = exp->aux = i++;
+        /* add to the store chain */
+        exp->previndex = sa->laststore;
+        sa->laststore = exp2index(fs, exp);
+        /* emit store */
+        dischargestores2(sa, fs);
+        exp = newexp(fs);
+        *exp = node;
+        /* check if there is room to increment the line number */
+        if (line + 1 < nextline)
+          exp->line = exp->closeparenline = ++line;
+      } while (i < laststorereg);
+      /* now there is 1 node left for the final clobbered local register */
+      exp->info = laststorereg;
+      exp->aux = lastnilreg;
+      /* fix line for final node if needed */
+      if (exp->line < fs->D->linenumber) {
+        int expline;
+        if (line + 1 < nextline ||
+            (sa->pc+1 == fs->f->sizecode-1 && line + 1 == nextline))
+          expline = line+1;
+        else
+          expline = fs->D->linenumber;
+        exp->line = exp->closeparenline = expline;
+      }
+      if (sa->nextopenexpr != NULL && sa->nextopenexpr->startpc == sa->pc+1 &&
+          exp->info == sa->nextopenreg)
+        exp->line = exp->closeparenline = nextline;
+      else if (fs->D->matchlineinfo == 0) {
+        exp->line = exp->closeparenline = fs->D->nextlinenumber;
+      }
+      /* add a new expression for the rest of the registers */
+      return addexptoreg2(sa, fs, exp->info, exp, splitnil);
+    }
     exp->previndex = sa->laststore;
     sa->laststore = exp2index(fs, exp);
     if (exp->kind == ENIL && exp->aux >= fs->nactvar) {
