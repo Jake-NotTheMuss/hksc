@@ -8435,8 +8435,6 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
                         struct HoldItem *blockheader)
 {
   DecompState *D = fs->D;
-  /*if (node->type == BL_FUNCTION && fs->prev == NULL)
-    return;*/
   if (node->type != BL_FUNCTION || fs->prev != NULL)
     lua_assert(D->indentlevel >= 0);
   sa->currheader = blockheader;
