@@ -5220,13 +5220,15 @@ static BlockNode *updatenextchild2(StackAnalyzer *sa, BlockNode *parent,
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
+static void dischargestores2(StackAnalyzer *sa, DFuncState *fs);
+
 /*
 ** adds a new store node to the pending chain
 */
-static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
+static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
 {
-  ExpNode *prevcall;
   int prevlaststore = sa->laststore;
+  int chainempty = prevlaststore == 0;
   lua_assert(exp != NULL);
   lua_assert(exp->kind == ESTORE);
   exp->previndex = sa->laststore;
@@ -5234,27 +5236,23 @@ static void updatelaststore2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
   /* when preserving line info, if the last expression has a different line
      than this store, add extra parens around it to make it end on the line that
      this store is mapped to */
-  if (fs->D->matchlineinfo && prevlaststore == 0) {
+  if (fs->D->matchlineinfo && chainempty) {
     ExpNode *prev = index2exp(fs, exp2index(fs, exp)-1);
     if (prev != NULL && prev->line != exp->line && prev->line != 0)
       prev->closeparenline = exp->line;
   }
-  /* this store may reference a register that holds the second or greater
-     return value of the last function call; the actual expression node that is
-     referenced by AUX may point to the wrong value in this case (if the
-     function uses the register for one of its arguments), sp make sure AUX
-     points to NULL instead of one of the function arguments */
-  prevcall = index2exp(fs, fs->lastcallexp);
-  lua_assert(prevcall == NULL || (prevcall >= fs->a->pendingstk.u.s2 &&
-             prevcall < &fs->a->pendingstk.u.s2[fs->a->pendingstk.used]));
-  if (prevcall != NULL && prevcall->kind == ECALL) {
-    int reg = exp->u.store.srcreg;
-    int firstretreg = prevcall->info;
-    int lastretreg = firstretreg + prevcall->u.call.nret;
-    if (!ISK(reg) && reg > firstretreg && reg <= lastretreg)
-      /* make source NULL because it uses results from a previous call */
-      exp->aux = 0;
+  if (chainempty) {
+    int issingle;
+    if (!istempreg(fs, exp->u.store.srcreg))
+      issingle = fs->firstfree <= fs->nactvar;
+    else
+      issingle = exp->u.store.srcreg == fs->nactvar;
+    if (issingle) {
+      dischargestores2(sa, fs);
+      return NULL;
+    }
   }
+  return exp;
 }
 
 
@@ -7591,7 +7589,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   linkexp2(sa, fs, exp);
   if (exp->kind == ESTORE) {
     exp->pending = 0;
-    updatelaststore2(sa, fs, exp);
+    return updatelaststore2(sa, fs, exp);
   }
   else if (exp->kind == ECALL)
     fs->lastcallexp = exp2index(fs, exp);  /* update last call node */
