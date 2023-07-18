@@ -8631,9 +8631,9 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   lua_assert(node->visited == 0);
   D(node->visited = 1);
   fs->seenstatinblock = 0;
-  if (node->isempty) /* block has no instructions */
-    goto block2finished;
   D->indentlevel++;
+  if (node->isempty) /* block has no instructions */
+    goto loopfinished;
   /* main instruction loop */
   for (; sa->pc < sa->sizecode; sa->pc++) {
     int pc, a, b, c, bx, sbx;
@@ -8826,10 +8826,11 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     goto processnextchild;
   }
   loopfinished:
-  D->indentlevel--;
-  block2finished:
 #ifdef HKSC_DECOMP_HAVE_PASS2
   checkdischargestores2(sa, fs);
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+  D->indentlevel--;
+#ifdef HKSC_DECOMP_HAVE_PASS2
   leaveblock2(sa, fs, node);
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
   debugleaveblock2(sa, fs, node);
