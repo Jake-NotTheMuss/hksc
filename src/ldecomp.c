@@ -6631,9 +6631,11 @@ static void addindextolhs2(struct LHSStringBuilder *sb, int reg, int isfield)
   }
   else {
     addregtolhs2(sb, reg);
+    wasempty = sb->empty;
   }
   if (!isfield) {
     sb->needspace = needspace;
+    D->needspace = needspace;
     addchartolhs2(sb, ']');
   }
   if (wasempty) {
