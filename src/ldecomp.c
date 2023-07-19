@@ -8828,6 +8828,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
             emitretstat2(fs, pc, a, b-1);
           }
         }
+        if (numvars > 0)
+          emitlocalstat2(fs, numvars, pc);
       }
     }
     else {
