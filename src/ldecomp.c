@@ -8437,6 +8437,7 @@ static void dumpheaderstring2(StackAnalyzer *sa, DFuncState *fs,
   CheckSpaceNeeded(D);
   DumpString(str, D);
   D->needspace = 1;
+  D->nextlinenumber++;
 }
 
 
@@ -8473,6 +8474,7 @@ static void dumpfuncheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   }
   DumpLiteral(")", D);
   D->needspace = 1;
+  D->nextlinenumber++;
 }
 
 
@@ -8496,7 +8498,7 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
   if (sa->numblockstartatpc == -1) {
     calcnumblockstartatpc2(sa, node);
     if (fs->prev != NULL)
-      D->nextlinenumber += sa->numblockstartatpc;
+      D->nextlinenumber += sa->numblockstartatpc-1;
   }
   switch (node->type) {
     case BL_FUNCTION: {
@@ -8551,7 +8553,7 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
 
 
 static int
-calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node, int mainfunc)
+calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,int inmainfunc)
 {
   DecompState *D = fs->D;
   int line, nextline;
@@ -8559,7 +8561,7 @@ calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node, int mainfunc)
   nextline = getline2(fs, node->endpc+1);
   line = D->linenumber;
   if (line + (sa->deferleaveblock + 1) <= nextline) {
-    if (mainfunc && node->endpc+1 == fs->f->sizecode-1)
+    if (inmainfunc && node->endpc+1 == fs->f->sizecode-1)
       line = nextline;
     else
       line = line + 1;
@@ -8572,8 +8574,8 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
   const char *token;
   DecompState *D = fs->D;
-  int mainfunc = (fs->prev == NULL);
-  if (mainfunc && node->type == BL_FUNCTION)
+  int inmainfunc = (fs->prev == NULL);
+  if (inmainfunc && node->type == BL_FUNCTION)
     return;
   if (node->iselseif) {
     lua_assert(node->type == BL_IF);
@@ -8601,14 +8603,14 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         else if (sa->deferleaveblock) {
           D->indentlevel += sa->deferleaveblock;
           do {
-            updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+            updateline2(fs, calclastline2(sa, fs, node, inmainfunc), D);
             CheckSpaceNeeded(D);
             DumpLiteral("end", D);
             D->needspace = 1;
             D->indentlevel--;
           } while (--sa->deferleaveblock);
         }
-        updateline2(fs, calclastline2(sa, fs, node, mainfunc), D);
+        updateline2(fs, calclastline2(sa, fs, node, inmainfunc), D);
       }
       else {
         beginline2(fs, 1, D);
