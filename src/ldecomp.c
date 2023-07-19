@@ -6876,15 +6876,18 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
 ** activates new local variables and emits a declaration/initialization
 ** statement for them
 */
-static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
+static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
 {
   ExpNode dummy;
   ExpNode *firstexp, *lastexp;
   hksc_State *H = fs->H;
   DecompState *D = fs->D;
+  int firstreg = fs->nactvar;
   int i, lastreg;
+  int haveRHS = 1;
   TString *funcname = NULL;
   int seenfirstexp = 0;
+  int skipsemiforlineinfo = 0;
   Mbuffer *b;
   struct HoldItem lhs;
   lua_assert(isregvalid(fs, firstreg));
@@ -6936,9 +6939,21 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
     }
     /*lua_assert(firstexp == checkexpinreg2(fs, firstreg));*/
     lua_assert(firstexp->info == firstreg);
+    if (D->matchlineinfo && firstexp->kind == ENIL && firstexp->aux == lastreg)
+    {
+      if (pc+1 < fs->f->sizecode-1 && getline(fs->f, pc+1) == firstexp->line &&
+          D->linenumber <= firstexp->line - 1) {
+        haveRHS = 0;
+        skipsemiforlineinfo = 1;
+        firstexp->closeparenline = --firstexp->line;
+      }
+    }
     /* if only assigning nil's, avoid writing the RHS altogether, unless it is
        just one variable */
-    if (nvars == 1 || firstexp->kind != ENIL || firstexp->aux != lastreg)
+    if (haveRHS &&
+        (nvars > 1 && firstexp->kind == ENIL && firstexp->aux == lastreg))
+      haveRHS = 0;
+    if (haveRHS)
       addliteral2buff(H, b, " = ");
     addholditem2(D, &lhs, luaZ_buffer(b), luaZ_bufflen(b), 0);
     D(printf("added hold item for decl: `%.*s'\n", cast_int(luaZ_bufflen(b)),
@@ -6948,7 +6963,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
   for (i = firstreg; i <= lastreg; i++) {
     ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
     setreglocal2(fs, i, getlocvar2(fs, fs->nactvar++));
-    if (nvars > 1 && firstexp->kind == ENIL && firstexp->aux == lastreg)
+    if (haveRHS == 0)
       continue; /* don't write  */
     else if (exp != NULL) {
       if (nvars > 1 && exp->kind == ENIL && exp->aux == lastreg)
@@ -6965,8 +6980,6 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
       lua_assert(lastexp != NULL);
       if (lastexp->kind == EVARARG &&
           (lastexp->info+lastexp->aux-1) >= i) {
-        /*int lastvareg = lastexp->info+lastexp->aux-1;
-        CHECK(fs, lastvareg >= i, "")*/
         continue; /* vararg has already been emitted */
       }
       else if (lastexp->kind == ECALL &&
@@ -6977,7 +6990,6 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
         continue; /* only nil's remain; don't print them */
       }
       else if (lastexp->kind == ENIL) {
-        /*CHECK(fs, lastexp->aux >= i, "");*/
         if (seenfirstexp)
           DumpComma(D);
         lastexp->pending = 1;
@@ -6987,7 +6999,6 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
         DumpLiteral("UNHANDLED CASE in initlocvar2\n",D);
       }
     }
-    /*needc initlocvar2(fs, i, &fs->locvars[fs->nactvar++]);*/
   }
   if (seenfirstexp == 0) {
     /* no expressions have been dumped, but the items in the hold need to be
@@ -7029,7 +7040,7 @@ static void initlocvars2(DFuncState *fs, int firstreg, int nvars)
       }
     }
   }
-  if (funcname == NULL)
+  if (funcname == NULL && skipsemiforlineinfo == 0)
     DumpSemi(D); /* `;' */
   flushpendingexp2(fs); /* discharge everything */
 }
@@ -8489,7 +8500,7 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
         if (getline2(fs, 0) > D->linenumber &&
             GET_OPCODE(fs->f->code[0]) != OP_CLOSURE)
           beginline2(fs, 1, D);
-        initlocvars2(fs, fs->nactvar, numvars);
+        emitlocalstat2(fs, numvars, 0);
         D->indentlevel--;
       }
       break;
@@ -8717,7 +8728,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           addlocalvars2(fs, numvars);
           if (isfor) numvars -= 3;
           if (numvars > 0)
-            initlocvars2(fs, fs->nactvar, numvars);
+            emitlocalstat2(fs, numvars, pc);
         }
       }
       if (isfor) {
@@ -8775,7 +8786,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           checkdischargestores2(sa, fs);
           D(lprintf("NEW LOCAL VARIABLE\n"));
           (void)getfirstexp;
-          initlocvars2(fs, fs->nactvar, numvars);
+          emitlocalstat2(fs, numvars, pc);
         }
       }
       else {  /* an A-mode instruction that doesn't clobber A */
