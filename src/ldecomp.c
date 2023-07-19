@@ -7791,8 +7791,11 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
     exp->auxlistprev = sa->pendingcond.e;
   }
   sa->pendingcond.e = e;
-  if (reg != -1)
-    addexptoreg2(sa, fs, reg, exp, NULL);
+  if (reg != -1) {
+    /* udpate the pending expression in REG if needed */
+    if (istempreg(fs, reg) && getslotdesc(fs, reg)->u.expindex != e)
+      pushexp2(fs, reg, exp, 0);
+  }
   else
     sa->tempslot.u.expindex = e;
 }
@@ -7836,8 +7839,25 @@ finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
       sa->tempslot.u.expindex = e;
     }
   }
-  else if (isregvalid(fs, exp1->info) && !istempreg(fs, exp1->info))
-    exp1 = addexptoreg2(sa, fs, exp1->info, exp1, NULL);
+  else {
+    if (isregvalid(fs, exp1->info) && !istempreg(fs, exp1->info))
+      exp1 = addexptoreg2(sa, fs, exp1->info, exp1, NULL);
+    /* see if the pending condition needs to be inverted */
+    if (exp1->goiftrue == 0) {
+      ExpNode *invertnode = newexp(fs);
+      exp1 = index2exp(fs, e);
+      *invertnode = *exp1;
+      invertnode->kind = EUNOP;
+      invertnode->u.unop.b = -1;
+      invertnode->u.unop.bindex = e;
+      invertnode->u.unop.needinnerparen = 0;
+      invertnode->u.unop.op = OPR_NOT;
+      invertnode->previndex = sa->tempslot.u.expindex;
+      sa->tempslot.u.expindex = exp2index(fs, invertnode);
+      exp1 = invertnode;
+      e = exp2index(fs, exp1);
+    }
+  }
   sa->pendingcond.target = prevtarget;
   return exp1;
 }
