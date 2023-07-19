@@ -158,9 +158,8 @@ typedef enum {
   FORNUMPREP,  /* numeric for-loop preparation code */
   FORLISTPREP,  /* list for-loop preparation code */
   SETLISTPREP,  /* code evaluating items in a table constructor */
-  HASHTABLEPREP,  /* code construction a table with only hash items */
-  EMPTYTABLE,  /* empty table constructors are their own category because they
-                  may or may not clobber an open register */
+  HASHTABLEPREP,  /* code constructing a table with only hash items */
+  EMPTYTABLE,  /* an empty table constructor */
   RETPREP  /* return statement preparation code */
 } openexptype;
 
