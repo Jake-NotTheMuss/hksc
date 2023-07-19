@@ -8406,30 +8406,6 @@ dumpwhilestatheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static void
-dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
-  DecompState *D = fs->D;
-  if (sa->pendingcond.e) {
-    struct HoldItem until;  /* `until' */
-    ExpNode *exp;
-    addliteralholditem2(D, &until, "until", 1);
-    exp = finalizeconditionalnode2(sa, fs, sa->pc);
-    dumpexp2(D, fs, exp, 0);
-    if (exp->info == -1)
-      sa->tempslot.u.expindex = 0;
-  }
-  else {
-    /* this should never happen for correct code, but is here as a fail-safe */
-    updateline2(fs, getline2(fs, node->endpc), D);
-    CheckSpaceNeeded(D);
-    DumpLiteral("until false", D);
-  }
-  DumpSemi(D);
-  D->needspace = 1;
-}
-
-
 static void dumpheaderstring2(StackAnalyzer *sa, DFuncState *fs,
                               BlockNode *node, const char *str)
 {
@@ -8574,9 +8550,29 @@ static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
 }
 
 
+static int dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  if (sa->pendingcond.e) {
+    struct HoldItem until;  /* `until' */
+    ExpNode *exp;
+    addliteralholditem2(D, &until, "until", 1);
+    exp = finalizeconditionalnode2(sa, fs, sa->pc);
+    dumpexp2(D, fs, exp, 0);
+    if (exp->info == -1)
+      sa->tempslot.u.expindex = 0;
+    DumpSemi(D);
+    D->needspace = 1;
+    return 1;
+  }
+  UNUSED(node);
+  return 0;
+}
+
+
 static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
-  const char *token;
+  const char *str;
   DecompState *D = fs->D;
   int inmainfunc = (fs->prev == NULL);
   if (inmainfunc && node->type == BL_FUNCTION)
@@ -8589,16 +8585,19 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   lua_assert(D->indentlevel >= 0);
   switch (node->type) {
     case BL_REPEAT:
-      dumprepeatfooter2(sa, fs, node);
-      return;
+      if (dumprepeatfooter2(sa, fs, node))
+        return;
+      str = "until true;";
+      goto advancetoendline;
     case BL_FUNCTION:
-      token = "end";
+      str = "end";
       /* advance to the line of the final return */
       updateline2(fs, getline2(fs, node->endpc), D);
       break;
     default:
+      str = (node->type == BL_IF && haselsepart(node)) ? "else" : "end";
+      advancetoendline:
       lua_assert(sa->currparent != NULL);
-      token = (node->type == BL_IF && haselsepart(node)) ? "else" : "end";
       if (D->matchlineinfo) {
         if (istailblock(sa->currparent, node)) {
           sa->deferleaveblock++;
@@ -8623,7 +8622,7 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
       break;
   }
   CheckSpaceNeeded(D);
-  DumpString(token, D);
+  DumpString(str, D);
   D->needspace = 1;
 }
 
