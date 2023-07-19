@@ -4971,6 +4971,7 @@ typedef struct StackAnalyzer {
   int nextforloopbase;
   int whilestatbodystart;
   int numblockstartatpc;
+  int currheaderline;
   int pc;
   int sizecode;
   int maxstacksize;
@@ -8549,15 +8550,18 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
     sa->numblockstartatpc = -1;
   sa->numforloopvars = 0;  /* discharge */
   sa->currheader = NULL;
+  sa->currheaderline = D->linenumber;
 }
 
 
-static int
-calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,int inmainfunc)
+static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
+                         int inmainfunc)
 {
   DecompState *D = fs->D;
   int line, nextline;
   lua_assert(ispcvalid(fs, node->endpc+1));
+  if (D->linenumber == sa->currheaderline)
+    return D->linenumber;
   nextline = getline2(fs, node->endpc+1);
   line = D->linenumber;
   if (line + (sa->deferleaveblock + 1) <= nextline) {
@@ -8676,15 +8680,18 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     int actualnumvars;
     if (sa->pc == nextchildstartpc) {
       BlockNode *prevparent;
+      int prevheaderline;
       /* save NEXTCHILD->ISEMPTY to use after updating NEXTCHILD */
       int waschildempty;
       processnextchild:
       prevparent = sa->currparent;
+      prevheaderline = sa->currheaderline;
       sa->currparent = node;
       lua_assert(nextchild != NULL);
       waschildempty = nextchild->isempty;
       blnode2(sa, fs, nextchild);
       sa->currparent = prevparent;
+      sa->currheaderline = prevheaderline;
       nextchild = updatenextchild2(sa, node, nextchild, &nextchildstartpc);
       if (sa->intailemptyblock) {
         sa->intailemptyblock = 0;
@@ -8788,7 +8795,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
            line than this expression, wrap this expression in parens and put
            the closing paren on the line that the return is mapped to; this
            preserves line info when recompiling */
-        if (fs->prev == NULL && D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
+        if (fs->prev == NULL && node->type == BL_FUNCTION &&
+            D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
           int retline = getline2(fs, pc+1);
           lua_assert(GET_OPCODE(code[pc+1]) == OP_RETURN);
           if (retline != exp->line && exp->line != 0) {
@@ -8922,6 +8930,7 @@ static void pass2(const Proto *f, DFuncState *fs)
   sa.numforloopvars = 0;
   sa.whilestatbodystart = 0;
   sa.numblockstartatpc = -1;
+  sa.currheaderline = 0;
   memset(&sa.tempslot, 0, sizeof(SlotDesc));
   fs->nactvar = 0;
   lua_assert(fs->firstfree == 0);
