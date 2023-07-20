@@ -6685,8 +6685,11 @@ static TString *buildfuncname(struct LHSStringBuilder *sb, ExpNode *exp,
   }
   else {
     OpCode rootop = exp->u.store.rootop;
-    if (rootop == OP_SETGLOBAL || rootop == OP_SETUPVAL) {
+    if (rootop == OP_SETGLOBAL) {
       return rawtsvalue(&fs->f->k[exp->u.store.aux1]);
+    }
+    else if (rootop == OP_SETUPVAL) {
+      return fs->upvalues[exp->u.store.aux1];
     }
     else if (rootop == OP_SETFIELD || rootop == OP_SETTABLE) {
       int tab = exp->u.store.aux1;
@@ -6774,7 +6777,11 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
         addindextolhs2(&sb, exp->u.store.aux2, rootop == OP_SETFIELD);
       }
       else if (rootop == OP_SETGLOBAL || rootop == OP_SETUPVAL) {
-        TString *varname = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
+        TString *varname;
+        if (rootop == OP_SETGLOBAL)
+          varname = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
+        else
+          varname = fs->upvalues[exp->u.store.aux1];
         addvarnametolhs2(&sb, varname);
       }
       else
