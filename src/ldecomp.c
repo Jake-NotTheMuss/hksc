@@ -5125,10 +5125,6 @@ static TString *genvarname1(DFuncState *fs, int index, int ispar)
   }
   if (i == MAX_EXTRA_CHARS) {
     name->tsv.isglobal = 2;
-    /* todo: in this case, I think I should just keep the current name, and
-       whenever the global with this name needs to be emitted, it is printed
-       as `_G.<name>', which will not generate matching code, but it is the
-       best alternative */
   }
   return name;
 #undef MAX_EXTRA_CHARS
