@@ -4268,23 +4268,17 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
         lu_byte nactvar;
         getactvar(fs, pc+1, NULL, &nactvar);
         if (reg >= nactvar) {
-          BlockNode *erroblock = nextchild;
           BlockNode *sibling = nextchild->nextsibling;
           BlockNode *child = nextchild->firstchild;
           if (child == NULL)
             child = sibling;
-          if (child) {
-            nextchild = child;
-            if (prevchild)
-              prevchild->nextsibling = child;
-            else
-              node->firstchild = child;
-          }
-          else if (prevchild)
-            prevchild->nextsibling = NULL;
+          if (prevchild)
+            prevchild->nextsibling = child;
           else
-            node->firstchild = NULL;
-          deleteblock2(fs, erroblock);
+            node->firstchild = child;
+          deleteblock2(fs, nextchild);
+          nextchild = child;
+          nextchildstartpc = nextchild ? nextchild->startpc : -1;
         }
       }
     }
