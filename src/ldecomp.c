@@ -8686,7 +8686,7 @@ updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   if (D->matchlineinfo)
     nextline = getvalidline2(D, fs, node->startpc);
   else
-    nextline = fs->D->nextlinenumber;
+    nextline = D->nextlinenumber + sa->numblockstartatpc;
   if (nextline - sa->numblockstartatpc > line)
     line = nextline - sa->numblockstartatpc;
   updateline2(fs, line, D);
