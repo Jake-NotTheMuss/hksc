@@ -1649,6 +1649,18 @@ static void applyregnote(DFuncState *fs, int firstreg, int pc, OpCode o, int a,
 }
 
 
+static void checkmoveisnext(DFuncState *fs, int startpc, int pc, int reg)
+{
+  if (pc+1 < fs->f->sizecode) {
+    Instruction next = fs->f->code[pc+1];
+    if (GET_OPCODE(next) == OP_MOVE && GETARG_B(next) == reg &&
+        GETARG_A(next) < reg) {
+      addregnote1(fs, REG_NOTE_MOVE, startpc, GETARG_A(next));
+    }
+  }
+}
+
+
 /*
 ** finds and marks the beginning of an open expression of type KIND; recursing
 ** into nested open expressions is not necessary, as only the start/end pc of
@@ -1788,6 +1800,10 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
     /* clear REG_HASNOTE on all registers */
     for (i = 0; i < fs->a->sizeregproperties; i++)
       unset_reg_property(fs, i, REG_HASNOTE);
+    if (kind != VOIDPREP && kind != RETPREP && kind != FORNUMPREP &&
+        kind != FORLISTPREP) {
+      checkmoveisnext(fs, pc, endpc, firstreg);
+    }
   }
 }
 
@@ -1960,6 +1976,7 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
     }
   }
   e->endpc = endpc;
+  checkmoveisnext(fs, e->startpc, endpc, firstreg);
 }
 
 
