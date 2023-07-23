@@ -999,6 +999,23 @@ static BlockNode *remblnode1(DFuncState *fs, BlockNode *node,
 }
 
 
+static void deleteblock2(DFuncState *fs, BlockNode *node)
+{
+  BlockNode *iterblock = fs->a->bllist.first;
+  /* NODE cannot be the function block, so cannot be first in the list */
+  lua_assert(fs->a->bllist.first != node);
+  while (iterblock->next != node)
+    iterblock = iterblock->next;
+  lua_assert(iterblock->next == node);
+  if (fs->a->bllist.last == node) {
+    fs->a->bllist.last = iterblock;
+    lua_assert(node->next == NULL);
+  }
+  iterblock->next = node->next;
+  luaM_free(fs->H, node);
+}
+
+
 /*
 ** use this version after `loop1'; NODE is the node to delete, PARENT is the
 ** parent block of NODE
@@ -1018,20 +1035,7 @@ static void remblnode2(DFuncState *fs, BlockNode *node, BlockNode *parent)
   else {
     parent->firstchild = node->nextsibling;
   }
-  /* NODE cannot be the function block, so cannot be first in the list */
-  lua_assert(fs->a->bllist.first != node);
-  {
-    BlockNode *iterblock = fs->a->bllist.first;
-    while (iterblock->next != node)
-      iterblock = iterblock->next;
-    lua_assert(iterblock->next == node);
-    if (fs->a->bllist.last == node) {
-      fs->a->bllist.last = iterblock;
-      lua_assert(node->next == NULL);
-    }
-    iterblock->next = node->next;
-  }
-  luaM_free(fs->H, node);
+  deleteblock2(fs, node);
 }
 
 
@@ -4264,6 +4268,7 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
         lu_byte nactvar;
         getactvar(fs, pc+1, NULL, &nactvar);
         if (reg >= nactvar) {
+          BlockNode *erroblock = nextchild;
           BlockNode *sibling = nextchild->nextsibling;
           BlockNode *child = nextchild->firstchild;
           if (child == NULL)
@@ -4279,6 +4284,7 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
             prevchild->nextsibling = NULL;
           else
             node->firstchild = NULL;
+          deleteblock2(fs, erroblock);
         }
       }
     }
