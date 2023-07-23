@@ -215,6 +215,9 @@ typedef union TString {
   struct {
     CommonHeader;
     lu_byte reserved;
+#ifdef HKSC_DECOMPILER
+    lu_byte isglobal;
+#endif
     unsigned int hash;
     size_t len;
   } tsv;

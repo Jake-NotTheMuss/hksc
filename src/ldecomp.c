@@ -5106,12 +5106,32 @@ static void genblockdebug1(DebugGenerator *s, BlockNode *node)
 }
 
 
-static TString *genvarname1(DFuncState *fs, int i, int ispar)
+static TString *genvarname1(DFuncState *fs, int index, int ispar)
 {
-  char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC)];
+#define MAX_EXTRA_CHARS 30
+  int i = 0;
+  TString *name;
+  char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC) + MAX_EXTRA_CHARS];
   const char *fmt = ispar ? "f%d_par%d" : "f%d_local%d";
-  sprintf(buff, fmt, fs->idx, i);
-  return luaS_new(fs->H, buff);
+  size_t len;
+  sprintf(buff, fmt, fs->idx, index);
+  len = strlen(buff);
+  name = luaS_newlstr(fs->H, buff, len);
+  while (name->tsv.isglobal && i < MAX_EXTRA_CHARS) {
+    buff[len++] = '_';
+    buff[len] = '\0';
+    i++;
+    name = luaS_newlstr(fs->H, buff, len);
+  }
+  if (i == MAX_EXTRA_CHARS) {
+    name->tsv.isglobal = 2;
+    /* todo: in this case, I think I should just keep the current name, and
+       whenever the global with this name needs to be emitted, it is printed
+       as `_G.<name>', which will not generate matching code, but it is the
+       best alternative */
+  }
+  return name;
+#undef MAX_EXTRA_CHARS
 }
 
 
@@ -5121,8 +5141,8 @@ static int createvarnames1(DFuncState *fs, int nvars, struct LocVar *vars)
     "(for index)", "(for limit)", "(for step)",
     "(for generator)", "(for state)", "(for control)"
   };
-  int i;
-  for (i = 0; i < nvars; i++) {
+  int i, v, p;
+  for (i = v = p = 0; i < nvars; i++) {
     struct LocVar *var = &vars[i];
     int note = getvarnote1(var);
     if (note == GENVAR_FORNUM || note == GENVAR_FORLIST) {
@@ -5133,9 +5153,13 @@ static int createvarnames1(DFuncState *fs, int nvars, struct LocVar *vars)
         lua_assert(ispcvalid(fs, vars[i].startpc));
         lua_assert(ispcvalid(fs, vars[i].endpc));
       }
+      i--;
     }
     else {
-      vars[i].varname = genvarname1(fs, i, note == GENVAR_PARAM);
+      int ispar = (note == GENVAR_PARAM);
+      vars[i].varname = genvarname1(fs, ispar ? p : v, ispar);
+      if (ispar) p++;
+      else v++;
     }
   }
   return nvars;
@@ -5811,7 +5835,10 @@ static void dumpexpk2(DecompState *D, DFuncState *fs, ExpNode *exp)
 /* dump a global or upvalue name as an R-value */
 static void dumpexpvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
+  TString *name = exp->u.name;
   predumpexp2(D,fs,exp);
+  if (exp->kind == EGLOBAL && name->tsv.isglobal == 2)
+    DumpLiteral("_G.",D);
   DumpTString(exp->u.name, D);
   postdumpexp2(D,fs,exp);
 }
@@ -7047,6 +7074,13 @@ static TString *buildfuncname(struct LHSStringBuilder *sb, ExpNode *exp,
   else {
     OpCode rootop = exp->u.store.rootop;
     if (rootop == OP_SETGLOBAL) {
+      TString *name = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
+      if (name->tsv.isglobal == 2) {
+        addtolhsbuff2(sb, "_G.", sizeof("_G.")-1);
+        sb->needspace = 0;
+        addvarnametolhs2(sb, name);
+        return luaS_newlstr(fs->H,luaZ_buffer(sb->buff),luaZ_bufflen(sb->buff));
+      }
       return rawtsvalue(&fs->f->k[exp->u.store.aux1]);
     }
     else if (rootop == OP_SETUPVAL) {
@@ -7139,8 +7173,13 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       }
       else if (rootop == OP_SETGLOBAL || rootop == OP_SETUPVAL) {
         TString *varname;
-        if (rootop == OP_SETGLOBAL)
+        if (rootop == OP_SETGLOBAL) {
           varname = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
+          if (varname->tsv.isglobal == 2) {
+            addtolhsbuff2(&sb, "_G.", sizeof("_G.")-1);
+            sb.needspace = 0;
+          }
+        }
         else
           varname = fs->upvalues[exp->u.store.aux1];
         addvarnametolhs2(&sb, varname);
@@ -9335,6 +9374,24 @@ static void DecompileFunction(DecompState *D, const Proto *f)
 }
 
 
+static void MarkGlobals(DecompState *D, const Proto *f)
+{
+  int i;
+  for (i = 0; i < f->sizecode; i++) {
+    Instruction insn = f->code[i];
+    OpCode o = GET_OPCODE(insn);
+    if (o == OP_GETGLOBAL || o == OP_GETGLOBAL_MEM || o == OP_SETGLOBAL) {
+      int bx = GETARG_Bx(insn);
+      TString *name = rawtsvalue(&f->k[bx]);
+      name->tsv.isglobal = 1;
+    }
+  }
+  for (i = 0; i < f->sizep; i++) {
+    MarkGlobals(D, f->p[i]);
+  }
+}
+
+
 /*
 ** Execute a protected decompiler.
 */
@@ -9345,7 +9402,12 @@ struct SDecompiler {  /* data to `f_decompiler' */
 
 static void f_decompiler (hksc_State *H, void *ud) {
   struct SDecompiler *sd = (struct SDecompiler *)ud;
-  DecompileFunction(sd->D, sd->f);
+  DecompState *D = sd->D;
+  const Proto *f = sd->f;
+  if (D->usedebuginfo == 0) {
+    MarkGlobals(D, f);
+  }
+  DecompileFunction(D, f);
   UNUSED(H);
 }
 
