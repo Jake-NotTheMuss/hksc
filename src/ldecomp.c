@@ -3087,12 +3087,15 @@ static void updateprevsibling1(DFuncState *fs, struct blockstates1 *s,
     bl = s->block;
     p = 0;
   }
-  if (bl != NULL) {
+  while (bl != NULL) {
     struct BlockStateControl *blstate;
     lua_assert(bl->branch == 0);
     blstate = p ? &bl->u.bl.pcnt : &bl->u.bl.rcnt;
-    if (blstate->prevsibling == NULL)
+    if (blstate->prevsibling == NULL) {
       blstate->prevsibling = node;
+      break;
+    }
+    bl = prevdoblockstate1(bl);
   }
 }
 
