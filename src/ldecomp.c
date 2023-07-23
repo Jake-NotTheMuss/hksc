@@ -4669,6 +4669,10 @@ static LocVar *getlocvar1(DebugGenerator *s, int r)
 }
 
 
+/*
+** I store the NOTE in the VARNAME field, as the notes are only before variable
+** names are generated
+*/
 static int getvarnote1(struct LocVar *var)
 {
   return cast_int(cast(size_t, var->varname));
@@ -4677,6 +4681,7 @@ static int getvarnote1(struct LocVar *var)
 
 static void setvarnote1(DebugGenerator *s, int r, int note)
 {
+  /* store NOTE in the VARNAME field */
   getlocvar1(s, r)->varname = cast(TString *, cast(size_t, note));
 }
 
@@ -4719,6 +4724,7 @@ static void addvar1(DebugGenerator *s, int r, int startpc, int endpc, int note)
   lua_assert(r < s->fs->f->maxstacksize);
   a->actvar[r] = s->nlocvars++;
   s->nactvar++;
+  /* advance over RegNotes that are no longer useful */
   while (s->nextnote && s->nextnote->reg < s->nactvar)
     updatenextregnote1(s);
 }
@@ -4741,6 +4747,12 @@ static void advance1(DebugGenerator *s)
 }
 
 
+/*
+** use this when you want the next instruction that is not OP_DATA; for example,
+** variables that are initialized by OP_GETTABLE will start after the 2 OP_DATA
+** codes, and variables initialized by OP_GETGLOBAL_MEM will start after the
+** OP_DATA code
+*/
 static int getnextpc1(DebugGenerator *s, int pc)
 {
   int nextpc = pc;
@@ -4776,6 +4788,9 @@ static int maybeaddvar1(DebugGenerator *s, int r, int pc, int pclimit)
 }
 
 
+/*
+** set bit K in the constants bitmap, marking it as having been referenced
+*/
 static void setkreferenced(DebugGenerator *s, int k)
 {
   Analyzer *a = s->fs->a;
@@ -4783,6 +4798,9 @@ static void setkreferenced(DebugGenerator *s, int k)
 }
 
 
+/*
+** test bit K in the constants bitmap
+*/
 static int iskreferenced(DebugGenerator *s, int k)
 {
   Analyzer *a = s->fs->a;
@@ -4792,6 +4810,7 @@ static int iskreferenced(DebugGenerator *s, int k)
 
 static void updatereferences1(DebugGenerator *s)
 {
+  /* mark any constants referenced by the current instruction */
   int res = referencesk(s->o, s->b, s->c, s->b);
   int isref = 0;
   if (res & KREF_B) {
@@ -4815,6 +4834,7 @@ static void updatereferences1(DebugGenerator *s)
       }
     }
   }
+  /* update the highest upvalue referenced */
   if (s->o == OP_GETUPVAL || s->o == OP_SETUPVAL || s->o == OP_SETUPVAL_R1) {
     int up = s->b;
     if (up > s->lastup) {
