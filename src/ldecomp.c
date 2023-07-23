@@ -4045,6 +4045,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             CHECK(fs, isregvalid(fs, upvalindex), "OP_DATA indexes invalid "
                   "register");
             newregnote(fs, REG_NOTE_UPVALUE, pc+nupn, upvalindex);
+            if (upvalindex == a)
+              set_ins_property(fs, pc, INS_SELFUPVAL);
           }
           else {
             CHECK(fs, upvalindex >= 0 && upvalindex < fs->f->nups, "OP_DATA "
@@ -7308,8 +7310,9 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
       /* use the actual local variable name as the function name because p->name
          is clamped to 512 characters */
       funcname = varname;
-    else if (fs->D->usedebuginfo == 0) {
-      funcname = NULL;  /* todo */
+    else if (fs->D->usedebuginfo == 0 &&
+             test_ins_property(fs, firstexp->aux, INS_SELFUPVAL)) {
+      funcname = varname;
     }
     firstexp->u.cl.name = funcname;
   }

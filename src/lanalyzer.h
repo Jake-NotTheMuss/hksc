@@ -63,6 +63,7 @@ enum BLTYPE {
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
   DEFINSFLAG(LOCVAREXPR)  /* start of a local varible initialization */ \
   DEFINSFLAG(CLOBBER) \
+  DEFINSFLAG(SELFUPVAL) \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
 #define DEFINSFLAG(e)  INS_##e,
