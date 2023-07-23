@@ -307,6 +307,7 @@ typedef struct Analyzer {
   struct SlotDesc *regproperties;  /* register properties */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
+  lu_int32 *kmap;  /* bitmap blocks for marking referenced constants */
   unsigned short *actvar;
   int sizeinsproperties;
   int sizeopencalls;
@@ -315,7 +316,10 @@ typedef struct Analyzer {
   int sizelocvars;
   int sizeactvar;
   int sizeupvalues;
+  int sizekmap;
   int decomppass;  /* which decompiler pass */
+  /* when the function has <= 32 constants, KMAP points to this field */
+  lu_int32 kmap_1;
   struct {
     struct BlockNode *first, *last;
   } bllist;

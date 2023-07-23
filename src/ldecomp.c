@@ -999,6 +999,42 @@ static BlockNode *remblnode1(DFuncState *fs, BlockNode *node,
 }
 
 
+/*
+** use this version after `loop1'; NODE is the node to delete, PARENT is the
+** parent block of NODE
+*/
+static void remblnode2(DFuncState *fs, BlockNode *node, BlockNode *parent)
+{
+  lua_assert(parent != NULL);  /* cannot delete the function block */
+  lua_assert(node != NULL);
+  D(lprintf("deleting erroneous block %B\n", node));
+  if (parent->firstchild != node) {
+    BlockNode *child = parent->firstchild;
+    lua_assert(child != NULL);
+    while (child->nextsibling != node)
+      child = child->nextsibling;
+    child->nextsibling = node->nextsibling;
+  }
+  else {
+    parent->firstchild = node->nextsibling;
+  }
+  /* NODE cannot be the function block, so cannot be first in the list */
+  lua_assert(fs->a->bllist.first != node);
+  {
+    BlockNode *iterblock = fs->a->bllist.first;
+    while (iterblock->next != node)
+      iterblock = iterblock->next;
+    lua_assert(iterblock->next == node);
+    if (fs->a->bllist.last == node) {
+      fs->a->bllist.last = iterblock;
+      lua_assert(node->next == NULL);
+    }
+    iterblock->next = node->next;
+  }
+  luaM_free(fs->H, node);
+}
+
+
 #if 0
 static BlockNode *addbbl2(DFuncState *fs, int startpc, int endpc, int type) {
   hksc_State *H = fs->H;
@@ -1407,6 +1443,50 @@ static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
     default:
       return 0;
   }
+}
+
+#define KREF_B (1 << 0)
+#define KREF_C (1 << 1)
+#define KREF_BX (1 << 2)
+
+static int referencesk(OpCode o, int b, int c, int bx)
+{
+  int res = 0;
+  int barg;
+  int bmask;
+  switch (getOpMode(o)) {
+    case iABC:
+      bmask = KREF_B;
+      barg = b;
+      /* see if C is a K index */
+      switch (getCMode(o)) {
+        case OpArgRK:
+          if (!ISK(c)) break;
+          /* fallthrough */
+        case OpArgK:
+          res |= KREF_C;
+          break;
+        default: break;
+      }
+      checkargb:
+      /* see if B is a K index */
+      switch (getBMode(o)) {
+        case OpArgRK:
+          if (!ISK(barg)) break;
+          /* fallthrough */
+        case OpArgK:
+          res |= bmask;
+          break;
+        default: break;
+      }
+      break;
+    case iABx:
+      bmask = KREF_BX;
+      barg = bx;
+      goto checkargb;
+    default: break;
+  }
+  return res;
 }
 
 #if 0
@@ -4518,43 +4598,78 @@ static void markfollowblock1(DFuncState *fs, BlockNode *node)
   }
 }
 
+
+/*******************************************************************************
+Debug generator - creates artifical variables when debug info is not being used
+*******************************************************************************/
+
+
+/*
+** Variable generation notes
+** These notes describe the level of necessity of a variable's creation at a
+** particular pc
+*/
 enum GENVARNOTE {
-  GENVAR_TRIVIAL,
+  /* FILL is used when there is stack space between the last variable and the
+     next variable to create; the actual note for this variable defers to the
+     next non-FILL variable */
   GENVAR_FILL,
+  /* TRIVIAL applies to variables that may not need to exist; specifically,
+     this note is used when there are no RegNote entries left */
+  GENVAR_TRIVIAL,
+  /* UNCERTAIN is used when there is a RegNote entry, but it is after or within
+     a child block */
   GENVAR_UNCERTAIN,
+  /* CERTAIN is used when the RegNote entry is before any child block; these
+     types of variables are certain to exist, but the startpc may vary */
   GENVAR_CERTAIN,
+  /* NECESSARY is like CERTAIN, but additionally, the startpc is also certain */
   GENVAR_NECESSARY,
-  GENVAR_PARAM,
+  /* the rest of the notes are used to determine how to name the variabless;
+     PARAM variables will be named following the pattern "f%d_par%d" */
+  GENVAR_PARAM,  /* function parameters */
   GENVAR_FORNUM,  /* augmented numeric for-loop variables */
   GENVAR_FORLIST  /* augmented list for-loop variables */
 };
 
 typedef struct {
-  const BlockNode *currnode;
+  BlockNode *currnode;
   DFuncState *fs;
   const Instruction *code;
+  const TValue *k;
   const OpenExpr *nextexpr;
   const RegNote *nextnote;
   int nregnote, nopenexpr;
   int pc;
   OpCode o;
   int a, b, c;
+  int lastopenexprpc;
+  int laststat;
   int currvarlimit;
   int varendpc;
+  int lastk;  /* highest referenced constant so far */
+  int lastup;  /* highest referenced upvalue so far */
+  int skippedstorerefpc;
   short nlocvars;
   lu_byte nactvar;
-  unsigned short actvar[LUAI_MAXVARS];  /* declared-variable stack */
 } DebugGenerator;
+
+
+static LocVar *getlocvar1(DebugGenerator *s, int r)
+{
+  return &s->fs->a->locvars[s->fs->a->actvar[r]];
+}
+
 
 static int getvarnote1(struct LocVar *var)
 {
   return cast_int(cast(size_t, var->varname));
 }
 
+
 static void setvarnote1(DebugGenerator *s, int r, int note)
 {
-  unsigned short i = s->actvar[r];
-  s->fs->a->locvars[i].varname = cast(TString *, cast(size_t, note));
+  getlocvar1(s, r)->varname = cast(TString *, cast(size_t, note));
 }
 
 
@@ -4594,18 +4709,10 @@ static void addvar1(DebugGenerator *s, int r, int startpc, int endpc, int note)
   var->varname = cast(TString *, cast(size_t, note));
   lua_assert(r == s->nactvar);
   lua_assert(r < s->fs->f->maxstacksize);
-  s->actvar[r] = s->nlocvars++;
+  a->actvar[r] = s->nlocvars++;
   s->nactvar++;
   while (s->nextnote && s->nextnote->reg < s->nactvar)
     updatenextregnote1(s);
-}
-
-
-static LocVar *getlastvar1(DebugGenerator *s)
-{
-  if (s->nlocvars == 0)
-    return NULL;
-  return &s->fs->a->locvars[s->nlocvars-1];
 }
 
 
@@ -4626,13 +4733,24 @@ static void advance1(DebugGenerator *s)
 }
 
 
+static int getnextpc1(DebugGenerator *s, int pc)
+{
+  int nextpc = pc;
+  do {
+    nextpc++;
+    if (nextpc >= s->fs->f->sizecode) break;
+  } while (GET_OPCODE(s->code[nextpc]) == OP_DATA);
+  return nextpc;
+}
+
+
 static int maybeaddvar1(DebugGenerator *s, int r, int pc, int pclimit)
 {
   /* see if register A can possibly be a local variable in this block */
   if (r < s->currvarlimit) {
     /* check reg notes and see if this is a good time to create a local
        variable at A */
-    int startpc = pc+1;
+    int startpc = getnextpc1(s, pc);
     int note;
     int i;
     for (i = s->nactvar; i < r; i++)
@@ -4650,39 +4768,152 @@ static int maybeaddvar1(DebugGenerator *s, int r, int pc, int pclimit)
 }
 
 
-static int fixvarendpc1(DebugGenerator *s, int pc, int laststat)
+static void setkreferenced(DebugGenerator *s, int k)
 {
-  LocVar *var = getlastvar1(s);
-  if (var != NULL && var->startpc-1 > laststat) {
-    int oldstartpc = var->startpc;
-    int newstartpc = pc+1;
-    int i = cast_int(var - s->fs->a->locvars);
-    var->startpc = newstartpc;
-    while (i--) {
-      var--;
-      if (var->startpc == oldstartpc)
-        var->startpc = newstartpc;
-      else
-        break;
-    }
-    return 1;
-  }
-  return 0;
+  Analyzer *a = s->fs->a;
+  a->kmap[k >> 5] |= (1u << (k & 31));
 }
 
 
-static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
+static int iskreferenced(DebugGenerator *s, int k)
 {
-  const BlockNode *prevnode = s->currnode;
+  Analyzer *a = s->fs->a;
+  return ((a->kmap[k >> 5] & (1u << (k & 31))) != 0);
+}
+
+
+static void updatereferences1(DebugGenerator *s)
+{
+  int res = referencesk(s->o, s->b, s->c, s->b);
+  int isref = 0;
+  if (res & KREF_B) {
+    setkreferenced(s, INDEXK(s->b));
+    isref = 1;
+  }
+  if (res & KREF_C) {
+    setkreferenced(s, INDEXK(s->c));
+    isref = 1;
+  }
+  else if (res & KREF_BX) {
+    setkreferenced(s, INDEXK(s->b));
+    isref = 1;
+  }
+  if (isstorecode(s->o) && isref) {
+    int k = (res & KREF_C) ? INDEXK(s->c) : INDEXK(s->b);
+    while (--k >= 0) {
+      if (iskreferenced(s, k) == 0) {
+        s->skippedstorerefpc = s->pc;
+        break;
+      }
+    }
+  }
+  if (s->o == OP_GETUPVAL || s->o == OP_SETUPVAL || s->o == OP_SETUPVAL_R1) {
+    int up = s->b;
+    if (up > s->lastup) {
+      if (up > s->lastup+1 && s->o != OP_GETUPVAL) {
+        s->skippedstorerefpc = s->pc;
+      }
+      s->lastup = up;
+    }
+  }
+}
+
+
+/*
+** data for the pending store chain when generating variables
+*/
+struct pendingstorechain1 {
+  int pc;  /* current pc */
+  int startpc;  /* pc of first store code */
+  int firstreg;  /* first reg used to evaluate RHS */
+  int lastreg;  /* last reg used to evaluate RHS */
+  int laststat;  /* pc of previous statement if any */
+  int lastup;  /* highest referenced upvalue before the store chain */
+  int upval;  /* true if there is an OP_SETUPVAL code in the store chain */
+};
+
+
+static int storeischainable1(DebugGenerator *s,struct pendingstorechain1 *store)
+{
+  return (s->skippedstorerefpc >= store->startpc ||
+          (store->upval && s->lastup == store->lastup));
+}
+
+
+static void dischargestores1(DebugGenerator *s,struct pendingstorechain1 *store)
+{
+  lua_assert(store->pc != -1);
+  lua_assert(store->startpc != -1);
+  lua_assert(store->lastreg != -1);
+  lua_assert(store->firstreg != -1);
+  /* if the store chain lasts more than 1 pc and it is not chainable, make sure
+     any registers used as RHS values are made local variables */
+  if (store->startpc != store->pc && !storeischainable1(s, store)) {
+    int i;
+    for (i = store->firstreg; i < s->nactvar; i++) {
+      LocVar *var = getlocvar1(s, i);
+      if (getvarnote1(var) < GENVAR_CERTAIN)
+        setvarnote1(s, i, GENVAR_CERTAIN);
+    }
+  }
+  /* if the store is chainable, make sure the registers used to evaluate RHS are
+     temporary */
+  else if (store->startpc != store->pc &&
+           s->nactvar && s->nactvar-1 == store->lastreg) {
+    int i, numtodelete = 0;
+    for (i = s->nactvar-1; i >= store->firstreg; i--, numtodelete++) {
+      LocVar *var = getlocvar1(s, i);
+      if ((var->startpc < store->startpc && var->startpc <= store->laststat) ||
+          getvarnote1(var) >= GENVAR_UNCERTAIN) {
+        break;
+      }
+    }
+    if (numtodelete) {
+      if (i >= 0) {
+        if (getvarnote1(getlocvar1(s, i)) < GENVAR_CERTAIN)
+          setvarnote1(s, i, GENVAR_CERTAIN);
+      }
+      s->nlocvars -= numtodelete;
+      s->nactvar -= numtodelete;
+    }
+  }
+  /* clear pending data */
+  store->pc = store->startpc = store->firstreg = store->lastreg = -1;
+  store->laststat = store->lastup = -1;
+  store->upval = 0;
+}
+
+
+static void
+maybedeletenode1(DebugGenerator *s, BlockNode *node, BlockNode *prevnode,
+                 lu_byte prevnactvar)
+{
+  if (node->type == BL_IF && node->isempty == 0 && !haselsepart(node) &&
+      s->laststat == -1 && s->nactvar == prevnactvar) {
+    Instruction i = s->fs->f->code[node->endpc+1];
+    OpCode o = GET_OPCODE(i);
+    if (isstorecode(o)) {
+      int srcreg = IS_OP_SETTABLE(o) ? GETARG_C(i) : GETARG_A(i);
+      if (srcreg >= prevnactvar) {
+        remblnode2(s->fs, node, prevnode);
+      }
+    }
+  }
+}
+
+
+static void genblockdebug1(DebugGenerator *s, BlockNode *node)
+{
+  BlockNode *prevnode = s->currnode;
   BlockNode *nextchild = node->firstchild;
   int nextchildstartpc = nextchild ? nextchild->startpc : -1;
   int nextpclimit = nextchildstartpc != -1 ? nextchildstartpc : node->endpc+1;
   const int varendpc = s->varendpc;
   const lu_byte nactvar = s->nactvar;
-  int r1 = -1, rstreak = 0;
-  int laststat = -1;
+  struct pendingstorechain1 store = {-1,-1,-1,-1,-1,-1,0};
   s->currnode = node;
   s->varendpc = getnaturalvarendpc(node);
+  lua_assert(s->pc == node->startpc);
   if (isforloop(node)) {
     int isnum = node->type == BL_FORNUM;
     int note = isnum ? GENVAR_FORNUM : GENVAR_FORLIST;
@@ -4696,54 +4927,109 @@ static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
     for (i = 0; i < nvars; i++)
       addvar1(s, s->nactvar, node->startpc, s->varendpc, GENVAR_NECESSARY);
   }
-  for (s->pc = node->startpc; s->pc <= node->endpc; advance1(s)) {
-    int pc = s->pc;
-    OpCode o = s->o;
-    if (pc == nextchildstartpc) {
+  else if (node->type == BL_WHILE) {
+    /* no variables should be created within the header */
+    int startpc = getfirstindentedpc(s->fs, node);
+    while (s->pc < startpc) {
+      updatereferences1(s);
+      advance1(s);
+    }
+  }
+  for (; s->pc <= node->endpc; advance1(s)) {
+    int pc; OpCode o;
+    if (s->pc == nextchildstartpc) {
+      BlockNode *nextnextchild = nextchild->nextsibling;
       genblockdebug1(s, nextchild);
-      nextchild = nextchild->nextsibling;
+      nextchild = nextnextchild;
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
       nextpclimit = nextchildstartpc != -1 ? nextchildstartpc : node->endpc+1;
-      laststat = s->pc;
+      s->laststat = --s->pc;
+      continue;
+    }
+    pc = s->pc;
+    o = s->o;
+    /* avoid creating variables inside a branch header */
+    if (test_ins_property(s->fs, pc, INS_BRANCHFAIL) ||
+        test_ins_property(s->fs, pc, INS_BRANCHPASS)) {
+      updatereferences1(s);
+      while (s->pc < nextchildstartpc-1) {
+        advance1(s);
+        updatereferences1(s);
+      }
+      continue;
+    }
+    /* avoid creating variables inside a repeat-loop footer */
+    if ((test_ins_property(s->fs, pc, INS_LOOPFAIL) ||
+         test_ins_property(s->fs, pc, INS_LOOPPASS)) &&
+        node->type == BL_REPEAT) {
+      updatereferences1(s);
+      while (s->pc < node->endpc) {
+        advance1(s);
+        updatereferences1(s);
+      }
       continue;
     }
     if (s->nextexpr && pc == s->nextexpr->startpc) {
+      int kind = s->nextexpr->kind;
       int exprendpc = s->nextexpr->endpc;
-      if (s->nextexpr->kind == CALLPREP) {
+      int hasendcode = (kind != HASHTABLEPREP && kind != EMPTYTABLE);
+      int isstat = 0;
+      if (kind == CALLPREP) {
         OpCode op = GET_OPCODE(s->code[exprendpc]);
         if (IS_OP_CALL(op) && GETARG_C(s->code[exprendpc]) == 1)
-          laststat = exprendpc;
+          isstat = 1;
       }
-      else if (s->nextexpr->kind == RETPREP)
-        laststat = exprendpc;
-      pc = exprendpc;
+      else if (kind == RETPREP)
+        isstat = 1;
+      if (isstat) {
+        s->laststat = exprendpc;
+      }
+      else {
+        Instruction i = hasendcode ? s->code[exprendpc] : s->code[pc];
+        Instruction next = s->code[exprendpc+1];
+        int r = GETARG_A(i);
+        OpCode endcode = GET_OPCODE(i);
+        if ((GET_OPCODE(next) != OP_MOVE || GETARG_B(next) != r) &&
+            r >= s->nactvar && maybeaddvar1(s, r, exprendpc, nextpclimit)) {
+          if (IS_OP_CALL(endcode)) {
+            int nret = GETARG_C(endcode) - 1;
+            int i;
+            for (i = 1; i < nret; i++) {
+              maybeaddvar1(s, r+i, exprendpc, nextpclimit);
+            }
+          }
+        }
+      }
+      s->lastopenexprpc = s->pc;
+      while (s->pc != exprendpc) {
+        advance1(s);
+        updatereferences1(s);
+      }
       updatenextopenexpr1(s);
       continue;
     }
     if (beginseval(o, s->a, s->b, s->c, 0) || o == OP_SETLIST) {
       int r = s->a;
-      if (r != r1) rstreak = 0;
-      else rstreak++;
-      r1 = r;
+      int lastreg = r;
+      if (o == OP_LOADNIL || o == OP_VARARG)
+        lastreg = (o == OP_LOADNIL) ? s->b : r + s->b - 2;
       if (r >= s->nactvar) {  /* clobbering a free register */
+        tryaddvar:
         /* see if register A can possibly be a local variable in this block */
         if (maybeaddvar1(s, r, pc, nextpclimit)) {
           if (o == OP_LOADNIL || o == OP_VARARG) {
-            int i, lastreg = o == OP_LOADNIL ? s->b : r + s->b - 2;
+            int i;
             for (i = r+1; i <= lastreg; i++) {
               if (!maybeaddvar1(s, i, pc, nextpclimit))
                 break;
             }
           }
         }
-        else if (!beginseval(o, s->a, s->b, s->c, 1)) {
-          fixvarendpc1(s, pc, laststat);
-        }
-        else {
-          laststat = pc-1;
-        }
       }
       else {
+        int laststored = lastreg;
+        if (laststored >= s->nactvar)
+          laststored = s->nactvar-1;
         if (o == OP_LOADNIL && s->b >= s->nactvar) {
           int i;
           for (i = s->nactvar; i <= s->b; i++) {
@@ -4751,23 +5037,72 @@ static void genblockdebug1(DebugGenerator *s, const BlockNode *node)
               break;
           }
         }
-        if (r+1 != s->nactvar || !fixvarendpc1(s, pc, laststat))
-          laststat = pc;
+        if ((o != OP_MOVE || s->b < s->a) && store.pc != -1) {
+          dischargestores1(s, &store);
+          if (r >= s->nactvar)
+            goto tryaddvar;
+        }
+        else {
+          if (o == OP_MOVE) {
+            /* add to the new store-chain */
+            if (store.lastreg == -1) {
+              store.lastreg = store.firstreg = s->b;
+              store.pc = pc;
+            }
+            else if (s->b+1 == store.firstreg) {
+              store.firstreg = s->b;
+              store.pc = pc;
+            }
+            if (store.pc == pc && store.startpc == -1) {
+              store.startpc = pc;
+              store.laststat = s->laststat;
+              store.lastup = s->lastup;
+            }
+          }
+        }
+        s->laststat = pc;
+        if (getvarnote1(getlocvar1(s, laststored)) < GENVAR_CERTAIN)
+          setvarnote1(s, laststored, GENVAR_CERTAIN);
       }
     }
     else if (isstorecode(o)) {
-      laststat = pc;
+      int srcreg = IS_OP_SETTABLE(o) ? s->c : s->a;
+      if (store.lastreg == -1) {
+        int n = 0;
+        if (store.startpc != -1)
+          n = pc - store.startpc;
+        store.lastreg = store.firstreg = srcreg + n;
+        store.pc = pc;
+      }
+      else if (srcreg+1 == store.firstreg || store.firstreg == -1) {
+        store.firstreg = srcreg;
+        store.pc = pc;
+        if (o == OP_SETUPVAL || o == OP_SETUPVAL_R1)
+          store.upval = 1;
+      }
+      else {
+        dischargestores1(s, &store);
+      }
+      if (store.pc == pc && store.startpc == -1) {
+        store.startpc = pc;
+        store.laststat = s->laststat;
+        store.lastup = s->lastup;
+      }
+      s->laststat = pc;
     }
-    else if (o != OP_DATA) {
-      r1 = -1;
-      rstreak = 0;
+    if (o != OP_DATA) {
+      if (store.pc != -1 && store.pc != pc) {
+        lua_assert(store.pc < pc);
+        dischargestores1(s, &store);
+      }
     }
+    updatereferences1(s);
   }
+  maybedeletenode1(s, node, prevnode, nactvar);
   /* restore previous values */
   s->currnode = prevnode;
   s->nactvar = nactvar;
   s->varendpc = varendpc;
-  (void)getvarnote1; (void)setvarnote1;
 }
 
 
@@ -4853,7 +5188,7 @@ static void debugdebug1(DFuncState *fs)
 #endif /* LUA_DEBUG */
 
 
-static void gendebug1(DFuncState *fs, const BlockNode *startnode)
+static void gendebug1(DFuncState *fs, BlockNode *startnode)
 {
   int newsizelocvars;
   DebugGenerator s;
@@ -4863,9 +5198,17 @@ static void gendebug1(DFuncState *fs, const BlockNode *startnode)
   s.code = fs->f->code;
   s.nregnote = 0;
   s.nopenexpr = fs->nopencalls-1;
+  s.lastopenexprpc = -1;
+  s.lastk = 0;
+  s.k = fs->f->k;
+  s.lastup = 0;
+  s.skippedstorerefpc = -1;
+  s.laststat = -1;
   s.nactvar = 0;
   s.nlocvars = 0;
   s.pc = -1;
+  /* allocate a bitmap for marking referenced constants */
+  luaA_allockmap(fs->H, a, fs->f->sizek);
   /* FS must be using the analyzer data to generate variables */
   lua_assert(fs->locvars == a->locvars);
   updatenextopenexpr1(&s);
@@ -4883,6 +5226,7 @@ static void gendebug1(DFuncState *fs, const BlockNode *startnode)
 #ifdef LUA_DEBUG
   debugdebug1(fs);
 #endif /* LUA_DEBUG */
+  luaA_freekmap(fs->H, a);
   /* reset variable stack for second pass */
   memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
 }

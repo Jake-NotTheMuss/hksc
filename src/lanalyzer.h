@@ -310,5 +310,12 @@ typedef struct SlotDesc {
 LUAI_FUNC Analyzer *luaA_newanalyzer (hksc_State *H);
 LUAI_FUNC void luaA_freeanalyzer (hksc_State *H, Analyzer *a);
 
+/*
+** call this to allocate a bitmap big enough for NK constants; the caller can
+** then reference a->kmap
+*/
+LUAI_FUNC void luaA_allockmap (hksc_State *H, Analyzer *a, int nk);
+LUAI_FUNC void luaA_freekmap (hksc_State *H, Analyzer *a);
+
 #endif /* HKSC_DECOMPILER */
 #endif
