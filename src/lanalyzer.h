@@ -109,44 +109,18 @@ typedef struct BlockNode {
 } BlockNode;
 
 
-/* variables that are subject to being overwritten on each instruction */
-struct BlockStateControl {
-  int startpc;
-  BlockNode *firstchild, *prevsibling;
-};
-
-
+/*
+** BlockState tracks the state of a pending do-block terminated by OP_CLOSE
+*/
 typedef struct BlockState {
-  BlockNode *nextsibling;
-  BlockNode *result;  /* the else-part if a branch */
-  BlockNode *firstblock;
-  short nested;  /* immediate nesting level (0 if this is not nested) */
-  lu_byte branch;
+  BlockNode *nextsibling;  /* the next sibling of this block */
+  BlockNode *firstchild;  /* the first child of this block */
+  BlockNode *prevsibling;  /* the previous sibling of this block */
+  int nested;  /* nesting level within the current loop or function */
+  int startpc;
   int endpc;
-  struct BlockStateControl parentsnapshot;
-  union {
-    struct {
-      struct BlockStateControl rcnt, pcnt;  /* actual and potential states */
-      BlockNode *firstsibling;
-      int reg;  /* closed register */
-      short lastbranch;  /* relative position of last branch state */
-      lu_byte upval;  /* has upvalues */
-      lu_byte opaque;  /* is being tracked alongside (behind) a branch */
-      lu_byte loop;  /* is tracking a loop block */
-    } bl;  /* block data */
-    struct {
-      BlockNode *prevsibling2;  /* preceding block for the else-part */
-      int startpc;  /* startpc of the if-part */
-      int midpc;  /* startpc of the else-part */
-      int target1;  /* actual fail-jump target from the if-part */
-      int target2;  /* actual exit-jump target from the if-part */
-      int optimalexit;  /* an optimal jump target for the if-part exit */
-      int parentblock;  /* stack index of parent (non-branch) block */
-      int parentbranchwithblock;  /* stack index of parent branch that had an
-                                     opaque block created with it */
-      lu_byte withblock;  /* is tracking a regular block with this branch */
-    } br;  /* branch data */
-  } u;
+  unsigned reg : 15;  /* closed register */
+  unsigned loop : 1;  /* true if the OP_CLOSE code was at the end of the loop */
 } BlockState;
 
 
