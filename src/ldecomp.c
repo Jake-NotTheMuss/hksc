@@ -5614,15 +5614,16 @@ static void dumpcloseparen2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
+  struct HoldItem hold1, hold2;
   int isfield;
   int rkkey;
   lua_assert(exp->kind == ESTORE);
   isfield = exp->u.store.rootop == OP_SETFIELD;
   rkkey = exp->u.store.aux2;
   if (isfield && ISK(rkkey) && ttisstring(&fs->f->k[INDEXK(rkkey)])) {
-    checklineneeded2(D, fs, exp);
-    CheckSpaceNeeded(D);
-    DumpTString(rawtsvalue(&fs->f->k[INDEXK(rkkey)]), D);
+    TString *field = rawtsvalue(&fs->f->k[INDEXK(rkkey)]);
+    addholditem2(D, &hold1, getstr(field), field->tsv.len, 1);
+    addliteralholditem2(D, &hold2, "=", 1);
   }
   else {
     struct HoldItem bracket;
@@ -5633,10 +5634,9 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
       checklineneeded2(D, fs, exp);
       dumpRK2(D, fs, rkkey, 0);
     }
-    DumpLiteral("]",D);
+    DumpLiteral("] =",D);
+    D->needspace = 1;
   }
-  DumpLiteral(" =",D);
-  D->needspace = 1;
   if (exp->aux)
     dumpexpoperand2(D, fs, index2exp(fs, exp->aux), exp, 0);
   else
