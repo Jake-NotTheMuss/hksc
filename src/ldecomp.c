@@ -3144,7 +3144,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 encountered1("repeat", target);
                 set_ins_property(fs, target, INS_REPEATSTAT);
                 init_ins_property(fs, pc, INS_LOOPEND);
-                init_ins_property(fs, pc, INS_LOOPPASS);
+                init_ins_property(fs, pc, INS_LOOPFAIL);
                 innerloop1(ca, fs, target, BL_REPEAT, &nextsibling, &s);
                 nextstat = ca->pc;
               }
@@ -3254,10 +3254,10 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
             /* check for a fail-jump out of a repeat-loop condition */
             if (type == BL_REPEAT && target-1 == endpc) {
               markrepeatfail:
-              init_ins_property(fs, pc, INS_LOOPFAIL);
+              init_ins_property(fs, pc, INS_LOOPPASS);
             }
             else if (type == BL_REPEAT &&
-                     test_ins_property(fs, pc, INS_LOOPPASS)) {
+                     test_ins_property(fs, pc, INS_LOOPFAIL)) {
               break; /* already marked; do nothing */
             }
             /* if the jump skips over a false-jump, this is a true-jump */
@@ -3376,14 +3376,14 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 if (((pc-2) + 1 + GETARG_sBx(code[pc-2])) == (pc+1)) {
                   /* mark PC-2 now so it doesn't get detected later as something
                      else */
-                  init_ins_property(fs, pc-2, INS_LOOPPASS);
+                  init_ins_property(fs, pc-2, INS_LOOPFAIL);
                   goto markrepeatfail;
                 }
               }
               /* fallthrough */
             }
             if (type == BL_REPEAT && target <= endpc &&
-                     test_ins_property(fs, pc, INS_LOOPPASS)) {
+                     test_ins_property(fs, pc, INS_LOOPFAIL)) {
               break; /* already marked from above; do nothing */
             }
             else if (test_ins_property(fs, target-1, INS_LOOPEND) &&
