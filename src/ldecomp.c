@@ -5326,10 +5326,13 @@ static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
   }
   if (chainempty) {
     int issingle;
-    if (!istempreg(fs, exp->u.store.srcreg))
+    int lowesttempreg = exp->u.store.srcreg;
+    if (IS_OP_SETTABLE(exp->u.store.rootop) && istempreg(fs, exp->u.store.aux2))
+      lowesttempreg = exp->u.store.aux2;
+    if (!istempreg(fs, lowesttempreg))
       issingle = fs->firstfree <= fs->nactvar;
     else
-      issingle = exp->u.store.srcreg == fs->nactvar;
+      issingle = lowesttempreg == fs->nactvar;
     if (issingle) {
       dischargestores2(sa, fs);
       return NULL;
