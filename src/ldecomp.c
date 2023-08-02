@@ -5482,6 +5482,7 @@ struct HoldItem {
 
 
 #define addliteralholditem2(D,i,s,a) addholditem2(D,i,"" s,sizeof(s)-1,a)
+#define addtsholditem2(D,i,ts,a) addholditem2(D,i,getstr(ts),(ts)->tsv.len,a)
 /*
 ** `addholditem2' appends a hold item to the chain
 */
@@ -5851,7 +5852,7 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
   rkkey = exp->u.store.aux2;
   if (isfield && ISK(rkkey) && ttisstring(&fs->f->k[INDEXK(rkkey)])) {
     TString *field = rawtsvalue(&fs->f->k[INDEXK(rkkey)]);
-    addholditem2(D, &hold1, getstr(field), field->tsv.len, 1);
+    addtsholditem2(D, &hold1, field, 1);
     addliteralholditem2(D, &hold2, "=", 1);
   }
   else {
@@ -8342,7 +8343,7 @@ dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   var = getlocvar2(fs, base+3);
   /* add hold items for for-loop header */
   addliteralholditem2(D, loopheader, "for", 1);
-  addholditem2(D, &initvar, getstr(var->varname), var->varname->tsv.len, 1);
+  addtsholditem2(D, &initvar, var->varname, 1);
   addliteralholditem2(D, &initeq, "=", 1);
   /* dump initializer expression */
   initexplistiter2(&iter, fs, base, exp);
@@ -8625,8 +8626,7 @@ static void dumpfuncheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   addliteralholditem2(D, sa->currheader, "function", 1);
   /* add function name if needed */
   if (D->lastcl.name != NULL) {
-    addholditem2(D, &funcname, getstr(D->lastcl.name),
-                 D->lastcl.name->tsv.len, 0);
+    addtsholditem2(D, &funcname, D->lastcl.name, 0);
   }
   if (D->lastcl.line == 0)
     updateheaderline2(sa, fs, node);
