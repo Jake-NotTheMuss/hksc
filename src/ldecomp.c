@@ -6094,7 +6094,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         if (D->matchlineinfo) {
           if (firstitem) {
             bracketline = exp->line;
-            linestep = exp->line < firstitem->line;
+            linestep = exp->line < exp->aux;
           }
           else
             linestep = 0;
@@ -6110,6 +6110,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         }
         else if (D->matchlineinfo) {
           checklineneeded2(D, fs, exp);
+          dischargeholditems2(D);
         }
         for (i = reg =0; i < totalitems; i++) {
           int dumparray;
@@ -6168,8 +6169,11 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
             exp->aux = D->nextlinenumber += linestep;
         }
         /* exp->aux has the line mapping for OP_SETLIST if present */
-        if (exp->aux)
+        if (exp->aux) {
           updateline2(fs, exp->aux, D);
+          if (needparen && !needparenforlineinfo)
+            exp->closeparenline = D->linenumber;
+        }
       }
       else {  /* totalitems == 0 */
         /* discharge hold items */
