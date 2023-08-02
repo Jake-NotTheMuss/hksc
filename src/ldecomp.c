@@ -6245,7 +6245,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       narg -= (firstexp->kind == ESELF);
       if (narg != 0) {
         /* initialize the expression list iterator for dumping arguments */
-        initexplistiter2(&iter, fs, exp->info+1+(firstexp->kind == ESELF),
+        initexplistiter2(&iter, fs, firstexp->info+1+(firstexp->kind == ESELF),
                          firstexp);
         if (firstexp->kind == ESELF) {
           D(lprintf("firstexp->auxlistnext = %d\n", firstexp->auxlistnext));
