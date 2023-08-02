@@ -8619,12 +8619,22 @@ dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   DecompState *D = fs->D;
   int iselseif;
   lua_assert(sa->currparent != NULL);
-  if (sa->currparent->type == BL_ELSE && node->endpc == sa->currparent->endpc)
-    iselseif = fs->seenstatinblock == 0;
+  if (sa->currparent->type == BL_ELSE && node == sa->currparent->firstchild) {
+    int endpc;
+    if (haselsepart(node) && node->nextsibling->nextsibling == NULL)
+      endpc = node->nextsibling->endpc;
+    else if (node->nextsibling == NULL)
+      endpc = node->endpc;
+    else
+      endpc = -1;
+    iselseif = (endpc == sa->currparent->endpc && fs->seenstatinblock == 0);
+  }
   else
     iselseif = 0;
   if (iselseif) {
     node->iselseif = 1;
+    if (haselsepart(node))
+      node->nextsibling->iselseif = 1;
     D->indentlevel--;
   }
   if (sa->pendingcond.e) {
@@ -8902,11 +8912,18 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   const char *str;
   DecompState *D = fs->D;
   int inmainfunc = (fs->prev == NULL);
-  if (inmainfunc && node->type == BL_FUNCTION)
+  if (inmainfunc && node->type == BL_FUNCTION) {
+    D->indentlevel = 0;
+    /* no tokens needed to leave the main function, just add a line-feed */
+    beginline2(fs, 1, D);
     return;
-  if (node->iselseif) {
-    lua_assert(node->type == BL_IF);
-    D->indentlevel++;
+  }
+  /* when leaving an elseif-block, do not dump anything unless this is an
+     if-block which has an else part; in that case, dump `else'; otherwise,
+     the parent block will dump the correct token when leaving */
+  if (node->iselseif &&
+      ((node->type == BL_IF && !haselsepart(node)) || node->type == BL_ELSE)) {
+    D->indentlevel+= 1+(node->type != BL_ELSE);
     return;
   }
   lua_assert(D->indentlevel >= 0);
