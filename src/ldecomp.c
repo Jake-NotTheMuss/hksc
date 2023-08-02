@@ -2968,7 +2968,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         updateactvar1(fs, pc, &nvars);
         goto traverseforlistprep;
       }
-      D(lprintf("encountered start of new local variable at next pc (%i)\n", pc+1));
       locvarexpr1(ca, fs, nvars, locvarhere);
       goto poststat;
     }
@@ -2985,7 +2984,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                                  different control path than the one which
                                  handles branch constructs */
         OpCode prevop; /* previous opcode to see if it is a test instruction */
-        CHECK(fs, ispcvalid(fs, target), "jump target pc is invalid");
         if (test_ins_property(fs, target, INS_BOOLLABEL) ||
             test_ins_property(fs, pc+1, INS_BOOLLABEL))
           break;  /* this jump is part of a boolean expression */
