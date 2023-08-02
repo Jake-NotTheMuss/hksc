@@ -7414,7 +7414,7 @@ static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
   sa->lastexpindex = exp2index(fs, exp);
   if (prevreg) {
     prevreg->auxlistnext = sa->lastexpindex;
-    if (prevreg->kind == ECONSTRUCTOR)
+    if (prevreg->kind == ECONSTRUCTOR && prevreg->aux == 0)
       prevreg->u.cons.firstarrayitem = sa->lastexpindex;
   }
 }
@@ -7511,6 +7511,12 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       }
       if (fs->D->matchlineinfo)
         tab->aux = getline(fs->f, pc);
+      /* I use AUX being non-zero as an indication that OP_SETLIST has been
+         encountered for this table, so that its first array item does not get
+         updated anymore */
+      if (tab->aux == 0)
+        tab->aux = -1;
+      sa->lastexpindex = exp2index(fs, tab);
       /* return the existing table constructor node */
       return tab;
     }
