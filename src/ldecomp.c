@@ -6504,6 +6504,8 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
     dumpexp2(D, fs, firstexp, 0);  /* dump first expression in list */
     /* initialize the expression list iterator starting at REG */
     initexplistiter2(&iter, fs, reg, firstexp);
+    if (nret == -1)
+      nret = fs->firstfree - reg;
     for (i = 1; i < nret; i++) {
       DumpLiteral(",",D);
       dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
