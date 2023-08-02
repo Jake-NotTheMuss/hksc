@@ -3598,6 +3598,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
         goto postexpr;
       poststat:
         nextstat = ca->pc;
+        ca->testset.endpc = -1;
+        ca->testset.reg = -1;
       postexpr:  /* update variables after calls which change the pc */
         pc = ca->pc;
         i = code[pc];
