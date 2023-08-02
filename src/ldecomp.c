@@ -7742,12 +7742,13 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
   }
   exp = newexp(fs);
   *exp = node;
-  linkexp2(sa, fs, exp);
-  if (exp->kind == ESTORE) {
+  if (exp->kind != ESTORE)
+    linkexp2(sa, fs, exp);
+  else {
     exp->pending = 0;
     return updatelaststore2(sa, fs, exp);
   }
-  else if (exp->kind == ECALL)
+  if (exp->kind == ECALL)
     fs->lastcallexp = exp2index(fs, exp);  /* update last call node */
   return exp;
 }
