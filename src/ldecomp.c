@@ -4368,7 +4368,7 @@ static void dischargestores1(DebugGenerator *s,struct pendingstorechain1 *store)
 }
 
 
-static void
+static int
 maybedeletenode1(DebugGenerator *s, BlockNode *node, BlockNode *prevnode,
                  lu_byte prevnactvar)
 {
@@ -4380,8 +4380,52 @@ maybedeletenode1(DebugGenerator *s, BlockNode *node, BlockNode *prevnode,
       int srcreg = IS_OP_SETTABLE(o) ? GETARG_C(i) : GETARG_A(i);
       if (srcreg >= prevnactvar) {
         remblnode2(s->fs, node, prevnode);
+        return 1;
       }
     }
+  }
+  return 0;
+}
+
+
+static void
+checkclosedreg1(DebugGenerator *s, BlockNode *node, lu_byte prevnactvar)
+{
+  int oldvarendpc;
+  int closedreg;
+  if (node->upval == 0)
+    return;
+  oldvarendpc = getnaturalvarendpc(node);
+  lua_assert(GET_OPCODE(s->code[oldvarendpc]) == OP_CLOSE);
+  closedreg = GETARG_A(s->code[oldvarendpc]);
+  if (closedreg > prevnactvar && s->nactvar > closedreg) {
+    BlockNode *new_node;
+    int startpc = node->startpc;
+    /* the OP_CLOSE is for a nested do-block, not this node */
+    int newvarendpc = (node->upval = 0, getnaturalvarendpc(node));
+    int i;
+    for (i = prevnactvar; i < closedreg; i++) {
+      LocVar *var = getlocvar1(s, i);
+      var->endpc = newvarendpc;
+      startpc = var->startpc;
+    }
+    new_node = createdoblock2(s->fs, startpc, oldvarendpc);
+    new_node->upval = 1;
+    if (node->firstchild != NULL) {
+      BlockNode *child = node->firstchild;
+      BlockNode *lastchild = NULL;
+      while (child != NULL && child->endpc < startpc) {
+        lastchild = child;
+        child = child->nextsibling;
+      }
+      if (lastchild != NULL)
+        lastchild->nextsibling = new_node;
+      else
+        node->firstchild = new_node;
+      new_node->firstchild = child;
+    }
+    else
+      node->firstchild = new_node;
   }
 }
 
@@ -4582,7 +4626,9 @@ static void genblockdebug1(DebugGenerator *s, BlockNode *node)
     }
     updatereferences1(s);
   }
-  maybedeletenode1(s, node, prevnode, nactvar);
+  if (!maybedeletenode1(s, node, prevnode, nactvar)) {
+    checkclosedreg1(s, node, nactvar);
+  }
   /* restore previous values */
   s->currnode = prevnode;
   s->nactvar = nactvar;
