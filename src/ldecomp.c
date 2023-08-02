@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
+#include <ctype.h>
 
 #define ldecomp_c
 #define LUA_CORE
@@ -797,6 +798,28 @@ static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
   }
   CHECK(fs, i == fs->sizeupvalues, "not enough OP_DATA codes for number of "
         "upvalues");
+}
+
+
+/*
+** returns true if NAME can be written as a field
+*/
+static int isfieldname(TString *name)
+{
+  const char *str;
+  lua_assert(name != NULL);
+  if (name->tsv.reserved != 0)
+    return 0;
+  str = getstr(name);
+  if (isalpha(*str) || *str == '_') {
+    size_t i;
+    for (i = 1; i < name->tsv.len; i++) {
+      if (!isalnum(str[i]) && str[i] != '_')
+        return 0;
+    }
+    return 1;
+  }
+  return 0;
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
@@ -7508,7 +7531,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.indexed.b = b;
       exp->u.indexed.c = RKASK(c);
       /* write as a field unless the field is a reserved word */
-      exp->u.indexed.isfield = (rawtsvalue(&fs->f->k[c])->tsv.reserved == 0);
+      exp->u.indexed.isfield = isfieldname(rawtsvalue(&fs->f->k[c]));
       break;
     case OP_GETTABLE_S:
     case OP_GETTABLE_N:
@@ -7952,7 +7975,7 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
   switch (o) {
     case OP_SETFIELD: case OP_SETFIELD_R1:
       /* OP_SETFIELD is used as the root if it should be written as a field */
-      if (rawtsvalue(&fs->f->k[b])->tsv.reserved > 0)
+      if (!isfieldname(rawtsvalue(&fs->f->k[b])))
         rootop = OP_SETTABLE;
       else
         rootop = OP_SETFIELD;
@@ -8029,7 +8052,7 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
   switch (o) {
     case OP_SETFIELD: case OP_SETFIELD_R1:
       /* OP_SETFIELD is used as the root if it should be written as a field */
-      if (rawtsvalue(&fs->f->k[b])->tsv.reserved > 0)
+      if (!isfieldname(rawtsvalue(&fs->f->k[b])))
         rootop = OP_SETTABLE;
       else
         rootop = OP_SETFIELD;
