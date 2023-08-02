@@ -616,6 +616,41 @@ static ExpNode *gettopexp(DFuncState *fs)
 }
 
 
+static int hasmultret(ExpNode *exp)
+{
+  return (exp->kind == ECALL || exp->kind == EVARARG);
+}
+
+
+static int getexpline(ExpNode *exp)
+{
+  int line = exp->line;
+  if (exp->kind == ECONSTRUCTOR && exp->aux > 0)
+    line = exp->aux;  /* use line-mapping of OP_SETLIST or final hash item */
+  return line;
+}
+
+
+static int gethighestexpreg(ExpNode *exp)
+{
+  int numextraregs = 0;
+  if (hasmultret(exp))
+    numextraregs = exp->kind == ECALL ? exp->u.call.nret-1 : exp->aux-2;
+  return exp->info + numextraregs;
+}
+
+
+/*
+** check if an expression returns multiple values REG is the last one clobbered
+*/
+static int hasmultretuptoreg(ExpNode *exp, int reg)
+{
+  if (hasmultret(exp))
+    return gethighestexpreg(exp) == reg;
+  return 0;
+}
+
+
 #ifdef LUA_DEBUG
 static const char *getunoprstring(UnOpr op);
 static const char *getbinoprstring(BinOpr op);
@@ -5863,19 +5898,13 @@ static void initexplistiter2(struct ExpListIterator *iter, DFuncState *fs,
 */
 static ExpNode *getnextexpinlist2(struct ExpListIterator *iter, int i)
 {
+  int nextreg = iter->firstreg+i;
   ExpNode *nextexp;
   lua_assert(iter->nextexp != NULL);
   iter->lastexp = iter->nextexp;
   /* first try to follow the next expression chained to the current one */
   nextexp = index2exp(iter->fs, iter->nextexp->auxlistnext);
-  if (nextexp == NULL)
-    /* if NULL, the previous expression is more than one register removed; see
-       if there is a pending expression in the next register explicitly */
-    nextexp = getexpinreg2(iter->fs, iter->firstreg+i);
-  if (nextexp == NULL) {  /* multiple nil's */
-    /* if NULL, there is a previous nil expression that occupies this register
-       */
-    lua_assert(iter->lastexp != NULL);
+  if (nextexp == NULL || nextexp->info > nextreg) {
     nextexp = iter->lastexp;
     /* this expression has already been dumped and will be dumped again */
     nextexp->pending = 1;
@@ -6160,7 +6189,15 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
               nextarrayitem = NULL;
               break;
             }
-            nextarrayitem = getnextexpinlist2(&iter, reg);
+            {
+              ExpNode *nextinlist = getnextexpinlist2(&iter, reg);
+              if (nextinlist != nextarrayitem)
+                nextarrayitem = nextinlist;
+              else {
+                nextarrayitem = NULL;
+                nextinlist->pending = 0;
+              }
+            }
           }
         }
         if (linestep) {
@@ -6948,11 +6985,11 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
     ExpNode *src = (exp->kind == ESTORE) ? index2exp(fs, exp->aux) : exp;
     if (exp->u.store.srcreg == -1)
       lua_assert(src != NULL);
-    if (src != NULL) {
+    if (src != NULL && src != lastsrc) {
       /* for N remaining variables, if there are exactly N expressions
          remaining and they are all nil, do not write them, the entire
          assignment is just one `nil', which needs to be written */
-      if (i != 0 && src->kind == ENIL && src->aux == lastsrcreg)
+      if (i != 0 && src != exp && src->kind == ENIL && src->aux == lastsrcreg)
         src->pending = 0;  /* skip */
       else {
         if (i != 0)
@@ -7100,9 +7137,11 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
   for (i = firstreg; i <= lastreg; i++) {
     ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
     setreglocal2(fs, i, getlocvar2(fs, fs->nactvar++));
-    if (haveRHS == 0)
+    if (haveRHS == 0) {
+      exp->pending = 0;
       continue; /* don't write  */
-    else if (exp != NULL) {
+    }
+    else if (exp != NULL && exp != lastexp) {
       if (nvars > 1 && exp->kind == ENIL && exp->aux == lastreg)
         exp->pending = 0;
       else {
@@ -7140,7 +7179,6 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
   if (seenfirstexp == 0) {
     /* no expressions have been dumped, but the items in the hold need to be
        discharged and the line needs to be updated */
-    firstexp->pending = 0;
     D->needspace = 0;
     predumpexp2(D,fs,firstexp);
     postdumpexp2(D,fs,firstexp);
@@ -7197,6 +7235,11 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     return exp;
   if (exp2index(fs, exp) == sa->pendingcond.e)
     return exp;
+  /* a call statement does not go into a register */
+  if (exp->kind == ECALL && exp->u.call.nret == 0) {
+    exp->previndex = getslotdesc(fs, reg)->u.expindex;
+    return exp;
+  }
   if (!test_reg_property(fs, reg, REG_LOCAL)) {
     int link, lastreg;
     if (exp->kind == ENIL || exp->kind == ESELF)
@@ -7210,8 +7253,6 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     lua_assert(isregvalid(fs, lastreg));
     link = fs->firstfree <= lastreg;
     if (link) {
-      D(lprintf("updating fs->firstfree from %d to %d\n",
-                fs->firstfree, lastreg+1));
       fs->firstfree = lastreg+1;
     }
     if (exp->kind == ECONDITIONAL)
@@ -7244,6 +7285,29 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
     }
     if (exp->kind == ESELF)
       pushexp2(fs, reg+1, exp, 0);
+    else if (exp->kind != ENIL) {
+      int i;
+      for (i = reg+1; i <= lastreg; i++)
+        pushexp2(fs, i, exp, 0);
+    }
+    else {  /* exp->kind == ENIL */
+      /* push an expression node for each register clobbered by LOADNIL */
+      int i;
+      int last = exp->aux;
+      int prev = exp2index(fs, exp);
+      for (i = reg+1; i <= last; i++) {
+        ExpNode *prevexp;
+        pushexp2(fs, i-1, exp, link);
+        exp = newexp(fs);
+        prevexp = index2exp(fs, prev);
+        *exp = *prevexp;
+        exp->info = i;
+        exp->auxlistprev = prev;
+        prev = exp2index(fs, exp);
+        prevexp->auxlistnext = prev;
+      }
+      reg = last;
+    }
     pushexp2(fs, reg, exp, link);
     if (splitnil != NULL) *splitnil = 0;
     return exp;
@@ -7316,44 +7380,12 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
       else if (fs->D->matchlineinfo == 0) {
         exp->line = exp->closeparenline = fs->D->nextlinenumber;
       }
+      if (splitnil != NULL) *splitnil = (lastnilreg != laststorereg);
       /* add a new expression for the rest of the registers */
-      return addexptoreg2(sa, fs, exp->info, exp, splitnil);
+      return addexptoreg2(sa, fs, exp->info, exp, NULL);
     }
     exp->previndex = sa->laststore;
     sa->laststore = exp2index(fs, exp);
-    if (exp->kind == ENIL && exp->aux >= fs->nactvar) {
-      ExpNode *new_exp;
-      ExpNode node = *exp;  /* the node starts as local; the stack is about to
-                               be discharged; add it to the stack after */
-      node.info = fs->nactvar;  /* start this node at the first pending */
-      exp->aux = fs->nactvar-1;  /* end the original node at the last local */
-      dischargestores2(sa, fs);  /* store some of the nil's */
-      new_exp = newexp(fs);/* put the rest of the nil's in a new pending node */
-      *new_exp = node;
-      /* if this node loads nil into the first open register, change its line so
-         that it gets emitted with the first opcode of the open expression,
-         which is likely how it was in the source code; this has to be done here
-         since the node has already been split and is no longer shared, so there
-         will be no OPENEXPRNILDEBT when entering the open expression in
-         `openexpr2'; otherwise, OPENEXPRNILDEBT is set and the new nil node
-         will be created in `openexpr2', and its line will be set then */
-      if (sa->openexprkind == -1 && sa->nextopenexpr != NULL &&
-          sa->nextopenexpr->startpc == sa->pc+1 &&
-          fs->nactvar == sa->nextopenreg) {
-        lua_assert(ispcvalid(fs, sa->pc+1));
-        if (GET_OPCODE(fs->f->code[sa->pc+1]) != OP_CLOSURE) {
-          new_exp->line = getline2(fs, sa->pc+1);
-          new_exp->closeparenline = new_exp->line;
-        }
-        else if (sa->nextopenexpr->kind == CALLPREP) {
-          new_exp->line = getline2(fs, sa->nextopenexpr->endpc);
-          new_exp->closeparenline = new_exp->line;
-        }
-      }
-      if (splitnil != NULL) *splitnil = 1;
-      lua_assert(!test_reg_property(fs, fs->nactvar, REG_LOCAL));
-      return addexptoreg2(sa, fs, new_exp->info, new_exp, NULL);
-    }
     if (splitnil != NULL) *splitnil = 0;
     return exp;
   }
@@ -8254,6 +8286,8 @@ static ExpNode *getforloopbasenode2(StackAnalyzer *sa, DFuncState *fs,
   if (exp == NULL) {
     exp = addnilexp2(sa, fs, base, node->startpc - (node->startpc > 0));
     exp->aux = base+2+bias;
+    addexptoreg2(sa, fs, base, exp, NULL);
+    return checkexpinreg2(fs, base);
   }
   return exp;
 }
@@ -8314,7 +8348,7 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   const int lastvar = base + 3 + sa->numforloopvars - 1;
   /* get the pending initial expression before creating the control variables */
   ExpNode *exp = getforloopbasenode2(sa, fs, node, base, bias);
-  int i, singleexp;
+  int i, lastreg = base + nexp - 1;
   /* create the control variables */
   commitcontrolvars2(fs, base, 3);
   /* create the loop variables */
@@ -8333,21 +8367,13 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   }
   addliteral2buff(H, b, " in ");
   addholditem2(D, header, luaZ_buffer(b), luaZ_bufflen(b), 0);
-  singleexp = (exp->kind == ENIL && exp->aux == base+2) ||
-              (exp->kind == EVARARG && exp->info + exp->aux - 2 == base+2) ||
-              (exp->kind == ECALL && exp->info + exp->u.call.nret-1 == base+2);
   /* dump expression list */
   initexplistiter2(&iter, fs, base, exp);
   dumpexp2(D, fs, exp, 0);
-  if (singleexp == 0) {
-    for (i = 1; i < nexp; i++) {
-      DumpComma(D);
-      exp = getnextexpinlist2(&iter, i);
-      dumpexp2(D, fs, exp, 0);
-      if ((exp->kind == EVARARG && exp->info + exp->aux - 1 == base+nexp) ||
-          (exp->kind == ECALL && exp->info + exp->u.call.nret == base+nexp))
-        break;
-    }
+  for (i = 1; i < nexp && !hasmultretuptoreg(exp, lastreg); i++) {
+    DumpComma(D);
+    exp = getnextexpinlist2(&iter, i);
+    dumpexp2(D, fs, exp, 0);
   }
   DumpLiteral(" do", D);
   D->needspace = 1;
