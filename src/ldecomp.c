@@ -1982,33 +1982,6 @@ static void clearblocksatpc1(DFuncState *fs, BlockNode **chain, int pc)
 
 
 /*
-** readjust NEXTBRANCH after removing block nodes in an open or conditional
-** expression
-*/
-static void adjustnextbranch1(DFuncState *fs, BlockNode *nextsibling,
-                              BlockNode **chain, int *nextbranchtarget)
-{
-  BlockNode *nextbranch;
-  lua_assert(chain != NULL);
-  lua_assert(nextbranchtarget != NULL);
-  /* also update NEXTBRANCH */
-  if (nextsibling && nextsibling->type == BL_IF) {
-    nextbranch = nextsibling;
-    lua_assert(nextbranch->startpc-1 >= 0 &&
-               nextbranch->startpc-1 < fs->f->sizecode);
-    lua_assert(GET_OPCODE(fs->f->code[nextbranch->startpc-1]) == OP_JMP);
-    *nextbranchtarget = nextbranch->startpc-1 + 1 +
-                       GETARG_sBx(fs->f->code[nextbranch->startpc-1]);
-  }
-  else {
-    nextbranch = NULL;
-    *nextbranchtarget = -1;
-  }
-  *chain = nextbranch;
-}
-
-
-/*
 ** finds the earliest possible endpc for a SETLIST open expression with only
 ** hash items (the exact number cannot be known if operand C is graeter than 16
 ** due to the conversion with `luaO_fb2int')
@@ -2956,9 +2929,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
   struct blockstates1 s;
   /* NEXTSIBLING is the next chronological block node that has been created */
   BlockNode *nextsibling = NULL;
-  /* NEXTBRANCH is the next if-branch block node that has been created */
-  BlockNode *nextbranch = NULL;
-  int nextbranchtarget = -1;
   int endpc;  /* endpc of the current block */
   int nextstat = -1;
   int closedloopreg = -1;
@@ -3061,7 +3031,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               /* there can be no blocks inside a testset expression, this was
                  a false positive; unmark the target as a block-ending */
               unset_ins_property(fs, target-1, INS_BLOCKEND);
-              D(lprintf("nextbranch = %B\n", nextbranch));
               D(lprintf("cleaning up testset expression from (%i-%i)\n",
                      pc, target-1));
               D(lprintf("--\n"));
@@ -3071,10 +3040,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                 clearblocksatpc1(fs, &nextsibling, testsetpc);
               }
               D(lprintf("--\n"));
-              adjustnextbranch1(fs, nextsibling, &nextbranch,&nextbranchtarget);
-              D(lprintf("nextbranch = %B\n", nextbranch));
-              if (nextbranchtarget != -1)
-                D(lprintf("nextbranchtarget = (%i)\n", nextbranchtarget));
             }
           }
           else { /* part of a pending testset expression */
@@ -3650,7 +3615,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
              this constructor */
           scanforhashitems1(ca, fs, newopenexpr(fs, a, pc, -1, HASHTABLEPREP),
                             c, a, &nextsibling);
-          adjustnextbranch1(fs, nextsibling, &nextbranch, &nextbranchtarget);
         }
         else
           newopenexpr(fs, a, pc, pc, EMPTYTABLE);
