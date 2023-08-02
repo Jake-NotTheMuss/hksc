@@ -4430,6 +4430,20 @@ checkclosedreg1(DebugGenerator *s, BlockNode *node, lu_byte prevnactvar)
 }
 
 
+static int isbranchjump(DFuncState *fs, int pc)
+{
+  return (test_ins_property(fs, pc, INS_BRANCHFAIL) ||
+          test_ins_property(fs, pc, INS_BRANCHPASS));
+}
+
+
+static int isloopjump(DFuncState *fs, int pc)
+{
+  return (test_ins_property(fs, pc, INS_LOOPFAIL) ||
+          test_ins_property(fs, pc, INS_LOOPPASS));
+}
+
+
 static void genblockdebug1(DebugGenerator *s, BlockNode *node)
 {
   BlockNode *prevnode = s->currnode;
@@ -4476,24 +4490,36 @@ static void genblockdebug1(DebugGenerator *s, BlockNode *node)
     }
     pc = s->pc;
     o = s->o;
-    /* avoid creating variables inside a branch header */
-    if (test_ins_property(s->fs, pc, INS_BRANCHFAIL) ||
-        test_ins_property(s->fs, pc, INS_BRANCHPASS)) {
+    /* avoid creating variables inside a branch header or repeat-loop footer */
+    if (isbranchjump(s->fs, pc) ||
+        (node->type == BL_REPEAT && isloopjump(s->fs, pc))) {
+      int pclimit = isbranchjump(s->fs, pc) ? nextchildstartpc-1 : node->endpc;
       updatereferences1(s);
-      while (s->pc < nextchildstartpc-1) {
+      while (s->pc < pclimit) {
         advance1(s);
         updatereferences1(s);
-      }
-      continue;
-    }
-    /* avoid creating variables inside a repeat-loop footer */
-    if ((test_ins_property(s->fs, pc, INS_LOOPFAIL) ||
-         test_ins_property(s->fs, pc, INS_LOOPPASS)) &&
-        node->type == BL_REPEAT) {
-      updatereferences1(s);
-      while (s->pc < node->endpc) {
-        advance1(s);
-        updatereferences1(s);
+        /* check if there are variables that cannot exist; if the branch
+           condition uses a local register to evluate its condition, the
+           register must be temporary */
+        if (beginseval(s->o, s->a, s->b, s->c, 0)) {
+          if (s->nactvar > s->a) {
+            int numtodelete = s->nactvar - s->a;
+            s->nlocvars -= numtodelete;
+            s->nactvar -= numtodelete;
+            /* revert back to the last valid RegNote entry */
+            if (s->fs->nregnotes > 0) {
+              int n = s->nregnote-1;
+              while (n > 0) {
+                RegNote *note = &s->fs->a->regnotes[n];
+                if (note->pc < pc || note->reg < s->nactvar)
+                  break;
+                n--;
+              }
+              s->nregnote = n+1;
+              updatenextregnote1(s);
+            }
+          }
+        }
       }
       continue;
     }
