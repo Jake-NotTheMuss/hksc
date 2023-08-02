@@ -1865,8 +1865,6 @@ static void openexpr1(CodeAnalyzer *ca, DFuncState *fs, int firstreg, int kind,
         break;
       case OP_NEWTABLE:
         if (kind == VOIDPREP) {
-          CHECK(fs, b == 0, "no OP_SETLIST found for OP_NEWTABLE even though "
-                  "OP_NEWTABLE has non-zero amount of list items");
           if (c) {
             /* walk back up the code vector to find the earliest possible end of
                this constructor */
@@ -1995,19 +1993,50 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
                               int argC, int firstreg, BlockNode **chain)
 {
   const Instruction *code = ca->code;
-  int minendpc, endpc;
+  int endpc = e->startpc;
   int pc;  /* iterator */
   int numhashitems = 0;  /* number of hash items found so far */
   int minhashsize = luaO_fb2int(argC-1)+1;
   int maxhashsize = luaO_fb2int(argC);
-  lua_assert(argC > 0);
-  lua_assert(minhashsize > 0);
-  lua_assert(e != NULL);
-  lua_assert(e->kind == HASHTABLEPREP);
-  lua_assert(ispcvalid(fs, e->startpc));
-  lua_assert(GET_OPCODE(code[e->startpc]) == OP_NEWTABLE);
-  lua_assert(GETARG_B(code[e->startpc]) == 0);
+  (void)minhashsize;
   for (pc = e->startpc+1; pc < fs->f->sizecode-1; pc++) {
+    Instruction i = code[pc];
+    OpCode o = GET_OPCODE(i);
+    int a = GETARG_A(i);
+    int b = GETARG_B(i);
+    int c = GETARG_C(i);
+    if (o == OP_MOVE && b == firstreg) {
+      /* found the end, as the constructor is being moved to a local variable */
+      break;
+    }
+    /* check if this opcode sets a table index */
+    if (IS_OP_SETTABLE(o)) {
+      /* check if a RegNote entry can be added for the source register */
+      if (c < firstreg)
+        addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
+      if (fs->D->usedebuginfo && GET_OPCODE(code[pc-1]) == OP_CLOSURE) {
+        const Proto *p = fs->f->p[GETARG_Bx(code[pc-1])];
+        if (p->name != NULL)
+          break;  /* cannot have a named function inside a constructor */
+      }
+      if (a == firstreg) {
+        numhashitems++;
+        endpc = pc;
+        if (numhashitems == maxhashsize)
+          break;
+      }
+      else if (a < firstreg)
+        break;
+    }
+    /* if there is any other store code, the constructor has ended */
+    else if (isstorecode(o))
+      break;
+    else if (beginseval(o, a, b, c, 0) && a <= firstreg)
+      break;
+  }
+  /* now that the constructor length is known, clear any if-statements inside
+     the constructor and add RegNotes for the open expression */
+  for (pc = e->startpc+1; pc < endpc; pc++) {
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
@@ -2016,51 +2045,9 @@ static void scanforhashitems1(CodeAnalyzer *ca, DFuncState *fs, OpenExpr *e,
     if (chain != NULL)
       clearblocksatpc1(fs, chain, pc);
     applyregnote(fs, firstreg, pc, o, a, b, c);
-    /* check if this opcode sets a table index */
-    if (IS_OP_SETTABLE(o)) {
-      /* check if a RegNote entry can be added for the source register */
-      if (c < firstreg) {
-        addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
-      }
-      if (a == firstreg) {
-        numhashitems++;
-        if (numhashitems == minhashsize)
-          break;  /* found earliest possible end */
-      }
-    }
   }
-  minendpc = endpc = pc;
-  for (; pc < fs->f->sizecode-1 && numhashitems < maxhashsize; pc++) {
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
-    int b = GETARG_B(i);
-    int c = GETARG_C(i);
-    if (o == OP_MOVE && b == firstreg) {
-      /* found the end */
-      for (pc = minendpc; pc < endpc; pc++) {
-        i = code[pc];
-        o = GET_OPCODE(i);
-        a = GETARG_A(i);
-        b = GETARG_B(i);
-        c = GETARG_C(i);
-        clearblocksatpc1(fs, chain, pc);
-        applyregnote(fs, firstreg, pc, o, a, b, c);
-      }
-      break;
-    }
-    /* check if this opcode sets a table index */
-    if (IS_OP_SETTABLE(o)) {
-      /* check if a RegNote entry can be added for the source register */
-      if (c < firstreg) {
-        addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
-      }
-      if (a == firstreg) {
-        numhashitems++;
-        endpc = pc;
-      }
-    }
-  }
+  if (numhashitems == 0)
+    e->kind = EMPTYTABLE;
   e->endpc = endpc;
   checkmoveisnext(fs, e->startpc, endpc, firstreg);
 }
@@ -3596,10 +3583,10 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
       case OP_DATA:
         break;
       case OP_NEWTABLE:
-        /* table constructors with only hash-items will not emit OP_SETLIST, nor
-           empty table constructors, so they are detected here */
-        CHECK(fs, b == 0, "no OP_SETLIST found for OP_NEWTABLE even though "
-                "OP_NEWTABLE has non-zero amount of list items");
+        /* when constructors end with OP_SETLIST, they will be handled as an
+           open expression, so this is only for constructors without OP_SETLIST,
+           which could sitll have a non-zero array size if using a compiler
+           extension or patching bytecode */
         if (c) {
           /* walk back up the code vector to find the earliest possible end of
              this constructor */
