@@ -8867,7 +8867,8 @@ static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
   nextline = getline2(fs, node->endpc+1);
   line = D->linenumber;
   if (line + (sa->deferleaveblock + 1) <= nextline) {
-    if (inmainfunc && node->endpc+1 == fs->f->sizecode-1)
+    if (inmainfunc && node->endpc+1 == fs->f->sizecode-1 &&
+        sa->deferleaveblock < 1)
       line = nextline;
     else
       line = line + 1;
