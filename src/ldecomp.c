@@ -5355,9 +5355,16 @@ static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
      than this store, add extra parens around it to make it end on the line that
      this store is mapped to */
   if (fs->D->matchlineinfo && chainempty) {
-    ExpNode *prev = index2exp(fs, exp2index(fs, exp)-1);
-    if (prev != NULL && prev->line != exp->line && prev->line != 0)
-      prev->closeparenline = exp->line;
+    ExpNode *src = index2exp(fs, sa->lastexpindex);
+    if (src != NULL) {
+      int line = getexpline(src);
+      if (line != exp->line && line != 0) {
+        if (src->kind == ECONSTRUCTOR && src->aux <= 0)
+          src->aux = exp->line;
+        else
+          src->closeparenline = exp->line;
+      }
+    }
   }
   if (chainempty) {
     int issingle;
@@ -6452,13 +6459,18 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
   int needblock;
   lua_assert(isregvalid(fs, reg));
   if (D->matchlineinfo && nret != 0) {
-    ExpNode *top = gettopexp(fs);
-    /* if this return code is mapped to a different line than the last
-       expression to be returned, wrap that expression in parens and put the
-       closing paren on the line that the return is mapped to; this preserves
-       line info when recompiling */
-    if (top != NULL && line != top->line)
-      top->closeparenline = line;
+    ExpNode *last = getexpinreg2(fs, (nret == -1) ? reg : reg+nret-1);
+    if (last != NULL) {
+      int expline = getexpline(last);
+      if (last->kind == ECLOSURE)
+        expline = getline2(fs, last->aux);
+      /* if this return code is mapped to a different line than the last
+         expression to be returned, wrap that expression in parens and put the
+         closing paren on the line that the return is mapped to; this preserves
+         line info when recompiling */
+      if (last != NULL && line != expline)
+        last->closeparenline = line;
+    }
   }
   needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
   if (pc == fs->f->sizecode-1)
@@ -8155,11 +8167,15 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
   exp->u.store.aux1 = aux1;
   exp->u.store.aux2 = aux2;
   exp->u.store.rootop = rootop;
+  exp->line = getline2(fs, pc);
   if (!istempreg(fs, srcreg))
     exp->aux = 0;
-  else
-    exp->aux = getslotdesc(fs, srcreg)->u.expindex;
-  exp->line = getline2(fs, pc);
+  else {
+    ExpNode *srcexp = getexpinreg2(fs, srcreg);
+    if (srcexp && srcexp->kind == ECLOSURE)
+      exp->line = 0;
+    exp->aux = exp2index(fs, srcexp);
+  }
   exp->closeparenline = exp->line;
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->dependondest = 0;
@@ -8240,14 +8256,28 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
             int reg = exp->u.store.aux2;
             if (!istempreg(fs, reg))
               reg = exp->u.store.srcreg;
-            else
+            else {
               /* use AUXLISTPREV to hold the index of the pending key expression
               */
               exp->auxlistprev = exp2index(fs, getexpinreg2(fs, b));
-            if (istempreg(fs, reg))
+            }
+            if (istempreg(fs, reg)) {
               setfirstfree(fs, reg);
+              /* if the last used reg holds the current table constructor, then
+                 reset its firstarrayitem as it now points to a free register */
+              if (reg - 1 == a) {
+                tab->u.cons.firstarrayitem = 0;
+              }
+            }
+          }
+          if (exp->aux) {
+            ExpNode *value = index2exp(fs, exp->aux);
+            int line = getexpline(value);
+            if (line != exp->line && line != 0)
+              value->closeparenline = exp->line;
           }
           tab->u.cons.nhash++;
+          sa->lastexpindex = exp2index(fs, tab);
         }
       }
     }
@@ -8966,9 +8996,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         if (fs->prev == NULL && node->type == BL_FUNCTION &&
             D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
           int retline = getline2(fs, pc+1);
-          lua_assert(GET_OPCODE(code[pc+1]) == OP_RETURN);
-          if (retline != exp->line && exp->line != 0) {
-            D(lprintf("splitnil = %d\n", splitnil));
+          int expline = getexpline(exp);
+          if (retline != expline && expline != 0) {
             if (splitnil) {
               lua_assert(exp->kind == ENIL);
               exp->line = exp->closeparenline = retline;
