@@ -1357,6 +1357,7 @@ static void debugregnotesummary(DFuncState *fs)
     "REG_NOTE_CLOSED",
     "REG_NOTE_UPVALUE",
     "REG_NOTE_NONRELOC",
+    "REG_NOTE_MOVE",
     "REG_NOTE_CHECKTYPE"
   };
   RegNote *regnote;
