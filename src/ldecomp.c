@@ -5814,7 +5814,8 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
     if (istempreg(fs, rkkey))
       dumpexpoperand2(D, fs, index2exp(fs, exp->auxlistprev), exp, 0);
     else {
-      checklineneeded2(D, fs, exp);
+      if (exp->line)
+        checklineneeded2(D, fs, exp);
       dumpRK2(D, fs, rkkey, 0);
     }
     DumpLiteral("] =",D);
