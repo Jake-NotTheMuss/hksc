@@ -5648,8 +5648,9 @@ static void clearslots2(DFuncState *fs, int reg, int n)
   lua_assert(isregvalid(fs, reg + n - 1));
   lua_assert(istempreg(fs, reg));
   for (i = reg; i < reg + n; i++) {
-    getslotdesc(fs, reg)->u.expindex = exp2index(fs, NULL);
+    getslotdesc(fs, i)->u.expindex = exp2index(fs, NULL);
   }
+  fs->firstfree = reg;
 }
 
 
