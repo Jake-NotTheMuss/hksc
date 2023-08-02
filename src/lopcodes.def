@@ -189,8 +189,8 @@ DEFCODE1(LT, ABC, 1, 0, RK, RK, 0)
 DEFCODE1(LT_BK, ABC, 1, 0, RK, RK, 0)
 
 /* OP_LE  A B C  if ((RK(B) <= RK(C)) ~= A) then pc++ */
-DEFCODE1(LE, ABC, 1, 0, R, K, 0)
-DEFCODE1(LE_BK, ABC, 1, 0, K, K, 0)
+DEFCODE1(LE, ABC, 1, 0, RK, RK, 0)
+DEFCODE1(LE_BK, ABC, 1, 0, RK, RK, 0)
 
 /* begin T7 extensions */
 /******************************************************************************/
