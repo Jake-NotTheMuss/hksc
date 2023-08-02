@@ -7560,6 +7560,13 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
           /* get number of array expressions pushed */
           nitems = fs->firstfree-(tab->info+1);
         }
+        /* link together groups of stack items separated by SETLIST */
+        if (tab->aux != 0 && tab->u.cons.firstarrayitem) {
+          ExpNode *node = index2exp(fs, tab->u.cons.firstarrayitem);
+          while (node->auxlistnext != 0)
+            node = index2exp(fs, node->auxlistnext);
+          node->auxlistnext = exp2index(fs, getexpinreg2(fs, tab->info+1));
+        }
         tab->auxlistnext = 0;
         tab->u.cons.narray += nitems;
         fs->curr_constructor = exp2index(fs, tab);
