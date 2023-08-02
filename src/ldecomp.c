@@ -7437,7 +7437,6 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
     exp->line = getline2(fs, sa->nextopenexpr->endpc);
     exp->closeparenline = exp->line;
   }
-  exp->dependondest = 0;
   exp->leftside = 0;
   exp->pending = 1;
   addexptoreg2(sa, fs, exp->info, exp, NULL);
@@ -7749,7 +7748,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       return NULL;
   }
   if (exp->kind == EBINOP) {
-    exp->dependondest = (a == b || a == c);
     if (!ISK(b) && !test_reg_property(fs, b, REG_LOCAL)) {
       /* B references a pending expression in register B, save the index of the
          current expression in B */
@@ -7764,7 +7762,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     }
   }
   else if (exp->kind == EUNOP) {
-    exp->dependondest = (a == b);
     exp->u.unop.needinnerparen = 0;
     /* B must be a register */
     if (!test_reg_property(fs, b, REG_LOCAL)) {
@@ -7773,7 +7770,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
     }
   }
   else if (exp->kind == EINDEXED || exp->kind == ESELF) {
-    exp->dependondest = (a == b || a == c);
     CHECK(fs, isregvalid(fs, b), "invalid register operand for indexed table");
     if (!test_reg_property(fs, b, REG_LOCAL)) {
       exp->u.indexed.b = -1;
@@ -7785,8 +7781,6 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.indexed.cindex = getslotdesc(fs, c)->u.expindex;
     }
   }
-  else
-    exp->dependondest = 0;
   /* discharge stores now before pushing a new expression node */
   if (exp->kind != ESTORE && pc >= sa->pendingcond.target) {
     if (sa->laststore) {
@@ -8243,7 +8237,6 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
   exp->line = getline2(fs, pc);
   exp->closeparenline = exp->line;
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
-  exp->dependondest = 0;
   exp->leftside = 0;
   exp->pending = 0;
   exp->u.store.srcreg = srcreg;
@@ -8300,7 +8293,6 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
   }
   exp->closeparenline = exp->line;
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
-  exp->dependondest = 0;
   exp->leftside = 0;
   exp->pending = 0;
   exp->u.store.srcreg = srcreg;

@@ -264,7 +264,6 @@ typedef struct ExpNode {
   int line;  /* which line is this on */
   int closeparenline;
   int endlabel;  /* next conditional jump target or -1 */
-  lu_byte dependondest; /* does this node use its destination as a source */
   lu_byte leftside; /* is this node the left operand in a binary operation */
   lu_byte pending;  /* true if this expression has not yet been emitted */
   lu_byte goiftrue;
