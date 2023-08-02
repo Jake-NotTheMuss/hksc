@@ -140,10 +140,18 @@ PASS2_SRC=	75_locvar.lua \
 	89_loadnil_before_openexpr.lua \
 	90_b2b_nil_explist.lua \
 	91_selfcall.lua \
-	92_selfcall_reg.lua
+	92_selfcall_reg.lua \
+	95_emptyconstructor.lua \
+	96_arrayconstructor.lua \
+	97_hashconstructor.lua \
+	98_mixedconstructor.lua \
+	99_newtable_arg.lua \
+	100_conditional.lua \
+	101_compare.lua \
+	102_conditional2.lua
 
 # tests interesting for compiler/decompiler
-DECOMPILER_SRC=	99_newtable_arg.lua
+DECOMPILER_SRC=
 
 # all the tests that can be run
 ALL_SRC=$(NOPASS1_SRC) $(PASS1_SRC) $(PASS2_SRC) $(DECOMPILER_SRC)
