@@ -437,6 +437,16 @@ static int istailblock(const BlockNode *parent, const BlockNode *child) {
   }
   return (child->endpc + hasendcode == parent->endpc);
 }
+
+static int issinglelinefunc(DFuncState *fs, const BlockNode *func)
+{
+  const Proto *f = fs->f;
+  lua_assert(func->type == BL_FUNCTION);
+  if (fs->D->usedebuginfo == 0)
+    return 0;
+  return (getline(f, func->startpc) == getline(f, func->endpc));
+}
+
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
@@ -8587,8 +8597,14 @@ updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   DecompState *D = fs->D;
   int line = D->linenumber;
   int nextline;
-  if (D->matchlineinfo)
-    nextline = getvalidline2(D, fs, node->startpc);
+  if (D->matchlineinfo) {
+    if (node->type == BL_FUNCTION && issinglelinefunc(fs, node)) {
+      updateline2(fs, getline(fs->f, 0), D);
+      return;
+    }
+    else
+      nextline = getvalidline2(D, fs, node->startpc);
+  }
   else
     nextline = D->nextlinenumber + sa->numblockstartatpc;
   if (nextline - sa->numblockstartatpc > line)
