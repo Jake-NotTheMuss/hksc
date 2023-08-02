@@ -6073,8 +6073,10 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       key = (c == -1) ? index2exp(fs, exp->u.indexed.cindex) : NULL;
       if (needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
-      if (b == -1)
+      if (b == -1) {
         dumpexpoperand2(D, fs, tab, exp, SUBEXPR_PRIORITY);
+        D->needspace = 0;
+      }
       else
         holdRK2(D, fs, b, &holdleft, 0);
       if (isfield)
@@ -6083,7 +6085,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         addliteralholditem2(D, &holditem, "[", 0);
       else
         addliteralholditem2(D, &holditem, ":", 0);
-      D->needspace = 0;
       if (c == -1) {
         lua_assert(isfield == 0);
         if (isself == 0)
