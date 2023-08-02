@@ -1605,6 +1605,10 @@ static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
          beginning of the expression. */
       int sbx = GETARG_sBx(i);
       lua_assert(sbx >= 0);
+      if (test_ins_property(fs, pc+1, INS_BOOLLABEL) &&
+          test_ins_property(fs, pc+2, INS_BOOLLABEL) && sbx == 2) {
+        return 0;
+      }
       lua_assert(pc + 1 + sbx <= jumplimit);
       (void)sbx;
       return 0;
