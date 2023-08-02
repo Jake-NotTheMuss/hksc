@@ -1145,47 +1145,52 @@ static void DumpTString(const TString *ts, DecompState *D)
 }
 
 
-/*
-** prints a Lua object as it would appear in source code to output
-*/
-static void DumpTValue(const TValue *o, DecompState *D)
+static const char *TValueToString(const TValue *o, DecompState *D)
 {
+  TString *res;
   switch (ttype(o))
   {
     case LUA_TNIL:
-      DumpLiteral("nil",D);
-      break;
+      return "nil";
     case LUA_TBOOLEAN:
-      if (bvalue(o)) DumpLiteral("true",D);
-      else DumpLiteral("false",D);
-      break;
+      return bvalue(o) ? "true" : "false";
     case LUA_TLIGHTUSERDATA: {
       char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
       luaO_ptr2str(s, pvalue(o));
-      DumpString(s,D);
+      res = luaS_new(D->H, s);
       break;
     }
     case LUA_TNUMBER: {
       char s[LUAI_MAXNUMBER2STR];
-      sprintf(s, "%g", nvalue(o));
-      DumpString(s,D);
+      lua_number2str(s, nvalue(o));
+      res = luaS_new(D->H, s);
       break;
     }
     case LUA_TSTRING:
-      DumpTString(luaO_kstring2print(D->H, rawtsvalue(o)), D);
+      res = luaO_kstring2print(D->H, rawtsvalue(o));
       break;
     case LUA_TUI64: {
       char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
       lua_ui642str(s+2, ui64value(o));
       s[0] = '0'; s[1] = 'x';
       strcat(s, "hl");
-      DumpString(s,D);
+      res = luaS_new(D->H, s);
       break;
     }
     default:
-      lua_assert(0);
-      break;
+      return "";
   }
+  return getstr(res);
+}
+
+
+/*
+** prints a Lua object as it would appear in source code to output
+*/
+static void DumpTValue(const TValue *o, DecompState *D)
+{
+  const char *str = TValueToString(o, D);
+  DumpString(str, D);
 }
 
 
@@ -5731,6 +5736,26 @@ static void dumpRK2(DecompState *D, DFuncState *fs, int reg, ExpNode *op)
 }
 
 
+static void holdRK2(DecompState *D, DFuncState *fs, int reg,
+                    struct HoldItem *hold, int addspace)
+{
+  const char *str;
+  size_t len;
+  if (ISK(reg)) {
+    str = TValueToString(&fs->f->k[INDEXK(reg)], D);
+    len = strlen(str);
+  }
+  else {
+    TString *varname;
+    lua_assert(test_reg_property(fs, reg, REG_LOCAL));
+    varname = getslotdesc(fs, reg)->u.locvar->varname;
+    str = getstr(varname);
+    len = varname->tsv.len;
+  }
+  addholditem2(D, hold, str, len, addspace);
+}
+
+
 static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
                      unsigned int limit);
 
@@ -5863,7 +5888,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
 {
   /* NEEDPARENFORLINEINFO is for using extra parens to preserve line info */
   int needparenforlineinfo = (exp->line != exp->closeparenline);
-  struct HoldItem holdparen;
+  struct HoldItem holdparen, holdleft;
   lua_assert(exp != NULL);
   lua_assert(exp->pending);
   exp->pending = 0;
@@ -5903,6 +5928,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
     case EBINOP: { /* binary operation */
       ExpNode *o1, *o2;
       BinOpr op = exp->u.binop.op;
+      struct HoldItem holdbinop;
       int b = exp->u.binop.b;
       int c = exp->u.binop.c;
       int needparen;  /* for preserving order of operations */
@@ -5934,15 +5960,20 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         o2->closeparenline = exp->line;
       if (needparen || needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
-      if (b == -1)
+      if (b == -1) {
         /* discharge pending expression in B */
         dumpexpoperand2(D, fs, o1, exp, priority[op].left);
-      else
+        DumpSpace(D);
+        DumpBinOpr(op,D); /* operator */
+        D->needspace = 1;
+      }
+      else {
+        const char *binopstring;
         /* dump constant INDEXK(B) or local variable in B */
-        dumpRK2(D, fs, b, exp); /* first operand */
-      DumpSpace(D);
-      DumpBinOpr(op,D); /* operator */
-      D->needspace = 1;
+        holdRK2(D, fs, b, &holdleft, 1); /* first operand */
+        binopstring = getbinoprstring(op);
+        addholditem2(D, &holdbinop, binopstring, strlen(binopstring), 1);
+      }
       if (c == -1)
         /* discharge pending expression in C */
         dumpexpoperand2(D, fs, o2, exp, priority[op].right);
@@ -5992,7 +6023,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       if (b == -1)
         dumpexpoperand2(D, fs, tab, exp, SUBEXPR_PRIORITY);
       else
-        dumpRK2(D, fs, b, exp);
+        holdRK2(D, fs, b, &holdleft, 0);
       if (isfield)
         addliteralholditem2(D, &holditem, ".", 0);
       else if (isself == 0)
