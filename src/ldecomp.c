@@ -3377,9 +3377,14 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
           /* assume this OP_CLOSE is for the current loop, it will be corrected
              later on if it is not */
           s.upval = 1;
-          closedloopreg = a;
+          if (D->usedebuginfo) {
+            lu_byte startactvar;
+            getactvar(fs, startpc, NULL, &startactvar);
+            s.upval = (startactvar == a);
+          }
+          if (s.upval) closedloopreg = a;
           lua_assert(s.block == NULL);
-          pushblock1(fs, &s, pc, a)->loop = 1;
+          pushblock1(fs, &s, pc, a)->loop = s.upval;
         }
         else if (s.upval && test_ins_property(fs, pc+1, INS_BREAKSTAT)) {
           /* if an OP_CLOSE before a break statement closes up to a lower
