@@ -1409,6 +1409,11 @@ static int isstorecode(OpCode o)
     case OP_SETGLOBAL:
     case OP_SETUPVAL:
     case OP_SETUPVAL_R1:
+    case OP_SETSLOTN:
+    case OP_SETSLOTI:
+    case OP_SETSLOT:
+    case OP_SETSLOTS:
+    case OP_SETSLOTMT:
       return 1;
     default:
       return 0;
