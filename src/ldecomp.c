@@ -2549,6 +2549,8 @@ static void rescanblocksfornewbranch1(DFuncState *fs, struct blockstates1 *s,
       if (lastbl->loop) s->upval = 0;
       if (s->haveblocksibling == 0) {
         s->blocksibling = lastbl->nextsibling;
+        if (nextsibling == NULL)
+          nextsibling = s->blocksibling;
         s->haveblocksibling = 1;
       }
       /* this branch has upvalues; the block is redundant */
@@ -2693,6 +2695,7 @@ static void addifstatnode1(DFuncState *fs, struct blockstates1 *s, int pc,
 {
   int endlabel;
   int startpc = pc+1;
+  int blendpc;
   struct siblingsnapshot1 snapshot;
   BlockNode *new_node, *lastchild;
   BlockNode *nextsibling = *siblingchain;
@@ -2701,6 +2704,11 @@ static void addifstatnode1(DFuncState *fs, struct blockstates1 *s, int pc,
   if (nextsibling)
     getsiblingsforpc1(&snapshot, endpc+1);
   lastchild = snapshot.prevsibling;
+  if (snapshot.nextsibling == NULL && s->block != NULL) {
+    snapshot.nextsibling = s->block->nextsibling;
+    if (nextsibling == NULL)
+      nextsibling = snapshot.nextsibling;
+  }
   if (isbranchjumpoptimized(fs, endpc, lastchild)) {
     /* ends one before the exit jump */
     endpc = lastchild->startpc-2;
@@ -2724,10 +2732,10 @@ static void addifstatnode1(DFuncState *fs, struct blockstates1 *s, int pc,
         Instruction jmp = fs->f->code[lastchild->startpc-1];
         int offs = GETARG_sBx(jmp);
         if (lastchild->startpc+offs == target) {
-          /* 2 branch fail jumps have the same target, which is
-             the start of an else part, so the 2 branch fails
-             must be for the same block, as otherwise, the first
-             of the two would target the end of the else part */
+          /* 2 branch fail jumps have the same target, which is the start of an
+             else part, so the 2 branch fails must be for the same block, as
+             otherwise, the first of the two would target the end of the else
+             part */
           new_node = lastchild;
           elsepart = lastchild->nextsibling;
           if (lastchild == nextsibling)
@@ -2752,7 +2760,8 @@ static void addifstatnode1(DFuncState *fs, struct blockstates1 *s, int pc,
     }
   }
   endlabel = elsepart ? elsepart->endpc+1 : target;
-  rescanblocksfornewbranch1(fs, s, endpc, endlabel, siblingchain);
+  blendpc = endpc - (elsepart != NULL);
+  rescanblocksfornewbranch1(fs, s, blendpc, endlabel, siblingchain);
   new_node = addblnode1(fs, startpc, endpc, BL_IF);
   nextsibling = *siblingchain;
   /* if the else part is empty, it will be counted as a child of the if part, so
@@ -2761,10 +2770,12 @@ static void addifstatnode1(DFuncState *fs, struct blockstates1 *s, int pc,
     BlockNode *node = nextsibling;
     lua_assert(node != NULL);
     if (node != elsepart) {
-      while (node->nextsibling != elsepart)
-        node = node->nextsibling;
+      if (!s->haveblocksibling) {
+        while (node->nextsibling != elsepart)
+          node = node->nextsibling;
+        node->nextsibling = NULL;
+      }
       new_node->firstchild = nextsibling;
-      node->nextsibling = NULL;
     }
     new_node->nextsibling = elsepart;
     elsepart->type = BL_ELSE;
@@ -3223,10 +3234,8 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                condition, or an unconditional exit in the case of `while false'
                */
             Instruction siblingjump;
-            int siblingtarget;
+            int opttarget = -1;
             lua_assert(type != BL_FUNCTION); /* pc is already checked */
-            /* the current loop must have a sibling for it to be an optimized
-               exit */
             if (futuresibling != NULL) {
               /* get the pc that would be the jump - if the sibling is an ELSE
                  block, than use the jump out of the preceding IF block */
@@ -3235,20 +3244,21 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               siblingjump = code[siblingstartpc];
               if (GET_OPCODE(siblingjump) == OP_JMP &&
                   getjumpcontrol(fs, siblingstartpc) == NULL) {
-                siblingtarget = siblingstartpc+1+GETARG_sBx(siblingjump);
-                if (target == siblingtarget) { /* optimized jump? */
-                  if (ca->prevTMode || (pc == startpc && type == BL_WHILE)) {
-                    /* loop-exit */
-                    init_ins_property(fs, pc, INS_LOOPFAIL);
-                    inwhileheader = 1;
-                  }
-                  else /* break */
-                    init_ins_property(fs, pc, INS_BREAKSTAT);
-                  break;
-                }
+                opttarget = siblingstartpc+1+GETARG_sBx(siblingjump);
               }
             }
-            /* fallthrough */
+            else if (test_ins_property(fs, endpc+1, INS_BREAKSTAT))
+              opttarget = endpc+2+GETARG_sBx(code[endpc+1]);
+            if (target == opttarget) { /* optimized jump? */
+              if (ca->prevTMode || (pc == startpc && type == BL_WHILE)) {
+                /* loop-exit */
+                init_ins_property(fs, pc, INS_LOOPFAIL);
+                inwhileheader = 1;
+              }
+              else /* break */
+                init_ins_property(fs, pc, INS_BREAKSTAT);
+              break;
+            }
           }
           if (ca->prevTMode) { /* conditional forward jump */
             /* check for a fail-jump out of a repeat-loop condition */
