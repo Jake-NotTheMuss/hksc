@@ -45,7 +45,6 @@ enum BLTYPE {
   DEFINSFLAG(BRANCHPASS) /* true-jump in an if-statement condition */ \
   DEFINSFLAG(LOOPFAIL)  /* false-jump in a loop condition */ \
   DEFINSFLAG(LOOPPASS)  /* true-jump in a loop condition */ \
-  DEFINSFLAG(OPTLOOPFAILTARGET)  /* optimized jump target of a loop fail */ \
   DEFINSFLAG(REPEATSTAT)  /* first pc in a repeat-loop */ \
   DEFINSFLAG(WHILESTAT)  /* first pc in a while-loop */ \
   DEFINSFLAG(FORLIST)  /* first pc in a list for-loop */ \

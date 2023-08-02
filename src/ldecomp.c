@@ -3169,24 +3169,6 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
               encountered1("while", target);
               set_ins_property(fs, target, INS_WHILESTAT);
               init_ins_property(fs, pc, INS_LOOPEND);
-              /* if this while-loop is at the end of an enclosing block, mark
-                 the exit-target of the enclosing block as a potential target
-                 for optimized exits out of this while-loop */
-              if (test_ins_property(fs, pc+1, INS_BLOCKEND)) {
-                Instruction nexti = code[pc+1];
-                int nexttarget;
-                /* only a jump could be marked as a block ending this near
-                   removed */
-                lua_assert(GET_OPCODE(nexti) == OP_JMP);
-                nexttarget = pc + 1 + 1 + GETARG_sBx(nexti);
-                if (nexttarget > pc + 1) /* really a branch exit */
-                  /* this while-loop is at the very end of a branch-block, which
-                     means the condition at the beginning of the loop will have
-                     an optimized fail-jump; the target that the while-loop will
-                     fail-jump to is marked now and used later to determine
-                     whether a conditional jump is part of a loop or a branch */
-                  init_ins_property(fs, nexttarget, INS_OPTLOOPFAILTARGET);
-              }
               innerloop1(ca, fs, target, BL_WHILE, &nextsibling, &s);
               nextstat = ca->pc;
             }
@@ -3250,9 +3232,7 @@ static void loop1(CodeAnalyzer *ca, DFuncState *fs, int startpc, int type,
                      ((target-1 == outer.end &&
                        test_ins_property(fs, endpc+1, INS_BREAKSTAT)) ||
                       /* the typical case, a jump past the end of the loop */
-                      (target-1 == endpc) ||
-                      /* a specially marked target for optimized fail-jumps */
-                      (test_ins_property(fs, target, INS_OPTLOOPFAILTARGET)))) {
+                      target-1 == endpc)) {
               lua_assert(outer.end != -1);
               init_ins_property(fs, pc, INS_LOOPFAIL);
               inwhileheader = 1;
