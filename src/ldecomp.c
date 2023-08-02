@@ -5740,7 +5740,8 @@ static ExpNode *popexp2(DFuncState *fs, int reg)
   lua_assert(isregvalid(fs, reg));
   lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
   exp = index2exp(fs, getslotdesc(fs, reg)->u.expindex);
-  getslotdesc(fs, reg)->u.expindex = exp->previndex;
+  if (exp != NULL)
+    getslotdesc(fs, reg)->u.expindex = exp->previndex;
   return exp;
 }
 
@@ -6356,7 +6357,6 @@ static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
   else { /* dump pending expression in REG */
     dumpexp2(D, fs, checkexpinreg2(fs, reg), priority);
   }
-  (void)popexp2;
 }
 
 
@@ -7812,10 +7812,9 @@ reducecondition2(StackAnalyzer *sa, DFuncState *fs, int e1, int e2, int reg,
   lu_byte goiftrue;
   {  /* compute the logical operator to use for this new conditional node */
     ExpNode *prev = index2exp(fs, e1);
-    if (prev->kind == ECONDITIONAL)
-      goiftrue = index2exp(fs, prev->u.cond.e2)->goiftrue;
-    else
-      goiftrue = prev->goiftrue;
+    while (prev->kind == ECONDITIONAL)
+      prev = index2exp(fs, prev->u.cond.e2);
+    goiftrue = prev->goiftrue;
   }
   exp = newexp(fs);
   initexp2(fs, exp, reg, pc);
@@ -7833,7 +7832,7 @@ reducecondition2(StackAnalyzer *sa, DFuncState *fs, int e1, int e2, int reg,
 ** create an expression node for a comparison operation
 */
 static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
-                            Instruction i, lu_byte goiftrue)
+                            Instruction i, lu_byte inverted)
 {
   OpCode o = GET_OPCODE(i);
   int a, b, c;
@@ -7845,6 +7844,21 @@ static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
   initexp2(fs, exp, reg, pc);
   exp->kind = EBINOP;
   linkexp2(sa, fs, exp);
+  if (inverted)
+    a = !a;
+  if (comp == OP_EQ)
+    op = a ? OPR_EQ : OPR_NE;
+  else {
+    if (istempreg(fs, b) && istempreg(fs, c) && b > c) {
+      int temp = b; b = c; c = temp;
+      a = !a;
+    }
+    if (comp == OP_LT)
+      op = a ? OPR_LT : OPR_GT;
+    else /* OP_LE */
+      op = a ? OPR_LE : OPR_GE;
+  }
+  exp->u.binop.op = op;
   if (istempreg(fs, b)) {
     exp->u.binop.b = -1;
     exp->u.binop.bindex = getslotdesc(fs, b)->u.expindex;
@@ -7861,22 +7875,33 @@ static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
     exp->u.binop.c = c;
     exp->u.binop.cindex = 0;
   }
-  if (goiftrue)
-    a = !a;
-  if (comp == OP_EQ)
-    op = a ? OPR_EQ : OPR_NE;
-  else {
-    if (istempreg(fs, b) && istempreg(fs, c) && b > c) {
-      int temp = b; b = c; c = temp;
-      a = !a;
-    }
-    if (comp == OP_LT)
-      op = a ? OPR_LT : OPR_GT;
-    else /* OP_LE */
-      op = a ? OPR_LE : OPR_GE;
-  }
-  exp->u.binop.op = op;
   return exp;
+}
+
+
+static int isfailjump(DFuncState *fs, int pc)
+{
+  return (test_ins_property(fs, pc, INS_BRANCHFAIL) ||
+          test_ins_property(fs, pc, INS_LOOPFAIL));
+}
+
+static int ispassjump(DFuncState *fs, int pc)
+{
+  return (test_ins_property(fs, pc, INS_BRANCHPASS) ||
+          test_ins_property(fs, pc, INS_LOOPPASS));
+}
+
+
+static int iscondreducible(ExpNode *e1, ExpNode *e2, int golabel)
+{
+  lua_assert(e2 != NULL);
+  if (e1 == NULL)
+    return 0;
+  if (e1->endlabel == golabel)
+    return 1;
+  if (/*e1->goiftrue == e2->goiftrue && */e1->endlabel == e2->endlabel)
+    return 1;
+  return 0;
 }
 
 
@@ -7895,12 +7920,14 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
                         jumptarget == pc+3);
   /* E is the index of EXP */
   int e, reg;
+  int augment_dest = 0;
   lu_byte goiftrue;
   ExpNode *exp;
   const Instruction *jc = getjumpcontrol(fs, pc);
   if (jc != NULL) {
     OpCode o = GET_OPCODE(*jc);
     if (testAMode(o) == 0) {  /* a comparison */
+      goiftrue = !GETARG_A(*jc);
       if (targetbool) {
         /* see which bool label is targeted; if false, then this is a go-if-true
            node, e.g. `a == b and 1', because the boolean result of the first
@@ -7909,43 +7936,103 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
         reg = GETARG_A(fs->f->code[jumptarget]);
       }
       else {
-        goiftrue = (test_ins_property(fs, pc, INS_BRANCHFAIL) ||
-                    test_ins_property(fs, pc, INS_LOOPFAIL));
         reg = -1;
+        if (isfailjump(fs, pc))
+          goiftrue = 1;
+        else if (ispassjump(fs, pc))
+          goiftrue = 0;
+        else
+          goiftrue = 1;
+        if (GET_OPCODE(fs->f->code[jumptarget-1]) == OP_JMP) {
+          const Instruction *nextjc = getjumpcontrol(fs, jumptarget-1);
+          if (nextjc != NULL && testAMode(GET_OPCODE(*nextjc)))
+            reg = GETARG_A(*nextjc);
+        }
       }
       exp = addcompare2(sa, fs, pc-1, reg, *jc, goiftrue);
     }
     else {  /* (testAMode(o) != 0) */
       int src;
+      int needinvert = 0;
+      goiftrue = !GETARG_C(*jc);
       if (o == OP_TESTSET) {
         src = GETARG_B(*jc);
         reg = GETARG_A(*jc);
       }
       else {
         reg = src = GETARG_A(*jc);
+        /* when a jump list node does not leave a value in the destination
+           register, bool labels are created for that node, and it encodes the
+           destination register and the go-if-true property; also, the bool
+           labels indicate that the expression is cast to a bool, which is not
+           known until now since OP_NOT followed by OP_TEST will be optimized by
+           inverting OP_TEST and not emitting OP_NOT; an extra unary `not' node
+           will be added here if needed */
+        if (targetbool)
+          /* in this case OP_NOT caused argC in OP_TEST to be inverted; the
+             boolean value to jump to then tells you if going on true */
+          needinvert = 1;
+        else if (isfailjump(fs, pc))
+          needinvert = !goiftrue;
+        else if (ispassjump(fs, pc))
+          needinvert = goiftrue;
       }
       if (!istempreg(fs, src)) {
+        /* a local variable, either create ELOCAL or EUNOP if inverting it with
+           OPR_NOT */
         exp = newexp(fs);
         if (reg == src)
-          reg = -1;
-        initexp2(fs, exp, reg, pc);
-        exp->kind = ELOCAL;
-        exp->aux = src;
+          reg = targetbool ? GETARG_A(fs->f->code[jumptarget]) : -1;
+        if (needinvert) {
+          initexp2(fs, exp, reg, pc);
+          exp->kind = EUNOP;
+          exp->u.unop.b = src;
+          exp->u.unop.bindex = 0;
+          exp->u.unop.needinnerparen = 0;
+          exp->u.unop.op = OPR_NOT;
+        }
+        else {
+          /* this jump may not leave any value in a free register if, for
+             example, it is jumping from a branch test; in that case, use the
+             reserved register value of (-1) */
+          if (reg == src)
+            reg = -1;
+          initexp2(fs, exp, reg, pc);
+          exp->kind = ELOCAL;
+          exp->aux = src;
+        }
         linkexp2(sa, fs, exp);
       }
       else {  /* src is a temporary register */
         exp = getexpinreg2(fs, src);
+        if (needinvert) {
+          e = exp2index(fs, exp);
+          exp = newexp(fs);
+          initexp2(fs, exp, reg, pc);
+          exp->kind = EUNOP;
+          exp->u.unop.b = -1;
+          exp->u.unop.bindex = e;
+          exp->u.unop.needinnerparen = 0;
+          exp->u.unop.op = OPR_NOT;
+        }
         /* if OP_TESTSET, move the expression to the destination register */
         if (src != reg) {
+          ExpNode *prev = index2exp(fs, sa->pendingcond.e);
           popexp2(fs, src);
           exp->info = reg;
+          if (prev != NULL && prev->info == src) {
+            popexp2(fs, prev->info);
+            prev->info = reg;
+          }
         }
       }
-      goiftrue = !GETARG_C(*jc);
+      if (needinvert)
+        goiftrue = !goiftrue;
+      augment_dest = (o == OP_TESTSET && jumptarget == pc+1);
     }
   }
   else if (skipsboollabel) {
-    exp = gettopexp(fs);
+    exp = index2exp(fs, sa->lastexpindex);
     goiftrue = exp->goiftrue;
     reg = exp->info;
   }
@@ -7966,24 +8053,61 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
     goiftrue = !b;
   }
   exp->goiftrue = goiftrue;
-  exp->endlabel = jumptarget;
+  if (targetbool)
+    exp->endlabel = jumptarget + (GETARG_C(fs->f->code[jumptarget]) + 1);
+  else
+    exp->endlabel = jumptarget;
   e = exp2index(fs, exp);
-  sa->pendingcond.target = jumptarget;
-  if (sa->pendingcond.e && index2exp(fs, sa->pendingcond.e)->info == reg) {
-    /* combine the current pending node and this new node as the 2 operands of a
-       logical operation */
-    exp = reducecondition2(sa, fs, sa->pendingcond.e, e, reg, pc);
-    exp->auxlistprev = index2exp(fs, sa->pendingcond.e)->auxlistprev;
-    e = exp2index(fs, exp);  /* update the expression index */
-  }
-  else {
-    exp->auxlistprev = sa->pendingcond.e;
+  sa->pendingcond.target = exp->endlabel;
+  {
+    ExpNode *prevnode;
+    int golabel = skipsboollabel ? jumptarget : pc+1;
+    addnode:
+    prevnode = index2exp(fs, sa->pendingcond.e);
+    if (iscondreducible(prevnode, exp, golabel)) {
+      if (exp->info == -1 && prevnode->info != -1)
+        reg = exp->info = prevnode->info;
+      /* combine the current pending node and this new node as the 2 operands of
+         a logical operation */
+      exp = reducecondition2(sa, fs, sa->pendingcond.e, e, reg, pc);
+      prevnode = index2exp(fs, sa->pendingcond.e);
+      exp->auxlistprev = prevnode->auxlistprev;
+      e = exp2index(fs, exp);  /* update the expression index */
+      sa->pendingcond.e = exp->auxlistprev;
+      goto addnode;
+    }
+    else {
+      exp->auxlistprev = sa->pendingcond.e;
+    }
   }
   sa->pendingcond.e = e;
+  if (augment_dest) {
+    /* AUGMENT_DEST is true if this condition is part of an assignment where the
+       last operand in the conditional expression is the destination variable,
+       for example:
+          local a;
+          a = b or a;
+       'a' itself does generate code, but it causes 'b' to be evluated on the
+       free stack, with OP_TESTSET, followed by a jump to the next instruction
+    */
+    exp = newexp(fs);
+    initexp2(fs, exp, reg, pc);
+    exp->kind = ELOCAL;
+    exp->aux = reg;
+    exp->endlabel = jumptarget;
+    exp->goiftrue = goiftrue;
+    linkexp2(sa, fs, exp);
+    e = exp2index(fs, exp);
+    augment_dest = 0;
+    goto addnode;
+  }
   if (reg != -1) {
     /* udpate the pending expression in REG if needed */
-    if (istempreg(fs, reg) && getslotdesc(fs, reg)->u.expindex != e)
+    if (istempreg(fs, reg) && exp2index(fs, getexpinreg2(fs, reg)) != e) {
       pushexp2(fs, reg, exp, 0);
+      if (fs->firstfree <= reg)
+        fs->firstfree = reg+1;
+    }
   }
   else
     sa->tempslot.u.expindex = e;
@@ -8031,21 +8155,6 @@ finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
   else {
     if (isregvalid(fs, exp1->info) && !istempreg(fs, exp1->info))
       exp1 = addexptoreg2(sa, fs, exp1->info, exp1, NULL);
-    /* see if the pending condition needs to be inverted */
-    if (exp1->goiftrue == 0) {
-      ExpNode *invertnode = newexp(fs);
-      exp1 = index2exp(fs, e);
-      *invertnode = *exp1;
-      invertnode->kind = EUNOP;
-      invertnode->u.unop.b = -1;
-      invertnode->u.unop.bindex = e;
-      invertnode->u.unop.needinnerparen = 0;
-      invertnode->u.unop.op = OPR_NOT;
-      invertnode->previndex = sa->tempslot.u.expindex;
-      sa->tempslot.u.expindex = exp2index(fs, invertnode);
-      exp1 = invertnode;
-      e = exp2index(fs, exp1);
-    }
   }
   sa->pendingcond.target = prevtarget;
   return exp1;
