@@ -5655,13 +5655,8 @@ static void setfirstfree(DFuncState *fs, int newfirstfree)
     memset(getslotdesc(fs, newfirstfree), 0, numfree * sizeof(SlotDesc));
   if (newfirstfree > 0) {
     ExpNode *lastreg = getexpinreg2(fs, newfirstfree-1);
-    if (lastreg) {
+    if (lastreg)
       lastreg->auxlistnext = 0;
-      /* if the last used reg holds the current table constructor, then reset
-         its firstarrayitem as it now points to a free register */
-      if (lastreg->kind == ECONSTRUCTOR)
-        lastreg->u.cons.firstarrayitem = 0;
-    }
   }
   fs->firstfree = newfirstfree;
 }
