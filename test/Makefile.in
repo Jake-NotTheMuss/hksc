@@ -232,6 +232,7 @@ temp-expect:
 		$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $$b.profileexpect $$src; \
 		$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $$b.debugexpect $$src; \
 	done
+	@cd programs && $(MAKE) $@ HKSC_NAME=$(HKSC_NAME)
 
 
 .SUFFIXES:
@@ -345,6 +346,7 @@ clean:
 	-@$(RM) *.luac *.luadebug *.luaprofile *.luacallstackdb *.ctest *.dtest \
 	*.decp1.lua *.decp1.log
 	@cd error && $(MAKE) $@
+	@cd programs && $(MAKE) $@
 
 .PHONY: test all checkexpect expectsum dummy clean version error
 

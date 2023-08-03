@@ -458,7 +458,7 @@ printvar LDFLAGS
 
 
 if test "x$in_source" = xno; then
-	for d in src test test/error; do
+	for d in src test test/error test/programs; do
 		test -d $d || mkdir $d
 	done
 	VPATH='@srcdir@'
@@ -599,7 +599,7 @@ config_makefile()
 	done
 }
 
-config_makefile Makefile src/Makefile test/Makefile test/error/Makefile
+config_makefile Makefile src/Makefile test/Makefile test/error/Makefile test/programs/Makefile
 
 # configure pc
 sed < "${SRCDIR}libhksc.pc.in" "

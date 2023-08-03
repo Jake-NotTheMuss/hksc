@@ -75,6 +75,9 @@ all: src
 	@cd test && \
 	$(MAKE) HKSC_NAME=hksc
 
+testprog:
+	@cd test/programs && $(MAKE) HKSC_NAME=hksc
+
 src: src/hkscconf.h
 	@cd src && $(MAKE)
 

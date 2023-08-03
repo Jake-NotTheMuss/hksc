@@ -1,0 +1,180 @@
+# makefile for testing Lua
+
+srcdir=@srcdir@
+top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
+
+EXESUF=@EXESUF@
+
+HKSC_TARGET_PLAT=@HKSC_TARGET_PLAT@
+HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
+HKSC_GEN_PROFILE=@HKSC_GEN_PROFILE@
+HKSC_GEN_DEBUG=@HKSC_GEN_DEBUG@
+HKSC_CMP_CODE=@HKSC_CMP_CODE@
+HKSC_CMP_PROFILE=@HKSC_CMP_PROFILE@
+HKSC_CMP_DEBUG=@HKSC_CMP_DEBUG@
+WITH_COD_EXT=@WITH_COD_EXT@
+
+RM=@RM@
+
+HKSC_VERSION=@HKSC_VERSION@
+
+# will be set to .dtest by configure if the decompiler is enabled
+# *.dtest will depend on *.ctest, so compiler tests will always be run, and then
+# if the decompiler is enabled, the decompiler tests will be run
+TESTSUFFIX=@TESTSUFFIX@
+
+@VPATH_SET@
+
+# should be set by the parent Makefile in the invokation
+HKSC_NAME=hksc
+
+HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
+
+# flags for loading source files
+HKSCAFLAGS=-L $(HKSC_TARGET_PLAT) $(HKSC_PREFIX_MAP)
+# flags for loading binary files
+HKSCBFLAGS=$(HKSC_TARGET_PLAT)
+# flags for loading decompilation files
+HKSCDFLAGS=-L $(HKSC_TARGET_PLAT) --file-prefix-map=$*.dec.lua=$*.lua
+
+
+MAKELOG=./tests.$(HKSC_NAME).log
+
+
+PROGRAMS=	Carp.lua \
+	DataDumper.lua \
+	ExTypeCheck.lua \
+	bits.lua \
+	cmdline.lua \
+	complex.lua \
+	convert_to.lua \
+	deepcopy.lua \
+	dirtree.lua \
+	fsum.lua \
+	hamming.lua \
+	hyperbolic.lua \
+	intlimit.lua \
+	lib_cad.lua \
+	luac.lua \
+	pngparse.lua \
+	profiler.lua \
+	raii.lua \
+	randomstrings.lua \
+	readonlytable.lua \
+	savetable.lua \
+	serial.lua \
+	set.lua \
+	setclass.lua \
+	sha.lua \
+	supervisor.lua \
+	tcpserver.lua
+
+all: prepare $(PROGRAMS:.lua=@TESTSUFFIX@)
+	@echo ----------------------------
+	@echo ---------------------------- >> $(MAKELOG)
+	@echo All Lua tests passed
+	@echo All Lua tests passed >> $(MAKELOG)
+	@echo
+
+prepare: clean
+	@echo
+	@echo Starting Lua tests...
+	@echo Starting Lua tests... > $(MAKELOG)
+	@echo ----------------------------
+	@echo ---------------------------- >> $(MAKELOG)
+
+temp-expect:
+	@for f in $(PROGRAMS); do \
+		b=$${f%.*}; \
+		src=$(srcdir)/$$f; \
+		echo "Generating expect files for $$f"; \
+		$(HKSC) $(HKSCAFLAGS) -s $$src -o $$b.cexpect; \
+		$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $$b.profileexpect $$src; \
+		$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $$b.debugexpect $$src; \
+	done
+
+.SUFFIXES:
+.SUFFIXES: .lua .cexpect .ctest .profileexpect .debugexpect .ctest .dtest
+
+
+# compiler test + bytecode loader test
+.cexpect.ctest:
+	@echo ------------ $* ------------
+	@echo ------------ $* ------------ >> $(MAKELOG)
+# 	generate stripped bytecode
+	@echo $(HKSC) $(HKSCAFLAGS) -s $(srcdir)/$*.lua -o $*.luac >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) -s $(srcdir)/$*.lua -o $*.luac
+# 	generate profile info
+	@echo $(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile \
+	$(srcdir)/$*.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_PROFILE) $*.luaprofile $(srcdir)/$*.lua
+# 	generate debug info
+	@echo $(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug \
+	$(srcdir)/$*.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) $(HKSC_GEN_DEBUG) $*.luadebug $(srcdir)/$*.lua
+# 	compare code with expected
+	@echo $(HKSC_CMP_CODE) $*.cexpect $*.luac >> $(MAKELOG)
+	@ $(HKSC_CMP_CODE) $*.cexpect $*.luac &&  echo "$*.luac OK"
+# 	compare profile info with expected
+	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile >> $(MAKELOG)
+	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile && \
+	echo "$*.luaprofile OK"
+# 	compare debug info with expected
+	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
+	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug && echo "$*.luadebug OK"
+# 	check bytecode loader by loading $*.luac and dumping it again
+# 	echo the command for logs
+	@echo HKSC='$(HKSC)' HKSCFLAGS='$(HKSCBFLAGS)' $(srcdir)/redump \
+	--cod=$(WITH_COD_EXT) --bytecode-file=$*.luac --profile-file=$*.luaprofile \
+	--debug-file=$*.luadebug >> $(MAKELOG)
+# 	redump everything to check that the bytecode loader works
+	@HKSC='$(HKSC)' HKSCFLAGS='$(HKSCBFLAGS)' $(srcdir)/../redump \
+	--cod=$(WITH_COD_EXT) --bytecode-file=$*.luac --profile-file=$*.luaprofile \
+	--debug-file=$*.luadebug
+# 	compare redumped code with expected
+	@echo $(HKSC_CMP_CODE) $*.cexpect $*.luac >> $(MAKELOG)
+	@ $(HKSC_CMP_CODE) $*.cexpect $*.luac
+# 	compare redumped profile info with expected
+	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile >> $(MAKELOG)
+	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.luaprofile
+# 	compare redumped debug info with expected
+	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug >> $(MAKELOG)
+	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.luadebug
+
+# decompiler test, run after compiler and bytecode loader tests
+.ctest.dtest:
+	@echo Decompiling $*.lua
+# 	load source and generate a decomp for it
+	@echo $(HKSC) $(HKSCAFLAGS) -d $(srcdir)/$*.lua -o $*.dec.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCAFLAGS) -l -d $(srcdir)/$*.lua -o $*.dec.lua > $*.dec.log
+# 	re-compile the decomp to bytecode
+	@echo $(HKSC) $(HKSCDFLAGS) -s $*.dec.lua -o $*.dec.luac >> $(MAKELOG)
+	@$(HKSC) $(HKSCDFLAGS) -s $*.dec.lua -o $*.dec.luac
+# 	re-generate profile info
+	@echo $(HKSC) $(HKSCDFLAGS) $(HKSC_GEN_PROFILE) $*.dec.luaprofile \
+	$*.dec.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCDFLAGS) $(HKSC_GEN_PROFILE) $*.dec.luaprofile $*.dec.lua
+# 	re-generate debug info
+	@echo $(HKSC) $(HKSCDFLAGS) $(HKSC_GEN_DEBUG) $*.dec.luadebug \
+	$*.dec.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCDFLAGS) $(HKSC_GEN_DEBUG) $*.dec.luadebug $*.dec.lua
+# 	compare code with expected
+	@echo $(HKSC_CMP_CODE) $*.cexpect $*.dec.luac >> $(MAKELOG)
+	@ $(HKSC_CMP_CODE) $*.cexpect $*.dec.luac &&  echo "$*.luac OK"
+# 	compare profile info with expected
+	@echo $(HKSC_CMP_PROFILE) $*.profileexpect $*.dec.luaprofile >> $(MAKELOG)
+	@ $(HKSC_CMP_PROFILE) $*.profileexpect $*.dec.luaprofile && \
+	echo "$*.luaprofile OK"
+# 	compare debug info with expected
+	@echo $(HKSC_CMP_DEBUG) $*.debugexpect $*.dec.luadebug >> $(MAKELOG)
+	@ $(HKSC_CMP_DEBUG) $*.debugexpect $*.dec.luadebug && echo "$*.luadebug OK"
+
+Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
+	@echo regenerating test/$@
+	@cd $(top_builddir) && @CONFIGURE@ > /dev/null
+
+clean:
+	-@$(RM) *.luac *.luadebug *.luaprofile *.luacallstackdb *.dec.lua
+
+.PHONY: all clean prepare
