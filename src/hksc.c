@@ -629,10 +629,8 @@ int main(int argc, char *argv[])
   lua_setmode(H, mode);
   lua_setintliteralsenabled(H,literals_enabled);
 #ifdef LUA_CODT6
-  if (dumping) {
-    lua_onstartcycle(H, luacod_startcycle);
-    lua_onendcycle(H, luacod_endcycle);
-  }
+  lua_onstartcycle(H, luacod_startcycle);
+  lua_onendcycle(H, luacod_endcycle);
   lua_setbytecodestrippinglevel(H,BYTECODE_STRIPPING_ALL);
   lua_setignoredebug(H, !withdebug);
 #else /* !LUA_CODT6 */
