@@ -1,0 +1,20 @@
+Status for Havok Script compiler
+================================
+
+All implementation for the base compiler is done, not counting a couple
+of Havok Script extensions that I could not find any implementations for
+because I could not find any games which enable those extensions.
+
+The only other thing I am concerned with is implementing my own
+extensions to the compiler to further optimize code. One extension I
+have thought of is allowing programmers to specify table sizes when
+writing table constructors. The programmer could provide a desired
+array-size and hashtable-size for the table without providing as many
+elements to reach those numbers naturally. This would make more
+convenient the initialization of large tables with many values that
+start out as nil without having to write out all of the nil elements.
+
+The syntax might be as follows:
+	local t = {} : 100, 200;
+
+Where 100 is the array-size, and 200 is the hashtable-size.
