@@ -8,13 +8,14 @@ generating block information in the first pass, and then doing symbolic
 execution and dumping output in the second pass.
 
 The current implementation is still flawed. It passes all unit tests,
-and can decompile all but one of the test programs without crashing, but
-one test program exposed a flaw in the first pass. The file is located
-in test/programs/intlimit.lua. It contains a while-loop which contains
-an if-else-statement. The else-part begins with a break-statement. Thus,
-the if-part exit targets the break, allowing the exit to be optimized to
-target the break label of the loop. This results in the if-part
-condition looking like the while-loop condition.
+and can decompile all but one of the test programs without aborting due
+to a failed assertion, but one test program exposed a flaw in the first
+pass. The file is located in test/programs/intlimit.lua. It contains a
+while-loop which contains an if-else-statement. The else-part begins
+with a break-statement. Thus, the if-part exit targets the break,
+allowing the exit to be optimized to target the break label of the loop.
+This results in the if-part condition looking like the while-loop
+condition.
 
 There should never be statements or new local variables within a
 while-loop condition. But before an if-statement, those things are
