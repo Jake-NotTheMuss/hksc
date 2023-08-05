@@ -31,40 +31,6 @@
 #include "lzio.h"
 
 
-/*
-** assert that that Hksc is running in a given mode
-*/
-#define checkmode(H,m,f) do { \
-  if (checkmode_(H,m,f)) return LUA_ERRRUN; \
-} while (0)
-
-
-#define checkmodematches(H,c,f) do { \
-  if ((c) == LUA_SIGNATURE[0]) \
-    checkmode(H,HKSC_MODE_BINARY,f); \
-  else \
-    checkmode(H,HKSC_MODE_SOURCE,f); \
-} while (0)
-
-
-static int checkmode_(hksc_State *H, int mode, const char *filename) {
-  int oldmode = hksc_mode(H);
-  lua_assert(mode != HKSC_MODE_DEFAULT);
-  if (oldmode == HKSC_MODE_DEFAULT)
-    hksc_mode(H) = mode; /* set the mode if it wasn't set */
-  else if (oldmode != mode) {
-    if (oldmode == HKSC_MODE_SOURCE)
-      luaD_setferror(H, "cannot process `%s' in compile-mode, it is already a "
-        "pre-compiled Lua file", filename);
-    else
-      luaD_setferror(H, "cannot process `%s' in decompile-mode, it is not a "
-        "pre-compiled Lua file", filename);
-    return 1;
-  }
-  return 0;
-}
-
-
 #define MAX_CLEANED_FILENAME_SIZE 260
 
 static void cleanFileName(const char *instr, char *outstr) {
@@ -125,7 +91,6 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
                 const char *chunkname) {
   ZIO z;
   int status;
-  lua_assert(hksc_mode(H) != HKSC_MODE_DEFAULT); /* the mode must be known */
   if (!chunkname) chunkname = "?";
   luaZ_init(H, &z, reader, data);
   status = luaD_protectedparser(H, &z, chunkname);
@@ -158,15 +123,11 @@ static int loadfile(hksc_State *H, const char *filename) {
   if (c == LUA_SIGNATURE[0] && lf.f != stdin) {  /* binary file? */
     fclose(lf.f);
     /* make sure this state is in decompile-mode */
-    checkmode(H, HKSC_MODE_BINARY, filename);
     lf.f = fopen(filename, "rb");  /* reopen in binary mode */
     if (lf.f == NULL) return errfile(H, "reopen", filename);
     /* skip eventual `#!...' */
     while ((c = getc(lf.f)) != EOF && c != LUA_SIGNATURE[0]) ;
     lf.extraline = 0;
-  } else { /* source file */
-    /* make sure this state is in compile-mode */
-    checkmode(H, HKSC_MODE_SOURCE, filename);
   }
   ungetc(c, lf.f);
   status = load(H, getF, &lf, chunkname);
@@ -208,7 +169,6 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
       cleanFileName(name, cleanedFileNamePtr);
     }
   }
-  checkmodematches(H, *buff, name);
   ls.s = buff;
   ls.size = size;
   return load(H, getS, &ls, name);

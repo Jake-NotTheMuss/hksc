@@ -138,10 +138,16 @@ static void f_parser (hksc_State *H, void *ud) {
   int c = luaZ_lookahead(p->z);
   luaC_checkGC(H);
   if (c == LUA_SIGNATURE[0]) { /* binary file */
-    lua_assert(hksc_mode(H) == HKSC_MODE_BINARY);
+    if (hksc_mode(H) == HKSC_MODE_SOURCE) {
+      luaD_setferror(H, "hksc set to source-mode, but got binary input");
+      luaD_throw(H, LUA_ERRRUN);
+    }
     tf = luaU_undump(H, p->z, &p->buff, p->name);
   } else {
-    lua_assert(hksc_mode(H) == HKSC_MODE_SOURCE);
+    if (hksc_mode(H) == HKSC_MODE_BINARY) {
+      luaD_setferror(H, "hksc set to binary-mode, but got text input");
+      luaD_throw(H, LUA_ERRRUN);
+    }
     tf = luaY_parser(H, p->z, &p->buff, p->name);
   }
   /*tf = luaY_parser(H, p->z, &p->buff, p->name);*/
