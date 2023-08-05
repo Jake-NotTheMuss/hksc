@@ -58,7 +58,7 @@ case, the script will succeed, but the configuration will be set for the last
 Lua/Hksc Options:
   --with-compat-vararg     Enable LUA_COMPAT_VARARG
   --no-compat-vararg       Disable LUA_COMPAT_VARARG
-  --with-decompiler        Lua decompiler (enabled by default)
+  --with-decompiler        Lua decompiler (disabled by default)
   --no-decompiler          Disable Lua decompiler
   --with-ui64              Enable UI64 type
   --no-ui64                Disable UI64 type
@@ -123,7 +123,7 @@ program_prefix=
 program_suffix=
 with_ui64=1
 emu_ui64=0
-with_decompiler=1
+with_decompiler=0
 debug=0
 testing=0
 debug_pass=
