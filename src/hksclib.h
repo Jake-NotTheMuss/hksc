@@ -26,6 +26,8 @@ LUA_API void hksI_close(hksc_State *H);
 
 /* Custom parse & dump functions (user program must provide a custom dump
    function to call when dumping the bytecode) */
+LUA_API int hksI_parser(hksc_State *H, lua_Reader reader, void *readerdata,
+             hksc_DumpFunction dumpf, void *dumpdata, const char *chunkname);
 LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
                              hksc_DumpFunction dumpf, void *ud);
 LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,

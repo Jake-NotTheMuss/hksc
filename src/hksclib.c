@@ -285,36 +285,33 @@ static void endcycle(hksc_State *H, const char *name) {
 ** =======================================================
 */
 
+enum sourcekind_e {
+  HKSC_LOAD_FILE,
+  HKSC_LOAD_BUFFER,
+  HKSC_LOAD_CUSTOM
+};
+
 struct SParser {
-  union {
-    const char *filename;
-    const char *buff;
-  } arg1;
-  size_t size;
-  const char *source;
+  int sourcekind;
+  size_t size;  /* buffer size if loading from a buffer */
+  const char *source;  /* source name */
+  lua_Reader reader;
+  void *aux;  /* data depending on sourcekind */
   hksc_DumpFunction dumpf;
   void *ud;
 };
 
-static void fparser_file(hksc_State *H, void *ud) {
-  struct SParser *p = (struct SParser *)ud;
-  int status;
-  startcycle(H, p->arg1.filename);
-  status = loadfile(H, p->arg1.filename); /* parse file */
-  if (status) goto fail;
-  lua_unlock(H);
-  status = (*p->dumpf)(H, p->ud);
-  lua_lock(H);
-  fail:
-  endcycle(H, p->arg1.filename);
-  if (status) luaD_throw(H, status);
-}
 
-static void fparser_buffer(hksc_State *H, void *ud) {
+static void fparser(hksc_State *H, void *ud) {
   struct SParser *p = (struct SParser *)ud;
   int status;
   startcycle(H, p->source);
-  status = lua_loadbuffer(H, p->arg1.buff, p->size, p->source);
+  if (p->sourcekind == HKSC_LOAD_FILE)
+    status = loadfile(H, p->source);  /* parse file */
+  else if (p->sourcekind == HKSC_LOAD_BUFFER)
+    status = lua_loadbuffer(H, (const char *)(p->aux), p->size, p->source);
+  else
+    status = load(H, p->reader, p->aux, p->source);
   if (status) goto fail;
   lua_unlock(H);
   status = (*p->dumpf)(H, p->ud);
@@ -325,14 +322,33 @@ static void fparser_buffer(hksc_State *H, void *ud) {
 }
 
 
+LUA_API int hksI_parser(hksc_State *H, lua_Reader reader, void *readerdata,
+             hksc_DumpFunction dumpf, void *dumpdata, const char *chunkname)
+{
+  int status;
+  struct SParser p;
+  lua_lock(H);
+  p.source = chunkname;
+  p.reader = reader; p.aux = readerdata;
+  p.dumpf = dumpf; p.ud = dumpdata;
+  p.size = 0;
+  p.sourcekind = HKSC_LOAD_CUSTOM;
+  status = luaD_pcall(H, &fparser, &p);
+  lua_unlock(H);
+  return status;
+}
+
+
 LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
                      hksc_DumpFunction dumpf, void *ud) {
   int status;
   struct SParser p;
   lua_lock(H);
-  p.arg1.filename = filename;
+  p.source = filename;
+  p.reader = NULL; p.aux = NULL;
   p.dumpf = dumpf; p.ud = ud;
-  status = luaD_pcall(H, &fparser_file, &p);
+  p.sourcekind = HKSC_LOAD_FILE;
+  status = luaD_pcall(H, &fparser, &p);
   lua_unlock(H);
   return status;
 }
@@ -343,10 +359,11 @@ LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
   int status;
   struct SParser p;
   lua_lock(H);
-  p.arg1.buff = buff;
+  p.aux = (void *)buff; p.reader = NULL;
   p.size = size; p.source = source;
   p.dumpf = dumpf; p.ud = ud;
-  status = luaD_pcall(H, &fparser_buffer, &p);
+  p.sourcekind = HKSC_LOAD_BUFFER;
+  status = luaD_pcall(H, &fparser, &p);
   lua_unlock(H);
   return status;
 }
