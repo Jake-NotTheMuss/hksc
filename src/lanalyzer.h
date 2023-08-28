@@ -25,8 +25,7 @@
   DEFBLTYPE(FORLIST)    /* a for-list-loop */     \
   DEFBLTYPE(DO)         /* a block */             \
   DEFBLTYPE(IF)         /* an if-block */         \
-  DEFBLTYPE(ELSE)       /* an else-block */       \
-  DEFBLTYPE(ELSEIF)     /* an elseif-block */
+  DEFBLTYPE(ELSE)       /* an else-block */
 
 #define DEFBLTYPE(e)  BL_##e,
 enum BLTYPE {
@@ -40,6 +39,10 @@ enum BLTYPE {
 ** instruction properties
 */
 #define INSFLAG_TABLE \
+  DEFINSFLAG(LEADER)  /* instruction is a leader */ \
+  DEFINSFLAG(CONTINUEJUMP)  /* a jump to the start of the current loop */ \
+  DEFINSFLAG(FAILJUMP)  /* a jump-on-false */ \
+  DEFINSFLAG(PASSJUMP)  /* a jump past a jump-on-false */ \
   DEFINSFLAG(PRERETURN1) /* the pc before a single-value-return */ \
   DEFINSFLAG(BRANCHFAIL) /* false-jump in an if-statement condition */ \
   DEFINSFLAG(BRANCHPASS) /* true-jump in an if-statement condition */ \
@@ -53,14 +56,15 @@ enum BLTYPE {
   DEFINSFLAG(BRANCHBEGIN)  /* start of branch block */ \
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
-  DEFINSFLAG(AUGBREAK)  /* augmented break in a repeat-loop with upvalues */ \
-  DEFINSFLAG(AUGCONT)  /* augmented continue in a repeat-loop with upvalues */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
   DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
+  DEFINSFLAG(SKIPBOOLLABEL)  /* a jump over 2 bool labels */ \
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
+  DEFINSFLAG(TESTSETLABEL)  /* jump target of OP_TESTSET-controlled jump */ \
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
-  DEFINSFLAG(LOCVAREXPR)  /* start of a local varible initialization */ \
+  DEFINSFLAG(ASSIGNSTART)  /* start of a local statement or store */ \
+  DEFINSFLAG(ASSIGNEND)  /* end of a local statement or store */ \
   DEFINSFLAG(CLOBBER)   /* an instruction which clobbers register A */ \
   DEFINSFLAG(SELFUPVAL)  /* OP_CLOSURE uses its own register as an upvalue */ \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
@@ -98,7 +102,7 @@ typedef struct BlockNode {
   struct BlockNode *firstchild;  /* first child block */
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
-  int type;  /* the type of the block */
+  int kind;  /* the type of the block */
   lu_byte isempty;  /* true if the block has zero instructions */
   lu_byte upval;
   lu_byte iselseif;
@@ -111,7 +115,7 @@ typedef struct BlockNode {
 /*
 ** BlockState tracks the state of a pending do-block terminated by OP_CLOSE
 */
-typedef struct BlockState {
+typedef struct BlockState2 {
   BlockNode *nextsibling;  /* the next sibling of this block */
   BlockNode *firstchild;  /* the first child of this block */
   BlockNode *prevsibling;  /* the previous sibling of this block */
@@ -120,7 +124,7 @@ typedef struct BlockState {
   int endpc;
   unsigned reg : 15;  /* closed register */
   unsigned loop : 1;  /* true if the OP_CLOSE code was at the end of the loop */
-} BlockState;
+} BlockState2;
 
 
 

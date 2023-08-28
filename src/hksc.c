@@ -568,7 +568,7 @@ static int hksc_dump_f(hksc_State *H, void *ud) {
   }
 #ifdef HKSC_DECOMPILER
   if (decompiling) {
-    if (lua_getmode(H) == HKSC_MODE_SOURCE && ignore_debug == 0)
+    if (lua_getmode(H) != HKSC_MODE_BINARY && ignore_debug == 0)
       lua_setignoredebug(H, 0);
     return hksc_dump_decomp(H, filename);
   }

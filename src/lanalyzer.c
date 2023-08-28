@@ -93,7 +93,7 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
     bn = next;
   }
   if (a->decomppass == 1)
-    luaM_freearray(H, a->pendingstk.u.s1, a->pendingstk.total, BlockState);
+    luaM_freearray(H, a->pendingstk.u.s1, a->pendingstk.total, BlockState2);
   else
     luaM_freearray(H, a->pendingstk.u.s2, a->pendingstk.total, ExpNode);
   luaM_free(H, a);

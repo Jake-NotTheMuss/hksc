@@ -292,7 +292,7 @@ typedef struct LocVar {
 
 /* flags defined in lanalyzer.h */
 typedef lu_int32 InstructionFlags;
-struct BlockState;
+struct BlockState2;
 struct SlotDesc;
 struct BlockNode;
 struct ExpNode;
@@ -330,7 +330,7 @@ typedef struct Analyzer {
     /* the first pass keeps a stack of pending block states, the second pass
        keeps a stack of pending expression nodes; both stacks only live within
        their respective decompiler passes */
-    union { struct BlockState *s1; struct ExpNode *s2; } u;
+    union { struct BlockState2 *s1; struct ExpNode *s2; } u;
     int total;  /* number of allocated elements in the stack */
     int used;  /* number of used elements in the stack */
   } pendingstk;
