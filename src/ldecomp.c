@@ -3840,31 +3840,6 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
           break;
         bl = nextbl;
       }
-#if 0
-      BlockNode *newblock = createdoblock(fs, firstvar->startpc, newendpc-1);
-      /* update variable endings to end before the open expression starts */
-      for (i = varlimit; i < newnactvar; i++)
-        getlocvar1(D, i)->endpc = newendpc;
-      {
-        BlockNode *parent = D->a.bl->node;
-        BlockNode *node = parent->firstchild;
-        if (node != NULL) {
-          BlockNode *prevnode = NULL;
-          while (node != NULL && blstartpc(node) < newblock->startpc) {
-            prevnode = node;
-            node = node->nextsibling;
-          }
-          newblock->firstchild = node;
-          if (prevnode != NULL) prevnode->nextsibling = newblock;
-          else parent->firstchild = newblock;
-        }
-        else
-          parent->firstchild = newblock;
-        D->a.prevnode = newblock;
-        newblock->nextsibling = D->a.nextnode;
-      }
-      fs->nlocvars -= (fs->nactvar - (lastnecessaryvar + 1));
-#endif
     }
     fs->nactvar = cast_byte(varlimit);
   }
