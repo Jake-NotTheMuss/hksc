@@ -103,12 +103,18 @@ typedef struct BlockNode {
   struct BlockNode *firstchild;  /* first child block */
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
-  int kind;  /* the type of the block */
-  lu_byte isempty;  /* true if the block has zero instructions */
-  lu_byte upval;
-  lu_byte iselseif;
 #ifdef LUA_DEBUG
-  lu_byte visited;  /* has this block been visited in pass2 */
+  /* use the enum type when debugging so it's easy to see what kind it is */
+  enum BLTYPE kind;  /* the type of the block */
+#else
+  /* save space otherwise */
+  unsigned kind : 4;
+#endif
+  unsigned isempty : 1;  /* true if the block has zero instructions */
+  unsigned upval : 1;
+  unsigned iselseif : 1;
+#ifdef LUA_DEBUG
+  unsigned visited : 1;  /* has this block been visited in pass2 */
 #endif
 } BlockNode;
 
@@ -143,10 +149,16 @@ typedef enum {
 } openexptype;
 
 typedef struct OpenExpr {
+  int startpc, endpc;
+#ifdef LUA_DEBUG
+  /* use the enum type when debugging so it's easy to tell what kind it is */
   openexptype kind;
-  int startpc;
-  int endpc;
   int firstreg;
+#else
+  /* save space otherwise */
+  unsigned kind : 4;
+  unsigned firstreg : 12;
+#endif
 } OpenExpr;
 
 
