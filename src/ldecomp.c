@@ -2835,7 +2835,7 @@ static void setbranchlabels(DFuncState *fs, BlockState *block)
   }
 }
 
-static void calclastnecessaryvar(DFuncState *fs, BlockState *block);
+static int getlastpersistentvar1(DecompState *D, int limit);
 
 static BlockState *pushblockstate1(DFuncState *fs, BlockNode *node)
 {
@@ -2851,11 +2851,12 @@ static BlockState *pushblockstate1(DFuncState *fs, BlockNode *node)
   block->highestclobbered = -1;
   block->highestclobberedresetpc = node->startpc;
   block->savedlastup = -1;
+  block->lastnecessaryvar = -1;
   if (D->blockstk.used > 1) {
     BlockState *prev = block-1;
     /* parent block has seen a statement */
     prev->seenstat = 1;
-    calclastnecessaryvar(fs, prev);
+    prev->lastnecessaryvar = getlastpersistentvar1(D, prev->nactvar);
   }
   if (isloopnode(node)) {
     pushloopstate1(fs, node->kind, node->startpc, node->endpc+1);
@@ -3027,23 +3028,6 @@ static void promotevar1(DecompState *D, int r, int note)
   if (getvarnote1(var) < note)
     setvarnote1(D, r, note);
 }
-
-
-static void calclastnecessaryvar(DFuncState *fs, BlockState *block)
-{
-  DecompState *D = fs->D;
-  int lastnecessaryvar = -1;
-  int i;
-  for (i = fs->nactvar-1; i >= block->nactvar; i--) {
-    enum GENVARNOTE note = getvarnote1(getlocvar1(D, i));
-    if (ispersistent(note)) {
-      lastnecessaryvar = i;
-      break;
-    }
-  }
-  block->lastnecessaryvar = lastnecessaryvar;
-}
-
 
 
 /*
@@ -3802,11 +3786,17 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
         BlockNode *newblock;
         /* update variable endings for this block state */
         firstvar = NULL;
-        for (i = varlimit; i < fs->nactvar && i < blockvarlimit; i++) {
-          LocVar *var = getlocvar1(D, i);
-          if (var->startpc > blockendpc) break;
-          var->endpc = blockendpc + iscurrblock;
-          if (firstvar == NULL) firstvar = var;
+        if (!iscurrblock && bl->lastnecessaryvar < varlimit) {
+          fs->nlocvars -= (fs->nactvar - varlimit);
+          fs->nactvar = nextbl->nactvar = varlimit;
+        }
+        else {
+          for (i = varlimit; i < fs->nactvar && i < blockvarlimit; i++) {
+            LocVar *var = getlocvar1(D, i);
+            if (var->startpc > blockendpc) break;
+            var->endpc = blockendpc + iscurrblock;
+            if (firstvar == NULL) firstvar = var;
+          }
         }
         if (nextbl != NULL) {
           /* if this block has a variable that needs to end early, update
