@@ -67,6 +67,7 @@ enum BLTYPE {
   DEFINSFLAG(ASSIGNEND)  /* end of a local statement or store */ \
   DEFINSFLAG(CLOBBER)   /* an instruction which clobbers register A */ \
   DEFINSFLAG(SELFUPVAL)  /* OP_CLOSURE uses its own register as an upvalue */ \
+  DEFINSFLAG(SKIPPEDREF)  /* pc skips a constant/upvalue reference */ \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
 #define DEFINSFLAG(e)  INS_##e,
