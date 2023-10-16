@@ -153,11 +153,13 @@ typedef struct OpenExpr {
 #ifdef LUA_DEBUG
   /* use the enum type when debugging so it's easy to tell what kind it is */
   openexptype kind;
-  int firstreg;
+  unsigned sharednil : 1;
+  unsigned firstreg : 15;
 #else
   /* save space otherwise */
   unsigned kind : 4;
-  unsigned firstreg : 12;
+  unsigned sharednil : 1;
+  unsigned firstreg : 11;  /* need at least 8 bits */
 #endif
 } OpenExpr;
 

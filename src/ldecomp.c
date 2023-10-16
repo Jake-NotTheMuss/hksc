@@ -1937,6 +1937,7 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
   int endpc = fs->pc;
   int nextpossiblestart = endpc;
   int pc;
+  int sharednil = 0;
   /* VOIDPREP calls already have ca->pc at the correct value; other kinds have
      a particular opcode that ends the expression (e.g. OP_RETURN), and that
      opcode has already been visited in those cases */
@@ -2043,6 +2044,7 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
       /* found an OP_LOADNIL that clobbers an earlier register; mark
          NEXTPOSSIBLESTART as the start */
       pc = nextpossiblestart;
+      sharednil = 1;
       break;
     }
     if (pc == 0)
@@ -2050,7 +2052,7 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
   }
   if (pc < 0) pc = 0;
   if (kind != VOIDPREP) {
-    newopenexpr(fs, firstreg, pc, endpc, kind);
+    newopenexpr(fs, firstreg, pc, endpc, kind)->sharednil = sharednil;
   }
   fs->pc = pc;
   fs->inopenexpr--;
@@ -2647,7 +2649,7 @@ static void simloop1(DFuncState *fs)
 
 static void updatenextopenexpr0(DecompState *D)
 {
-  static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1};
+  static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
   DFuncState *fs = D->fs;
   lua_assert(fs->nopencalls >= 0);
   if (fs->nopencalls < fs->a->sizeopencalls)
@@ -3073,7 +3075,7 @@ static void calcvarlimit(DecompState *D)
 
 static void updatenextopenexpr1(DecompState *D)
 {
-  static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1};
+  static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
   DFuncState *fs = D->fs;
   lua_assert(fs->nopencalls >= 0);
   if (fs->nopencalls == 0)
@@ -3158,6 +3160,18 @@ static void newlocalvar1(DecompState *D, int r, int pc)
      their actual startpc */
   int startpc = pc /*getnextpc1(D->fs, pc)*/;
   int i;
+  if (D->a.insn.o == OP_LOADNIL) {
+    /* when an OP_LOADNIL is shared by a local variable statement and an open
+       expression, such as `local a, b, c; (nil)(1, 2);', variables should not
+       be created for the extra nil slots used by the open expression */
+    if (D->a.openexpr->startpc == pc+1 && D->a.openexpr->sharednil) {
+      int firsttemp = D->a.openexpr->firstreg;
+      /* if rescanning, the next open expression should never start after PC */
+      lua_assert(D->rescan == 0);
+      if (r >= firsttemp)
+        return;
+    }
+  }
   for (i = D->fs->nactvar; i < r; i++)
     addvar1(D, startpc, GENVAR_FILL);
   addvar1(D, startpc, GENVAR_ONSTACK);
