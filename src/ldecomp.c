@@ -3715,6 +3715,35 @@ static void rescanvars1(DecompState *D, BlockState *bl);
 
 
 /*
+** return the highest necessary variable slot between lower LIMIT and the top
+*/
+static int getlastpersistentvar1(DecompState *D, int limit)
+{
+  DFuncState *fs = D->fs;
+  int i;
+  for (i = cast_int(fs->nactvar)-1; i >= limit; i--) {
+    enum GENVARNOTE note = getvarnote1(getlocvar1(D, i));
+    if (ispersistent(note))
+      break;
+  }
+  return i;
+}
+
+
+static int prunevars1(DecompState *D, int limit)
+{
+  DFuncState *fs = D->fs;
+  int newnactvar = getlastpersistentvar1(D, limit)+1;
+  int n = fs->nactvar-newnactvar;  /* number of variables to prune */
+  if (n) {
+    fs->nlocvars -= n;
+    fs->nactvar = newnactvar;
+  }
+  return n;
+}
+
+
+/*
 ** if needed, end existing variables that will be used as temporary slots in the
 ** pending open expression
 */
@@ -3722,26 +3751,15 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
 {
   DFuncState *fs = D->fs;
   const OpenExpr *expr = D->a.openexpr;  /* the pending open expression */
-  int varlimit = expr->firstreg;  /* no local variables from slot and up */
+  int varlimit = expr->firstreg;  /* no local variables from this slot and up */
   if (varlimit < fs->nactvar) {
-    int i;
-    int lastnecessaryvar = -1;
-    int newnactvar = varlimit;
-    /* find the highest local variable that must exist (the analyzer is
-       maximally generous when creating variables, so some may really be
-       temporaries used only once in a statement) */
-    for (i = fs->nactvar-1; i >= varlimit; i--) {
-      enum GENVARNOTE note = getvarnote1(getlocvar1(D, i));
-      if (ispersistent(note)) {
-        lastnecessaryvar = i;
-        newnactvar = i+1;
-        break;
-      }
-    }
+    int lastnecessaryvar = getlastpersistentvar1(D, varlimit);
+    int newnactvar = lastnecessaryvar+1;
     /* see if are there variables that need to be killed before entering the
        open expression */
-    if (lastnecessaryvar == -1)
-      /* just roll back the variables as if they never existed */
+    if (lastnecessaryvar < varlimit)
+      /* no variables need to end early, just roll back the extra variables as
+         if they never existed */
       fs->nlocvars -= (fs->nactvar - varlimit);
     else {
       BlockState *bl;
@@ -3758,10 +3776,13 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
       /* for each block containing a variable that needs to end, end it and see
          if duplicates need to be created in child blocks */
       for (;;) {
+        int i;
         BlockNode *parent, *child;
         int iscurrblock = bl == D->a.bl;
         BlockState * nextbl = iscurrblock ? NULL : bl+1;
         int blockendpc = iscurrblock ? newendpc-1 : nextbl->node->startpc-1;
+        /* BLOCKVARLIMIT is an additional constraint when processing a parent
+           block, because NACTVAR is up-to-date for the current block */
         int blockvarlimit = iscurrblock ? newnactvar : nextbl->nactvar;
         /* a new lexical block for the variables */
         BlockNode *newblock;
@@ -3774,18 +3795,15 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
           if (firstvar == NULL) firstvar = var;
         }
         if (nextbl != NULL) {
+          /* if this block has a variable that needs to end early, update
+             NACTVAR for FS and NEXTBL */
           if (firstvar != NULL)
-            nextbl->nactvar = varlimit + (blockvarlimit - i);
-          else
-            nextbl->nactvar = fs->nactvar;
-          if (nextbl->highestclobbered >= varlimit) {
-            /*lu_byte savednactvar = fs->nactvar;*/
-            fs->nactvar = nextbl->nactvar;
+            fs->nactvar = nextbl->nactvar = varlimit + (blockvarlimit - i);
+          /* if the next block clobbers one of the slots that had a deleted
+             variable, rescan the block to generate duplicate variables for
+             those clobber operations */
+          if (nextbl->highestclobbered >= varlimit)
             rescanvars1(D, nextbl);
-            /*fs->nactvar = savednactvar;*/
-          }
-          else
-            fs->nactvar = nextbl->nactvar;
         }
         if (firstvar != NULL) {
           /* some variables were ended; a do-block needs to be created */
@@ -3927,6 +3945,7 @@ scanpassjump(DecompState *D, DFuncState *fs, int target, int needvars)
 static void rescanvars1(DecompState *D, BlockState *bl)
 {
   DFuncState *fs = D->fs;
+  int startnactvar = fs->nactvar;
   int savedlastup = D->a.lastup;
   int savedpc = fs->pc;
   int pc = bl->highestclobberedresetpc;
@@ -3952,6 +3971,7 @@ static void rescanvars1(DecompState *D, BlockState *bl)
       D->a.skippedstorerefpc = pc;
     updatevars1(D, fs);
   }
+  prunevars1(D, startnactvar);
   D->rescan = 0;
   D->a.lastup = savedlastup;
   fs->pc = savedpc;
