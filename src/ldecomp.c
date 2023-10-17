@@ -135,7 +135,6 @@ typedef struct {
   lu_int32 kmap_1[SIZE_STATIC_KMAP];
   int sizekmap;
   struct {
-    const RegNote *nextnote;
     const OpenExpr *openexpr;
     struct BlockState *bl;
     struct pendingstorechain1 *store;
@@ -247,7 +246,6 @@ typedef struct DFuncState {
   int lastcallexp;  /* exp index of last function call node */
   int curr_constructor;  /* exp index of current table constructor */
   int nopencalls;  /* number of OpenExpr entries created */
-  int nregnotes;  /* number of RegNote entries created */
 } DFuncState;
 
 
@@ -368,6 +366,7 @@ static void printinsflags(DFuncState *fs, int pc, const char *preamble)
 }
 
 
+#ifdef HKSC_DECOMP_HAVE_PASS2
 static void printregflags(DFuncState *fs, int reg, const char *preamble)
 {
   int i;
@@ -378,6 +377,7 @@ static void printregflags(DFuncState *fs, int reg, const char *preamble)
   }
   lprintf("\n");
 }
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 #else /* !LUA_DEBUG */
@@ -457,6 +457,8 @@ static void unset_ins_property(DFuncState *fs, int pc, int prop)
 
 
 
+#ifdef HKSC_DECOMP_HAVE_PASS2
+
 /*
 ** set_reg_property - set flag PROP for register REG
 */
@@ -492,6 +494,8 @@ static int test_reg_property(DFuncState *fs, int reg, int prop)
 }
 
 #define check_reg_property(fs,reg,val) lua_assert(test_reg_property(fs,reg,val))
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
 /* empty blocks start 1 pc after they end; the startpc to use for comparisons is
@@ -628,55 +632,6 @@ static OpenExpr *newopenexpr(DFuncState *fs, int firstreg, int startpc,
   expr->endpc = endpc;
   expr->firstreg = firstreg;
   return expr;
-}
-
-
-/*
-** create a new RegNote entry
-*/
-static RegNote *newregnote(DFuncState *fs, int note, int pc, int reg)
-{
-  RegNote *regnote;
-  hksc_State *H = fs->H;
-  Analyzer *a = fs->a;
-  lua_assert(fs->nregnotes >= 0 && fs->nregnotes <= a->sizeregnotes);
-  luaM_growvector(H, a->regnotes, fs->nregnotes, a->sizeregnotes, RegNote,
-                  MAX_INT, "too many RegNote entries");
-  { /* the array shall be sorted by register first, then by pc, descending */
-    int pos, low, high, mid, i;
-    low = 0;
-    high = fs->nregnotes;
-    while (1) {
-      int result;  /* comparison result */
-      if (high <= low) {
-        pos = low;
-        break;
-      }
-      mid = (low+high)/2;
-      /* comparison: RegNote a, b;
-         a < b if a.reg < b.reg
-         a < b if a.reg == b.reg and a.pc < b.pc */
-      result = a->regnotes[mid].reg - reg;
-      if (result == 0)
-        result = a->regnotes[mid].pc - pc;
-      if (result == 0) {
-        pos = mid+1;
-        break;
-      }
-      else if (result > 0)
-        low = mid+1;
-      else
-        high = mid;
-    }
-    for (i = fs->nregnotes; i > pos; i--)
-      a->regnotes[i] = a->regnotes[i-1];
-    regnote = &a->regnotes[i];
-  }
-  fs->nregnotes++;
-  regnote->note = note;
-  regnote->pc = pc;
-  regnote->reg = reg;
-  return regnote;
 }
 
 
@@ -1066,7 +1021,6 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->actvar = luaM_newvector(H, a->sizeactvar, unsigned short);
   memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
   fs->nopencalls = 0;
-  fs->nregnotes = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
   fs->firstfree = 0;
@@ -1417,34 +1371,10 @@ static void debugopenexprsummary(DFuncState *fs)
 }
 
 
-static void debugregnotesummary(DFuncState *fs)
-{
-  static const char *const typenames[] = {
-    "REG_NOTE_CLOSED",
-    "REG_NOTE_UPVALUE",
-    "REG_NOTE_NONRELOC",
-    "REG_NOTE_MOVE",
-    "REG_NOTE_CHECKTYPE"
-  };
-  RegNote *regnote;
-  int i;
-  lprintf("REG NOTE SUMMARY\n"
-          "-------------------\n");
-  for (i = fs->nregnotes-1; i >= 0; i--) {
-    int note;
-    regnote = &fs->a->regnotes[i];
-    note = regnote->note;
-    lprintf("(pc %i, reg %d) %s\n", regnote->pc, regnote->reg, typenames[note]);
-  }
-  lprintf("-------------------\n");
-}
-
-
 static void debugpass1summary(DFuncState *fs)
 {
   debugblocksummary(fs); lprintf("\n");
   debugopenexprsummary(fs); lprintf("\n");
-  debugregnotesummary(fs);
   {
     int pc;
     for (pc = 0; pc < fs->f->sizecode; pc++)
@@ -1860,42 +1790,6 @@ static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
 static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc);
 
 
-static void addregnote1(DFuncState *fs, int note, int pc, int reg)
-{
-  if (test_reg_property(fs, reg, REG_HASNOTE) == 0) {
-    newregnote(fs, note, pc, reg);
-    set_reg_property(fs, reg, REG_HASNOTE);
-  }
-}
-
-
-static void applyregnote(DFuncState *fs, int firstreg, int pc, OpCode o, int a,
-                         int b, int c)
-{
-  if (o != OP_LOADNIL && beginseval(o, a, b, c, 0)) {
-    /* check if B and C are registers and are less than FIRSTREG */
-    if ((getBMode(o) == OpArgR || (getBMode(o) == OpArgRK && !ISK(b))) &&
-        b < firstreg)
-      addregnote1(fs, REG_NOTE_NONRELOC, pc, b);
-    if ((getCMode(o) == OpArgR || (getCMode(o) == OpArgRK && !ISK(c))) &&
-        c < firstreg)
-      addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
-  }
-}
-
-
-static void checkmoveisnext(DFuncState *fs, int startpc, int pc, int reg)
-{
-  if (pc+1 < fs->f->sizecode) {
-    Instruction next = fs->f->code[pc+1];
-    if (GET_OPCODE(next) == OP_MOVE && GETARG_B(next) == reg &&
-        GETARG_A(next) < reg) {
-      addregnote1(fs, REG_NOTE_MOVE, startpc, GETARG_A(next));
-    }
-  }
-}
-
-
 /* 
 ** common LOADBOOL handler for initial pass
 */
@@ -2036,7 +1930,6 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
     if ((kind == SETLISTPREP || kind == HASHTABLEPREP) &&
         o == OP_NEWTABLE && a == firstreg)
       break;  /* found start of table */
-    applyregnote(fs, firstreg, pc, o, a, b, c);
     if (beginstempexpr(fs, i, pc, firstreg, endpc, &nextpossiblestart)) {
       break;  /* found the beginning */
     }
@@ -2056,16 +1949,6 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
   }
   fs->pc = pc;
   fs->inopenexpr--;
-  if (fs->inopenexpr == 0) {
-    int i;
-    /* clear REG_HASNOTE on all registers */
-    for (i = 0; i < fs->a->sizeregproperties; i++)
-      unset_reg_property(fs, i, REG_HASNOTE);
-    if (kind != VOIDPREP && kind != RETPREP && kind != FORNUMPREP &&
-        kind != FORLISTPREP && kind != CONCATPREP) {
-      checkmoveisnext(fs, pc, endpc, firstreg);
-    }
-  }
 }
 
 
@@ -2137,9 +2020,6 @@ static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc)
     }
     /* check if this opcode sets a table index */
     if (IS_OP_SETTABLE(o)) {
-      /* check if a RegNote entry can be added for the source register */
-      if (c < firstreg)
-        addregnote1(fs, REG_NOTE_NONRELOC, pc, c);
       if (fs->D->usedebuginfo && GET_OPCODE(code[pc-1]) == OP_CLOSURE) {
         const Proto *p = fs->f->p[GETARG_Bx(code[pc-1])];
         if (p->name != NULL)
@@ -2160,20 +2040,9 @@ static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc)
     else if (beginseval(o, a, b, c, 0) && a <= firstreg)
       break;
   }
-  /* now that the constructor length is known, clear any if-statements inside
-     the constructor and add RegNotes for the open expression */
-  for (pc = e->startpc+1; pc < endpc; pc++) {
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
-    int b = GETARG_B(i);
-    int c = GETARG_C(i);
-    applyregnote(fs, firstreg, pc, o, a, b, c);
-  }
   if (numhashitems == 0)
     e->kind = EMPTYTABLE;
   e->endpc = endpc;
-  checkmoveisnext(fs, e->startpc, endpc, firstreg);
 }
 
 
@@ -2608,14 +2477,9 @@ static void simloop1(DFuncState *fs)
       case OP_CLOSURE: {
         int nup = fs->f->p[bx]->nups;
         int nupn;
-        for (nupn = nup; nupn > 0; nupn--) {
-          int data = GETARG_Bx(code[pc+nupn]);
-          if (GETARG_A(code[pc+nupn]) == 1) {
-            newregnote(fs, REG_NOTE_UPVALUE, pc+nupn, data);
-            if (data == a)
-              set_ins_property(fs, pc, INS_SELFUPVAL);
-          }
-        }
+        for (nupn = nup; nupn > 0; nupn--)
+          if (GETARG_A(code[pc+nupn]) == 1 && GETARG_Bx(code[pc+nupn]) == a)
+            set_ins_property(fs, pc, INS_SELFUPVAL);
         break;
       }
       default: {
@@ -2979,19 +2843,6 @@ enum GENVARNOTE {
 };
 
 
-typedef struct {
-  DFuncState *fs;
-  const RegNote *nextnote;
-  const OpenExpr *openexpr;
-  const BlockState *bl;
-  int currvarlimit;
-  int nextclose;
-  int nclose;
-  int skippedstorerefpc;
-  int lastup;
-} DebugGenerator;
-
-
 static LocVar *getlocvar1(DecompState *D, int r)
 {
   return &D->fs->a->locvars[D->fs->a->actvar[r]];
@@ -3044,19 +2895,6 @@ struct pendingstorechain1 {
 };
 
 
-static void calcvarlimit(DecompState *D)
-{
-  int currvarlimit = D->fs->f->maxstacksize;
-  if (D->a.openexpr->startpc != -1 &&
-      D->a.openexpr->startpc < D->a.bl->node->endpc &&
-      (D->a.nextnote == NULL ||
-       D->a.nextnote->reg > D->a.openexpr->firstreg ||
-       D->a.nextnote->pc > D->a.openexpr->startpc))
-    currvarlimit = D->a.openexpr->firstreg;
-  D->a.currvarlimit = currvarlimit;
-}
-
-
 static void updatenextopenexpr1(DecompState *D)
 {
   static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
@@ -3066,16 +2904,6 @@ static void updatenextopenexpr1(DecompState *D)
     D->a.openexpr = &dummyexpr;
   else
     D->a.openexpr = &fs->a->opencalls[--fs->nopencalls];
-  calcvarlimit(D);
-}
-
-
-static void updatenextregnote1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  lua_assert(fs->nregnotes >= 0);
-  if (fs->nregnotes >= fs->a->sizeregnotes) D->a.nextnote = NULL;
-  else D->a.nextnote = &fs->a->regnotes[fs->nregnotes++];
 }
 
 
@@ -3087,7 +2915,6 @@ static void updatenextclose1(DecompState *D, int pc)
       D->a.nextclose = fs->D->closecodes.s[D->a.nclose++];
     else
       D->a.nextclose = fs->f->sizecode;
-    calcvarlimit(D);
   }
 }
 
@@ -3108,9 +2935,6 @@ static LocVar *addvar1(DecompState *D, int pc, int note)
   var->varname = cast(TString *, cast(size_t, note));
   a->actvar[fs->nactvar] = fs->nlocvars++;
   fs->nactvar++;
-  /* advance over RegNotes that are no longer useful */
-  while (D->a.nextnote && D->a.nextnote->reg < fs->nactvar)
-    updatenextregnote1(D);
   return var;
 }
 
@@ -3160,29 +2984,6 @@ static void newlocalvar1(DecompState *D, int r, int pc)
     addvar1(D, startpc, GENVAR_FILL);
   addvar1(D, startpc, GENVAR_ONSTACK);
   (void)getnextpc1;
-#if 0
-  /* see if register A can possibly be a local variable in this block */
-  if (/*r < D->a.currvarlimit*/ 1) {
-    /* check reg notes and see if this is a good time to create a local
-       variable at A */
-    int startpc = getnextpc1(D->fs, pc);
-    int note;
-    int i;
-    for (i = D->fs->nactvar; i < r; i++)
-      addvar1(D, startpc, GENVAR_FILL);
-    /*if (r >= D->a.currvarlimit)
-      note = GENVAR_ONSTACK;
-    else if (D->a.nextnote == NULL)
-      note = GENVAR_REFERENCED;
-    else if (D->a.nextnote->reg <= r)
-      note = GENVAR_CERTAIN;
-    else
-      note = GENVAR_UNCERTAIN;*/
-    addvar1(D, startpc, GENVAR_ONSTACK);
-    return 1;
-  }
-  return 0;
-#endif
 }
 
 
@@ -3198,18 +2999,6 @@ static void rollbackvars1(DecompState *D, lu_byte n)
     return;
   fs->nlocvars -= numtodelete;
   fs->nactvar = n;
-  /* revert back to a the first usable RegNote entry */
-  if (fs->a->sizeregnotes > 0) {
-    int n = fs->nregnotes-1;
-    while (n > 0) {
-      RegNote *note = &fs->a->regnotes[n];
-      if (note->pc < fs->pc || note->reg < n)
-        break;
-      n--;
-    }
-    fs->nregnotes = n+1;
-    updatenextregnote1(D);
-  }
 }
 
 
@@ -3977,12 +3766,10 @@ static void simblock1(DFuncState *fs)
   D->a.laststat = -1;
   D->a.prevnode = NULL;
   D->a.nextnode = fs->root->firstchild;
-  fs->nregnotes = 0;
   root = NULL; /* pointer may be invalid when the stack grows */
   allockmap(D, fs->f->sizek);
   updatenextnodestart();
   updatenextopenexpr1(D);
-  updatenextregnote1(D);
   if (needvars) {
     createparams1(D);
     createinitiallocals1(D);
@@ -3995,9 +3782,6 @@ static void simblock1(DFuncState *fs)
     if (updateactvar1(fs, pc, NULL)) {
       setlaststat1(D, pc);
     }
-    while (D->a.nextnote &&
-           (D->a.nextnote->pc < pc || D->a.nextnote->reg < fs->nactvar))
-      updatenextregnote1(D);
     /* push a new block state if entering the next node */
     while (pc == nextnodestart) {
       D->a.bl = pushblockstate1(fs, D->a.nextnode);
@@ -4124,12 +3908,9 @@ static void finalizevectors1(DFuncState *fs)
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
   int newsize = fs->nopencalls;
-  /* resize the open expression and regnote arrays */
+  /* resize the open expression array */
   luaM_reallocvector(H, a->opencalls, a->sizeopencalls, newsize, OpenExpr);
   a->sizeopencalls = newsize;
-  newsize = fs->nregnotes;
-  luaM_reallocvector(H, a->regnotes, a->sizeregnotes, newsize, RegNote);
-  a->sizeregnotes = newsize;
 }
 
 

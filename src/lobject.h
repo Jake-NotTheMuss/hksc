@@ -297,7 +297,6 @@ struct SlotDesc;
 struct BlockNode;
 struct ExpNode;
 struct OpenExpr;
-struct RegNote;
 
 /*
 ** Function analyzers
@@ -306,7 +305,6 @@ typedef struct Analyzer {
   CommonHeader;
   InstructionFlags *insproperties;  /* instruction flags */
   struct OpenExpr *opencalls;
-  struct RegNote *regnotes;
   struct SlotDesc *regproperties;  /* register properties */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;  /* upvalue names */
@@ -314,7 +312,6 @@ typedef struct Analyzer {
   unsigned short *actvar;
   int sizeinsproperties;
   int sizeopencalls;
-  int sizeregnotes;
   int sizeregproperties;
   int sizelocvars;
   int sizeactvar;

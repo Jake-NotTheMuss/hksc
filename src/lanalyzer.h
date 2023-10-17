@@ -82,8 +82,6 @@ enum INSFLAG {
 ** register properties
 */
 #define REGFLAG_TABLE \
-  DEFREGFLAG(HASNOTE)  /* used by first pass to avoid creating redunadnt \
-                          RegNote entries */ \
   DEFREGFLAG(PENDING)  /* a register being used in a temporary expression */ \
   DEFREGFLAG(CONTROL)   /* a register which holds a loop control variable */ \
   DEFREGFLAG(LOCAL)     /* a register which holds an active local variable */ \
@@ -162,25 +160,6 @@ typedef struct OpenExpr {
   unsigned firstreg : 11;  /* need at least 8 bits */
 #endif
 } OpenExpr;
-
-
-/* when debug info is not used, the decompiler makes note of how registers are
-   used in the program */
-enum NOTEWORTHY_TYPE {
-  REG_NOTE_CLOSED,  /* first pc/reg in a do-block with OP_CLOSE */
-  REG_NOTE_UPVALUE, /* is used as an upvalue for a child function */
-  REG_NOTE_NONRELOC, /* is the source in an OP_MOVE inside an open expression */
-  REG_NOTE_MOVE, /* is the destination in an OP_MOVE after an open expression */
-  REG_NOTE_CHECKTYPE, /* is type-checked */
-  MAX_REG_NOTE
-};
-
-
-typedef struct RegNote {
-  int note;  /* what is noteworhty about this register and pc */
-  int pc;
-  int reg;
-} RegNote;
 
 
 /*
