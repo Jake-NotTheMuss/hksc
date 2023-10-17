@@ -3551,6 +3551,9 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
       int newendpc = expr->startpc;  /* new endpc for variables */
       /* the first variable that needs to be ended */
       LocVar *firstvar = getlocvar1(D, varlimit);
+      /* remove unneeded variables before ending the necessary ones */
+      fs->nlocvars -= (fs->nactvar - newnactvar);
+      fs->nactvar = newnactvar;
       /* find the earliest parent block containing the first variable (note that
          the startpc of a local variable is initially set as the clobbering
          instruction, so a strict less-than works and avoids needing to check if
