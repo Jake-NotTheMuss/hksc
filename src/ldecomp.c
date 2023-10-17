@@ -497,6 +497,10 @@ static int test_reg_property(DFuncState *fs, int reg, int prop)
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
+/*
+** the startpc of a node or -1 if node is NULL
+*/
+#define NODE_STARTPC(node) ((node) ? (node)->startpc : -1)
 
 /* empty blocks start 1 pc after they end; the startpc to use for comparisons is
    the emptiness subtracted from the startpc (consider a tail-empty child block
@@ -1365,7 +1369,7 @@ static void debugopenexprsummary(DFuncState *fs)
   int i;
   lprintf("OPEN EXPRESSION SUMMARY\n"
          "-------------------\n");
-  for (i = fs->nopencalls-1; i >= 0; i--)
+  for (i = fs->a->sizeopencalls-1; i >= 0; i--)
     debugopenexpr(&fs->a->opencalls[i]);
   lprintf("-------------------\n");
 }
@@ -2510,10 +2514,11 @@ static void simloop1(DFuncState *fs)
   set_ins_property(fs, 0, INS_LEADER);
 }
 
+static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
+
 
 static void updatenextopenexpr0(DecompState *D)
 {
-  static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
   DFuncState *fs = D->fs;
   lua_assert(fs->nopencalls >= 0);
   if (fs->nopencalls < fs->a->sizeopencalls)
@@ -2897,7 +2902,6 @@ struct pendingstorechain1 {
 
 static void updatenextopenexpr1(DecompState *D)
 {
-  static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
   DFuncState *fs = D->fs;
   lua_assert(fs->nopencalls >= 0);
   if (fs->nopencalls == 0)
@@ -3750,15 +3754,11 @@ static void simblock1(DFuncState *fs)
 {
   DecompState *D = fs->D;
   struct pendingstorechain1 store = {-1,-1,-1,-1,-1,-1,0};
-  BlockState *root;  /* a block state to represent the function */
   const int needvars = (D->usedebuginfo == 0);
   int nextnodestart;
   int inassignment = 0;
-#define updatenextnodestart() \
-  nextnodestart = D->a.nextnode ? D->a.nextnode->startpc : -1
   fs->nactvar =0;
-  root = pushblockstate1(fs,fs->root);
-  D->a.bl = root;
+  D->a.bl = pushblockstate1(fs,fs->root);
   D->a.store = &store;
   D->a.nextclose = D->a.nclose = 0;
   D->a.skippedstorerefpc = -1;
@@ -3766,9 +3766,8 @@ static void simblock1(DFuncState *fs)
   D->a.laststat = -1;
   D->a.prevnode = NULL;
   D->a.nextnode = fs->root->firstchild;
-  root = NULL; /* pointer may be invalid when the stack grows */
+  nextnodestart = NODE_STARTPC(D->a.nextnode);
   allockmap(D, fs->f->sizek);
-  updatenextnodestart();
   updatenextopenexpr1(D);
   if (needvars) {
     createparams1(D);
@@ -3789,7 +3788,7 @@ static void simblock1(DFuncState *fs)
         genforloopvars(D, D->a.nextnode);
       D->a.prevnode = NULL;
       D->a.nextnode = D->a.nextnode->firstchild;
-      updatenextnodestart();
+      nextnodestart = NODE_STARTPC(D->a.nextnode);
     }
     /* do not process jumps inside a local statement or store statement - these
        kinds of statements are only previously detected when using debug info */
