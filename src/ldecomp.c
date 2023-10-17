@@ -124,7 +124,6 @@ typedef struct {
      the program is analyzed consecutively */
   VEC_STRUCT(struct LoopState, loopstk);
   VEC_STRUCT(struct BlockState, blockstk);
-  VEC_STRUCT(int, closecodes);  /* OP_CLOSE list */
   VEC_STRUCT(BlockNode *, freeblocknodes);
   /* constants bitmap - each bit represents whether the corresponding constant
      has been referenced in the current function - used in the first pass when
@@ -140,7 +139,6 @@ typedef struct {
     struct pendingstorechain1 *store;
     BlockNode *prevnode, *nextnode;
     int currvarlimit;
-    int nextclose;
     int nclose;
     int skippedstorerefpc;
     int lastup;
@@ -983,7 +981,7 @@ static int getline2(DFuncState *fs, int pc) {
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   hksc_State *H = D->H;
   Analyzer *a = luaA_newanalyzer(H);
-  D->loopstk.used = D->blockstk.used = D->closecodes.used = 0;
+  D->loopstk.used = D->blockstk.used = 0;
   fs->a = a;
   fs->prev = D->fs;  /* linked list of funcstates */
   fs->D = D;
@@ -2423,10 +2421,6 @@ static void simloop1(DFuncState *fs)
         set_ins_property(fs, target, INS_LEADER);
         break;
       }
-      case OP_CLOSE:
-        growvector(fs->H, fs->D->closecodes, int);
-        fs->D->closecodes.s[fs->D->closecodes.used++] = pc;
-        break;
       /* mark open expressions */
       CASE_OP_CALL:
         openexpr1(fs, a, CALLPREP, NULL);
@@ -2908,18 +2902,6 @@ static void updatenextopenexpr1(DecompState *D)
     D->a.openexpr = &dummyexpr;
   else
     D->a.openexpr = &fs->a->opencalls[--fs->nopencalls];
-}
-
-
-static void updatenextclose1(DecompState *D, int pc)
-{
-  DFuncState *fs = D->fs;
-  if (pc == D->a.nextclose) {
-    if (D->a.nclose < fs->D->closecodes.used)
-      D->a.nextclose = fs->D->closecodes.s[D->a.nclose++];
-    else
-      D->a.nextclose = fs->f->sizecode;
-  }
 }
 
 
@@ -3760,7 +3742,6 @@ static void simblock1(DFuncState *fs)
   fs->nactvar =0;
   D->a.bl = pushblockstate1(fs,fs->root);
   D->a.store = &store;
-  D->a.nextclose = D->a.nclose = 0;
   D->a.skippedstorerefpc = -1;
   D->a.lastup = 0;
   D->a.laststat = -1;
@@ -3777,7 +3758,6 @@ static void simblock1(DFuncState *fs)
     int isstat = 0;
     int pc = fs->pc;
     updateinsn1(D, fs);
-    updatenextclose1(D, pc);
     if (updateactvar1(fs, pc, NULL)) {
       setlaststat1(D, pc);
     }
@@ -8249,7 +8229,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.needspace=0;
   VEC_INIT(D.loopstk);
   VEC_INIT(D.blockstk);
-  VEC_INIT(D.closecodes);
   VEC_INIT(D.freeblocknodes);
   D.kmap = NULL;
   D.sizekmap = 0;
@@ -8268,7 +8247,6 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   luaZ_freebuffer(H, &D.buff);
   VEC_FREE(H, D.loopstk, LoopState);
   VEC_FREE(H, D.blockstk, BlockState);
-  VEC_FREE(H, D.closecodes, int);
   VEC_FREE(H, D.freeblocknodes, BlockNode *);
   freekmap(&D);
   if (status) D.status = status;
