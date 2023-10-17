@@ -2847,6 +2847,14 @@ enum GENVARNOTE {
   GENVAR_FORLIST  /* augmented list for-loop variables */
 };
 
+#ifdef LUA_DEBUG
+static const char *const varnotenames[] = {
+  "GENVAR_FILL", "GENVAR_ONSTACK", "GENVAR_DISCHARGED", "GENVAR_PERSISTENT",
+  "GENVAR_REFERENCED", "GENVAR_UNCERTAIN", "GENVAR_CERTAIN", "GENVAR_NECESSARY",
+  "GENVAR_PARAM", "GENVAR_FORNUM", "GENVAR_FORLIST"
+};
+#endif /* LUA_DEBUG */
+
 
 static LocVar *getlocvar1(DecompState *D, int r)
 {
@@ -3391,6 +3399,15 @@ static TString *genvarname1(DFuncState *fs, int index, int ispar)
 }
 
 
+#ifdef LUA_DEBUG
+static void printvar(LocVar *var, int i, int note)
+{
+  lprintf("  (%d)  %s  (%i-%i)  %s\n", i+1, getstr(var->varname),
+          var->startpc, var->endpc, varnotenames[note]);
+}
+#endif /* LUA_DEBUG */
+
+
 static void finalizevars1(DFuncState *fs)
 {
   Analyzer *a = fs->a;
@@ -3406,6 +3423,7 @@ static void finalizevars1(DFuncState *fs)
   fs->sizelocvars = a->sizelocvars;
   fs->locvars = a->locvars;
   vars = fs->locvars;
+  D(printf("Local variables\n--------------------------\n"));
   for (i = v = p = 0; i < nvars; i++) {
     struct LocVar *var = &vars[i];
     int note = getvarnote1(var);
@@ -3416,6 +3434,7 @@ static void finalizevars1(DFuncState *fs)
         vars[i].varname = luaS_new(fs->H, forloop_names[j]);
         lua_assert(ispcvalid(fs, vars[i].startpc));
         lua_assert(ispcvalid(fs, vars[i].endpc));
+        D(printvar(&vars[i], i, note));
       }
       i--;
     }
@@ -3424,25 +3443,11 @@ static void finalizevars1(DFuncState *fs)
       vars[i].varname = genvarname1(fs, ispar ? p : v, ispar);
       if (ispar) p++;
       else v++;
+      D(printvar(var, i, note));
     }
   }
+  D(printf("--------------------------\n"));
 }
-
-
-#ifdef LUA_DEBUG
-static void debugvars1(DFuncState *fs)
-{
-  int i;
-  printf("Local variables\n");
-  printf("--------------------------\n");
-  for (i = 0; i < fs->sizelocvars; i++) {
-    LocVar *var = &fs->locvars[i];
-    lprintf("  (%d)  %s  (%i-%i)\n", i+1, getstr(var->varname), var->startpc,
-            var->endpc);
-  }
-  printf("--------------------------\n");
-}
-#endif /* LUA_DEBUG */
 
 
 static int jump2(DFuncState *fs, int pc, int offs, int needvars)
@@ -3877,9 +3882,6 @@ static void simblock1(DFuncState *fs)
   }
   if (needvars) {
     finalizevars1(fs);
-#ifdef LUA_DEBUG
-    debugvars1(fs);
-#endif /* LUA_DEBUG */
   }
   memset(fs->a->actvar, 0, fs->a->sizeactvar * sizeof(unsigned short));
 }
