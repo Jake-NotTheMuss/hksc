@@ -104,6 +104,9 @@ struct pendingstorechain1;
 
 #define SIZE_STATIC_KMAP 2
 
+/*
+** DecompState - state of decompilation across all functions
+*/
 typedef struct {
   hksc_State *H;
   struct DFuncState *fs;  /* current function state */
@@ -129,10 +132,13 @@ typedef struct {
      has been referenced in the current function - used in the first pass when
      generating variable info */
   lu_int32 *kmap;
-  /* if the function has <= 64 constants, no heap allocation is needed, this
-     static array can be used */
+  /* if the function has <= 32*SIZE_STATIC_KMAP constants, no heap allocation is
+     needed, this static array can be used */
   lu_int32 kmap_1[SIZE_STATIC_KMAP];
   int sizekmap;
+  /* this structure is for per-function data that only needs to be instanced
+     once at any time, because it is only needed in the initial passes where
+     functions are processsed consecutively, not recursively */
   struct {
     const OpenExpr *openexpr;
     struct BlockState *bl;
