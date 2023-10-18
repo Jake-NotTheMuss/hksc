@@ -3106,6 +3106,83 @@ static void checkstoreoperands(DecompState *D, OpCode o, int a, int b, int c)
 }
 
 
+/*
+** call this when encountering a statement which does not reference one of the
+** pending slots on the stack, which can be more than one in the case of a
+** comparison or a table assignment; it could also be an opcode that doesn't
+** reference any registers such as returning 0 values or a jump
+*/
+static void commitvarsonstack1(DecompState *D)
+{
+  DFuncState *fs = D->fs;
+  int i;
+  for (i = cast_int(fs->nactvar)-1; i >= 0; i--) {
+    LocVar *var = getlocvar1(D, i);
+    enum GENVARNOTE note = getvarnote1(var);
+    if (note != GENVAR_DISCHARGED)
+      promotevar1(D, i, GENVAR_PERSISTENT);
+  }
+}
+
+
+/*
+** TEMPPOS is the slot which R would equal if it were eligible to be a temporary
+** value
+*/
+static void onvarreferenced1(DecompState *D, int r, int temppos)
+{
+  LocVar *var = getlocvar1(D, r);
+  enum GENVARNOTE note = getvarnote1(var);
+  if (note <= GENVAR_ONSTACK && r == temppos)
+    setvarnote1(D, r, GENVAR_DISCHARGED);
+  else {
+    promotevar1(D, r, GENVAR_PERSISTENT);
+    commitvarsonstack1(D);
+  }
+}
+
+
+static void onvarclobber1(DecompState *D, int r, int pc)
+{
+  LocVar *var = getlocvar1(D, r);
+  enum GENVARNOTE note = getvarnote1(var);
+  if (note <= GENVAR_ONSTACK)
+    setvarnote1(D, r, GENVAR_PERSISTENT);
+  else if (note == GENVAR_DISCHARGED) {
+    var->startpc = pc;
+    setvarnote1(D, r, GENVAR_ONSTACK);
+  }
+}
+
+
+/*
+** update variable references for opcodes which may not reference any registers
+*/
+static void updatevarreference1(DecompState *D, OpCode o, int a, int b, int c)
+{
+  DFuncState *fs = D->fs;
+  switch (o) {
+    case OP_RETURN: {
+      int nret = b-1;
+      if (nret != 0) {
+        /* multiple returns are handled elsewhere as an open expression  */
+        lua_assert(nret == 1);
+        onvarreferenced1(D, a, fs->nactvar - 1);
+        break;
+      }
+      /* else this is an empty return, go through */
+    }
+    /* fallthrough */
+    case OP_CLOSE:
+    case OP_JMP:
+      commitvarsonstack1(D);
+      break;
+    default: break;
+  }
+  (void)c;
+}
+
+
 static void updatevars1(DecompState *D, DFuncState *fs)
 {
   OpCode o = D->a.insn.o;
@@ -3139,13 +3216,31 @@ static void updatevars1(DecompState *D, DFuncState *fs)
         for (i = fs->nactvar; i <= b; i++)
           newlocalvar1(D, i, pc);
       }
-      if (r == fs->nactvar-1 && !beginseval(o, a, b, c, 1)) {
-        ;
+      if (beginseval(o, a, b, c, 1)) {
+        int i;
+        for (i = r; i <= laststored; i++)
+          onvarclobber1(D, i, pc);
       }
-      else {
-        LocVar *topvar = getlastlocvar1(D);
-        if (getvarnote1(topvar) == GENVAR_ONSTACK)
-          setvarnote1(D, fs->nactvar-1, GENVAR_DISCHARGED);
+      else { /* R is both operand and destination (r == b || r == c) */
+        LocVar *var = getlocvar1(D, r);
+        /* check if R is referecnes in a way where it must be a variable */
+        if (getvarnote1(var) == GENVAR_DISCHARGED || (r == b && r == c))
+          setvarnote1(D, r, GENVAR_PERSISTENT);
+        else {
+          int other = (r != b) ? b : c; /* the operand that is not R */
+          int top = fs->nactvar-1;
+          /*int realtop = top;*/
+          lua_assert(top >= 0); /* fs->nactvar must be greater than 0 */
+          while (top && getvarnote1(getlocvar1(D, top)) == GENVAR_DISCHARGED)
+            top--;
+          /* something like OP_ADD 0 0 1 */
+          if (r == top-1 && other == top) {
+            promotevar1(D, top, GENVAR_DISCHARGED);
+          }
+          else if (r != top || !ISK(other))
+            /* todo: shpuld this be realtop instead of top? */
+            promotevar1(D, top, GENVAR_PERSISTENT);
+        }
       }
       /* Note this path is for A-mode clobberring codes, so only OP_MOVE can be
          a store in this case; if there is a pending store and this code is not
@@ -3181,8 +3276,17 @@ static void updatevars1(DecompState *D, DFuncState *fs)
         /* update last statement pc */
         setlaststat1(D, pc);
       }
-      if (getvarnote1(getlocvar1(D, laststored)) < GENVAR_CERTAIN)
-        commitvar1(D, laststored);
+    }
+    if (o == OP_CLOSURE) {
+      Instruction next;
+      while (next = fs->f->code[++pc], GET_OPCODE(next) == OP_DATA) {
+        /* mark local variables used as upvalues */
+        if (GETARG_A(next) == 1) {
+          int reg = GETARG_Bx(next);
+          promotevar1(D, reg, GENVAR_PERSISTENT);
+        }
+      }
+      pc = fs->pc;
     }
   }
   else if (isstorecode(o)) {
@@ -3210,6 +3314,24 @@ static void updatevars1(DecompState *D, DFuncState *fs)
       store->lastup = D->a.lastup;
     }
     setlaststat1(D, pc);
+  }
+  else if (testTMode(o)) {
+    int r1, r2;
+    if (testAMode(o))
+      r1 = a, r2 = -1;
+    else
+      r1 = ISK(b) ? -1 : b, r2 = ISK(c) ? -1 : c;
+    /* sort r1 and r2, r1 must be less */
+    if (r1 > r2 && r2 != -1) {
+      int temp = r1; r1 = r2; r2 = temp;
+    }
+    if (r1 != -1)
+      onvarreferenced1(D, r1, fs->nactvar - 1 - (r2 != -1));
+    if (r2 != -1)
+      onvarreferenced1(D, r2, fs->nactvar - 1);
+  }
+  else if (o != OP_DATA) {
+    updatevarreference1(D, o, a, b, c);
   }
   if (o != OP_DATA) {
     if (store->pc != -1 && store->pc != pc) {
