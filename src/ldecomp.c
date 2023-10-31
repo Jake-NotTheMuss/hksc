@@ -2829,9 +2829,7 @@ enum GENVARNOTE {
   GENVAR_ONSTACK,
   GENVAR_DISCHARGED,
   GENVAR_PERSISTENT,
-  /* TRIVIAL applies to variables that may not need to exist; specifically,
-     this note is used when there are no RegNote entries left */
-  GENVAR_REFERENCED,
+  GENVAR_UPVALUE,  /* same priority as PERSISTENT */
   /* UNCERTAIN is used when there is a RegNote entry, but it is after or within
      a child block */
   GENVAR_UNCERTAIN,
@@ -2850,7 +2848,7 @@ enum GENVARNOTE {
 #ifdef LUA_DEBUG
 static const char *const varnotenames[] = {
   "GENVAR_FILL", "GENVAR_ONSTACK", "GENVAR_DISCHARGED", "GENVAR_PERSISTENT",
-  "GENVAR_REFERENCED", "GENVAR_UNCERTAIN", "GENVAR_CERTAIN", "GENVAR_NECESSARY",
+  "GENVAR_UPVALUE", "GENVAR_UNCERTAIN", "GENVAR_CERTAIN", "GENVAR_NECESSARY",
   "GENVAR_PARAM", "GENVAR_FORNUM", "GENVAR_FORLIST"
 };
 #endif /* LUA_DEBUG */
@@ -3283,7 +3281,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
         /* mark local variables used as upvalues */
         if (GETARG_A(next) == 1) {
           int reg = GETARG_Bx(next);
-          promotevar1(D, reg, GENVAR_PERSISTENT);
+          promotevar1(D, reg, GENVAR_UPVALUE);
         }
       }
       pc = fs->pc;
@@ -3489,8 +3487,8 @@ static void checkslotreferences1(DecompState *D)
   for (i = 0; i < n; i++) {
     if (slots[i] < fs->nactvar) {
       LocVar *var = getlocvar1(D, slots[i]);
-      if (var->startpc < fs->pc && getvarnote1(var) < GENVAR_REFERENCED)
-        setvarnote1(D, slots[i], GENVAR_REFERENCED);
+      if (var->startpc < fs->pc && getvarnote1(var) < GENVAR_PERSISTENT)
+        setvarnote1(D, slots[i], GENVAR_PERSISTENT);
     }
   }
 }
