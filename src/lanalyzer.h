@@ -63,6 +63,7 @@ enum BLTYPE {
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
   DEFINSFLAG(TESTSETLABEL)  /* jump target of OP_TESTSET-controlled jump */ \
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
+  DEFINSFLAG(LOCVAREXPR) \
   DEFINSFLAG(ASSIGNSTART)  /* start of a local statement or store */ \
   DEFINSFLAG(ASSIGNEND)  /* end of a local statement or store */ \
   DEFINSFLAG(CLOBBER)   /* an instruction which clobbers register A */ \
@@ -101,6 +102,7 @@ typedef struct BlockNode {
   struct BlockNode *firstchild;  /* first child block */
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
+  short parentnilvars;
 #ifdef LUA_DEBUG
   /* use the enum type when debugging so it's easy to see what kind it is */
   enum BLTYPE kind;  /* the type of the block */

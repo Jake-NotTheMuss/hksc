@@ -535,6 +535,7 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
   node->upval = 0;
   node->iselseif = 0;
   node->hardstatbeforechild = 0;
+  node->parentnilvars = 0;
   D(node->visited = 0);
 }
 
@@ -1994,6 +1995,7 @@ static void locvarexpr1(DFuncState *fs, int nvars, struct LocVar *var)
   reg = fs->nactvar-nvars;
   openexpr1(fs, reg, VOIDPREP, var);
   fs->nactvar -= nvars;
+  set_ins_property(fs, fs->pc, INS_LOCVAREXPR);
   set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
   set_ins_property(fs, endpc, INS_ASSIGNEND);
 }
@@ -2872,29 +2874,6 @@ static BlockState *gettopblock1(DFuncState *fs, int n)
 }
 
 
-/*
-** spawn a new BlockNode mid-scan, inserting it between the previous and next
-** BlockNode to process
-*/
-static BlockNode *insertnode1(DFuncState *fs, int kind, int startpc, int endpc)
-{
-  DecompState *D = fs->D;
-  BlockNode *node = addblnode(fs, startpc, endpc, kind);
-  if (D->a.prevnode != NULL) {
-    D->a.prevnode->nextsibling = node;
-  }
-  else {
-    BlockState *bl = getcurrblock1(fs);
-    lua_assert(bl != NULL);
-    lua_assert(bl->node != NULL);
-    bl->node->firstchild = node;
-  }
-  node->nextsibling = D->a.nextnode;
-  D->a.nextnode = node;
-  return node;
-}
-
-
 static void updateinsn1(DecompState *D, DFuncState *fs)
 {
   Instruction i;
@@ -2934,18 +2913,20 @@ enum GENVARNOTE {
      next variable to create; the actual note for this variable defers to the
      next non-FILL variable */
   GENVAR_FILL,
+  /* value is on the stack, yet to be used; if a variable ends up with this note
+     by the end of the analysis, it must not be pruned */
   GENVAR_ONSTACK,
+  /* value on the stack was used immediately; if a variable ends up with this
+     note by the end of the analysis, it may be pruned */
   GENVAR_DISCHARGED,
-  GENVAR_PERSISTENT,
-  GENVAR_UPVALUE,  /* same priority as PERSISTENT */
-  /* UNCERTAIN is used when there is a RegNote entry, but it is after or within
-     a child block */
-  GENVAR_UNCERTAIN,
-  /* CERTAIN is used when the RegNote entry is before any child block; these
-     types of variables are certain to exist, but the startpc may vary */
-  GENVAR_CERTAIN,
-  /* NECESSARY is like CERTAIN, but additionally, the startpc is also certain */
-  GENVAR_NECESSARY,
+  /* the below notes are for variables which must not be pruned from the
+     generated variable info */
+  GENVAR_PERSISTENT,  /* this variable must exist */
+  GENVAR_UPVALUE,  /* same as PERSISTENT, but also an upvalue */
+  /* the below notes indicate not to modify the startpc that was given to the
+     variable when it was created (in updatevarstartpcs1) */
+  GENVAR_FORLOOPVAR,  /* user variables in a for-loop */
+  GENVAR_INITIAL,  /* initial nil variables (only in regular Lua) */
   /* the rest of the notes are used to determine how to name the variabless;
      PARAM variables will be named following the pattern "f%d_par%d" */
   GENVAR_PARAM,  /* function parameters */
@@ -2956,8 +2937,8 @@ enum GENVARNOTE {
 #ifdef LUA_DEBUG
 static const char *const varnotenames[] = {
   "GENVAR_FILL", "GENVAR_ONSTACK", "GENVAR_DISCHARGED", "GENVAR_PERSISTENT",
-  "GENVAR_UPVALUE", "GENVAR_UNCERTAIN", "GENVAR_CERTAIN", "GENVAR_NECESSARY",
-  "GENVAR_PARAM", "GENVAR_FORNUM", "GENVAR_FORLIST"
+  "GENVAR_UPVALUE", "GENVAR_FORLOOPVAR", "GENVAR_INITIAL", "GENVAR_PARAM",
+  "GENVAR_FORNUM", "GENVAR_FORLIST"
 };
 #endif /* LUA_DEBUG */
 
@@ -3046,8 +3027,6 @@ static LocVar *addvar1(DecompState *D, int pc, int note)
   fs->nactvar++;
   return var;
 }
-
-#define commitvar1(D,i) setvarnote1(D,i,GENVAR_CERTAIN)
 
 
 /*
@@ -3165,10 +3144,6 @@ static void dischargestores1(DecompState *D)
       }
     }
     if (numtodelete) {
-      /*if (i >= 0) {
-        if (getvarnote1(getlocvar1(D, i)) < GENVAR_CERTAIN)
-          setvarnote1(D, i, GENVAR_CERTAIN);
-      }*/
       fs->nlocvars -= numtodelete;
       fs->nactvar -= numtodelete;
     }
@@ -3215,8 +3190,16 @@ static void checkstoreoperands(DecompState *D, OpCode o, int a, int b, int c)
   DFuncState *fs = D->fs;
   for (i = noperands-1, j = 1; i >= 0; i--) {
     if (operands[i] < fs->nactvar - j) {
+      LocVar *operandvar = getlocvar1(D, operands[i]);
       LocVar *var = getlastlocvar1(D);
-      if (getvarnote1(var) <= GENVAR_DISCHARGED) {
+      int k;
+      for (k = fs->nactvar - 1; k > operands[i]; k--)
+        if (getvarnote1(getlocvar1(D, k)) != GENVAR_DISCHARGED) break;
+      if (k == operands[i] && getvarnote1(operandvar) == GENVAR_ONSTACK /*&&
+          getnextpc1(fs, operandvar->startpc) >= fs->pc*/) {
+        setvarnote1(D, operands[i], GENVAR_DISCHARGED);
+      }
+      else if (getvarnote1(var) <= GENVAR_DISCHARGED) {
         int k;
         setvarnote1(D, fs->nactvar - 1, GENVAR_PERSISTENT);
         for (k = fs->nactvar - 2; k >= 0; k--)
@@ -3426,6 +3409,9 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           /* something like OP_ADD 0 0 1 where top == 1 */
           if (r == top-1 && (other == top || other == -1)) {
             promotevar1(D, top, GENVAR_DISCHARGED);
+            /* R now has a new value on the stack */
+            /*setvarnote1(D, r, GENVAR_DISCHARGED);*/
+            /*onvarclobber1(D, r, pc);*/
           }
           /* something like OP_ADD 1 1 x  or OP_ADD 1 x 1 where top == 1 */
           else if (r == top && (b == top-1 || (haveC && c == top-1))) {
@@ -3512,6 +3498,9 @@ static void updatevars1(DecompState *D, DFuncState *fs)
   }
   else if (testTMode(o)) {
     int r1, r2;
+    if (store->pc != -1 && store->pc != pc) {
+      ;
+    }
     if (testAMode(o))
       r1 = a, r2 = -1;
     else
@@ -3599,7 +3588,7 @@ static void addforloopvars(DecompState *D, BlockNode *node, int nvars)
   int i;
   /* todo: how do you handle the for-loop parser bug */
   for (i = 0; i < nvars; i++)
-    addvar1(D, node->startpc, GENVAR_NECESSARY);
+    addvar1(D, node->startpc, GENVAR_FORLOOPVAR);
 }
 
 
@@ -3624,12 +3613,12 @@ static void createinitiallocals1(DecompState *D)
         int b = GETARG_B(fs->f->code[pc]);
         if (a < fs->f->numparams && b >= fs->f->numparams) {
           for (; i <= b; i++)
-            addvar1(D, pc+1, GENVAR_NECESSARY);
+            addvar1(D, pc, GENVAR_PERSISTENT);
         }
       }
     }
     for (; i < reg; i++)
-      addvar1(D, 0, GENVAR_NECESSARY);
+      addvar1(D, 0, GENVAR_INITIAL);
   }
 }
 
@@ -3737,6 +3726,87 @@ static void printvar(LocVar *var, int i, int note)
 #endif /* LUA_DEBUG */
 
 
+static void updatevarstartpcs1(DFuncState *fs)
+{
+  DecompState *D = fs->D;
+  LocVar *vars = fs->locvars;
+  int i;
+  int slots[3];
+  fs->nopencalls = fs->a->sizeopencalls;
+  updatenextopenexpr1(D);
+  for (i = 0; i < fs->nlocvars; i++) {
+    int reg;
+    struct LocVar *var = &vars[i];
+    int pc;  /* startpc of this variable */
+    int nextpc;  /* startpc of next variable */
+    enum GENVARNOTE note = getvarnote1(var);
+    switch (note) {
+      case GENVAR_FILL:
+      case GENVAR_FORLOOPVAR:
+      case GENVAR_INITIAL:
+      case GENVAR_PARAM:
+      case GENVAR_FORLIST:
+      case GENVAR_FORNUM:
+        continue; /* these variables have the correct startpc */
+      default: break;
+    }
+    set_ins_property(fs, var->startpc, INS_LOCVAREXPR);
+    reg = GETARG_A(fs->f->code[var->startpc]);
+    pc = getnextpc1(fs, var->startpc);
+    nextpc = i+1 < fs->nlocvars ? vars[i+1].startpc : fs->f->sizecode-1;
+    /* fast-forward to the next open expression from PC */
+    while (D->a.openexpr->startpc < pc && fs->nopencalls > 0)
+      updatenextopenexpr1(D);
+    for (fs->pc = pc; fs->pc < nextpc; fs->pc++) {
+      int j, nslots;
+      updateinsn1(D, fs);
+      if (isstorecode(D->a.insn.o))
+        break;
+      if (fs->pc == D->a.openexpr->startpc) {
+        const OpenExpr *expr = D->a.openexpr;
+        /* check if the open expression is not part of an expression */
+        if (!exprpushesresult(expr->kind) && expr->kind != CONCATPREP)
+          break;
+        fs->pc = D->a.openexpr->endpc;
+        updatenextopenexpr1(D);
+        continue;
+      }
+      if (D->a.insn.o == OP_DATA)
+        goto endofregchecks;
+      if (!beginseval(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c, 0))
+        break;
+      if (D->a.insn.a < reg)
+        break;
+      if (beginseval(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c, 1))
+        break;
+      pc = getnextpc1(fs, fs->pc);
+      nslots = referencesslot(D->a.insn.o, D->a.insn.a, D->a.insn.b,
+                              D->a.insn.c, slots);
+      for (j = 0; j < nslots; j++) {
+        if (slots[j] < reg)
+          break;
+        if (j > 0 && slots[j] - slots[j-1] > 1)
+          break;
+      }
+      endofregchecks:
+      /* if at the end of a block or start of a branch or loop, stop */
+      if (test_ins_property(fs, fs->pc, INS_BLOCKEND) ||
+          test_ins_property(fs, fs->pc, INS_LOOPEND))
+        break;
+      if (test_ins_property(fs, fs->pc, INS_WHILESTAT) ||
+          test_ins_property(fs, fs->pc, INS_REPEATSTAT))
+        break;
+      if (test_ins_property(fs, fs->pc, INS_BRANCHFAIL) ||
+          test_ins_property(fs, fs->pc, INS_BRANCHPASS) ||
+          test_ins_property(fs, fs->pc, INS_LOOPFAIL) ||
+          test_ins_property(fs, fs->pc, INS_LOOPPASS))
+        break;
+    }
+    var->startpc = pc;
+  }
+}
+
+
 static void finalizevars1(DFuncState *fs)
 {
   Analyzer *a = fs->a;
@@ -3752,6 +3822,7 @@ static void finalizevars1(DFuncState *fs)
   fs->sizelocvars = a->sizelocvars;
   fs->locvars = a->locvars;
   vars = fs->locvars;
+  updatevarstartpcs1(fs);
   D(printf("Local variables\n--------------------------\n"));
   for (i = v = p = 0; i < nvars; i++) {
     struct LocVar *var = &vars[i];
@@ -4170,7 +4241,7 @@ static void addlocalvars1(DFuncState *fs, int n)
   lua_assert(fs->nlocvars >= 0 && fs->nlocvars <= fs->sizelocvars);
   lua_assert(fs->nlocvars >= n);
   lua_assert(fs->nactvar >= n);
-  lua_assert(fs->nactvar+n-1 <= fs->a->sizeactvar);
+  lua_assert(fs->nactvar-1 <= fs->a->sizeactvar);
   for (i = 0; i < n; i++)
     fs->a->actvar[fs->nactvar-n+i] = fs->nlocvars-n+i;
 }
@@ -4471,7 +4542,7 @@ static void simblock1(DFuncState *fs)
     }
     updatereferences1(D);
     /*if (needvars)
-      checkslotreferences1(D);*/
+      checkslotreferences1(D);*/ (void)checkslotreferences1;
     if (D->a.insn.o == OP_CLOSE)
       onclose1(D, !needvars);
     /* process jumps */
@@ -4601,6 +4672,393 @@ static void simblock1(DFuncState *fs)
 
 
 /*
+** create extra blocks to account for LOADNIL labels which do not already exist
+** on a basic block boundary
+** remove if-blocks that will not be able to generate matching code due to
+** compiler optimizations and turn them into expressions
+*/
+static void addnillabels1(DFuncState *fs, BlockNode *node)
+{
+  BlockNode *prevchild = NULL;
+  BlockNode *nextchild = node->firstchild;
+  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
+  int pc;
+  int naturaldebuginfo = fs->D->usedebuginfo;
+  for (pc = node->startpc; pc <= node->endpc; pc++) {
+    if (pc == nextchildstartpc) {
+      addnillabels1(fs, nextchild);
+      /* note that if NEXTCHILD is empty, pc will end up being decremented by 1,
+         then incremented by 1 when continuing, so that this pc is processed
+         again under the current node, because it wouldn't be processed by the
+         empty child block */
+      pc = nextchild->endpc;
+      prevchild = nextchild;
+      nextchild = nextchild->nextsibling;
+      nextchildstartpc = nextchild ? nextchild->startpc : -1;
+      continue;
+    }
+    /* check for nil-label and augment a basic block if needed */
+    if (test_ins_property(fs, pc, INS_NILLABEL)) {
+      int isblockend = (test_ins_property(fs, pc-1, INS_BLOCKEND) ||
+                        test_ins_property(fs, pc-1, INS_LOOPEND));
+      int isblockstart = (test_ins_property(fs, pc, INS_REPEATSTAT) ||
+                          test_ins_property(fs, pc, INS_WHILESTAT));
+      if (!isblockend && !isblockstart) {
+        int endpc = getnaturalclosepc(node);
+        /* a block node needs to be created so that a basic block boundary can
+           exist between the 2 LOADNIL codes */
+        BlockNode *new_node = addblnode(fs, pc, endpc, BL_IF);  /* if-true */
+        new_node->firstchild = nextchild;
+        if (prevchild != NULL)
+          prevchild->nextsibling = new_node;
+        else
+          node->firstchild = new_node;
+        prevchild = NULL;
+        node = new_node;
+      }
+    }
+    /* OP_LOADK is optimized differently depending on if it is part of an
+       if-statement condition or a conditional expression; if part of an
+       if-statement, the branch is optimized to always go through, i.e. no jump
+       is emitted, but if part of a conditional expression such as the
+       following:
+          local a = 1 or 5;
+       the conditional jump is not optimized to go through; because of this
+       distinction, the analyzer needs to check OP_LOADK codes that are followed
+       by branches, and see if the source code that it would generate will
+       compile to the same code; if the LOADK uses a temporary register, then
+       the generated source code will be of the form `if <constant> then' and it
+       will compile to different code, so the branch is removed from the chain
+       so that the code can be interpreted as an expression in pass 2 */
+    if (naturaldebuginfo && GET_OPCODE(fs->f->code[pc]) == OP_LOADK &&
+        (GET_OPCODE(fs->f->code[pc+1]) == OP_TEST ||
+         GET_OPCODE(fs->f->code[pc+1]) == OP_TEST_R1)) {
+      if (nextchild != NULL && nextchild->kind == BL_IF &&
+          nextchild->startpc == pc+3) {
+        int reg = GETARG_A(fs->f->code[pc]);
+        lu_byte nactvar;
+        getactvar(fs, pc+1, NULL, &nactvar);
+        if (reg >= nactvar) {
+          BlockNode *sibling = nextchild->nextsibling;
+          BlockNode *child = nextchild->firstchild;
+          if (child == NULL)
+            child = sibling;
+          if (prevchild)
+            prevchild->nextsibling = child;
+          else
+            node->firstchild = child;
+          freeblnode(fs, nextchild);
+          nextchild = child;
+          nextchildstartpc = nextchild ? nextchild->startpc : -1;
+        }
+      }
+    }
+  }
+}
+
+
+
+/*
+** get the next local variable that starts at PC, with a persistent iteration
+** state saved in fs->nlocvars
+*/
+static struct LocVar *getnextlocvaratpc1(DFuncState *fs, int pc)
+{
+  lua_assert(ispcvalid(fs, pc));
+  if (fs->nlocvars < fs->sizelocvars) {
+    struct LocVar *var = &fs->locvars[fs->nlocvars];
+    if (var->startpc == pc) {
+      fs->nlocvars++;
+      return var;
+    }
+  }
+  return NULL;
+}
+
+
+/*
+** returns the first pc that would be in the indented part of a block in the
+** source code
+*/
+static int getfirstindentedpc(DFuncState *fs, const BlockNode *node)
+{
+  int firstchildstart;
+  int pc = node->startpc;
+  int lastpossiblestart;
+  if (node->kind != BL_WHILE)
+    return pc;
+  /* for while-loops, find the first pc after the conditions */
+  lastpossiblestart = pc;
+  firstchildstart = node->firstchild ? node->firstchild->startpc : -1;
+  for (; pc < node->endpc; pc++) {
+    if (pc == firstchildstart)
+      break;
+    if (test_ins_property(fs, pc, INS_LOOPFAIL))
+      lastpossiblestart = pc+1;
+  }
+  return lastpossiblestart;
+}
+
+
+/*
+** get the `follow block' pc, which is the pc where a `return' or `break' can
+** exist without needing to augment a do-block around it
+*/
+static int getblockfollowpc(const BlockNode *node)
+{
+  int pc;
+  switch (node->kind) {
+    /* for REPEAT, it needs to be calculated with stack analysis */
+    case BL_REPEAT: return -1;
+    /* for-list ends with TFORLOOP and JMP; subtract 2 from endpc */
+    case BL_FORLIST: pc = node->endpc-2; break;
+    /* for do-blocks which have OP_CLOSE, subtract 1 from endpc */
+    case BL_DO: pc = node->endpc; break;
+    /* if-blocks with else parts end with JMP; subtract 1 if needed */
+    case BL_IF: pc = node->endpc-haselsepart(node); break;
+    case BL_ELSE: pc = node->endpc; break;
+    /* the rest have single termination code; subtract 1 */
+    default: /* FUNCTION, WHILE, FORNUM */ pc = node->endpc-1; break;
+  }
+  return pc - node->upval;
+}
+
+
+/*
+** restructures the lexical scope hierarchy to preserve local variable info
+*/
+static void fixblockendings1(DFuncState *fs, BlockNode *node)
+{
+  /* variables for the most recently processed child block and the next child
+     block to process for the current NODE */
+  BlockNode *nextchild = node->firstchild;
+  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
+  /* the last pc marked LOCVAREXPR (start of local variable initialization) */
+  int lastlocvarexpr = -1;
+  /* save this value so it can be restored when this call needs to be redone */
+  short nlocvars = fs->nlocvars;
+  /* the pc where locals in this block would naturally end */
+  int varendpc = getnaturalvarendpc(node);
+  /* function blocks end on the final return; only process instructions up to
+     the final return (so that I can safely use (pc+1) when getting the next
+     local variable) */
+  int endpc = (node->kind == BL_FUNCTION) ? node->endpc-1 : node->endpc;
+  int pc;
+  for (pc = node->startpc; pc <= endpc; pc++) {
+    struct LocVar *var;
+    short nvarshere = 0;
+    if (pc == nextchildstartpc) {
+      fixblockendings1(fs, nextchild);
+      pc = nextchild->endpc;
+      nextchild = nextchild->nextsibling;
+      nextchildstartpc = nextchild ? nextchild->startpc : -1;
+      continue;
+    }
+    if (test_ins_property(fs, pc, INS_LOCVAREXPR))
+      lastlocvarexpr = pc;
+    if (pc+1 == nextchildstartpc && isforloop(nextchild)) {
+      /* for-loop control variables start on the startpc of the for-loop, and
+         no other varibale can start there; because of the 1-pc lookahead, those
+         control variables will be seen here before recursing with NEXTCHILD */
+      continue;
+    }
+    while ((var = getnextlocvaratpc1(fs, pc+1)) != NULL) {
+      if (varisaugmented(var))
+        continue;
+      /* check if the variable does not end on the natural endpc */
+      if (var->endpc != varendpc) {
+        if (var->endpc > varendpc) {
+          /* the variable can end after the block ends because the code analyzer
+             may have detected an optimization that was not there; the lexical
+             blocks were already ordered `optimally' in the source code */
+          BlockNode *nextsibling = node->nextsibling;
+          if (node->kind == BL_IF) {
+            if (nextsibling != NULL && nextsibling->kind == BL_IF) {
+              /* now NEXTSIBLING will become a child of the current block */
+              BlockNode *newchild = nextsibling;
+              BlockNode *child;  /* for iterating through the child chain */
+              node->endpc = newchild->endpc;
+              recalcemptiness(node);
+              /* find the last child; get a headstart with NEXTCHILD */
+              child = nextchild;
+              while (child != NULL && child->nextsibling != NULL)
+                child = child->nextsibling;
+              /* add NEWCHILD to the chain */
+              if (child != NULL)
+                child->nextsibling = newchild;
+              else {
+                node->firstchild = newchild;
+                nextchild = newchild;
+                nextchildstartpc = nextchild->startpc;
+              }
+              /* transfer the next sibling from NEXTSIBLING to NODE */
+              node->nextsibling = newchild->nextsibling;
+              newchild->nextsibling = NULL;
+            }
+            else continue;
+          }
+          /* I'm not aware of any other case where the variable ending after the
+             block makes sense; but the decompiler is not responsible for
+             matching malformed code */
+          else continue;
+        }
+        else {  /* var->endpc < varendpc */
+          /* a variable ends earlier than the block ends; insert a new do-block
+             into the current block */
+          BlockNode *new_node;
+          int new_node_startpc;
+          if (lastlocvarexpr != -1)
+            new_node_startpc = lastlocvarexpr;
+          else
+            new_node_startpc = getfirstindentedpc(fs, node);
+          new_node = createdoblock(fs, new_node_startpc, var->endpc-1);
+          {  /* make NEW_NODE a child of NODE */
+            /* find the surrounding child nodes for NEW_NODE */
+            BlockNode *prevchild = NULL;
+            BlockNode *child = node->firstchild;
+            while (child != NULL && child->endpc < blstartpc(new_node)) {
+              prevchild = child;
+              child = child->nextsibling;
+            }
+            /* insert NEW_NODE into the chain */
+            if (prevchild != NULL)
+              prevchild->nextsibling = new_node;
+            else
+              node->firstchild = new_node;
+            new_node->firstchild = child;
+            prevchild = NULL;
+            while (child != NULL && child->endpc <= new_node->endpc) {
+              prevchild = child;
+              child = child->nextsibling;
+            }
+            if (prevchild != NULL) {
+              new_node->nextsibling = prevchild->nextsibling;
+              prevchild->nextsibling = NULL;
+            }
+          }
+          new_node->parentnilvars = nvarshere;
+        }
+        /* now redo this call; reset fs->nlocvars and do a tailcall with the
+           same arguments */
+        fs->nlocvars = nlocvars;
+        fixblockendings1(fs, node);
+        return;
+      }
+      nvarshere++;
+    }
+  }
+}
+
+
+static int getconditionstart(DFuncState *fs, int pc, int startlimit)
+{
+  int i;
+  lu_byte nactvar = 0;
+  const Instruction *jc;
+  lua_assert(ispcvalid(fs, pc));
+  lua_assert(ispcvalid(fs, startlimit));
+  lua_assert(GET_OPCODE(fs->f->code[pc]) == OP_JMP);
+  /* update number of active locals */
+  for (i = 0; i < fs->sizelocvars; i++) {
+    struct LocVar *var = &fs->locvars[i];
+    if (var->startpc <= pc && pc <= var->endpc)
+      nactvar++;
+  }
+  lua_assert(GET_OPCODE(fs->f->code[pc]) == OP_JMP);
+  jc = getjumpcontrol(fs,pc);
+  if (jc == NULL)  /* unconditional jump */ {
+    return pc;  /* the last pc is the follow-block pc */
+  }
+  else {  /* conditional jump */
+    int r, r2;
+    int numregs = getregstested(*jc, &r, &r2);
+    if (numregs == 1)
+      r2 = r;
+    if (numregs == 0 || (r < nactvar && r2 < nactvar)) {
+      return pc-1;  /* pc before TEST and JMP */
+    }
+    /* find the lowest temporary register of the 2 that are tested */
+    if (r < nactvar)
+      r = r2;
+    else if (r2 >= nactvar)
+      r = (r < r2) ? r : r2;
+    /* now walk back down the code to the start of the evluation of R */
+    for (pc -= 2; pc > startlimit; pc--) {
+      OpCode o = GET_OPCODE(fs->f->code[pc]);
+      int a = GETARG_A(fs->f->code[pc]);
+      int b = GETARG_B(fs->f->code[pc]);
+      int c = GETARG_C(fs->f->code[pc]);
+      if (!beginseval(o, a, b, c, 0) || a < nactvar)
+        break;  /* found a code that is not part of the condition */
+    }
+    return pc+1;
+  }
+}
+
+
+/*
+** returns the `follow block' pc of a repeat-loop, or -1 if the repaet-loop does
+** not have any return statements that could possibly be on a follow block pc
+*/
+static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
+{
+  BlockNode *nextchild = node->firstchild;
+  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
+  int pc;
+  int followblockpc = -1;
+  int lastreturn;
+  lu_byte state = 0;  /* state-machine variable */
+  lua_assert(node->kind == BL_REPEAT);
+  for (pc = node->startpc; pc < node->endpc; pc++) {
+    if (pc == nextchildstartpc) {
+      /* skip over child blocks */
+      pc = nextchild->endpc;
+      nextchild = nextchild->nextsibling;
+      nextchildstartpc = nextchild ? nextchild->startpc : -1;
+      state = 0;
+      continue;
+    }
+    if (GET_OPCODE(fs->f->code[pc]) == OP_RETURN) {
+      /* found a return code; check if it exists on a follow-block pc */
+      state = 1;
+      lastreturn = pc;
+    }
+    if (state) {
+      /* see if the `until' part has been reached */
+      if (test_ins_property(fs, pc, INS_LOOPFAIL) ||
+          test_ins_property(fs, pc, INS_LOOPPASS)) {
+        followblockpc = getconditionstart(fs, pc, lastreturn) - 1;
+        break;
+      }
+      else if (pc+1 == node->endpc && lastreturn == pc) {
+        followblockpc = lastreturn;
+        break;
+      }
+    }
+  }
+  return followblockpc == -1 ? -1 : followblockpc - node->upval;
+}
+
+
+/*
+** mark the `follow block' pc for a node and each of its children
+*/
+static void markfollowblock1(DFuncState *fs, BlockNode *node)
+{
+  BlockNode *child = node->firstchild;
+  int followblockpc = getblockfollowpc(node);
+  if (!ispcvalid(fs, followblockpc) && node->kind == BL_REPEAT)
+    followblockpc = findrepeatfollowblock1(fs, node);
+  if (ispcvalid(fs, followblockpc))
+    set_ins_property(fs, followblockpc, INS_BLOCKFOLLOW);
+  while (child != NULL) {
+    markfollowblock1(fs, child);
+    child = child->nextsibling;
+  }
+}
+
+
+/*
 ** free memory for first pass
 */
 static void finalizevectors1(DFuncState *fs)
@@ -4635,18 +5093,13 @@ static void pass1(DFuncState *fs)
   /*if (fs->D->usedebuginfo == 0)
     gendebug1(fs, func);*/
   /* add post-processing functions here */
-  /*verifyblocktree1(fs, func, NULL);
   addnillabels1(fs, func);
+  fs->nlocvars = 0;
   fixblockendings1(fs, func);
-  markfollowblock1(fs, func);*/
+  markfollowblock1(fs, func);
   /* end of pass1 post-processing */
   (void)badcode;
-  (void)recalcemptiness;
-  (void)varisaugmented;
   (void)updatefirstclob1;
-  (void)freeblnode;
-  (void)insertnode1;
-  (void)checkslotreferences1;
 }
 
 
@@ -8439,6 +8892,7 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
     case BL_IF:
       dumpbranchheader2(sa, fs, node);
       break;
+    default: break;
   }
   sa->numblockstartatpc--;
   if (sa->numblockstartatpc == 0)
@@ -8610,6 +9064,18 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
       /* save NEXTCHILD->ISEMPTY to use after updating NEXTCHILD */
       int waschildempty;
       processnextchild:
+#ifdef HKSC_DECOMP_HAVE_PASS2
+      if (nextchild->parentnilvars) {
+        /* emit the local statement for the parent nil variables before entering
+           the child block */
+        fs->nlocvars += nextchild->parentnilvars;
+        addlocalvars2(fs, nextchild->parentnilvars);
+        fs->firstfree += nextchild->parentnilvars;
+        if (D->matchlineinfo)
+          updateline2(fs, getline(fs->f, sa->pc), D);
+        emitlocalstat2(fs, nextchild->parentnilvars, 0);
+      }
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
       prevparent = sa->currparent;
       prevheaderline = sa->currheaderline;
       sa->currparent = node;
@@ -8705,6 +9171,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     if (testAMode(o)) { /* A is a register */
       ExpNode *exp;
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
+      if (sa->pc == node->startpc && node->parentnilvars)
+        a += node->parentnilvars;
       exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
         int splitnil;
