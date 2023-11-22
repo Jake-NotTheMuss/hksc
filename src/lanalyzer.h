@@ -111,6 +111,7 @@ typedef struct BlockNode {
   unsigned isempty : 1;  /* true if the block has zero instructions */
   unsigned upval : 1;
   unsigned iselseif : 1;
+  unsigned hardstatbeforechild : 1;  /* used by first pass */
 #ifdef LUA_DEBUG
   unsigned visited : 1;  /* has this block been visited in pass2 */
 #endif
