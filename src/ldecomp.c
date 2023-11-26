@@ -119,6 +119,8 @@ typedef struct {
   int linenumber;  /* output line counter */
   int nextlinenumber;  /* used when not using line info */
   int needspace;  /* for adding space between tokens */
+  int maxtreedepth;  /* maximum number of function states that will be active at
+                        once during the decompilation */
   /* Pass 1 dynamic vectors - instances of these arrays to do not need to exist
      per-function, because the first pass is not recursive, i.e. each closure in
      the program is analyzed consecutively */
@@ -9362,7 +9364,7 @@ static void DecompileFunction(DecompState *D, const Proto *f)
 }
 
 
-static void MarkGlobals(DecompState *D, const Proto *f)
+static void MarkGlobals(const Proto *f)
 {
   int i;
   for (i = 0; i < f->sizecode; i++) {
@@ -9374,9 +9376,47 @@ static void MarkGlobals(DecompState *D, const Proto *f)
       name->tsv.reserved = MARKED_GLOBAL;
     }
   }
-  for (i = 0; i < f->sizep; i++) {
-    MarkGlobals(D, f->p[i]);
-  }
+}
+
+
+static void prescan_enterfunc(DecompState *D)
+{
+  D->funcidx++;
+  if (D->funcidx > D->maxtreedepth)
+    D->maxtreedepth = D->funcidx;
+}
+
+static void prescan_leavefunc(DecompState *D)
+{
+  D->funcidx--;
+}
+
+
+/*
+** when using debug info, just calculcate the maximum function tree depth
+*/
+static void prescan_withdebug(DecompState *D, const Proto *f)
+{
+  int i;
+  prescan_enterfunc(D);
+  for (i = 0; i < f->sizep; i++)
+    prescan_withdebug(D, f->p[i]);
+  prescan_leavefunc(D);
+}
+
+
+/*
+** when not using debug info, mark global variable names referenced in the code
+** and calculate the maximum function tree depth
+*/
+static void prescan_nodebug(DecompState *D, const Proto *f)
+{
+  int i;
+  prescan_enterfunc(D);
+  MarkGlobals(f);
+  for (i = 0; i < f->sizep; i++)
+    prescan_nodebug(D, f->p[i]);
+  prescan_leavefunc(D);
 }
 
 
@@ -9392,9 +9432,11 @@ static void f_decompiler (hksc_State *H, void *ud) {
   struct SDecompiler *sd = (struct SDecompiler *)ud;
   DecompState *D = sd->D;
   const Proto *f = sd->f;
-  if (D->usedebuginfo == 0) {
-    MarkGlobals(D, f);
-  }
+  if (D->usedebuginfo)
+    prescan_withdebug(D, f);
+  else
+    prescan_nodebug(D, f);
+  lua_assert(D->funcidx == 0);
   DecompileFunction(D, f);
   UNUSED(H);
 }
@@ -9420,6 +9462,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.linenumber=1;
   D.nextlinenumber=1;
   D.needspace=0;
+  D.maxtreedepth=1;  /* at least a main function */
   VEC_INIT(D.loopstk);
   VEC_INIT(D.blockstk);
   VEC_INIT(D.freeblocknodes);
