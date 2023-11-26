@@ -41,14 +41,6 @@
 #define CONFLICTING_GLOBAL cast_byte(NUM_RESERVED+2)
 
 
-/*
-** Check whether an op loads a constant into register A. Helps determine if a
-** tested expression starts evaluating at an instruction. Ops that load
-** constants warrant their own statements, as otherwise the constant would be
-** indexed as an operand directly in the test-instruction.
-*/
-#define opLoadsK(o) ((o) == OP_LOADK || (o) == OP_LOADBOOL || (o) == OP_LOADNIL)
-
 #ifdef LUA_DEBUG
 
 #define DEFBLTYPE(e)  #e,
