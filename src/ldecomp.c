@@ -20,6 +20,7 @@
 #include "lcode.h"
 #include "ldebug.h"
 #include "ldo.h"
+#include "llex.h"
 #include "lobject.h"
 #include "lopcodes.h"
 #include "lparser.h"
@@ -35,6 +36,10 @@
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
 #define HKSC_DECOMP_HAVE_PASS2
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
+
+#define MARKED_GLOBAL cast_byte(NUM_RESERVED+1)
+#define CONFLICTING_GLOBAL cast_byte(NUM_RESERVED+2)
+
 
 /*
 ** Check whether an op loads a constant into register A. Helps determine if a
@@ -953,6 +958,9 @@ static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
         "upvalues");
 }
 
+#define IS_RESERVED(ts) \
+  ((ts)->tsv.reserved > 0 && (ts)->tsv.reserved < MARKED_GLOBAL)
+
 
 /*
 ** returns true if NAME can be written as a field
@@ -961,7 +969,7 @@ static int isfieldname(TString *name)
 {
   const char *str;
   lua_assert(name != NULL);
-  if (name->tsv.reserved != 0)
+  if (IS_RESERVED(name))
     return 0;
   str = getstr(name);
   if (isalpha(*str) || *str == '_') {
@@ -3703,14 +3711,14 @@ static TString *genvarname1(DFuncState *fs, int index, int ispar)
   sprintf(buff, fmt, fs->idx, index);
   len = strlen(buff);
   name = luaS_newlstr(fs->H, buff, len);
-  while (name->tsv.isglobal && i < MAX_EXTRA_CHARS) {
+  while (name->tsv.reserved == MARKED_GLOBAL && i < MAX_EXTRA_CHARS) {
     buff[len++] = '_';
     buff[len] = '\0';
     i++;
     name = luaS_newlstr(fs->H, buff, len);
   }
   if (i == MAX_EXTRA_CHARS) {
-    name->tsv.isglobal = 2;
+    name->tsv.reserved = CONFLICTING_GLOBAL;
   }
   return name;
 #undef MAX_EXTRA_CHARS
@@ -5626,7 +5634,7 @@ static void dumpexpvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
 {
   TString *name = exp->u.name;
   predumpexp2(D,fs,exp);
-  if (exp->kind == EGLOBAL && name->tsv.isglobal == 2)
+  if (exp->kind == EGLOBAL && name->tsv.reserved == CONFLICTING_GLOBAL)
     DumpLiteral("_G.",D);
   DumpTString(exp->u.name, D);
   postdumpexp2(D,fs,exp);
@@ -6902,7 +6910,7 @@ static TString *buildfuncname(struct LHSStringBuilder *sb, ExpNode *exp,
     OpCode rootop = exp->u.store.rootop;
     if (rootop == OP_SETGLOBAL) {
       TString *name = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
-      if (name->tsv.isglobal == 2) {
+      if (name->tsv.reserved == CONFLICTING_GLOBAL) {
         addtolhsbuff2(sb, "_G.", sizeof("_G.")-1);
         sb->needspace = 0;
         addvarnametolhs2(sb, name);
@@ -7002,7 +7010,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
         TString *varname;
         if (rootop == OP_SETGLOBAL) {
           varname = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
-          if (varname->tsv.isglobal == 2) {
+          if (varname->tsv.reserved == CONFLICTING_GLOBAL) {
             addtolhsbuff2(&sb, "_G.", sizeof("_G.")-1);
             sb.needspace = 0;
           }
@@ -9371,7 +9379,7 @@ static void MarkGlobals(DecompState *D, const Proto *f)
     if (o == OP_GETGLOBAL || o == OP_GETGLOBAL_MEM || o == OP_SETGLOBAL) {
       int bx = GETARG_Bx(insn);
       TString *name = rawtsvalue(&f->k[bx]);
-      name->tsv.isglobal = 1;
+      name->tsv.reserved = MARKED_GLOBAL;
     }
   }
   for (i = 0; i < f->sizep; i++) {
