@@ -127,6 +127,7 @@ typedef struct {
   VEC_STRUCT(struct LoopState, loopstk);
   VEC_STRUCT(struct BlockState, blockstk);
   VEC_STRUCT(BlockNode *, freeblocknodes);
+  VEC_STRUCT(lu_byte, varnotes);
   /* constants bitmap - each bit represents whether the corresponding constant
      has been referenced in the current function - used in the first pass when
      generating variable info */
@@ -2948,6 +2949,23 @@ static const char *const varnotenames[] = {
 #endif /* LUA_DEBUG */
 
 
+typedef struct GenLocVar {
+  union {
+    enum GENVARNOTE varnote;
+    TString *varname;
+  } u;
+  int startpc;  /* first point where variable is active */
+  int endpc;    /* first point where variable is dead */
+} GenLocVar;
+
+
+/* usually, GenLocVar will be compatible with LocVar, but in case it is not, a
+   separate vector will be used for variable notes */
+static const int mem_separate_varnotes =
+sizeof(GenLocVar) != sizeof(LocVar) ||
+offsetof(GenLocVar, startpc) != offsetof(LocVar, startpc);
+
+
 static LocVar *getlocvar1(DecompState *D, int r)
 {
   return &D->fs->locvars[D->fs->a->actvar[r]];
@@ -2965,23 +2983,38 @@ static LocVar *getlastlocvar1(DecompState *D)
 ** I store the NOTE in the VARNAME field, as the notes are only before variable
 ** names are generated
 */
-static int getvarnote1(struct LocVar *var)
+static enum GENVARNOTE getvarnote1(DecompState *D, struct LocVar *var)
 {
-  return cast_int(cast(size_t, var->varname));
+  if (mem_separate_varnotes) {
+    int index = var - D->fs->locvars;
+    lua_assert(index >= 0 && index < D->varnotes.used);
+    return cast(enum GENVARNOTE, D->varnotes.s[index]);
+  }
+  else {
+    GenLocVar *genvar = cast(void *, var);
+    return genvar->u.varnote;
+  }
 }
 
 
-static void setvarnote1(DecompState *D, int r, int note)
+static void setvarnote1(DecompState *D, int r, enum GENVARNOTE note)
 {
-  /* store NOTE in the VARNAME field */
-  getlocvar1(D, r)->varname = cast(TString *, cast(size_t, note));
+  if (mem_separate_varnotes) {
+    int index = D->fs->a->actvar[r];
+    lua_assert(index < D->varnotes.used);
+    D->varnotes.s[index] = cast_byte(note);
+  }
+  else {
+    GenLocVar *var = cast(void *, getlocvar1(D, r));
+    var->u.varnote = note;
+  }
 }
 
 
 static void promotevar1(DecompState *D, int r, enum GENVARNOTE newnote)
 {
   LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(var);
+  enum GENVARNOTE note = getvarnote1(D, var);
   if (note < newnote)
     setvarnote1(D, r, newnote);
 }
@@ -3015,7 +3048,7 @@ static void updatenextopenexpr1(DecompState *D)
 /*
 ** record a local variable starting at PC with the given NOTE
 */
-static LocVar *addvar1(DecompState *D, int pc, int note)
+static LocVar *addvar1(DecompState *D, int pc, enum GENVARNOTE note)
 {
   DFuncState *fs = D->fs;
   Analyzer *a = fs->a;
@@ -3027,7 +3060,16 @@ static LocVar *addvar1(DecompState *D, int pc, int note)
   var = &a->locvars[fs->nlocvars];
   var->startpc = pc;
   var->endpc = getnaturalvarendpc(D->a.bl->node);
-  var->varname = cast(TString *, cast(size_t, note));
+  if (mem_separate_varnotes) {
+    D->varnotes.used = fs->nlocvars;
+    growvector(fs->H, D->varnotes, lu_byte);
+    D->varnotes.s[D->varnotes.used] = cast_byte(note);
+    var->varname = NULL;
+  }
+  else {
+    GenLocVar *genvar = cast(void *, var);
+    genvar->u.varnote = note;
+  }
   a->actvar[fs->nactvar] = fs->nlocvars++;
   fs->nactvar++;
   return var;
@@ -3077,7 +3119,7 @@ static void newlocalvar1(DecompState *D, int r, int pc)
     addvar1(D, startpc, GENVAR_FILL);
   /* if the position below R is free, then it must be a local if it is not being
      used in favor of R */
-  if (r > 0 && getvarnote1(getlocvar1(D, r-1)) == GENVAR_DISCHARGED)
+  if (r > 0 && getvarnote1(D, getlocvar1(D, r-1)) == GENVAR_DISCHARGED)
     setvarnote1(D, r-1, GENVAR_PERSISTENT);
   addvar1(D, startpc, GENVAR_ONSTACK);
   (void)getnextpc1;
@@ -3134,7 +3176,7 @@ static void dischargestores1(DecompState *D)
     int i;
     for (i = store->firstreg; i < fs->nactvar; i++) {
       LocVar *var = getlocvar1(D, i);
-      enum GENVARNOTE note = getvarnote1(var);
+      enum GENVARNOTE note = getvarnote1(D, var);
       if (note < GENVAR_DISCHARGED)
         setvarnote1(D, i, GENVAR_DISCHARGED);
     }
@@ -3146,7 +3188,7 @@ static void dischargestores1(DecompState *D)
     int i, numtodelete = 0;
     for (i = fs->nactvar-1; i >= store->firstreg; i--, numtodelete++) {
       LocVar *var = getlocvar1(D, i);
-      enum GENVARNOTE note = getvarnote1(var);
+      enum GENVARNOTE note = getvarnote1(D, var);
       if ((var->startpc < store->startpc && var->startpc <= store->laststat) ||
           ispersistent(note)) {
         break;
@@ -3199,17 +3241,17 @@ static void checkstoreoperands(DecompState *D, OpCode o, int a, int b, int c)
   DFuncState *fs = D->fs;
   for (i = noperands-1, j = 1; i >= 0; i--) {
     LocVar *var = getlocvar1(D, operands[i]);
-    enum GENVARNOTE note = getvarnote1(var);
+    enum GENVARNOTE note = getvarnote1(D, var);
     if (operands[i] < fs->nactvar - j) {
       LocVar *lastvar = getlastlocvar1(D);
       int k;
       for (k = fs->nactvar - 1; k > operands[i]; k--)
-        if (getvarnote1(getlocvar1(D, k)) != GENVAR_DISCHARGED) break;
+        if (getvarnote1(D, getlocvar1(D, k)) != GENVAR_DISCHARGED) break;
       if (k == operands[i] && note == GENVAR_ONSTACK /*&&
           getnextpc1(fs, var->startpc) >= fs->pc*/) {
         goto stackvardischarged;
       }
-      else if (getvarnote1(lastvar) <= GENVAR_DISCHARGED) {
+      else if (getvarnote1(D, lastvar) <= GENVAR_DISCHARGED) {
         int k;
         setvarnote1(D, fs->nactvar - 1, GENVAR_PERSISTENT);
         for (k = fs->nactvar - 2; k >= 0; k--)
@@ -3245,7 +3287,7 @@ static void commitvarsonstack1(DecompState *D)
   int i;
   for (i = cast_int(fs->nactvar)-1; i >= 0; i--) {
     LocVar *var = getlocvar1(D, i);
-    enum GENVARNOTE note = getvarnote1(var);
+    enum GENVARNOTE note = getvarnote1(D, var);
     if (note != GENVAR_DISCHARGED)
       promotevar1(D, i, GENVAR_PERSISTENT);
   }
@@ -3259,7 +3301,7 @@ static void commitvarsonstack1(DecompState *D)
 static void onvarreferenced1(DecompState *D, int r, int temppos)
 {
   LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(var);
+  enum GENVARNOTE note = getvarnote1(D, var);
   if (note <= GENVAR_ONSTACK && var->startpc >= D->a.bl->node->startpc &&
       r == temppos)
     setvarnote1(D, r, GENVAR_DISCHARGED);
@@ -3322,13 +3364,13 @@ static void recheckfoldableblocks1(DecompState *D)
 static void onvarclobber1(DecompState *D, int r, int pc)
 {
   LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(var);
+  enum GENVARNOTE note = getvarnote1(D, var);
   if (note <= GENVAR_ONSTACK)
     setvarnote1(D, r, GENVAR_PERSISTENT);
   else if (note == GENVAR_DISCHARGED) {
     int i;
     for (i = D->fs->nactvar-1; i > r; i--)
-      if (getvarnote1(getlocvar1(D, i)) != GENVAR_DISCHARGED)
+      if (getvarnote1(D, getlocvar1(D, i)) != GENVAR_DISCHARGED)
         break;
     if (i != r) {
       setvarnote1(D, r, GENVAR_PERSISTENT);
@@ -3415,7 +3457,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
       else { /* R is both operand and destination (r == b || r == c) */
         LocVar *var = getlocvar1(D, r);
         /* check if R is referecnes in a way where it must be a variable */
-        if (getvarnote1(var) == GENVAR_DISCHARGED || (r == b && r == c))
+        if (getvarnote1(D, var) == GENVAR_DISCHARGED || (r == b && r == c))
           setvarnote1(D, r, GENVAR_PERSISTENT);
         else {
           int other;  /* the register operand that is not R */
@@ -3426,7 +3468,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           else other = -1;
           /*int realtop = top;*/
           lua_assert(top >= 0); /* fs->nactvar must be greater than 0 */
-          while (top && getvarnote1(getlocvar1(D, top)) == GENVAR_DISCHARGED)
+          while (top && getvarnote1(D, getlocvar1(D, top)) == GENVAR_DISCHARGED)
             top--;
           /* something like OP_ADD 0 0 1 where top == 1 */
           if (r == top-1 && (other == top || other == -1)) {
@@ -3437,7 +3479,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           }
           /* something like OP_ADD 1 1 x  or OP_ADD 1 x 1 where top == 1 */
           else if (r == top && (b == top-1 || (haveC && c == top-1))) {
-            if (getvarnote1(getlocvar1(D, r)) <= GENVAR_DISCHARGED)
+            if (getvarnote1(D, getlocvar1(D, r)) <= GENVAR_DISCHARGED)
               setvarnote1(D, r, GENVAR_ONSTACK);
           }
           else if (r != top || (other != -1 && !ISK(other)))
@@ -3733,7 +3775,7 @@ static void checkslotreferences1(DecompState *D)
   for (i = 0; i < n; i++) {
     if (slots[i] < fs->nactvar) {
       LocVar *var = getlocvar1(D, slots[i]);
-      if (var->startpc < fs->pc && getvarnote1(var) < GENVAR_PERSISTENT)
+      if (var->startpc < fs->pc && getvarnote1(D, var) < GENVAR_PERSISTENT)
         setvarnote1(D, slots[i], GENVAR_PERSISTENT);
     }
   }
@@ -3787,7 +3829,7 @@ static void updatevarstartpcs1(DFuncState *fs)
     struct LocVar *var = &vars[i];
     int pc;  /* startpc of this variable */
     int nextpc;  /* startpc of next variable */
-    enum GENVARNOTE note = getvarnote1(var);
+    enum GENVARNOTE note = getvarnote1(D, var);
     switch (note) {
       case GENVAR_FILL:
       case GENVAR_FORLOOPVAR:
@@ -3859,6 +3901,7 @@ static void updatevarstartpcs1(DFuncState *fs)
 
 static void finalizevars1(DFuncState *fs)
 {
+  DecompState *D = fs->D;
   Analyzer *a = fs->a;
   static const char *const forloop_names[] = {
     "(for index)", "(for limit)", "(for step)",
@@ -3876,7 +3919,7 @@ static void finalizevars1(DFuncState *fs)
   D(printf("Local variables\n--------------------------\n"));
   for (i = v = p = 0; i < nvars; i++) {
     struct LocVar *var = &vars[i];
-    int note = getvarnote1(var);
+    int note = getvarnote1(D, var);
     if (note == GENVAR_FORNUM || note == GENVAR_FORLIST) {
       int j = (note == GENVAR_FORNUM) ? 0 : 3;
       int k = j+ 3;
@@ -3966,7 +4009,7 @@ static int getlastpersistentvar1(DecompState *D, int limit)
   DFuncState *fs = D->fs;
   int i;
   for (i = cast_int(fs->nactvar)-1; i >= limit; i--) {
-    enum GENVARNOTE note = getvarnote1(getlocvar1(D, i));
+    enum GENVARNOTE note = getvarnote1(D, getlocvar1(D, i));
     if (ispersistent(note))
       break;
   }
@@ -9564,6 +9607,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   VEC_INIT(D.loopstk);
   VEC_INIT(D.blockstk);
   VEC_INIT(D.freeblocknodes);
+  VEC_INIT(D.varnotes);
   D.kmap = NULL;
   D.sizekmap = 0;
   D.holdfirst = NULL;
@@ -9582,6 +9626,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   VEC_FREE(H, D.loopstk, LoopState);
   VEC_FREE(H, D.blockstk, BlockState);
   VEC_FREE(H, D.freeblocknodes, BlockNode *);
+  VEC_FREE(H, D.varnotes, lu_byte);
   freekmap(&D);
   if (status) D.status = status;
   return D.status;
