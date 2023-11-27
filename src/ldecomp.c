@@ -2188,7 +2188,9 @@ static void setloophasbreak(DFuncState *fs, const LoopState *loop, int pc)
   if (loop == &dummyloop)
     return;
   loop1 = ((LoopState *)loop);
-  if (loop1->hasbreak == 0)
+  if (loop1->unsure == 0)
+    loop1->hasbreak = 2;
+  else if (loop1->hasbreak == 0)
     loop1->hasbreak = 1;
   if (loop1->hasbreak == 2)
     set_ins_property(fs, pc, INS_BREAKSTAT);
@@ -3923,6 +3925,23 @@ static int jump2(DFuncState *fs, int pc, int offs)
       set_ins_property(fs, pc, INS_LOOPFAIL);
       return -1;
     }
+    if (target == currloop->breaklabel) {
+      int pc;
+      for (pc = target-1; pc > fs->pc; pc--) {
+        if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
+          /* if there is an untested non-break jump before the break */
+          if (GET_OPCODE(fs->f->code[pc-1]) == OP_JMP &&
+              getjumpcontrol(fs, pc-1) == NULL &&
+              !test_ins_property(fs, pc-1, INS_BREAKSTAT) &&
+              !test_ins_property(fs, pc-1, INS_LOOPEND) &&
+              !test_ins_property(fs, pc-1, INS_BOOLLABEL) &&
+              !test_ins_property(fs, pc-1, INS_SKIPBOOLLABEL)) {
+            unset_ins_property(fs, pc-1, INS_FAILJUMP);
+            return pc;
+          }
+        }
+      }
+    }
   }
   /* INS_FAILJUMP, INS_PASSJUMP
      else-branch points are not marked */
@@ -4422,7 +4441,7 @@ static int enterblock1(DecompState *D, DFuncState *fs, int needvars)
 }
 
 
-static void leaveblock1(DecompState *D, DFuncState *fs)
+static int leaveblock1(DecompState *D, DFuncState *fs)
 {
   BlockState *bl = D->a.bl;
   BlockNode *node = bl->node;
@@ -4492,9 +4511,11 @@ static void leaveblock1(DecompState *D, DFuncState *fs)
   prunevars1(D, bl->nactvar);
   recheckfoldableblocks1(D);
   D->a.prevnode = node;
+  D->a.nextnode = node->nextsibling;
   popblockstate1(fs);
   D->a.bl = getcurrblock1(fs);
   (void)nvars;
+  return NODE_STARTPC(D->a.nextnode);
 }
 
 
@@ -4632,6 +4653,7 @@ static void simblock1(DFuncState *fs)
       }
       else {
         int passjump = -1;
+        int target = pc + 1 + D->a.insn.sbx;
         int real_target = jump2(fs, pc, D->a.insn.sbx);
         if (test_ins_property(fs, pc, INS_PASSJUMP)) {
           passjump = pc;
@@ -4678,7 +4700,7 @@ static void simblock1(DFuncState *fs)
                later check which says that the 2 blocks can definitely not be
                combined, because there is a definite statement between the 2
                blocks */
-            if (bl->node->kind == BL_IF && real_target == bl->f_exitlabel) {
+            if (bl->node->kind == BL_IF && target == bl->f_exitlabel) {
               if (bl->seenstat) {
                 bl->statbeforechild = 1;
                 if (bl->seenhardstat)
@@ -4735,7 +4757,7 @@ static void simblock1(DFuncState *fs)
     continueloop:
     /* pop the current block state for each block that ends at PC */
     while (pc == D->a.bl->node->endpc) {
-      leaveblock1(D, fs);
+      nextnodestart = leaveblock1(D, fs);
       if (D->a.bl == NULL) {
         lua_assert(pc == fs->f->sizecode-1);
         break;
