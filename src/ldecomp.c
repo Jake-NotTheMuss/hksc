@@ -2959,11 +2959,9 @@ typedef struct GenLocVar {
 } GenLocVar;
 
 
-/* usually, GenLocVar will be compatible with LocVar, but in case it is not, a
+/* check if GenLocVar will be compatible with LocVar, and in case it is not, a
    separate vector will be used for variable notes */
-static const int mem_separate_varnotes =
-sizeof(GenLocVar) != sizeof(LocVar) ||
-offsetof(GenLocVar, startpc) != offsetof(LocVar, startpc);
+static const int mem_separate_varnotes = sizeof(GenLocVar) != sizeof(LocVar);
 
 
 static LocVar *getlocvar1(DecompState *D, int r)
