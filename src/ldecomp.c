@@ -5292,11 +5292,9 @@ static void markfollowblock1(DFuncState *fs, BlockNode *node)
 {
   BlockNode *child = node->firstchild;
   int followblockpc = getblockfollowpc(node);
-  if (node->isempty)
-    return;
   if (!ispcvalid(fs, followblockpc) && node->kind == BL_REPEAT)
     followblockpc = findrepeatfollowblock1(fs, node);
-  if (ispcvalid(fs, followblockpc))
+  if (ispcvalid(fs, followblockpc) && followblockpc >= node->startpc)
     set_ins_property(fs, followblockpc, INS_BLOCKFOLLOW);
   while (child != NULL) {
     markfollowblock1(fs, child);
