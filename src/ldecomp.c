@@ -4491,6 +4491,11 @@ static void adjustvarsbeforechildblock1(DecompState *D, BlockNode *node)
 static int enterblock1(DecompState *D, DFuncState *fs, int needvars)
 {
   BlockNode *nextnode = D->a.nextnode;
+  if (nextnode->isempty) {
+    D->a.prevnode = nextnode;
+    D->a.nextnode = nextnode->nextsibling;
+    return NODE_STARTPC(D->a.nextnode);
+  }
   if (needvars)
     adjustvarsbeforechildblock1(D, nextnode);
   D->a.bl = pushblockstate1(fs, nextnode);
