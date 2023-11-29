@@ -2327,8 +2327,13 @@ static void jump1(DFuncState *fs, int pc, int offs)
   if (offs < 0 && tested) {
     if (GET_OPCODE(*jc) == OP_TFORLOOP)
       loopkind = BL_FORLIST;
-    else  /* possibly a repeat-loop jump */
-      loopkind = BL_REPEAT;
+    else {  /* possibly a repeat-loop jump */
+      if (target > currloop->startlabel) {
+        const int *label = isloopexit(currloop, target);
+        if (label == NULL || *label != currloop->exitlabel)
+          loopkind = BL_REPEAT;
+      }
+    }
   }
   else {
     if (!tested && isloopbreak(currloop, target)) {
