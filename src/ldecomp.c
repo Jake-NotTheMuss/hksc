@@ -4453,6 +4453,7 @@ static void appendifbranch1(DecompState *D, int startpc, int endpc)
   DFuncState *fs = D->fs;
   BlockNode *node = addblnode(fs, startpc, endpc, BL_IF);
   BlockNode *parent = D->a.bl->node;
+  lua_assert(parent->endpc >= endpc);
   chainnode1(parent, D->a.nextnode, D->a.prevnode, node);
   D->a.nextnode = node;
 }
@@ -4685,7 +4686,7 @@ static void simblock1(DFuncState *fs)
       updatenextopenexpr1(D);
       /* reset highest clobbered */
       resethighestclob1(D, fs->pc+1);
-      continue;
+      goto continueloop;
     }
     if (needvars) {
       if (D->a.testsetendlabel == -1)
