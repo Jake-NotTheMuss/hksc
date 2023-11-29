@@ -108,12 +108,13 @@ typedef struct BlockNode {
   enum BLTYPE kind;  /* the type of the block */
 #else
   /* save space otherwise */
-  unsigned kind : 4;
+  unsigned kind : 3;
 #endif
   unsigned isempty : 1;  /* true if the block has zero instructions */
   unsigned upval : 1;
   unsigned iselseif : 1;
   unsigned hardstatbeforechild : 1;  /* used by first pass */
+  unsigned repuntiltrue : 1;  /* used by first pass */
 #ifdef LUA_DEBUG
   unsigned visited : 1;  /* has this block been visited in pass2 */
 #endif

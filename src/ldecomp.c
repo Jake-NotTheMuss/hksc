@@ -536,6 +536,7 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
   node->upval = 0;
   node->iselseif = 0;
   node->hardstatbeforechild = 0;
+  node->repuntiltrue = 0;
   node->parentnilvars = 0;
   D(node->visited = 0);
 }
@@ -4716,11 +4717,11 @@ static void simblock1(DFuncState *fs)
               set_ins_property(fs, pc, INS_BREAKSTAT);
               for (bl--; bl->isbranch; bl--)
                 if (loopendpc < bl->node->endpc) break;
-              loopstartpc = (bl+1)->node->startpc - 1;
-              loopstartpc -= (getjumpcontrol(fs, loopstartpc) != NULL);
+              loopstartpc = (bl+1)->prepstart;
               repeatloop = addblnode(fs, loopstartpc, loopendpc, BL_REPEAT);
+              repeatloop->repuntiltrue = 1;
               attachnode1(bl->node, (bl+1)->node, repeatloop);
-              set_ins_property(fs, loopstartpc, INS_REPEATSTAT);
+              /* INS_REPEATSTAT is marked later when the startpc is verified */
               set_ins_property(fs, loopendpc, INS_LOOPEND);
               insertloopstate1(fs, repeatloop);
               goto continueloop;
@@ -4812,22 +4813,35 @@ static void simblock1(DFuncState *fs)
 }
 
 
+static int getconditionstart(DFuncState *fs, int pc, int startlimit);
+
+
+static void correctrutstart(DFuncState *fs, BlockNode *node, int minstartpc)
+{
+  if (testTMode(GET_OPCODE(fs->f->code[node->startpc])))
+    node->startpc = getconditionstart(fs, node->startpc+1, minstartpc);
+  set_ins_property(fs, node->startpc, INS_REPEATSTAT);
+}
+
+
 /*
 ** create extra blocks to account for LOADNIL labels which do not already exist
 ** on a basic block boundary
 ** remove if-blocks that will not be able to generate matching code due to
 ** compiler optimizations and turn them into expressions
 */
-static void addnillabels1(DFuncState *fs, BlockNode *node)
+static void finalizelexicalblocks1(DFuncState *fs, BlockNode *node)
 {
   BlockNode *prevchild = NULL;
   BlockNode *nextchild = node->firstchild;
   int nextchildstartpc = nextchild ? nextchild->startpc : -1;
   int pc;
   int naturaldebuginfo = fs->D->usedebuginfo;
+  if (nextchild != NULL && nextchild->repuntiltrue)
+    correctrutstart(fs, nextchild, node->startpc);
   for (pc = node->startpc; pc <= node->endpc; pc++) {
     if (pc == nextchildstartpc) {
-      addnillabels1(fs, nextchild);
+      finalizelexicalblocks1(fs, nextchild);
       /* note that if NEXTCHILD is empty, pc will end up being decremented by 1,
          then incremented by 1 when continuing, so that this pc is processed
          again under the current node, because it wouldn't be processed by the
@@ -4835,6 +4849,8 @@ static void addnillabels1(DFuncState *fs, BlockNode *node)
       pc = nextchild->endpc;
       prevchild = nextchild;
       nextchild = nextchild->nextsibling;
+      if (nextchild != NULL && nextchild->repuntiltrue)
+        correctrutstart(fs, nextchild, prevchild->endpc+1);
       nextchildstartpc = nextchild ? nextchild->startpc : -1;
       continue;
     }
@@ -4950,7 +4966,7 @@ static int getblockfollowpc(const BlockNode *node)
   int pc;
   switch (node->kind) {
     /* for REPEAT, it needs to be calculated with stack analysis */
-    case BL_REPEAT: return -1;
+    case BL_REPEAT: return node->repuntiltrue ? node->endpc : -1;
     /* for-list ends with TFORLOOP and JMP; subtract 2 from endpc */
     case BL_FORLIST: pc = node->endpc-2; break;
     /* for do-blocks which have OP_CLOSE, subtract 1 from endpc */
@@ -5130,9 +5146,9 @@ static int getconditionstart(DFuncState *fs, int pc, int startlimit)
       int b = GETARG_B(fs->f->code[pc]);
       int c = GETARG_C(fs->f->code[pc]);
       if (!beginseval(o, a, b, c, 0) || a < nactvar)
-        break;  /* found a code that is not part of the condition */
+        return pc+1;  /* found a code that is not part of the condition */
     }
-    return pc+1;
+    return pc;
   }
 }
 
@@ -5150,6 +5166,7 @@ static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
   int lastreturn;
   lu_byte state = 0;  /* state-machine variable */
   lua_assert(node->kind == BL_REPEAT);
+  lua_assert(node->repuntiltrue == 0);
   for (pc = node->startpc; pc < node->endpc; pc++) {
     if (pc == nextchildstartpc) {
       /* skip over child blocks */
@@ -5232,10 +5249,8 @@ static void pass1(DFuncState *fs)
   lua_assert(func != NULL);
   lua_assert(func->nextsibling == NULL);
   lua_assert(func->kind == BL_FUNCTION);
-  /*if (fs->D->usedebuginfo == 0)
-    gendebug1(fs, func);*/
   /* add post-processing functions here */
-  addnillabels1(fs, func);
+  finalizelexicalblocks1(fs, func);
   fs->nlocvars = 0;
   fixblockendings1(fs, func);
   markfollowblock1(fs, func);
