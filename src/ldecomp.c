@@ -4786,7 +4786,14 @@ static void simblock1(DFuncState *fs)
         if (ispcvalid(fs, real_target)) {
           if (test_ins_property(fs, pc, INS_FAILJUMP)) {
             BlockState *bl = D->a.bl;
-            if (jc == NULL && bl->isbranch && real_target >= bl->t_exitlabel &&
+            if (jc == NULL && bl->isbranch &&
+                /* if the jump is to the true-exit label or greater, and there
+                   is an else-part, it's a break, but if there is no else-part,
+                   the jump can target the true-exit and it does not need to be
+                   a break and no repeat-loop needs to be created */
+                (real_target > bl->t_exitlabel ||
+                 (real_target == bl->t_exitlabel &&
+                  bl->t_exitlabel != bl->f_exitlabel)) &&
                 (pc != bl->node->endpc || real_target > bl->t_exitlabel)) {
               int loopstartpc, loopendpc;
               BlockNode *repeatloop;
