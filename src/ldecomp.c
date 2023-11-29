@@ -2859,7 +2859,7 @@ static BlockState *insertloopstate1(DFuncState *fs, BlockNode *node)
   }
   growvector(H, D->blockstk, BlockState);
   /* make room to insert a block state */
-  for (i = D->blockstk.used; i > 0; i--) {
+  for (i = D->blockstk.used; i > 1; i--) {
     BlockState *bl = &D->blockstk.s[i-1];
     if (blstartpc(bl->node) < node->startpc)
       break;
