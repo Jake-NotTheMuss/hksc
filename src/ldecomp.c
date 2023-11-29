@@ -3975,6 +3975,12 @@ static void finalizevars1(DFuncState *fs)
 
 #define REPEAT_UNTIL_TRUE_JUMP  (-2)
 
+static int blockhaselse(const BlockState *block)
+{
+  lua_assert(block->isbranch);
+  return block->t_exitlabel != block->f_exitlabel;
+}
+
 
 static int jump2(DFuncState *fs, int pc, int offs)
 {
@@ -4022,14 +4028,23 @@ static int jump2(DFuncState *fs, int pc, int offs)
      else-branch points are not marked */
   if (target == currblock->f_exitlabel)
     real_target = currblockendpc+1;
-  /* detect an optimized true-exit from a nested if-else statement */
-  else if (target == currblock->t_exitlabel && pc == currblockendpc) {
+  /* detect an optimized true-exit from an if-else statement */
+  else if (target == currblock->t_exitlabel /*&& pc == currblockendpc*/) {
     /* note: t_exitlabel != f_exitlabel given */
     const BlockState *prevbl = currblock-1;
-    int prevhaselse = prevbl->t_exitlabel == prevbl->f_exitlabel;
+    /* the current block is a branch, but the parent may not be */
     lua_assert(currblock->isbranch);
     if (prevbl->t_exitlabel == currblock->t_exitlabel)
-      real_target = prevbl->node->endpc + prevhaselse;
+      /* the parent is a branch, unoptimize the jump and set the target to be
+         the end of the parent block */
+      real_target = prevbl->node->endpc + !blockhaselse(prevbl);
+    else if (pc != currblockendpc)
+      /* if jumping before the end of the if-block, the target is the end of the
+         if-block */
+      real_target = currblock->node->endpc + !blockhaselse(currblock);
+    else if (target == currloop->startlabel)
+      /* if jumping at the end of the if-block, it is an else-jump */
+      real_target = currloop->endlabel-1;
     else
       real_target = target;
   }
@@ -4556,7 +4571,7 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
   switch (node->kind) {
     case BL_REPEAT: {
       /* combine repeat-loops if possible */
-      if (prevnode != NULL &&
+      if (prevnode != NULL && !node->repuntiltrue &&
           prevnode->kind == BL_REPEAT && prevnode->startpc == node->startpc &&
           laststat <= prevnode->endpc) {
         /* combine the repeat-loops */
@@ -4806,10 +4821,11 @@ static void simblock1(DFuncState *fs)
                    is an else-part, it's a break, but if there is no else-part,
                    the jump can target the true-exit and it does not need to be
                    a break and no repeat-loop needs to be created */
-                (real_target > bl->t_exitlabel ||
-                 (real_target == bl->t_exitlabel &&
-                  bl->t_exitlabel != bl->f_exitlabel)) &&
-                (pc != bl->node->endpc || real_target > bl->t_exitlabel)) {
+                (real_target > bl->node->endpc+1 ||
+                 (real_target == bl->node->endpc+1 && blockhaselse(bl))) &&
+                /* if the jump happens at the end of the block,  it does not
+                   target the true-exit label, it is a break */
+                (pc != bl->node->endpc || real_target != bl->t_exitlabel)) {
               int loopstartpc, loopendpc;
               BlockNode *repeatloop;
               addrepuntiltrue:
