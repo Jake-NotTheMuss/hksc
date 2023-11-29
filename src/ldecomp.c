@@ -8952,6 +8952,10 @@ dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     DumpLiteral("if true ", D);
   }
   CheckSpaceNeeded(D);
+  if (D->matchlineinfo && haselsepart(node) && node->startpc == node->endpc)
+    /* if there are not instructions in the if-part, advance to the line of
+       the true-exit jump before emitting `then' to match line info */
+    updateline2(fs, getline(fs->f, node->endpc), D);
   DumpLiteral("then", D);
   D->needspace = 1;
   flushpendingexp2(fs);
