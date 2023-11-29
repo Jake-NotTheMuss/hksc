@@ -5159,7 +5159,8 @@ static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
       state = 0;
       continue;
     }
-    if (GET_OPCODE(fs->f->code[pc]) == OP_RETURN) {
+    if (GET_OPCODE(fs->f->code[pc]) == OP_RETURN ||
+        test_ins_property(fs, pc, INS_BREAKSTAT)) {
       /* found a return code; check if it exists on a follow-block pc */
       state = 1;
       lastreturn = pc;
