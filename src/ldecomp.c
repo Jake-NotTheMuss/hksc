@@ -2806,8 +2806,10 @@ static void initblockstate1(DFuncState *fs, BlockState *block, BlockNode *node)
     block->isloop = 0;
     setbranchlabels(fs, block);
   }
-  else
+  else {
     block->isbranch = block->isloop = 0;
+    block->t_exitlabel = block->f_exitlabel = -1;
+  }
   block->l.loop = getcurrloop1(fs);
   block->nforloopvars = 0;
 }
