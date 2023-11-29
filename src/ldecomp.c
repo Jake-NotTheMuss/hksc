@@ -9209,6 +9209,13 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   int inmainfunc = (fs->prev == NULL);
   if (inmainfunc && node->kind == BL_FUNCTION) {
     D->indentlevel = 0;
+    if (D->matchlineinfo) {
+      int lastline = getline(fs->f, fs->f->sizecode-1);
+      if (lastline > D->linenumber) {
+        updateline2(fs, lastline, D);
+        DumpLiteral("; --[[ emitted to match line info ]]",D);
+      }
+    }
     /* no tokens needed to leave the main function, just add a line-feed */
     beginline2(fs, 1, D);
     return;
