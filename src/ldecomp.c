@@ -5184,6 +5184,63 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
              into the current block */
           BlockNode *new_node;
           int new_node_startpc;
+          /* in the opposite case to above, the analyzer may have created a
+             sequence of blocks in a hierarchy while they were actually
+             adjacent in the source, causing the variables within the parent
+             blocks in the hierarchy to end earlier, and requiring a do-block to
+             be added. Instead, I will just flatten the hierarchy so the
+             variables end naturally */
+          if (fs->D->usedebuginfo && node->kind == BL_IF && !haselsepart(node)){
+            /* get the last child */
+            BlockNode *secondlast = NULL;
+            BlockNode *last = node->firstchild;
+            if (last)
+              while (last->nextsibling != NULL) {
+                secondlast = last;
+                last = last->nextsibling;
+              }
+            if (last &&
+                (last->kind == BL_IF || last->kind == BL_REPEAT ||
+                 last->kind == BL_WHILE)) {
+              /* see if the jump from this if-block may have been optimized */
+              /* if-blocks start one after the jump, while a while-loop or
+                 repeat-loop will start on a jump in order for optimization to
+                 be possible */
+              int jumppc = last->startpc - (last->kind == BL_IF);
+              int realvarendpc = jumppc;
+              int i;
+              if (GET_OPCODE(fs->f->code[jumppc]) != OP_JMP ||
+                  getjumpcontrol(fs, jumppc) != NULL)
+                goto augmentdoblock;
+              /* check if the block endpc can be decreased without messing up
+                 variable info */
+              for (i = 0; i < fs->sizelocvars; i ++) {
+                LocVar *var = &fs->locvars[i];
+                if (var->startpc > realvarendpc)
+                  break;
+                if (var->startpc >= node->startpc && var->endpc > realvarendpc)
+                  goto augmentdoblock;
+              }
+              /* no do-block is needed */
+              if (secondlast)
+                /* secondlast is now the last child */
+                secondlast->nextsibling = NULL;
+              else
+                node->firstchild = NULL;
+              /* the last child is now the next sibling */
+              last->nextsibling = node->nextsibling;
+              node->nextsibling = last;
+              /* update the endpc accordinly */
+              endpc = node->endpc = realvarendpc-1;
+              recalcemptiness(node);
+              if (nextchild == last) {
+                nextchild = NULL;
+                nextchildstartpc = -1;
+              }
+              goto continueloop;
+            }
+          }
+          augmentdoblock:
           if (lastlocvarexpr != -1)
             new_node_startpc = lastlocvarexpr;
           else
@@ -5225,6 +5282,7 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
         fixblockendings1(fs, node);
         return;
       }
+      continueloop:
       nvarshere++;
     }
   }
