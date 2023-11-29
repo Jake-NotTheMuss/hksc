@@ -9167,6 +9167,10 @@ static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
   DecompState *D = fs->D;
   int line, nextline;
   lua_assert(ispcvalid(fs, node->endpc+1));
+  /* I have it so if the entire block has been on the same line so far, also
+     emit the footer on the same line. In case this alone will not match line
+     info, I added a check after the entire file is dumped to add a semi-colon
+     on the last mapped line to ensure matching line info upon recompilation */
   if (D->linenumber == sa->currheaderline)
     return D->linenumber;
   nextline = getline2(fs, node->endpc+1);
