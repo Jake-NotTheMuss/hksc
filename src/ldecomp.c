@@ -4252,7 +4252,8 @@ static void onclose1(DecompState *D, int withdebug)
   /* adjust local variables in parent blocks before checking if a do-block is
      really needed in the current block */
   closelocalvars1(D, reg, pc+1, 1);
-  if (initialtop == reg && getnaturalclosepc(currblock->node) == pc) {
+  if (initialtop == reg && getnaturalclosepc(currblock->node) == pc &&
+      currblock->node->kind != BL_FUNCTION) {
     /* the current loop or if-statement will generate this OP_CLOSE code, no
        need to add a do-block */
     currblock->node->upval = 1;
