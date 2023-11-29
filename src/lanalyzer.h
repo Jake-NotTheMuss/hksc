@@ -61,7 +61,7 @@ enum BLTYPE {
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
   DEFINSFLAG(SKIPBOOLLABEL)  /* a jump over 2 bool labels */ \
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
-  DEFINSFLAG(TESTSETLABEL)  /* jump target of OP_TESTSET-controlled jump */ \
+  DEFINSFLAG(TESTSETJUMP)  /* a jump within a testset expression */ \
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
   DEFINSFLAG(LOCVAREXPR) \
   DEFINSFLAG(ASSIGNSTART)  /* start of a local statement or store */ \

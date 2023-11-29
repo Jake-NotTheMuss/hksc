@@ -2437,9 +2437,7 @@ static void simloop1(DFuncState *fs)
           updateactvar1(fs, pc, &nvars);
           openexpr1(fs, GETARG_A(code[pc+1+sbx]), FORLISTPREP, NULL);
         }
-        else if (jc != NULL && GET_OPCODE(*jc) == OP_TESTSET)
-          set_ins_property(fs, pc + 1 + sbx, INS_TESTSETLABEL);
-        else
+        else if (jc == NULL || GET_OPCODE(*jc) != OP_TESTSET)
           jump1(fs, pc, sbx);
         break;
       }
@@ -2598,6 +2596,13 @@ static void rescanloops(DFuncState *fs)
         (target == currloop->startlabel || isloopexit(currloop, target)))
       set_ins_property(fs, pc, INS_FAILJUMP);
     else if (sbx >= 0) {
+      if (target > pc+2 && GET_OPCODE(fs->f->code[target-1]) == OP_JMP) {
+        const Instruction *jc2 = getjumpcontrol(fs, target-1);
+        if (jc2 && GET_OPCODE(*jc2) == OP_TESTSET) {
+          set_ins_property(fs, pc, INS_TESTSETJUMP);
+          goto l1;
+        }
+      }
       if (test_ins_property(fs, target-1, INS_FAILJUMP)) {
         if (getjumpcontrol(fs, target-1) != NULL)
           set_ins_property(fs, pc, INS_PASSJUMP);
@@ -4310,10 +4315,18 @@ scanpassjump(DecompState *D, DFuncState *fs, int target, int needvars)
 
 static void checktestsetstart1(DecompState *D, int pc)
 {
+  DFuncState *fs = D->fs;
+  int label;
   if (D->a.insn.o == OP_TESTSET) {
-    int label = getjump(D->fs, pc+1);
+    label = getjump(fs, pc+1);
+    settestsetlabel:
     if (label > D->a.testsetendlabel)
       D->a.testsetendlabel = label;
+  }
+  else if (test_ins_property(fs, pc, INS_TESTSETJUMP)) {
+    lua_assert(D->a.insn.o == OP_JMP);
+    label = getjump(fs, getjump(fs, pc)-1);
+    goto settestsetlabel;
   }
 }
 
