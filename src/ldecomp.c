@@ -4896,6 +4896,7 @@ static void simblock1(DFuncState *fs)
     finalizevars1(fs);
   }
   memset(fs->a->actvar, 0, fs->a->sizeactvar * sizeof(unsigned short));
+  fs->nopencalls = fs->a->sizeopencalls;
 }
 
 
