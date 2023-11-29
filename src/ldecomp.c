@@ -3047,11 +3047,13 @@ static void updatenextopenexpr1(DecompState *D)
 /*
 ** record a local variable starting at PC with the given NOTE
 */
-static LocVar *addvar1(DecompState *D, int pc, enum GENVARNOTE note)
+static LocVar *genvar1(DecompState *D, int pc, enum GENVARNOTE note)
 {
   DFuncState *fs = D->fs;
   Analyzer *a = fs->a;
   struct LocVar *var;
+  /* never generate a variable if using debug info */
+  lua_assert(D->usedebuginfo == 0);
   luaM_growvector(fs->H, a->locvars, fs->nlocvars, a->sizelocvars, LocVar,
                   SHRT_MAX, "");
   fs->locvars = a->locvars;
@@ -3115,12 +3117,12 @@ static void newlocalvar1(DecompState *D, int r, int pc)
     }
   }
   for (i = D->fs->nactvar; i < r; i++)
-    addvar1(D, startpc, GENVAR_FILL);
+    genvar1(D, startpc, GENVAR_FILL);
   /* if the position below R is free, then it must be a local if it is not being
      used in favor of R */
   if (r > 0 && getvarnote1(D, getlocvar1(D, r-1)) == GENVAR_DISCHARGED)
     setvarnote1(D, r-1, GENVAR_PERSISTENT);
-  addvar1(D, startpc, GENVAR_ONSTACK);
+  genvar1(D, startpc, GENVAR_ONSTACK);
   (void)getnextpc1;
 }
 
@@ -3666,9 +3668,9 @@ static void addforloopaugmentedvars(DecompState *D, BlockNode *node)
 {
   int note = node->kind == BL_FORNUM ? GENVAR_FORNUM : GENVAR_FORLIST;
   /* reserve space for augmented vars */
-  addvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
-  addvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
-  addvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
+  genvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
+  genvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
+  genvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
 }
 
 
@@ -3677,7 +3679,7 @@ static void addforloopvars(DecompState *D, BlockNode *node, int nvars)
   int i;
   /* todo: how do you handle the for-loop parser bug */
   for (i = 0; i < nvars; i++)
-    addvar1(D, node->startpc, GENVAR_FORLOOPVAR);
+    genvar1(D, node->startpc, GENVAR_FORLOOPVAR);
 }
 
 
@@ -3685,7 +3687,7 @@ static void createparams1(DecompState *D)
 {
   int i;
   for (i = 0; i < D->fs->f->numparams; i++)
-    addvar1(D, 0, GENVAR_PARAM);
+    genvar1(D, 0, GENVAR_PARAM);
 }
 
 
@@ -3702,12 +3704,12 @@ static void createinitiallocals1(DecompState *D)
         int b = GETARG_B(fs->f->code[pc]);
         if (a < fs->f->numparams && b >= fs->f->numparams) {
           for (; i <= b; i++)
-            addvar1(D, pc, GENVAR_PERSISTENT);
+            genvar1(D, pc, GENVAR_PERSISTENT);
         }
       }
     }
     for (; i < reg; i++)
-      addvar1(D, 0, GENVAR_INITIAL);
+      genvar1(D, 0, GENVAR_INITIAL);
   }
 }
 
@@ -4455,7 +4457,7 @@ static void adjustvarsbeforechildblock1(DecompState *D, BlockNode *node)
   if (isforloop(node)) {
     base = getforloopbase(fs->f->code, node);
     for (i = fs->nactvar; i < base; i++)
-      addvar1(D, fs->pc, GENVAR_FILL);
+      genvar1(D, fs->pc, GENVAR_FILL);
     /* augmented vars start before entering the block */
     addforloopaugmentedvars(D, node);
     return;
@@ -4466,7 +4468,8 @@ static void adjustvarsbeforechildblock1(DecompState *D, BlockNode *node)
 static int enterblock1(DecompState *D, DFuncState *fs, int needvars)
 {
   BlockNode *nextnode = D->a.nextnode;
-  adjustvarsbeforechildblock1(D, nextnode);
+  if (needvars)
+    adjustvarsbeforechildblock1(D, nextnode);
   D->a.bl = pushblockstate1(fs, nextnode);
   /* add the rest of the for-loop variables after entering the block */
   if (isforloop(nextnode)) {
