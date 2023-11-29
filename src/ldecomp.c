@@ -5212,6 +5212,10 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
               new_node->nextsibling = prevchild->nextsibling;
               prevchild->nextsibling = NULL;
             }
+            else {
+              new_node->nextsibling = new_node->firstchild;
+              new_node->firstchild = NULL;
+            }
           }
           new_node->parentnilvars = nvarshere;
         }
