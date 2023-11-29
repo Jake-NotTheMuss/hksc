@@ -2863,8 +2863,11 @@ static BlockState *popblockstate1(DFuncState *fs)
   lua_assert(D->blockstk.used > 0);
   block = &D->blockstk.s[--D->blockstk.used];
   fs->nactvar = block->nactvar;
-  if (isloopnode(block->node))
+  if (isloopnode(block->node)) {
+    if (isforloop(block->node))
+      fs->nactvar -= 3;
     poploopstate1(fs);
+  }
   return block;
 }
 
