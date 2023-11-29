@@ -3980,6 +3980,7 @@ static int jump2(DFuncState *fs, int pc, int offs)
   DecompState *D = fs->D;
   const LoopState *currloop = getcurrloop1(fs);
   const BlockState *currblock = D->a.bl;
+  int currblockendpc;
   int target = pc + 1 + offs; /* the jump target pc */
   /*const Instruction *jc = getjumpcontrol(fs, pc);*/
   if (test_ins_property(fs, pc, INS_BREAKSTAT))
@@ -4014,10 +4015,22 @@ static int jump2(DFuncState *fs, int pc, int offs)
       }
     }
   }
+  currblockendpc = currblock->node->endpc;
   /* INS_FAILJUMP, INS_PASSJUMP
      else-branch points are not marked */
   if (target == currblock->f_exitlabel)
-    real_target = currblock->node->endpc+1;
+    real_target = currblockendpc+1;
+  /* detect an optimized true-exit from a nested if-else statement */
+  else if (target == currblock->t_exitlabel && pc == currblockendpc) {
+    /* note: t_exitlabel != f_exitlabel given */
+    const BlockState *prevbl = currblock-1;
+    int prevhaselse = prevbl->t_exitlabel == prevbl->f_exitlabel;
+    lua_assert(currblock->isbranch);
+    if (prevbl->t_exitlabel == currblock->t_exitlabel)
+      real_target = prevbl->node->endpc + prevhaselse;
+    else
+      real_target = target;
+  }
   else if (target == currloop->startlabel)
     real_target = currloop->endlabel-1;
   else
@@ -4856,6 +4869,8 @@ static void simblock1(DFuncState *fs)
               BlockNode *currnode = D->a.bl->node;
               BlockNode *prevnode = prevbl->node;
               if (prevnode->firstchild != currnode || prevnode->kind != BL_IF)
+                break;
+              if (currnode->endpc < prevnode->endpc)
                 break;
               if (prevbl->statbeforechild) {
                 goto addrepuntiltrue;
