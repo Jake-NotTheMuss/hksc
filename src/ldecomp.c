@@ -4607,7 +4607,8 @@ static void simblock1(DFuncState *fs)
     if (nvars) {  /* new vars are detected if using debug info */
       fs->nlocvars += nvars;
       addlocalvars1(fs, nvars);
-      setlaststat1(D, pc, 1);  /* a local statement here */
+      if (pc > 0)
+        setlaststat1(D, pc-1, 1);  /* a local statement here */
     }
     /* push a new block state if entering the next node */
     while (pc == nextnodestart)
@@ -4675,8 +4676,7 @@ static void simblock1(DFuncState *fs)
       /* if a new variable starts here or an active variable is clobbered, mark
          a new statement (either local statement or local assignment) */
       if (D->a.insn.o != OP_TESTSET)
-      if (nvars ||
-          clobberslocal(fs, D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c))
+      if (clobberslocal(fs, D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c))
         setlaststat1(D, pc, 1);
     }
     /* check TESTSET start AFTER updating generated variables */
