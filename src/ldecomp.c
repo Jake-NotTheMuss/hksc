@@ -1336,7 +1336,7 @@ static void DumpIndentation(DecompState *D)
 
 #ifdef LUA_DEBUG
 
-static void debugblnode(DFuncState *fs, BlockNode *node, int indent) {
+static void debugblnode1(DFuncState *fs, BlockNode *node, int indent) {
   BlockNode *child, *nextsibling;
   int i;
   lua_assert(node != NULL);
@@ -1354,9 +1354,28 @@ static void debugblnode(DFuncState *fs, BlockNode *node, int indent) {
   lua_assert(node->visited == 0);
   node->visited = 1;
   while (child != NULL) {
-    debugblnode(fs, child, indent+1);
+    debugblnode1(fs, child, indent+1);
     child = child->nextsibling;
   }
+}
+
+
+static void unvisittree(DFuncState *fs, BlockNode *node)
+{
+  BlockNode *child;
+  node->visited = 0;
+  child = node->firstchild;
+  while (child != NULL) {
+    unvisittree(fs, child);
+    child = child->nextsibling;
+  }
+}
+
+
+static void debugblnode(DFuncState *fs, BlockNode *node)
+{
+  debugblnode1(fs, node, 0);
+  unvisittree(fs, node);
 }
 
 
@@ -1368,13 +1387,8 @@ static void debugblocksummary(DFuncState *fs)
   lua_assert(node != NULL);
   lua_assert(node->kind == BL_FUNCTION);
   lua_assert(node->nextsibling == NULL);
-  debugblnode(fs, node, 0);
+  debugblnode(fs, node);
   lprintf("-------------------\n");
-  node = fs->a->bllist.first;
-  while (node != NULL) {
-    node->visited = 0;  /* unvisit before pass2 */
-    node = node->next;
-  }
 }
 
 
@@ -4249,6 +4263,9 @@ static void onclose1(DecompState *D, int withdebug)
   int pc = fs->pc;
   int initialtop = currblock->nactvar + currblock->nforloopvars;
   lua_assert(D->a.insn.o == OP_CLOSE);
+  /* OP_CLOSE before a break does not need handling */
+  if (test_ins_property(fs, pc+1, INS_BREAKSTAT))
+    return;
   /* adjust local variables in parent blocks before checking if a do-block is
      really needed in the current block */
   closelocalvars1(D, reg, pc+1, 1);
@@ -4535,11 +4552,41 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
       break;
     }
     case BL_IF: {
+      BlockNode *const parentnode = (bl-1)->node;
       Instruction nextinsn = fs->f->code[node->endpc+1];
       OpCode nextop = GET_OPCODE(nextinsn);
       int nextA = GETARG_A(nextinsn);
       int nextB = GETARG_B(nextinsn);
       int nextC = GETARG_C(nextinsn);
+      /* check if this if-block is part of the full-semantics emitted by the
+         compiled in a repeat-loop that closes upvalues, and remove the
+         if-block, as it will generate extra semantics and therefore different
+         code */
+      if (parentnode->kind == BL_REPEAT && !parentnode->repuntiltrue &&
+          node->kind == BL_IF && !node->isempty &&
+        /* the if-block is 2 instructions in length, and 2 instructions before
+           the end of the loop, contains a CLOSE and then a JMP */
+          node->endpc - node->startpc == 1 &&
+          GET_OPCODE(fs->f->code[node->startpc]) == OP_CLOSE &&
+          test_ins_property(fs, node->endpc, INS_BREAKSTAT) &&
+          parentnode->endpc - node->endpc == 2 &&
+          GET_OPCODE(fs->f->code[parentnode->endpc-1]) == OP_CLOSE) {
+        int start = bl->prepstart;
+        int pc = node->startpc-1;
+        unset_ins_property(fs, node->endpc, INS_BREAKSTAT);
+        set_ins_property(fs, node->endpc, INS_AUGBREAK);
+        for (; pc >= start; pc--) {
+          if (test_ins_property(fs, pc, INS_BRANCHFAIL)) {
+            unset_ins_property(fs, pc, INS_BRANCHFAIL);
+            set_ins_property(fs, pc, INS_LOOPFAIL);
+          }
+          else if (test_ins_property(fs, pc, INS_BRANCHPASS)) {
+            unset_ins_property(fs, pc, INS_BRANCHPASS);
+            set_ins_property(fs, pc, INS_LOOPPASS);
+          }
+        }
+        goto removenode;
+      }
       if (isstorecode(nextop) || nextop == OP_MOVE) {
         int i, noperands;
         int operands[3];
@@ -4555,7 +4602,7 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
         for (i = 0; i < noperands; i++)
           if (operands[i] >= bl->nactvar) break;
         if (i < noperands) {
-          BlockNode *const parentnode = (bl-1)->node;
+          removenode:
           /* destroy the block */
           /* PREVNODE is the last child of NODE */
           if (prevnode != NULL)
@@ -4584,7 +4631,8 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
   prunevars1(D, bl->nactvar);
   recheckfoldableblocks1(D);
   D->a.prevnode = node;
-  D->a.nextnode = node->nextsibling;
+  /* NODE can be NULL if it was removed and PREVNODE was also NULL */
+  D->a.nextnode = node ? node->nextsibling : NULL;
   popblockstate1(fs);
   D->a.bl = getcurrblock1(fs);
   (void)nvars;
@@ -8142,6 +8190,17 @@ static int iscondreducible(ExpNode *e1, ExpNode *e2, int golabel)
   return 0;
 }
 
+static void setpendingcondtarget(StackAnalyzer *sa, DFuncState *fs, int label)
+{
+  /* if jumping past an augmented repeat-loop break, set the actual target to be
+     the end of the loop, as this condition is the footer condition, and should
+     not be finalized until then */
+  if (!ispcvalid(fs, label-1) || !test_ins_property(fs, label-1, INS_AUGBREAK))
+    sa->pendingcond.target = label;
+  else
+    sa->pendingcond.target = label+2;
+}
+
 
 /*
 ** update the pending conditional expression after a new jump; only call when
@@ -8296,7 +8355,7 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
   else
     exp->endlabel = jumptarget;
   e = exp2index(fs, exp);
-  sa->pendingcond.target = exp->endlabel;
+  setpendingcondtarget(sa, fs, exp->endlabel);
   {
     ExpNode *prevnode;
     int golabel = skipsboollabel ? jumptarget : pc+1;
@@ -8394,7 +8453,7 @@ finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
     if (isregvalid(fs, exp1->info) && !istempreg(fs, exp1->info))
       exp1 = addexptoreg2(sa, fs, exp1->info, exp1, NULL);
   }
-  sa->pendingcond.target = prevtarget;
+  setpendingcondtarget(sa, fs, prevtarget);
   return exp1;
 }
 
@@ -9421,7 +9480,10 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           checkdischargestores2(sa, fs);
           emitbreakstat2(fs, pc);
         }
-        else if (pc == endpc && node->kind != BL_REPEAT) {
+        else if (pc == endpc && (node->kind != BL_REPEAT || node->upval)) {
+          /* do nothing */
+        }
+        else if (test_ins_property(fs, pc, INS_AUGBREAK)) {
           /* do nothing */
         }
         else if (sa->numforloopvars > 0) {

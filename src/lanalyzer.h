@@ -53,7 +53,7 @@ enum BLTYPE {
   DEFINSFLAG(FORLIST)  /* first pc in a list for-loop */ \
   DEFINSFLAG(FORNUM)  /* first pc in a numeric for-loop */ \
   DEFINSFLAG(BLOCKEND)  /* last pc in a non-loop block */ \
-  DEFINSFLAG(BRANCHBEGIN)  /* start of branch block */ \
+  DEFINSFLAG(AUGBREAK)  /* augmented break in a repeat-loop with upvalues */ \
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
