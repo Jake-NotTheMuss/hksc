@@ -2447,7 +2447,7 @@ static void simloop1(DFuncState *fs)
     if (nextvar) {
       if (o != OP_FORPREP && !test_ins_property(fs, pc+1, INS_FORLIST)) {
         locvarexpr1(fs, nvars, nextvar);
-        continue;
+        goto checkloopend;
       }
     }
     switch (o) {
@@ -2542,6 +2542,7 @@ static void simloop1(DFuncState *fs)
         }
       }
     }
+    checkloopend:
     /* update vars after possibly traversing extra codes */
     pc = fs->pc;
     o = GET_OPCODE(code[pc]);
