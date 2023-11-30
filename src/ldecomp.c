@@ -4598,12 +4598,51 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
       break;
     }
     case BL_IF: {
+      const LoopState *currloop = getcurrloop1(fs);
       BlockNode *const parentnode = (bl-1)->node;
       Instruction nextinsn = fs->f->code[node->endpc+1];
       OpCode nextop = GET_OPCODE(nextinsn);
       int nextA = GETARG_A(nextinsn);
       int nextB = GETARG_B(nextinsn);
       int nextC = GETARG_C(nextinsn);
+      /* check if there was an undetetced optimized jump from a branch that
+         targeted a break statement, but it couldn't be detected at the time due
+         to uncertainty about what came afterward; in jump2, the jump target
+         would have been unoptimized, but here it must be checked to see if it
+         makes sense as a jump target; if the optimized jump was undetected, the
+         target will be thought to be the end label of the loop */
+      if (node->endpc == currloop->endlabel-1 && currloop->hasbreak) {
+        BlockNode *lastchild;
+        BlockNode *prevchild = NULL;
+        BlockNode *nextchild = node->firstchild;
+        int pc;
+        int lastbreak = -1;
+        int limitpc = node->nextsibling ? blstartpc(node->nextsibling) :
+        currloop->endlabel-1;
+        for (pc = node->startpc+1; pc < limitpc; pc++) {
+          if (nextchild && pc == nextchild->startpc) {
+            pc = nextchild->endpc+1;
+            prevchild = nextchild;
+            nextchild = nextchild->nextsibling;
+          }
+          if (test_ins_property(fs, pc, INS_BREAKSTAT))
+            lastbreak = pc;
+        }
+        if (lastbreak != -1) {
+          if (prevchild)
+            prevchild->nextsibling = NULL;
+          else
+            node->firstchild = NULL;
+          lastchild = nextchild;
+          while (lastchild != NULL && lastchild->nextsibling != NULL)
+            lastchild = lastchild->nextsibling;
+          if (lastchild != NULL)
+            lastchild->nextsibling = node->nextsibling;
+          node->nextsibling = nextchild;
+          node->endpc = lastbreak-1;
+          recalcemptiness(node);
+        }
+      }
       /* check if this if-block is part of the full-semantics emitted by the
          compiled in a repeat-loop that closes upvalues, and remove the
          if-block, as it will generate extra semantics and therefore different
