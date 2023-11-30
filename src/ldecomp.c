@@ -3646,6 +3646,19 @@ static void updatevars1(DecompState *D, DFuncState *fs)
 }
 
 
+static void checkexpclobber(DecompState *D)
+{
+  DFuncState *fs = D->fs;
+  const OpenExpr *expr = D->a.openexpr;
+  if (expr->kind == CONCATPREP) {
+    int reg = GETARG_A(fs->f->code[expr->endpc]);
+    lua_assert(GET_OPCODE(fs->f->code[expr->endpc]) == OP_CONCAT);
+    if (reg < fs->nactvar)
+      setlaststat1(D, expr->endpc, 1);
+  }
+}
+
+
 /*
 ** if needed, create a new local variable for the result of an open expression,
 ** the expression must not be a statement such as a return or call statement
@@ -4767,8 +4780,11 @@ static void simblock1(DFuncState *fs)
         isstat = (kind == RETPREP || kind == FORNUMPREP || kind == FORLISTPREP);
       if (isstat)
         setlaststat1(D, D->a.openexpr->endpc, 1);
-      if (!isstat && needvars)
+      if (!isstat) {
+        checkexpclobber(D);
+        if (needvars)
         createexpresult(D, kind != HASHTABLEPREP && kind != EMPTYTABLE, iscall);
+      }
       /* advance to the end of the expression */
       while (pc != D->a.openexpr->endpc) {
         updatereferences1(D);
