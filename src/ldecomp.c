@@ -2445,8 +2445,10 @@ static void simloop1(DFuncState *fs)
     int nvars;
     LocVar *nextvar = updateactvar1(fs, pc+1, &nvars);
     if (nextvar) {
-      if (o != OP_FORPREP && !test_ins_property(fs, pc+1, INS_FORLIST))
+      if (o != OP_FORPREP && !test_ins_property(fs, pc+1, INS_FORLIST)) {
         locvarexpr1(fs, nvars, nextvar);
+        continue;
+      }
     }
     switch (o) {
       case OP_JMP: {
