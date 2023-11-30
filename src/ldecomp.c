@@ -4670,6 +4670,14 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
 }
 
 
+static void endvarshere1(DFuncState *fs, int pc)
+{
+  int i;
+  for (i = 0; i < fs->sizelocvars; i++)
+    if (fs->locvars[i].endpc == pc) fs->nactvar--;
+}
+
+
 static void simblock1(DFuncState *fs)
 {
   DecompState *D = fs->D;
@@ -4713,6 +4721,10 @@ static void simblock1(DFuncState *fs)
       if (pc > 0)
         setlaststat1(D, pc-1, 1);  /* a local statement here */
     }
+    if (!needvars)  /* using debug info */
+      /* before continuing, remove any variables that end on this pc from the
+         active variable count */
+      endvarshere1(fs, pc);
     /* push a new block state if entering the next node */
     while (pc == nextnodestart)
       nextnodestart = enterblock1(D, fs, needvars);
