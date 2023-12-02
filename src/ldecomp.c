@@ -579,7 +579,8 @@ static int getnaturalclosepc(const BlockNode *node)
 {
   switch (node->kind) {
     case BL_FORLIST: return node->endpc-2;
-    case BL_IF: case BL_ELSE: return node->endpc;
+    case BL_IF: return node->endpc - haselsepart(node);
+    case BL_ELSE: return node->endpc;
     default: return node->endpc-1;
   }
 }
@@ -4298,6 +4299,31 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
 
 
 /*
+** returns true if the current OP_CLOSE code will be generated implicitly by the
+** current lexical block without needing to have an inner do-blocm
+*/
+static int
+checkimplicitclose1(DecompState *D, int closedreg, int basereg, int pc)
+{
+  BlockState *bl = D->a.bl;
+  int closepc;
+  if (closedreg != basereg)
+    return 0;  /* OP_CLOSE does not close all variables in the block */
+  if (bl->node->kind == BL_FUNCTION)
+    return 0;  /* function blocks do not generate OP_CLOSE implcitly */
+  /* now check if the pc of OP_CLOSE is where an implicit one would ne */
+  closepc = getnaturalclosepc(bl->node);
+  /* at this point, an if-block which has en else-part will not have an
+     else-block sibling, so getnaturalclosepc will be inaccurate if there is an
+     else-part. The BlockState needs to be checked instead to see if it has an
+     else-part, which affects where the natural OP_CLOSE pc is */
+  if (bl->node->kind == BL_IF && blockhaselse(bl))
+    closepc--;  /* close pc is before the true-exit jump */
+  return pc == closepc;
+}
+
+
+/*
 ** OP_CLOSE handler
 */
 static void onclose1(DecompState *D, int withdebug)
@@ -4315,8 +4341,7 @@ static void onclose1(DecompState *D, int withdebug)
   /* adjust local variables in parent blocks before checking if a do-block is
      really needed in the current block */
   closelocalvars1(D, reg, pc+1, 1);
-  if (initialtop == reg && getnaturalclosepc(currblock->node) == pc &&
-      currblock->node->kind != BL_FUNCTION) {
+  if (checkimplicitclose1(D, reg, initialtop, pc)) {
     /* the current loop or if-statement will generate this OP_CLOSE code, no
        need to add a do-block */
     currblock->node->upval = 1;
