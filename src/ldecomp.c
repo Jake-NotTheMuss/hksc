@@ -4303,9 +4303,10 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
 ** current lexical block without needing to have an inner do-blocm
 */
 static int
-checkimplicitclose1(DecompState *D, int closedreg, int basereg, int pc)
+checkimplicitclose1(DecompState *D, int closedreg, int pc)
 {
   BlockState *bl = D->a.bl;
+  int basereg = bl->nactvar + bl->nforloopvars;
   int closepc;
   if (closedreg != basereg)
     return 0;  /* OP_CLOSE does not close all variables in the block */
@@ -4333,7 +4334,6 @@ static void onclose1(DecompState *D, int withdebug)
   BlockNode *node;
   int reg = D->a.insn.a;
   int pc = fs->pc;
-  int initialtop = currblock->nactvar + currblock->nforloopvars;
   lua_assert(D->a.insn.o == OP_CLOSE);
   /* OP_CLOSE before a break does not need handling */
   if (test_ins_property(fs, pc+1, INS_BREAKSTAT))
@@ -4341,7 +4341,7 @@ static void onclose1(DecompState *D, int withdebug)
   /* adjust local variables in parent blocks before checking if a do-block is
      really needed in the current block */
   closelocalvars1(D, reg, pc+1, 1);
-  if (checkimplicitclose1(D, reg, initialtop, pc)) {
+  if (checkimplicitclose1(D, reg, pc)) {
     /* the current loop or if-statement will generate this OP_CLOSE code, no
        need to add a do-block */
     currblock->node->upval = 1;
