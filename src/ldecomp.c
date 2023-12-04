@@ -2627,7 +2627,9 @@ static void rescanloops(DFuncState *fs)
         }
       }
       if (test_ins_property(fs, target-1, INS_FAILJUMP)) {
-        if (getjumpcontrol(fs, target-1) != NULL)
+        if (getjump(fs, target-1) == target)
+          set_ins_property(fs, pc, INS_FAILJUMP);
+        else if (getjumpcontrol(fs, target-1) != NULL)
           set_ins_property(fs, pc, INS_PASSJUMP);
         else {
           /* TODO: mark else-branch point if needed at (target-1) */
