@@ -2343,7 +2343,7 @@ static void jump1(DFuncState *fs, int pc, int offs)
     if (GET_OPCODE(*jc) == OP_TFORLOOP)
       loopkind = BL_FORLIST;
     else {  /* possibly a repeat-loop jump */
-      if (target > currloop->startlabel) {
+      if (1 || target > currloop->startlabel) {
         const int *label = isloopexit(currloop, target);
         if (label == NULL || *label != currloop->exitlabel)
           loopkind = BL_REPEAT;
@@ -4754,9 +4754,15 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
 
 static void endvarshere1(DFuncState *fs, int pc)
 {
+  int stat = 0;
   int i;
   for (i = 0; i < fs->sizelocvars; i++)
-    if (fs->locvars[i].endpc == pc) fs->nactvar--;
+    if (fs->locvars[i].endpc == pc) {
+      stat = 1;
+      fs->nactvar--;
+    }
+  if (stat)
+    setlaststat1(fs->D, pc, 1);
 }
 
 
