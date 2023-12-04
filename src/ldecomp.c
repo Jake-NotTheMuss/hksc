@@ -4356,11 +4356,13 @@ static void onclose1(DecompState *D, int withdebug)
     node = createdoblock(fs, startpc, pc);
     node->upval = 1;
     addnodetostate1(D->a.bl, node);
+    D->a.prevnode = node;
   }
   else {
     node = closelocalvars1(D, reg, pc+1, 0);
     if (node) {  /* should never be NULL, but just to be safe */
       node->upval = 1;
+      D->a.prevnode = node;
     }
   }
 }
@@ -5328,6 +5330,7 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
               /* update the endpc accordinly */
               endpc = node->endpc = realvarendpc-1;
               recalcemptiness(node);
+              varendpc = getnaturalvarendpc(node);
               if (nextchild == last) {
                 nextchild = NULL;
                 nextchildstartpc = -1;
