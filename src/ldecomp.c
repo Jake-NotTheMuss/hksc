@@ -144,6 +144,7 @@ typedef struct {
     struct BlockState *bl;
     struct pendingstorechain1 *store;
     BlockNode *prevnode, *nextnode;
+    int minexprstartpc;  /* used in initial pass for openexpr1 */
     int currvarlimit;
     int nclose;
     int skippedstorerefpc;
@@ -1645,6 +1646,18 @@ static int referencesslot(OpCode o, int a, int b, int c, int slots[3])
   return n;
 }
 
+
+static int getlowestslotreferenced(OpCode o, int a, int b, int c, int base)
+{
+  int slots[3];
+  int nslots = referencesslot(o, a, b, c, slots);
+  int lowest = -1;
+  int i;
+  for (i = 0; i < nslots; i++)
+    if (slots[i] < lowest && slots[i] >= base) lowest = slots[i];
+  return lowest;
+}
+
 #if 0
 /*
 ** Returns true if the instruction at (PC-1) is OP_JMP.
@@ -1878,6 +1891,7 @@ static void onjump1(DFuncState *fs, int pc, int offs)
 */
 static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
 {
+  DecompState *D = fs->D;
   const Instruction *code = fs->f->code;
   int endpc = fs->pc;
   int nextpossiblestart = endpc;
@@ -1934,7 +1948,9 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
       case OP_CALL_M:
       case OP_CONCAT:
         if (kind == VOIDPREP) {
-          openexpr1(fs, a, o == OP_CONCAT ? CONCATPREP : CALLPREP, NULL);
+          openexpr1(fs,
+                    o == OP_CONCAT ? b : a,
+                    o == OP_CONCAT ? CONCATPREP : CALLPREP, NULL);
           goto postrecursion;
         }
         else
@@ -1991,7 +2007,7 @@ static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
       sharednil = 1;
       break;
     }
-    if (pc == 0)
+    if (pc == 0 || pc == D->a.minexprstartpc)
       break;
   }
   if (pc < 0) pc = 0;
@@ -2016,6 +2032,60 @@ static void locvarexpr1(DFuncState *fs, int nvars, struct LocVar *var)
   openexpr1(fs, reg, VOIDPREP, var);
   fs->nactvar -= nvars;
   set_ins_property(fs, fs->pc, INS_LOCVAREXPR);
+  set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
+  set_ins_property(fs, endpc, INS_ASSIGNEND);
+}
+
+
+static struct LocVar *getactvar(DFuncState *fs, int pc, int *nv, lu_byte *na);
+
+
+/*
+** traverse a local varibale assignment
+*/
+static int clobberexpr1(DFuncState *fs, OpCode o, int a, int b, int c)
+{
+  int reg = a;
+  DecompState *D = fs->D;
+  int endpc = fs->pc;
+  int pc = fs->pc;
+  int minstartpc = 0;
+  int lowest = getlowestslotreferenced(o, a, b, c, fs->nactvar);
+  if (lowest < fs->nactvar) {
+    set_ins_property(fs, pc, INS_ASSIGNEND);
+    set_ins_property(fs, pc, INS_ASSIGNSTART);
+    return 0;
+  }
+  lua_assert(D->usedebuginfo);
+  lua_assert(reg < fs->nactvar);
+  for (; pc > 0; pc--)
+    if (getactvar(fs, pc, NULL, NULL)) {
+      minstartpc = pc;
+      /* if the previous code is OP_LOADNIL, allow that code to be processed in
+         case it is shared by the open expression */
+      if (pc > 0 && GET_OPCODE(fs->f->code[pc-1]) == OP_LOADNIL)
+        minstartpc--;
+      break;
+    }
+  D->a.minexprstartpc = minstartpc;
+  /* TODO: the endpc in openexpr1 will be 1 more than this function's endpc,
+     which shouldn't matter since no open expression is created for VOIDPREP,
+     but in case it does matter in the future, use a local LocVar struct with
+     special values, passed as the 4th argument to indicate that this expression
+     is for a local variable clobber, so that openexpr1 will know not to
+     increment endpc in this case */
+  openexpr1(fs, reg, VOIDPREP, NULL);
+  D->a.minexprstartpc = 0;
+  set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
+  set_ins_property(fs, endpc, INS_ASSIGNEND);
+  return 1;
+}
+
+
+static void moveexpr1(DFuncState *fs, int src)
+{
+  int endpc = --fs->pc;
+  openexpr1(fs, src, VOIDPREP, NULL);
   set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
   set_ins_property(fs, endpc, INS_ASSIGNEND);
 }
@@ -2428,12 +2498,14 @@ static void setlooplabels(DFuncState *fs, LoopState *loop)
 */
 static void simloop1(DFuncState *fs)
 {
+  DecompState *D = fs->D;
   const Instruction *code = fs->f->code;
   BlockNode *nextnode = NULL;
   int pendingbreak = -1;
   /*int n, r1, r2, r3;*/
   /* walk through code backwards */
   fs->pc = fs->f->sizecode-1;
+  D->a.minexprstartpc = 0;
   for (fs->pc--; fs->pc >= 0; fs->pc--) {
     int pc = fs->pc;
     OpCode o = GET_OPCODE(code[pc]);
@@ -2449,6 +2521,19 @@ static void simloop1(DFuncState *fs)
       if (o != OP_FORPREP && !test_ins_property(fs, pc+1, INS_FORLIST)) {
         locvarexpr1(fs, nvars, nextvar);
         goto checkloopend;
+      }
+    }
+    if (fs->nactvar) {
+      lua_assert(D->usedebuginfo);
+      if (o != OP_TESTSET && clobberslocal(fs, o, a, b, c)) {
+        if (o == OP_MOVE && b >= fs->nactvar) {
+          moveexpr1(fs, b);
+          goto checkloopend;
+        }
+        else {
+          if (clobberexpr1(fs, o, a, b, c))
+            goto checkloopend;
+        }
       }
     }
     switch (o) {
