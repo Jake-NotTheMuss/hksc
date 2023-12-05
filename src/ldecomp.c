@@ -4495,6 +4495,9 @@ scanpassjump(DecompState *D, DFuncState *fs, int target, int needvars)
       (void)rollbackvars1;
     }
   }
+  /* fast-forward open expressions to current pc */
+  while (D->a.openexpr->startpc != -1 && D->a.openexpr->startpc < pc)
+    updatenextopenexpr1(D);
   return pc;
 }
 
@@ -4913,7 +4916,7 @@ static void simblock1(DFuncState *fs)
         setlaststat1(D, pc, 1);
         inassignment = 0;
       }
-      else
+      else if (pc != D->a.openexpr->startpc)
         continue;
     }
     else if (test_ins_property(fs, pc, INS_ASSIGNSTART)) {
