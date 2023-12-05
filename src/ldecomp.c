@@ -3652,16 +3652,19 @@ static void updatevars1(DecompState *D, DFuncState *fs)
 }
 
 
-static void checkexpclobber(DecompState *D)
+static int checkexpclobber(DecompState *D)
 {
   DFuncState *fs = D->fs;
   const OpenExpr *expr = D->a.openexpr;
   if (expr->kind == CONCATPREP) {
     int reg = GETARG_A(fs->f->code[expr->endpc]);
     lua_assert(GET_OPCODE(fs->f->code[expr->endpc]) == OP_CONCAT);
-    if (reg < fs->nactvar)
+    if (reg < fs->nactvar) {
       setlaststat1(D, expr->endpc, 1);
+      return 1;
+    }
   }
+  return 0;
 }
 
 
@@ -4832,7 +4835,8 @@ static void simblock1(DFuncState *fs)
       setlaststat1(D, pc, 1);
       if (!test_ins_property(fs, pc, INS_ASSIGNEND)) {
         inassignment = 1;
-        continue;
+        if (pc != D->a.openexpr->startpc)
+          continue;
       }
     }
     /* check if exiting the current TESTSET expression */
@@ -4858,18 +4862,23 @@ static void simblock1(DFuncState *fs)
       if (isstat)
         setlaststat1(D, D->a.openexpr->endpc, 1);
       if (!isstat) {
-        checkexpclobber(D);
+        if (checkexpclobber(D))
+          inassignment = 0;
         if (needvars)
         createexpresult(D, kind != HASHTABLEPREP && kind != EMPTYTABLE, iscall);
       }
       /* advance to the end of the expression */
       while (pc != D->a.openexpr->endpc) {
         updatereferences1(D);
+        if (test_ins_property(fs, pc, INS_ASSIGNEND))
+          inassignment = 0;
         pc = ++fs->pc;
         updateinsn1(D, fs);
       }
       /* update constant/upvalue references for the last expression code */
       updatereferences1(D);
+      if (test_ins_property(fs, pc, INS_ASSIGNEND))
+        inassignment = 0;
       /* update next open expression */
       updatenextopenexpr1(D);
       /* reset highest clobbered */
