@@ -117,6 +117,7 @@ typedef struct {
   int funcidx;  /* n for the nth function that is being decompiled */
   int indentlevel;  /* indentation level counter */
   int linenumber;  /* output line counter */
+  int lastline;
   int nextlinenumber;  /* used when not using line info */
   int needspace;  /* for adding space between tokens */
   int maxtreedepth;  /* maximum number of function states that will be active at
@@ -623,6 +624,7 @@ static int istailblock(const BlockNode *parent, const BlockNode *child) {
     case BL_FUNCTION: case BL_REPEAT: return 0;
     case BL_DO: case BL_ELSE: hasendcode = 0; break;
     case BL_IF: hasendcode = haselsepart(parent); break;
+    case BL_FORLIST: hasendcode = 2; break;
     default: hasendcode = 1; break;
   }
   return (child->endpc + hasendcode == parent->endpc);
@@ -1136,10 +1138,22 @@ static void freeblnode(DFuncState *fs, BlockNode *node)
 
 static void DumpBlock(const void *b, size_t size, DecompState *D)
 {
+#ifdef LUA_DEBUG
+  /* newline is acceptable when dumping only dumping the newline and no other
+     characters */
+  if (*cast(char *, b) != '\n')
+    lua_assert(strchr(b, '\n') == NULL);
+  else {
+    size_t i;
+    for (i = 0; i < size; i ++)
+      lua_assert(cast(char *, b)[i] == '\n');
+  }
+#endif /* LUA_DEBUG */
   if (D->status==0)
   {
     lua_unlock(D->H);
     D->status=(*D->writer)(D->H,b,size,D->data);
+    D->lastline = D->linenumber;
     lua_lock(D->H);
   }
 }
@@ -1282,6 +1296,8 @@ static void beginline2(DFuncState *fs, int n, DecompState *D)
   "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
   "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
   const int buffsize = cast_int(sizeof(lf)-1);
+  /* save the lastline as you don't want to update it in this case */
+  int lastline = D->linenumber;
   D->linenumber += n;
   D(lprintf("adding %d line%s, updating D->linenumber to (%d)\n",
             n, n == 1 ? "" : "s", D->linenumber));
@@ -1294,6 +1310,7 @@ static void beginline2(DFuncState *fs, int n, DecompState *D)
   if (n != 0)
     DumpBlock(lf, n, D);
   DumpIndentation(D);
+  D->lastline = lastline;  /* restore last line */
   D->needspace = 0;
   UNUSED(fs);
 }
@@ -9474,6 +9491,8 @@ static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
     return D->linenumber;
   nextline = getline2(fs, node->endpc+1);
   line = D->linenumber;
+  if (D->matchlineinfo && GET_OPCODE(fs->f->code[node->endpc+1]) == OP_TFORLOOP)
+    nextline = getline(fs->f, node->endpc+2);
   if (line + (sa->deferleaveblock + 1) <= nextline) {
     if (inmainfunc && node->endpc+1 == fs->f->sizecode-1 &&
         sa->deferleaveblock < 1)
@@ -10029,6 +10048,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.funcidx=0;
   D.indentlevel=-1;
   D.linenumber=1;
+  D.lastline=1;
   D.nextlinenumber=1;
   D.needspace=0;
   D.maxtreedepth=1;  /* at least a main function */
