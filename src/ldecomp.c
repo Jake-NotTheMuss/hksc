@@ -621,7 +621,7 @@ static int istailblock(const BlockNode *parent, const BlockNode *child) {
   if (child->nextsibling != NULL)
     return 0;
   switch (parent->kind) {
-    case BL_FUNCTION: case BL_REPEAT: return 0;
+    case BL_REPEAT: return 0;
     case BL_DO: case BL_ELSE: hasendcode = 0; break;
     case BL_IF: hasendcode = haselsepart(parent); break;
     case BL_FORLIST: hasendcode = 2; break;
@@ -9479,8 +9479,25 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
 }
 
 
-static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
-                         int inmainfunc)
+static int getlastblockline(DFuncState *fs, const BlockNode *node)
+{
+  lua_assert(fs->D->matchlineinfo);
+  /* while-loops either have their final jump mapped to the start line, like
+     for-loops, or mapped to the lastline at the time END was encountered, so
+     they do not have a distinct final line that needs to be matched here;
+     only functions for for-list blocks always have a final opcode which has a
+     distinct line-mapping that needs to be matched */
+  switch (node->kind) {
+    case BL_REPEAT: if (node->repuntiltrue) return 0;
+    /* fallthrough */
+    case BL_FUNCTION: case BL_FORLIST: return getline(fs->f, node->endpc);
+    default: break;
+  }
+  return 0;
+}
+
+
+static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
   DecompState *D = fs->D;
   int line, nextline;
@@ -9496,10 +9513,10 @@ static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
   if (D->matchlineinfo && GET_OPCODE(fs->f->code[node->endpc+1]) == OP_TFORLOOP)
     nextline = getline(fs->f, node->endpc+2);
   if (line + (sa->deferleaveblock + 1) <= nextline) {
-    if (inmainfunc && node->endpc+1 == fs->f->sizecode-1 &&
+    /*if (inmainfunc && node->endpc+1 == fs->f->sizecode-1 &&
         sa->deferleaveblock < 1)
       line = nextline;
-    else
+    else*/
       line = line + 1;
   }
   return line;
@@ -9569,21 +9586,51 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
       advancetoendline:
       lua_assert(sa->currparent != NULL);
       if (D->matchlineinfo) {
+        int lastmappedline = getlastblockline(fs, node);
+        int lastline = 0;
         if (istailblock(sa->currparent, node)) {
-          sa->deferleaveblock++;
-          return;
+          int lastmappedparentline = getlastblockline(fs, sa->currparent);
+          if (lastmappedparentline)
+            /* the last line for this block will be the last mapped line for its
+               parent block, so that when recompiling, the LexState lastline
+               field will be LASTMAPPEDPARENTLINE when encountering the end of
+               the parent block, ensuring line info matches with the original,
+               example:
+                for x in a do
+                  for y in b do
+                    return;
+                  end -- LASTMAPPEDPARENTLINE
+                end -- when encountered, ls->lastline is LASTMAPPEDPARENTLINE
+                 */
+            lastline = lastmappedparentline;
+          else if (sa->currparent->kind != BL_FUNCTION) {
+            sa->deferleaveblock++;
+            return;
+          }
         }
-        else if (sa->deferleaveblock) {
+        if (sa->deferleaveblock) {
           D->indentlevel += sa->deferleaveblock;
           do {
-            updateline2(fs, calclastline2(sa, fs, node, inmainfunc), D);
+            updateline2(fs, calclastline2(sa, fs, node), D);
             CheckSpaceNeeded(D);
             DumpLiteral("end", D);
             D->needspace = 1;
             D->indentlevel--;
           } while (--sa->deferleaveblock);
         }
-        updateline2(fs, calclastline2(sa, fs, node, inmainfunc), D);
+        /* calculate a valid LASTLINE if needed; in this case, LASTLINE does not
+           need to be a particular value, as long as it does not overstep for
+           the next line-mapping in the program */
+        if (!lastline) lastline = calclastline2(sa, fs, node);
+        /* if there is no token on LASTMAPPEDLINE, put a token there so it will
+           be mapped to the next opcode instead of D->LASTLINE when recompiling
+          */
+        if (D->lastline < lastmappedline) {
+          updateline2(fs, lastmappedline, D);
+          DumpLiteral(";", D);
+          lua_assert(D->lastline == lastmappedline);
+        }
+        updateline2(fs, lastline, D);
       }
       else {
         beginline2(fs, 1, D);
