@@ -4402,6 +4402,8 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
 {
   const OpenExpr *expr = D->a.openexpr;  /* the pending open expression */
   closelocalvars1(D, expr->firstreg, expr->startpc, 0);
+  if (expr->firstreg > 0 && D->fs->nactvar >= expr->firstreg)
+    promotevar1(D, expr->firstreg-1, GENVAR_PERSISTENT);
 }
 
 
