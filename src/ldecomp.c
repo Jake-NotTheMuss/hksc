@@ -4288,6 +4288,10 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
     /* see if are there variables that need to be killed before entering the
        open expression */
     if (lastnecessaryvar < varlimit) {
+      BlockState *bl;
+      LocVar *firstvar = getlocvar1(D, varlimit);
+      for (bl = D->a.bl; firstvar->startpc < bl->node->startpc; bl--)
+        bl->nactvar = cast_byte(varlimit);
       /* no variables need to end early, just roll back the extra variables as
          if they never existed */
       if (!skipcurrblock)
@@ -4369,10 +4373,7 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
           }
         }
         if (nextbl != NULL) {
-          /* if this block has a variable that needs to end early, update
-             NACTVAR for FS and NEXTBL */
-          if (firstvar != NULL)
-            fs->nactvar = nextbl->nactvar = varlimit + (blockvarlimit - i);
+          fs->nactvar = nextbl->nactvar = varlimit;
           /* if the next block clobbers one of the slots that had a deleted
              variable, rescan the block to generate duplicate variables for
              those clobber operations */
