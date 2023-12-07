@@ -7893,19 +7893,6 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
         /* make this nil node end 1 before the open register */
         exp->aux = sa->nextopenreg-1;
       }
-      /* check if there is a single return that uses this nil expression */
-      else if (test_ins_property(fs, sa->pc, INS_PRERETURN1)) {
-        int retreg;
-        lua_assert(ispcvalid(fs, sa->pc+1));
-        lua_assert(GET_OPCODE(sa->code[sa->pc+1]) == OP_RETURN);
-        retreg = GETARG_A(sa->code[sa->pc+1]);
-        if (exp->info < retreg && exp->aux >= retreg) {
-          /* set the nil debt for the next return */
-          sa->openexprnildebt = exp->aux+1-retreg;
-          /* make this nil node end 1 before the returned register */
-          exp->aux = retreg-1;
-        }
-      }
     }
     if (exp->kind == ESELF)
       pushexp2(fs, reg+1, exp, 0);

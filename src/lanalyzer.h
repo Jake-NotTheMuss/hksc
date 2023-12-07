@@ -40,10 +40,8 @@ enum BLTYPE {
 */
 #define INSFLAG_TABLE \
   DEFINSFLAG(LEADER)  /* instruction is a leader */ \
-  DEFINSFLAG(CONTINUEJUMP)  /* a jump to the start of the current loop */ \
   DEFINSFLAG(FAILJUMP)  /* a jump-on-false */ \
   DEFINSFLAG(PASSJUMP)  /* a jump past a jump-on-false */ \
-  DEFINSFLAG(PRERETURN1) /* the pc before a single-value-return */ \
   DEFINSFLAG(BRANCHFAIL) /* false-jump in an if-statement condition */ \
   DEFINSFLAG(BRANCHPASS) /* true-jump in an if-statement condition */ \
   DEFINSFLAG(LOOPFAIL)  /* false-jump in a loop condition */ \
@@ -57,16 +55,14 @@ enum BLTYPE {
   DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
   DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
-  DEFINSFLAG(EMPTYBLOCK)  /* an empty block exists before this instruction */ \
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
   DEFINSFLAG(SKIPBOOLLABEL)  /* a jump over 2 bool labels */ \
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
   DEFINSFLAG(TESTSETJUMP)  /* a jump within a testset expression */ \
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
-  DEFINSFLAG(LOCVAREXPR) \
+  DEFINSFLAG(LOCVAREXPR)  /* start of a local varible initialization */ \
   DEFINSFLAG(ASSIGNSTART)  /* start of a local statement or store */ \
   DEFINSFLAG(ASSIGNEND)  /* end of a local statement or store */ \
-  DEFINSFLAG(CLOBBER)   /* an instruction which clobbers register A */ \
   DEFINSFLAG(SELFUPVAL)  /* OP_CLOSURE uses its own register as an upvalue */ \
   DEFINSFLAG(SKIPPEDREF)  /* pc skips a constant/upvalue reference */ \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
