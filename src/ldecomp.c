@@ -96,8 +96,8 @@ struct pendingstorechain1;
 
 #define VEC_FREE(H,name,T) luaM_freearray(H, (name).s, (name).alloc, T)
 
-#define growvector(H,st,t) \
-  luaM_growvector(H,(st).s,(st).used,(st).alloc,t,MAX_INT,"")
+#define VEC_GROW(H,name,T) \
+  luaM_growvector(H,(name).s,(name).used,(name).alloc,T,MAX_INT,"")
 
 #define SIZE_STATIC_KMAP 2
 
@@ -1128,7 +1128,7 @@ static void freeblnode(DFuncState *fs, BlockNode *node)
 {
   hksc_State *H = fs->H;
   DecompState *D = fs->D;
-  growvector(H, D->freeblocknodes, BlockNode *);
+  VEC_GROW(H, D->freeblocknodes, BlockNode *);
   D->freeblocknodes.s[D->freeblocknodes.used++] = node;
 }
 
@@ -2306,7 +2306,7 @@ static LoopState *pushloopstate1(DFuncState *fs, int kind, int start, int end)
   hksc_State *H = fs->H;
   DecompState *D = fs->D;
   LoopState *loop;
-  growvector(H, D->loopstk, LoopState);
+  VEC_GROW(H, D->loopstk, LoopState);
   loop = &D->loopstk.s[D->loopstk.used++];
   loop->kind = kind;
   loop->startlabel = start;
@@ -2929,7 +2929,7 @@ static BlockState *pushblockstate1(DFuncState *fs, BlockNode *node)
   DecompState *D = fs->D;
   BlockState *block;
   lua_assert(node != NULL);
-  growvector(H, D->blockstk, BlockState);
+  VEC_GROW(H, D->blockstk, BlockState);
   block = &D->blockstk.s[D->blockstk.used++];
   initblockstate1(fs, block, node);
   return block;
@@ -2956,7 +2956,7 @@ static BlockState *insertloopstate1(DFuncState *fs, BlockNode *node)
       else
         block->l.loopindex = block->l.loop - base;
     }
-    growvector(H, D->loopstk, LoopState);
+    VEC_GROW(H, D->loopstk, LoopState);
     base = D->loopstk.s;
     /* convert indices back to pointers */
     for (i = 0; i < D->blockstk.used; i++) {
@@ -2967,7 +2967,7 @@ static BlockState *insertloopstate1(DFuncState *fs, BlockNode *node)
         block->l.loop = base + block->l.loopindex;
     }
   }
-  growvector(H, D->blockstk, BlockState);
+  VEC_GROW(H, D->blockstk, BlockState);
   /* make room to insert a block state */
   for (i = D->blockstk.used; i > 1; i--) {
     BlockState *bl = &D->blockstk.s[i-1];
@@ -3200,7 +3200,7 @@ static LocVar *genvar1(DecompState *D, int pc, enum GENVARNOTE note)
   var->endpc = getnaturalvarendpc(D->a.bl->node);
   if (mem_separate_varnotes) {
     D->varnotes.used = fs->nlocvars;
-    growvector(fs->H, D->varnotes, lu_byte);
+    VEC_GROW(fs->H, D->varnotes, lu_byte);
     D->varnotes.s[D->varnotes.used] = cast_byte(note);
     var->varname = NULL;
   }
