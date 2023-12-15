@@ -329,6 +329,7 @@ static void finalizestruct (LexState *ls) {
         type_error(ls, "Structure '%s' already has a different definition.",
                    p->name);
       }
+      return;
     }
     if (G(H)->protolist.nuse + 1 >= LUAI_MAXSTRUCTS) {
       luaX_inputerror(ls, "Cannot define another structure in this VM: too "
