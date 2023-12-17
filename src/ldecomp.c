@@ -1138,7 +1138,7 @@ static void freeblnode(DFuncState *fs, BlockNode *node)
 
 static void DumpBlock(const void *b, size_t size, DecompState *D)
 {
-#ifdef LUA_DEBUG
+#if defined LUA_DEBUG && defined HKSC_DECOMP_HAVE_PASS2
   /* newline is acceptable when dumping only dumping the newline and no other
      characters */
   if (*cast(char *, b) != '\n')
