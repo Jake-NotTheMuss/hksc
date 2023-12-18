@@ -668,6 +668,7 @@ static OpenExpr *newopenexpr(DFuncState *fs, int firstreg, int startpc,
   expr->startpc = startpc;
   expr->endpc = endpc;
   expr->firstreg = firstreg;
+  expr->sharednil = 0;
   return expr;
 }
 
