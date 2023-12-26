@@ -9957,7 +9957,7 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
      the parent block will dump the correct token when leaving */
   if (node->iselseif &&
       ((node->kind == BL_IF && !haselsepart(node)) || node->kind == BL_ELSE)) {
-    D->indentlevel+= 1+(node->kind != BL_ELSE);
+    D->indentlevel+= 1+(node->kind != BL_ELSE && haselsepart(node));
     return;
   }
   lua_assert(D->indentlevel >= 0);
