@@ -1021,7 +1021,8 @@ static int getline1(DFuncState *fs, int pc) {
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 /*
-** call this version after debug info is generated
+** call this version to get the mapped line from debug info; okay to call if not
+** using debug info or matching line info
 */
 static int getline2(DFuncState *fs, int pc) {
   lua_assert(ispcvalid(fs, pc));
@@ -1030,6 +1031,24 @@ static int getline2(DFuncState *fs, int pc) {
   else
     return fs->D->nextlinenumber;
 }
+
+
+/*
+** call this if you need the actual source code line that begins the expression
+** at pc; this accounts for OP_CLOSURE line mapping to the end of the function
+** rather than the beginning; only call if matching line info
+*/
+static int getstartline(DFuncState *fs, int pc)
+{
+  lua_assert(fs->D->matchlineinfo);
+  if (GET_OPCODE(fs->f->code[pc]) == OP_CLOSURE) {
+    int bx = GETARG_Bx(fs->f->code[pc]);
+    const Proto *f = fs->f->p[bx];
+    return f->linedefined;
+  }
+  return fs->f->lineinfo[pc];
+}
+
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
@@ -6369,6 +6388,9 @@ static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
     ExpNode *src = index2exp(fs, sa->lastexpindex);
     if (src != NULL) {
       int line = getexpline(src);
+      /* compare the last line of a closure, not the first */
+      if (src->kind == ECLOSURE)
+        line = src->u.cl.p->lastlinedefined;
       if (line != exp->line && line != 0) {
         if (src->kind == ECONSTRUCTOR && src->aux <= 0)
           src->aux = exp->line;
@@ -7936,10 +7958,6 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
                         strchr(getstr(src->u.cl.p->name), ':') != NULL);
         funcname = buildfuncname(&sb, exp, needself);
         src->u.cl.haveself = needself;
-        if (D->usedebuginfo && src->u.cl.p->name != NULL) {
-          /* set the proper line number for the closure to start on  */
-          src->line = src->closeparenline = exp->line;
-        }
       }
       src->u.cl.name = funcname;
       lastsrcreg = (exp->kind == ESTORE) ? exp->u.store.srcreg : exp->info;
@@ -8351,12 +8369,8 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
          only temporary registers, ensuring the recursive call does not get here
       */
       int laststorereg = exp->aux < fs->nactvar ? exp->aux : fs->nactvar;
-      if (fs->D->matchlineinfo) {
-        if (GET_OPCODE(fs->f->code[sa->pc+1]) != OP_CLOSURE)
-          nextline = getline2(fs, sa->pc+1);
-        else
-          nextline = exp->line;
-      }
+      if (fs->D->matchlineinfo)
+        nextline = getstartline(fs, sa->pc+1);
       else
         /* compute a line number that gives each assignment its own line */
         nextline = line + exp->aux - exp->info;
@@ -8418,7 +8432,11 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
   exp->previndex = exp->auxlistprev = exp->auxlistnext = 0;
   exp->info = reg;
   exp->aux = exp->info + sa->openexprnildebt-1;
-  if (GET_OPCODE(fs->f->code[sa->pc]) != OP_CLOSURE) {
+  if (fs->D->matchlineinfo) {
+    exp->line = getstartline(fs, sa->pc);
+    exp->closeparenline = exp->line;
+  }
+  else if (GET_OPCODE(fs->f->code[sa->pc]) != OP_CLOSURE) {
     exp->line = getline2(fs, sa->pc);
     exp->closeparenline = exp->line;
   }
@@ -8578,7 +8596,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.cl.p = f->p[bx];
       exp->u.cl.name = NULL;
       exp->u.cl.haveself = 0;
-      exp->line = exp->closeparenline = 0;
+      exp->line = exp->closeparenline = exp->u.cl.p->linedefined;
       break; /* todo */
     case OP_VARARG:
       exp->kind = EVARARG;
@@ -9295,7 +9313,7 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
   else {
     ExpNode *srcexp = getexpinreg2(fs, srcreg);
     if (srcexp && srcexp->kind == ECLOSURE)
-      exp->line = 0;
+      exp->line = srcexp->line;
     exp->aux = exp2index(fs, srcexp);
   }
   exp->closeparenline = exp->line;
@@ -9533,63 +9551,6 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-/*
-** get an appropriate line for the given PC
-*/
-static int getvalidline2(DecompState *D, DFuncState *fs, int pc)
-{
-  int line = getline2(fs, pc);
-  /* OP_CLOSURE is mapped to the final line of the nested function and is not
-     appropriate to use as an estimation of how much room exists until PC */
-  if (GET_OPCODE(fs->f->code[pc]) == OP_CLOSURE) {
-    const Proto *f;
-    int i, bx;
-    /* two line numbers are computed that can possibly give a valid if not
-       correct line to dump the header on; the first is the next instruction
-       after OP_CLOSURE; if it is a store code and it is storing the closure
-       directly to a global variable, upvalue, or table index the line-mapping
-       may be the line of the header if the function is named; the second line
-       is computed from the first line-mapping in the closure refernced by the
-       OP_CLOSURE code; the analyzer will traverse the list of child functions
-       until the first code of a function is not OP_CLOSURE */
-    int line1 = 0, line2 = 0;
-    int reg = GETARG_A(fs->f->code[pc]);
-    /* see how this closure is being stored; if being assigned, the line-mapping
-       for the store code may give the correct line for the function header, but
-       only if the function is named, i.e. `function g()' intead of
-       `g = function()'; if there is no store code, as is the case when the
-       function is a local variable, or the closure is the RHS of a local
-       definition, and then the local is stored to another variable, the
-       line-mapping does not give correct line fo the header */
-    if (fs->nlocvars >= fs->sizelocvars ||
-        fs->locvars[fs->nlocvars].startpc > pc+1) {
-      OpCode o = GET_OPCODE(fs->f->code[pc+1]);
-      if ((o == OP_SETGLOBAL || o == OP_SETUPVAL || o == OP_SETUPVAL_R1 ||
-           IS_OP_SETTABLE(o)) && GETARG_A(fs->f->code[pc+1]) == reg) {
-        line2 = getline2(fs, pc+1);
-        if (line2 >= line) line2 = 0;
-      }
-    }
-    i = 0;
-    f = fs->f;
-    bx = GETARG_Bx(f->code[pc]);
-    do {
-      f = f->p[bx];
-      bx = GETARG_Bx(f->code[0]);
-      i++;
-      line1 = f->lineinfo[0];
-    } while (GET_OPCODE(f->code[0]) == OP_CLOSURE);
-    line1 -= i;
-    if ((line2 != 0) && line2 < line1)
-      line1 = line2;
-    if (line1 < D->linenumber)
-      return D->linenumber;
-    return line1;
-  }
-  return line;
-}
-
-
 static void
 updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 {
@@ -9602,7 +9563,7 @@ updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
       return;
     }
     else
-      nextline = getvalidline2(D, fs, node->startpc);
+      nextline = getstartline(fs, node->startpc);
   }
   else
     nextline = D->nextlinenumber + sa->numblockstartatpc;
@@ -9834,9 +9795,9 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
         fs->firstfree += numvars;
         /* see if there is room for a line feed, so that this declaration has a
            chance of being on its own line (otherwise it will be on the same
-           line as the statement after it) */
-        if (getline2(fs, 0) > D->linenumber &&
-            GET_OPCODE(fs->f->code[0]) != OP_CLOSURE)
+           line as the statement after it); if not matching line info, room is
+           made for a line feed */
+        if (!D->matchlineinfo || getstartline(fs, 0) > D->linenumber)
           beginline2(fs, 1, D);
         emitlocalstat2(fs, numvars, 0);
         D->indentlevel--;
