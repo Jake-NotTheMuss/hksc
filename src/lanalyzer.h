@@ -268,6 +268,7 @@ typedef struct ExpNode {
   lu_byte leftside; /* is this node the left operand in a binary operation */
   lu_byte pending;  /* true if this expression has not yet been emitted */
   lu_byte goiftrue;
+  lu_byte forceparen;  /* force parentheses around the expression */
 } ExpNode;
 
 

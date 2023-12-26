@@ -6968,6 +6968,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
   lua_assert(exp != NULL);
   lua_assert(exp->pending);
   exp->pending = 0;
+  if (exp->forceparen)
+    needparenforlineinfo = 1;
   switch (exp->kind) {
     case EUNOP: { /* unary operation */
       ExpNode *o; /* the operand if it is a pending expression */
@@ -7505,6 +7507,21 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
          line info when recompiling */
       if (last != NULL && line != expline)
         last->closeparenline = line;
+      if (last->kind == ECALL) {
+        OpCode op = last->u.call.op;
+        lua_assert(IS_OP_CALL(op));
+        /* if OP_TAILCALL is not the opcode, the call expression was discharged
+           before the opcode was generated when compiling, meaning it was
+           wrapped in parentheses; but if OP_TAILCALL is the opcode, the
+           expression was not discharged, and remained a VCALL node when the
+           opcode was generated */
+        if (!IS_OP_TAILCALL(op))
+          last->forceparen = 1;  /* force parentheses to discharge it */
+        else {
+          lua_assert(last->forceparen == 0);
+          last->closeparenline = last->line;  /* ensure no parentheses */
+        }
+      }
     }
   }
   needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
@@ -8468,6 +8485,7 @@ static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
   exp->pending = 1;
   exp->goiftrue = 0;
   exp->endlabel = -1;
+  exp->forceparen = 0;
 }
 
 
