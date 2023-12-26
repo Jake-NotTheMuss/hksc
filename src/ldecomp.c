@@ -5001,10 +5001,10 @@ chainnode1(BlockNode *parent, BlockNode *next, BlockNode *prev, BlockNode *node)
     if (blstartpc(next) > node->endpc)
       node->nextsibling = next;  /* make it a sibling */
     else {
-      BlockNode *lastchild = NULL;
+      BlockNode *lastchild = next;
       node->firstchild = next;
       /* find the last child for NODE */
-      while (next != NULL && blstartpc(next) < node->startpc) {
+      while (next != NULL && blstartpc(next) < node->endpc) {
         lastchild = next;
         next = next->nextsibling;
       }
