@@ -40,6 +40,9 @@ enum BLTYPE {
 */
 #define INSFLAG_TABLE \
   DEFINSFLAG(LEADER)  /* instruction is a leader */ \
+  DEFINSFLAG(BBSUBEXPR) \
+  DEFINSFLAG(KLOCVAR)  /* local initialization that pushes a constant */ \
+  DEFINSFLAG(BBLOCVAR) \
   DEFINSFLAG(FAILJUMP)  /* a jump-on-false */ \
   DEFINSFLAG(PASSJUMP)  /* a jump past a jump-on-false */ \
   DEFINSFLAG(BRANCHFAIL) /* false-jump in an if-statement condition */ \
