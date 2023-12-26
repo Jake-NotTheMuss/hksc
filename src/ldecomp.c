@@ -9981,7 +9981,10 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         int lastline = 0;
         if (istailblock(sa->currparent, node)) {
           int lastmappedparentline = getlastblockline(fs, sa->currparent);
-          if (lastmappedparentline)
+          if (lastmappedparentline &&
+              /* nested functions have `end' on their last line, which
+                 guarantees that its final return maps the correct line */
+              (inmainfunc || sa->currparent->kind != BL_FUNCTION))
             /* the last line for this block will be the last mapped line for its
                parent block, so that when recompiling, the LexState lastline
                field will be LASTMAPPEDPARENTLINE when encountering the end of
