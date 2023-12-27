@@ -7883,6 +7883,8 @@ static void addtab2funcname(struct LHSStringBuilder *sb, ExpNode *exp)
       LocVar *var = getlocvar2(fs, exp->u.indexed.b);
       addvarnametolhs2(sb, var->varname);
       sb->needspace = 0;
+      addchartolhs2(sb, '.');
+      sb->needspace = 0;
     }
     if (exp->u.indexed.c != -1 && ISK(exp->u.indexed.c) &&
         ttisstring(&fs->f->k[INDEXK(exp->u.indexed.c)])) {
