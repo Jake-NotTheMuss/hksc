@@ -10204,7 +10204,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
            the closing paren on the line that the return is mapped to; this
            preserves line info when recompiling */
         if (fs->prev == NULL && node->kind == BL_FUNCTION &&
-            D->matchlineinfo && pc+1 == fs->f->sizecode-1) {
+            D->matchlineinfo && pc+1 == fs->f->sizecode-1 &&
+            exp->kind != ECLOSURE) {
           int retline = getline2(fs, pc+1);
           int expline = getexpline(exp);
           if (retline != expline && expline != 0) {
