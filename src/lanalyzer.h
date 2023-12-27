@@ -202,6 +202,7 @@ typedef struct ExpNode {
 #ifdef LUA_DEBUG
       int arrsize, hashsize;
 #endif
+      int nextpc;  /* the pc after the end of the constructor expression */
       int firstarrayitem, firsthashitem, lasthashitem;
       int narray, nhash;
     } cons;  /* table constructor */

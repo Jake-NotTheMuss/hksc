@@ -763,6 +763,13 @@ static int hasmultret(ExpNode *exp)
 }
 
 
+static int ishashtable(ExpNode *exp)
+{
+  lua_assert(exp->kind == ECONSTRUCTOR);
+  return (exp->u.cons.narray == 0 &&  exp->u.cons.nhash != 0);
+}
+
+
 static int getexpline(ExpNode *exp)
 {
   int line = exp->line;
@@ -7172,6 +7179,10 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           if (firstitem) {
             bracketline = exp->line;
             linestep = exp->line < exp->aux;
+            if (firstitem == nextarrayitem && firstitem->kind == ECONSTRUCTOR) {
+              if (firstitem->line > bracketline && D->lastline == bracketline)
+                bracketline = firstitem->line;
+            }
           }
           else
             linestep = 0;
@@ -7201,6 +7212,17 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
             dumparray = 1;
           else
             dumparray = 0;
+          if (D->matchlineinfo && !linestep) {
+            ExpNode *nextitem = dumparray ? nextarrayitem : nexthashitem;
+            lua_assert(nextitem);
+            /* in the case of a table with only hash items, check for each item
+               if a new line will happen, in which case the indent level should
+               increase */
+            if (nextitem->line > D->lastline) {
+              linestep = 1;
+              D->indentlevel++;
+            }
+          }
           if (dumparray == 0) {
             lua_assert(nexthashitem != NULL);
             lua_assert(nexthashitem->kind == ESTORE);
@@ -7252,6 +7274,18 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           D->indentlevel--;
           if (D->matchlineinfo == 0)
             exp->aux = D->nextlinenumber += linestep;
+        }
+        if (D->matchlineinfo && ishashtable(exp) && exp->aux == 0) {
+          int nextpc = exp->u.cons.nextpc;
+          if (nextpc == fs->f->sizecode-1 && fs->prev == NULL)
+            /* table ends on the final return line in the main function */
+            exp->aux = getline(fs->f, nextpc);
+          else {
+            int nextline = getstartline(fs, nextpc);
+            /* see if ending it on the next line makes sense */
+            if (D->linenumber+1 < nextline)
+              exp->aux = D->linenumber+1;
+          }
         }
         /* exp->aux has the line mapping for OP_SETLIST if present */
         if (exp->aux) {
@@ -8576,6 +8610,7 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       exp->u.cons.arrsize = luaO_fb2int(b);
       exp->u.cons.hashsize = c > 0 ? luaO_fb2int(c-1)+1 : 0;
 #endif /* LUA_DEBUG */
+      exp->u.cons.nextpc = -1;
       exp->u.cons.narray = exp->u.cons.nhash = 0;
       exp->u.cons.firstarrayitem = 0;
       exp->u.cons.firsthashitem = 0;
@@ -9352,6 +9387,7 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
 
 static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
 {
+  ExpNode *result;
   const OpenExpr *e = sa->nextopenexpr;
   int limit;  /* pc limit */
   lua_assert(e != NULL);
@@ -9451,6 +9487,13 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
     }
   }
   sa->openexprkind = -1;
+  result = getexpinreg2(fs, e->firstreg);
+  if (result && result->kind == ECONSTRUCTOR) {
+    /* hashtable expressions don't have a mapped end line because there is no
+       OP_SETLIST code emitted for them; in this case, the next pc is saved so
+       its line number can be used as a limit on where the table can end */
+    result->u.cons.nextpc = e->endpc+1;
+  }
   return limit - e->startpc;
 }
 
