@@ -4488,6 +4488,9 @@ static int jump2(DFuncState *fs, int pc, int offs)
       test_ins_property(fs, target, INS_BOOLLABEL) ||
       test_ins_property(fs, pc, INS_SKIPBOOLLABEL))
     return -1;
+  if (offs > 0 && GET_OPCODE(fs->f->code[target-1]) == OP_JMP &&
+      test_ins_property(fs, getjump(fs, target-1), INS_BOOLLABEL))
+    return -1;
   if (target == currloop->exitlabel || target == currloop->breaklabel) {
     if (target == currloop->exitlabel &&
         currblock->isloop && currblock->seenstat == 0) {
