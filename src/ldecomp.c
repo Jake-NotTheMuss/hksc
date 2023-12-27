@@ -8572,8 +8572,10 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       break;
     case OP_NEWTABLE:
       exp->kind = ECONSTRUCTOR;
+#ifdef LUA_DEBUG
       exp->u.cons.arrsize = luaO_fb2int(b);
       exp->u.cons.hashsize = c > 0 ? luaO_fb2int(c-1)+1 : 0;
+#endif /* LUA_DEBUG */
       exp->u.cons.narray = exp->u.cons.nhash = 0;
       exp->u.cons.firstarrayitem = 0;
       exp->u.cons.firsthashitem = 0;

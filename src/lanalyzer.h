@@ -199,7 +199,9 @@ typedef struct ExpNode {
     TString *name;  /* variable name */
     int token;  /* token ID, e.g. TK_TRUE for `true' */
     struct {
+#ifdef LUA_DEBUG
       int arrsize, hashsize;
+#endif
       int firstarrayitem, firsthashitem, lasthashitem;
       int narray, nhash;
     } cons;  /* table constructor */
