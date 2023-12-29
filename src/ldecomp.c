@@ -7272,7 +7272,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           else if (nextpc != -1) {
             int nextline = getstartline(fs, nextpc);
             /* see if ending it on the next line makes sense */
-            if (D->linenumber+1 < nextline)
+            if (linestep && D->linenumber+1 < nextline)
               exp->aux = D->linenumber+1;
           }
         }
@@ -9462,8 +9462,10 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
           if (exp->aux) {
             ExpNode *value = index2exp(fs, exp->aux);
             int line = getexpline(value);
-            if (line != exp->line && line != 0)
+            if (line != exp->line && line != 0 && value->aux > 0)
               value->closeparenline = exp->line;
+            else if (value->aux == 0)
+              value->aux = exp->line;
           }
           tab->u.cons.nhash++;
           sa->lastexpindex = exp2index(fs, tab);
