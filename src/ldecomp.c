@@ -97,6 +97,9 @@ struct LoopState;
 struct BlockState;
 struct pendingstorechain1;
 
+typedef struct linemap {
+  int pc, line;
+} linemap;
 
 #define VEC_STRUCT(T,name) \
   struct { T *s; int used, alloc; } name
@@ -138,6 +141,10 @@ typedef struct {
   VEC_STRUCT(struct BlockState, blockstk);
   VEC_STRUCT(BlockNode *, freeblocknodes);
   VEC_STRUCT(lu_byte, varnotes);
+  /* vector for fixed start-lines for pc which have `fixed lines', that is,
+     they correspond to lines in source code that are earlier than the line that
+     they are mapped to in debug info */
+  VEC_STRUCT(linemap, fixedstartlines);
   /* constants bitmap - each bit represents whether the corresponding constant
      has been referenced in the current function - used in the first pass when
      generating variable info */
@@ -265,6 +272,7 @@ typedef struct DFuncState {
   lu_byte nactvar;
   lu_byte seenstatinblock;  /* true if a simple statement has been encountered
                                in the current block node */
+  int startlinemapbase;  /* local base of FIXEDSTARTLINES for this funcstate */
   int pc;
   int inopenexpr;
   int sizelocvars;
@@ -556,6 +564,7 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
   node->hardstatbeforechild = 0;
   node->repuntiltrue = 0;
   node->parentnilvars = 0;
+  node->fixedstartline = 0;
   D(node->visited = 0);
 }
 
@@ -1026,6 +1035,23 @@ static int getline1(DFuncState *fs, int pc) {
 }
 
 
+/*
+** add a new entry for a fixed start-line LINE at PC
+*/
+static void addfixedstartline(DFuncState *fs, int pc, int line)
+{
+  DecompState *D = fs->D;
+  linemap *map;
+  if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
+    return;  /* already have an entry for PC */
+  set_ins_property(fs, pc, INS_FIXEDSTARTLINE);
+  VEC_GROW(fs->H, D->fixedstartlines, linemap);
+  map = &D->fixedstartlines.s[D->fixedstartlines.used++];
+  map->pc = pc;
+  map->line = line;
+}
+
+
 #ifdef HKSC_DECOMP_HAVE_PASS2
 /*
 ** call this version to get the mapped line from debug info; okay to call if not
@@ -1041,6 +1067,26 @@ static int getline2(DFuncState *fs, int pc) {
 
 
 /*
+** get the fixed start-line entry at PC; entry must exist (before calling, check
+** if test_ins_property(fs, pc, INS_FIXEDSTARTLINE) is true)
+*/
+static int getfixedstartline(DFuncState *fs, int pc)
+{
+  DecompState *D = fs->D;
+  int n = D->fixedstartlines.used - fs->startlinemapbase;
+  linemap *map = D->fixedstartlines.s + fs->startlinemapbase;
+  lua_assert(n >= 0);
+  check_ins_property(fs, pc, INS_FIXEDSTARTLINE);
+  for (; n > 0; map++, n--) {
+    if (map->pc == pc)
+      return map->line;
+  }
+  lua_assert(0);
+  return 0;
+}
+
+
+/*
 ** call this if you need the actual source code line that begins the expression
 ** at pc; this accounts for OP_CLOSURE line mapping to the end of the function
 ** rather than the beginning; only call if matching line info
@@ -1048,12 +1094,33 @@ static int getline2(DFuncState *fs, int pc) {
 static int getstartline(DFuncState *fs, int pc)
 {
   lua_assert(fs->D->matchlineinfo);
+  /* if PC is the start of a while-loop/for-loop, it has a fixed start-line */
+  if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
+    return getfixedstartline(fs, pc);
+  /* if the next code is CLOSURE, the mapped line will be the end of the
+     function, but you want the start line, so return LINEDEFINED */
   if (GET_OPCODE(fs->f->code[pc]) == OP_CLOSURE) {
     int bx = GETARG_Bx(fs->f->code[pc]);
     const Proto *f = fs->f->p[bx];
     return f->linedefined;
   }
   return fs->f->lineinfo[pc];
+}
+
+
+/*
+** return the fixed start-line of a for-loop given its NODE, or zero if its
+** start line is not fixed (it should always be fixed in both Lua and Havok
+** Script)
+*/
+static int getforloopstartline(DFuncState *fs, BlockNode *node)
+{
+  int pc, startline;
+  lua_assert(isforloop(node));
+  lua_assert(fs->D->matchlineinfo);
+  pc = node->endpc - (node->kind == BL_FORLIST);
+  startline = getline(fs->f, pc);
+  return node->fixedstartline ? startline : 0;
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
@@ -1075,6 +1142,7 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   fs->nactvar = 0;
   fs->pc = 0;
   fs->inopenexpr = 0;
+  fs->startlinemapbase = D->fixedstartlines.used;
   if (f->name)
     D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
              getstr(f->name)));
@@ -1129,6 +1197,7 @@ static void close_func (DecompState *D) {
   UNUSED(fs->locvars);
   UNUSED(fs->sizelocvars);
   D->fs = fs->prev;
+  D->fixedstartlines.used = fs->startlinemapbase;
   killtemp(obj2gco(fs->a)); /* make analyzer collectable */
   UNUSED(fs->a);
 }
@@ -6042,6 +6111,75 @@ static void markfollowblock1(DFuncState *fs, BlockNode *node)
 
 
 /*
+** mark all PC which have a fixed start line, meaning it corresponds to an
+** earlier line than it is mapped to in debug info
+*/
+static void calcfixedstartlinesnode1(DFuncState *fs, BlockNode *node)
+{
+  DecompState *D = fs->D;
+  BlockNode *nextchild = node->firstchild;
+  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
+  int prepstart = -1;
+  int pc;
+  for (pc = node->startpc; pc <= node->endpc; pc++) {
+    if (pc == nextchildstartpc) {
+      /* record entries in the fixed start line map for loops which have fixed
+         start lines, namely for-loops, and in Havok Script, while-loops */
+      if (isforloop(nextchild)) {
+        int forlooppc = nextchild->endpc - (nextchild->kind == BL_FORLIST);
+        int forloopline = getline(fs->f, forlooppc);
+        lua_assert(prepstart != -1);
+        if (forloopline < getline(fs->f, prepstart)) {
+          addfixedstartline(fs, prepstart, forloopline);
+          nextchild->fixedstartline = 1;
+        }
+        prepstart = -1;
+      }
+      else if (nextchild->kind == BL_WHILE) {
+        int jumppc = nextchild->endpc;
+        int jumpline = getline(fs->f, jumppc);
+        if (jumpline < getline(fs->f, nextchild->startpc)) {
+          addfixedstartline(fs, nextchild->startpc, jumpline);
+          nextchild->fixedstartline = 1;
+        }
+      }
+      /* process child block */
+      calcfixedstartlinesnode1(fs, nextchild);
+      pc = nextchild->endpc;
+      nextchild = nextchild->nextsibling;
+      nextchildstartpc = nextchild ? nextchild->startpc : -1;
+      continue;
+    }
+    /* use for-loop prep expressions to get the actual start of the for-loop, so
+       it can be used when recording the fixed start line of the for-loop */
+    if (D->a.openexpr->startpc == pc) {
+      const OpenExpr *expr = D->a.openexpr;
+      if (expr->kind == FORLISTPREP || expr->kind == FORNUMPREP)
+        prepstart = pc;
+      pc = expr->endpc;
+      updatenextopenexpr1(D);
+      continue;
+    }
+  }
+}
+
+
+/*
+** call if matching line info; records fixed start line entries which are used
+** to yield correct results when calling `getstartline' in pass2
+*/
+static void recordfixedstartlines1(DFuncState *fs)
+{
+  DecompState *D = fs->D;
+  lua_assert(D->matchlineinfo);
+  lua_assert(fs->nopencalls == fs->a->sizeopencalls);
+  updatenextopenexpr1(D);
+  calcfixedstartlinesnode1(fs, fs->root);
+  fs->nopencalls = fs->a->sizeopencalls;
+}
+
+
+/*
 ** free memory for first pass
 */
 static void finalizevectors1(DFuncState *fs)
@@ -6080,6 +6218,8 @@ static void pass1(DFuncState *fs)
   fs->nlocvars = 0;
   fixblockendings1(fs, func);
   markfollowblock1(fs, func);
+  if (fs->D->matchlineinfo)
+    recordfixedstartlines1(fs);
   /* end of pass1 post-processing */
   (void)badcode;
   (void)updatefirstclob1;
@@ -9529,6 +9669,7 @@ dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   struct HoldItem initvar, initeq;
   struct HoldItem *loopheader = sa->currheader;
   struct LocVar *var;
+  int startline;
   /* get the base control register */
   const int base = GETARG_A(fs->f->code[node->endpc]);
   /* get the pending initial expression before creating the control variables */
@@ -9538,8 +9679,18 @@ dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   /* create the loop variable */
   pushlocalvars2(fs, base+3, 1);
   var = getlocvar2(fs, base+3);
+  /* emit `for', either now or as hold item depending on if its start line is
+     fixed */
+  if (D->matchlineinfo && (startline = getforloopstartline(fs, node))) {
+    updateline2(fs, startline, D);
+    CheckSpaceNeeded(D);
+    DumpLiteral("for",D);
+    D->needspace = 1;
+  }
+  else {
+    addliteralholditem2(D, loopheader, "for", 1);
+  }
   /* add hold items for for-loop header */
-  addliteralholditem2(D, loopheader, "for", 1);
   addtsholditem2(D, &initvar, var->varname, 1);
   addliteralholditem2(D, &initeq, "=", 1);
   /* dump initializer expression */
@@ -9567,6 +9718,7 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   DecompState *D = fs->D;
   struct ExpListIterator iter;
   struct HoldItem *header = sa->currheader;
+  int startline;
   Mbuffer *b = &D->buff;
   /* get the base control register */
   const int base = GETARG_A(fs->f->code[node->endpc-1]);
@@ -9583,7 +9735,17 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   pushlocalvars2(fs, base+3, sa->numforloopvars);
   /* create the for-loop header string */
   luaZ_resetbuffer(b);
-  addliteral2buff(H, b, "for ");
+  /* emit `for', either now or as hold item depending on if its start line is
+     fixed */
+  if (D->matchlineinfo && (startline = getforloopstartline(fs, node))) {
+    updateline2(fs, startline, D);
+    CheckSpaceNeeded(D);
+    DumpLiteral("for",D);
+    D->needspace = 1;
+  }
+  else {
+    addliteral2buff(H, b, "for ");
+  }
   for (i = base + 3; i <= lastvar; i++) {
     size_t len;
     struct LocVar *var = getlocvar2(fs, i);
@@ -10522,6 +10684,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   VEC_INIT(D.blockstk);
   VEC_INIT(D.freeblocknodes);
   VEC_INIT(D.varnotes);
+  VEC_INIT(D.fixedstartlines);
   D.kmap = NULL;
   D.sizekmap = 0;
   D.holdfirst = NULL;
@@ -10541,6 +10704,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   VEC_FREE(H, D.blockstk, BlockState);
   VEC_FREE(H, D.freeblocknodes, BlockNode *);
   VEC_FREE(H, D.varnotes, lu_byte);
+  VEC_FREE(H, D.fixedstartlines, linemap);
   freekmap(&D);
   if (status) D.status = status;
   return D.status;

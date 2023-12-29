@@ -43,6 +43,8 @@ enum BLTYPE {
   DEFINSFLAG(BBSUBEXPR) \
   DEFINSFLAG(KLOCVAR)  /* local initialization that pushes a constant */ \
   DEFINSFLAG(BBLOCVAR) \
+  DEFINSFLAG(FIXEDSTARTLINE)  /* pc corresponds to an earlier source line than \
+                             it is mapped to (referred to as `fixed' line) */ \
   DEFINSFLAG(FAILJUMP)  /* a jump-on-false */ \
   DEFINSFLAG(PASSJUMP)  /* a jump past a jump-on-false */ \
   DEFINSFLAG(BRANCHFAIL) /* false-jump in an if-statement condition */ \
@@ -114,6 +116,9 @@ typedef struct BlockNode {
   unsigned iselseif : 1;
   unsigned hardstatbeforechild : 1;  /* used by first pass */
   unsigned repuntiltrue : 1;  /* used by first pass */
+  unsigned fixedstartline : 1;  /* true if start-line is fixed; in this case,
+                                   the actual start line is mapped to a specific
+                                   opcode at the end of the block */
 #ifdef LUA_DEBUG
   unsigned visited : 1;  /* has this block been visited in pass2 */
 #endif
