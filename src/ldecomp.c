@@ -2178,13 +2178,14 @@ static void storeexpr1(DFuncState *fs, OpCode o, int a, int c)
 static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc)
 {
   const Instruction *code = fs->f->code;
-  OpenExpr *e = newopenexpr(fs, firstreg, pc, -1, HASHTABLEPREP);
-  int endpc = e->startpc;
+  OpenExpr *result;
+  int startpc = pc;
+  int endpc = pc;
   int numhashitems = 0;  /* number of hash items found so far */
   int minhashsize = luaO_fb2int(argC-1)+1;
   int maxhashsize = luaO_fb2int(argC);
   (void)minhashsize;
-  for (pc = e->startpc+1; pc < fs->f->sizecode-1; pc++) {
+  for (pc = startpc+1; pc < fs->f->sizecode-1; pc++) {
     Instruction i = code[pc];
     OpCode o = GET_OPCODE(i);
     int a = GETARG_A(i);
@@ -2216,9 +2217,21 @@ static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc)
     else if (beginseval(o, a, b, c, 0) && a <= firstreg)
       break;
   }
-  if (numhashitems == 0)
-    e->kind = EMPTYTABLE;
-  e->endpc = endpc;
+  /* remove any open expressions that were created inside this hashtable */
+  while (fs->nopencalls > 0) {
+    OpenExpr *e = &fs->a->opencalls[fs->nopencalls-1];
+    if (e->startpc < endpc) {
+      lua_assert(e->endpc <= endpc);
+      fs->nopencalls--;
+    }
+    else
+      break;
+  }
+  result = newopenexpr(fs, firstreg, startpc, endpc, HASHTABLEPREP);
+  if (numhashitems == 0) {
+    result->kind = EMPTYTABLE;
+    lua_assert(endpc == startpc);
+  }
 }
 
 
