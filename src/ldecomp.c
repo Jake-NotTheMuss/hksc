@@ -7269,7 +7269,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           if (nextpc == fs->f->sizecode-1 && fs->prev == NULL)
             /* table ends on the final return line in the main function */
             exp->aux = getline(fs->f, nextpc);
-          else {
+          else if (nextpc != -1) {
             int nextline = getstartline(fs, nextpc);
             /* see if ending it on the next line makes sense */
             if (D->linenumber+1 < nextline)
