@@ -10186,6 +10186,8 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           if (numvars > 0)
             emitlocalstat2(fs, numvars, pc);
         }
+        if (sa->pc == nextchildstartpc)
+          goto processnextchild;
       }
       if (isfor) {
         if (exprsize)
