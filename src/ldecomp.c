@@ -1201,17 +1201,6 @@ static void DumpBlock(const void *b, size_t size, DecompState *D)
   }
 }
 
-/*
-static void DumpStringf(DecompState *D, const char *fmt, ...)
-{
-  va_list argp;
-  const char *s;
-  va_start(argp, fmt);
-  s = luaO_pushvfstring(D->H, fmt, argp);
-  DumpString(s,D);
-  va_end(argp);
-}*/
-
 
 /*
 ** declarations for dump functions used by both passes
@@ -1733,19 +1722,6 @@ static int getlowestslotreferenced(OpCode o, int a, int b, int c, int base)
     if (slots[i] < lowest && slots[i] >= base) lowest = slots[i];
   return lowest;
 }
-
-#if 0
-/*
-** Returns true if the instruction at (PC-1) is OP_JMP.
-*/
-static int previsjump(const Instruction *code, int pc) {
-  if (pc > 0) {
-    Instruction i = code[pc-1];
-    return GET_OPCODE(i) == OP_JMP;
-  }
-  return 0;
-}
-#endif
 
 
 static int getjump (DFuncState *fs, int pc)
