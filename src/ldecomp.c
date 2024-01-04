@@ -1335,6 +1335,7 @@ static const char *TValueToString(const TValue *o, DecompState *D)
 */
 static void DumpTValue(const TValue *o, DecompState *D)
 {
+  /* resulting string will not have embedded null bytes, strlen is ok */
   const char *str = TValueToString(o, D);
   DumpString(str, D);
 }
@@ -1461,7 +1462,8 @@ static void emitlongstring2(ExpNode *exp, DecompState *D)
   str = getstr(ts);
   len = ts->tsv.len;
   for (;;) {
-    const char *s = strchr(str, '\n');
+    /* use memchr instead of strchr in case there are embedded null bytes */
+    const char *s = memchr(str, '\n', len);
     if (s != NULL) {
       int numlines;
       size_t blocksize = cast(size_t, s-str);
@@ -1477,7 +1479,6 @@ static void emitlongstring2(ExpNode *exp, DecompState *D)
       str = s;
     }
     else {
-      lua_assert(strlen(str) == len);
       DumpBlock(str, len, D);
       break;
     }
@@ -7510,22 +7511,20 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         if (firstexp->kind == ESELF) {
           D(lprintf("firstexp->auxlistnext = %d\n", firstexp->auxlistnext));
         }
-        {
+        if (D->matchlineinfo && narg == 1) {
           ExpNode *firstarg = getnextexpinlist2(&iter, 0);
-          if (D->matchlineinfo && narg == 1) {
-            /* if only 1 argument, check if it is a string */
-            if (firstarg->kind == ELITERAL && ttisstring(firstarg->u.k)) {
-              /* Here I'm checking if the called expression maps to a different
-                 line than the OP_CALL code, and that OP_CALL maps to the same
-                 line as the first argument, which is a string. In this case,
-                 the source code had a long string which was not wrapped in
-                 parentheses, which creates this unusual line-mapping */
-              if (firstexp->line != exp->line && firstarg->line == exp->line) {
-                noparen = 1;
-                emitlongstring2(firstarg,D);
-                narg = 0;
-                firstarg->pending = 0;
-              }
+          /* if only 1 argument, check if it is a string */
+          if (firstarg->kind == ELITERAL && ttisstring(firstarg->u.k)) {
+            /* Here I'm checking if the called expression maps to a different
+               line than the OP_CALL code, and that OP_CALL maps to the same
+               line as the first argument, which is a string. In this case, the
+               source code had a long string which was not wrapped in
+               parentheses, which creates this unusual line-mapping */
+            if (firstexp->line != exp->line && firstarg->line == exp->line) {
+              noparen = 1;
+              emitlongstring2(firstarg,D);
+              narg = 0;
+              firstarg->pending = 0;
             }
           }
         }
