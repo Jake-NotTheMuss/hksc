@@ -128,6 +128,8 @@ typedef struct {
   int matchlineinfo;  /* true if matching statements to line info */
   int funcidx;  /* n for the nth function that is being decompiled */
   int indentlevel;  /* indentation level counter */
+  int noindent;  /* used when dumping a long string, to prevent indenting inside
+                    the string */
   int linenumber;  /* output line counter */
   int lastline;
   int nextlinenumber;  /* used when not using line info */
@@ -1254,7 +1256,7 @@ static void DumpBlock(const void *b, size_t size, DecompState *D)
   /* newline is acceptable when dumping only dumping the newline and no other
      characters */
   if (*cast(char *, b) != '\n')
-    lua_assert(strchr(b, '\n') == NULL);
+    lua_assert(memchr(b, '\n', size) == NULL);
   else {
     size_t i;
     for (i = 0; i < size; i ++)
@@ -1410,7 +1412,8 @@ static void beginline2(DFuncState *fs, int n, DecompState *D)
   lua_assert(n >= 0 && n <= buffsize);
   if (n != 0)
     DumpBlock(lf, n, D);
-  DumpIndentation(D);
+  if (D->noindent == 0)
+    DumpIndentation(D);
   D->lastline = lastline;  /* restore last line */
   D->needspace = 0;
   UNUSED(fs);
@@ -1427,6 +1430,60 @@ static void updateline2(DFuncState *fs, int line, DecompState *D)
     beginline2(fs, lines_needed, D);
     lua_assert(D->linenumber == line);
   }
+}
+
+
+/*
+** dumps a string constant as a long string `[[...]]'
+*/
+static void emitlongstring2(ExpNode *exp, DecompState *D)
+{
+  int endline = exp->line;  /* last line of the string */
+  const TString *ts = rawtsvalue(exp->u.k);
+  const char *str;
+  size_t len;
+  int numlinefeeds = 0;  /* number LF characters in the string */
+  int numleadinglines;  /* number of lines the string starts with in source
+                           (skipped by lexer) */
+  lua_assert(D->matchlineinfo);
+  lua_assert(ts != NULL);
+  /* count number of new lines in the string */
+  for (str = getstr(ts); (str = strchr(str, '\n')) != NULL; str++)
+    numlinefeeds++;
+  /* calculate number of leading lines that were skipped by lexer */
+  lua_assert(endline >= D->linenumber);
+  numleadinglines = (endline - D->linenumber) - numlinefeeds;
+  /* start emitting the string */
+  DumpLiteral("[[",D);
+  D->noindent = 1;
+  if (numleadinglines)
+    beginline2(D->fs, numleadinglines, D);
+  str = getstr(ts);
+  len = ts->tsv.len;
+  for (;;) {
+    const char *s = strchr(str, '\n');
+    if (s != NULL) {
+      int numlines;
+      size_t blocksize = cast(size_t, s-str);
+      DumpBlock(str, blocksize, D);
+      str = s;
+      len -= blocksize;
+      /* advance over new lines */
+      while (*++s == '\n')
+        ;
+      numlines = s-str;
+      beginline2(D->fs, numlines, D);
+      len -= cast(size_t, numlines);
+      str = s;
+    }
+    else {
+      lua_assert(strlen(str) == len);
+      DumpBlock(str, len, D);
+      break;
+    }
+  }
+  DumpLiteral("]]",D);
+  D->noindent = 0;
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
@@ -7434,6 +7491,8 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       break;
     }
     case ECALL: {
+      int noparen = 0;  /* true if emitting a single constructor/string argument
+                           and not wrapping it in parentheses */
       struct ExpListIterator iter;
       ExpNode *firstexp;
       int narg = exp->u.call.narg;
@@ -7443,8 +7502,6 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       if (needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
       dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);  /* called expression */
-      DumpLiteral("(",D);  /* start of arguments */
-      D->needspace = 0;
       narg -= (firstexp->kind == ESELF);
       if (narg != 0) {
         /* initialize the expression list iterator for dumping arguments */
@@ -7453,13 +7510,41 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         if (firstexp->kind == ESELF) {
           D(lprintf("firstexp->auxlistnext = %d\n", firstexp->auxlistnext));
         }
+        {
+          ExpNode *firstarg = getnextexpinlist2(&iter, 0);
+          if (D->matchlineinfo && narg == 1) {
+            /* if only 1 argument, check if it is a string */
+            if (firstarg->kind == ELITERAL && ttisstring(firstarg->u.k)) {
+              /* Here I'm checking if the called expression maps to a different
+                 line than the OP_CALL code, and that OP_CALL maps to the same
+                 line as the first argument, which is a string. In this case,
+                 the source code had a long string which was not wrapped in
+                 parentheses, which creates this unusual line-mapping */
+              if (firstexp->line != exp->line && firstarg->line == exp->line) {
+                noparen = 1;
+                emitlongstring2(firstarg,D);
+                narg = 0;
+                firstarg->pending = 0;
+              }
+            }
+          }
+        }
+        if (noparen == 0) {
+          DumpLiteral("(",D);  /* start of arguments */
+          D->needspace = 0;
+        }
         for (i = 0; i < narg; i++) {
           if (i != 0)
             DumpLiteral(",",D);
           dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
         }
       }
-      DumpLiteral(")",D);  /* end of arguments */
+      else if (noparen == 0) {
+        DumpLiteral("(",D);  /* start of arguments */
+        D->needspace = 0;
+      }
+      if (noparen == 0)
+        DumpLiteral(")",D);  /* end of arguments */
       if (needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
       D->needspace = 1;  /* will not always be set */
@@ -10675,6 +10760,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.rescan=0;
   D.funcidx=0;
   D.indentlevel=-1;
+  D.noindent=0;
   D.linenumber=1;
   D.lastline=1;
   D.nextlinenumber=1;
