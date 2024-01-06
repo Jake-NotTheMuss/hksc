@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# generate a long string with embedded null bytes
+
+printf 'io:stdin[[\n\n\0\njsh\0nfjsf\n]]\n'
+
