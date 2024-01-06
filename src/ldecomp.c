@@ -7527,6 +7527,19 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
               firstarg->pending = 0;
             }
           }
+          else if (firstarg->kind == ECONSTRUCTOR) {
+            /* if the argument is a table constructor and the mapped line for
+               CALL is not the same as the line for the called expression, do
+               not wrap the table in parentheses and also move up the start line
+               of the table to be that of the called expression, ensuring the
+               line info will match on recompilation; see `funcargs' in
+               lparser.c for more insight on how line mapping works in this case
+               */
+            if (firstexp->line != exp->line) {
+              firstarg->line = firstarg->closeparenline = exp->line;
+              noparen = 1;
+            }
+          }
         }
         if (noparen == 0) {
           DumpLiteral("(",D);  /* start of arguments */
@@ -7542,8 +7555,11 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         DumpLiteral("(",D);  /* start of arguments */
         D->needspace = 0;
       }
-      if (noparen == 0)
+      if (noparen == 0) {
+        if (exp->aux > D->linenumber)
+          updateline2(fs, exp->aux, D);
         DumpLiteral(")",D);  /* end of arguments */
+      }
       if (needparenforlineinfo)
         dumpcloseparen2(D, fs, exp);
       D->needspace = 1;  /* will not always be set */
@@ -8956,8 +8972,15 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
         if (narg == -1) narg = 1;
         /* clear stack space of the arguments */
         clearslots2(fs, exp->info+1, narg);
+    }
+      /* if matching line info, see if the close-paren of the function call
+         needs to be on a specific line */
+      if (fs->D->matchlineinfo) {
+        if (fs->prev == NULL && pc+1 == fs->f->sizecode-1) {
+          /* call is before final return of main function */
+          exp->aux = getline(fs->f, pc+1);
+        }
       }
-      exp->aux = exp2index(fs, getexpinreg2(fs, a+exp->u.call.narg));
       break;
     case OP_CONCAT:
       exp->kind = ECONCAT;

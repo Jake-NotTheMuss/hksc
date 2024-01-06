@@ -190,7 +190,7 @@ typedef enum {
   ESELF,  /* a table index called as a method */
   EBINOP,  /* a binary operation */
   EUNOP,  /* a unary operation */
-  ECALL,  /* a function call */
+  ECALL,  /* a function call, aux = line to emit close paren of call or 0 */
   ECONCAT,  /* a concatenation */
   ECONDITIONAL,  /* a conditional expression */
   ESTORE  /* encodes an L-value in an assignment list */
