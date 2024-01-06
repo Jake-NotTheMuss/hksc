@@ -1449,8 +1449,12 @@ static void emitlongstring2(ExpNode *exp, DecompState *D)
   lua_assert(D->matchlineinfo);
   lua_assert(ts != NULL);
   /* count number of new lines in the string */
-  for (str = getstr(ts); (str = strchr(str, '\n')) != NULL; str++)
-    numlinefeeds++;
+  for (str = getstr(ts), len = ts->tsv.len; ; numlinefeeds++) {
+    const char *s = memchr(str, '\n', len);
+    if (s == NULL) break;
+    len -= cast(size_t, s+1-str);
+    str = s+1;
+  }
   /* calculate number of leading lines that were skipped by lexer */
   lua_assert(endline >= D->linenumber);
   numleadinglines = (endline - D->linenumber) - numlinefeeds;
