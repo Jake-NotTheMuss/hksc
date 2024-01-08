@@ -8253,7 +8253,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
     }
   }
   if (funcname == NULL) {
-    while (1) {
+    for (;;) {
       OpCode rootop;  /* opcode family for the current store */
       ExpNode *prev;
       rootop = exp->u.store.rootop;
@@ -8314,7 +8314,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
   lastsrc->aux = lastsrcreg;
   lastsrc->info = exp->info;
   D(lprintf("lastsrcreg = %d\n", lastsrcreg));
-  while (1) { /* tarverse the chain to dump RHS values */
+  for (;;) { /* tarverse the chain to dump RHS values */
     /* get expression to assigm */
     ExpNode *src = (exp->kind == ESTORE) ? index2exp(fs, exp->aux) : exp;
     if (exp->u.store.srcreg == -1)
