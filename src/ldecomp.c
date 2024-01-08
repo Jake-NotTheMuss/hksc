@@ -8452,8 +8452,10 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
       if (pc+1 < fs->f->sizecode-1 && getline(fs->f, pc+1) == firstexp->line &&
           D->linenumber <= firstexp->line - 1) {
         haveRHS = 0;
-        skipsemiforlineinfo = 1;
-        firstexp->closeparenline = --firstexp->line;
+        if (D->lastline < firstexp->line - 1) {
+          skipsemiforlineinfo = 1;
+          firstexp->closeparenline = --firstexp->line;
+        }
       }
     }
     /* if only assigning nil's, avoid writing the RHS altogether, unless it is
