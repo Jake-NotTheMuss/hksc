@@ -6595,6 +6595,8 @@ static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
       if (line != exp->line && line != 0) {
         if (src->kind == ECONSTRUCTOR && src->aux <= 0)
           src->aux = exp->line;
+        else if (src->kind == ECALL && src->aux == 0)
+          src->aux = exp->line;
         else
           src->closeparenline = exp->line;
       }
@@ -7158,6 +7160,25 @@ static ExpNode *getnextexpinlist2(struct ExpListIterator *iter, int i)
 
 
 /*
+** calculate the last line for a constructor argument in a function call
+*/
+static void calcconsargauxline(DFuncState *fs, ExpNode *call, ExpNode *tab)
+{
+  DecompState *D = fs->D;
+  lua_assert(call->kind == ECALL);
+  lua_assert(tab->kind == ECONSTRUCTOR);
+  if (call->aux > call->line)
+    tab->aux = call->aux;
+  else if (tab->u.cons.nextpc != -1) {
+    /* nextpc is this call, you want the one after it */
+    int line = getstartline(fs, tab->u.cons.nextpc+1);
+    if (line > D->linenumber)
+      tab->aux = line-1;
+  }
+}
+
+
+/*
 ** dumps an expression node to the output
 */
 static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
@@ -7504,6 +7525,14 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
       int i;
       firstexp = index2exp(fs, exp->previndex);
       lua_assert(firstexp != NULL);  /* there must be an expression to call */
+      /* if the called expression is also a call, calculate the line to emit the
+         close paren for that call */
+      if (D->matchlineinfo && firstexp->kind == ECALL) {
+        if (firstexp->aux == 0)
+          firstexp->aux = exp->line;
+        else if (firstexp->aux != exp->line)
+          firstexp->closeparenline = exp->line;
+      }
       if (needparenforlineinfo)
         addliteralholditem2(D, &holdparen, "(", 0);
       dumpexp2(D, fs, firstexp, SUBEXPR_PRIORITY);  /* called expression */
@@ -7543,6 +7572,9 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
               firstarg->line = firstarg->closeparenline = exp->line;
               noparen = 1;
             }
+            else if (firstarg->aux <= 0) {
+              calcconsargauxline(fs, exp, firstarg);
+            }
           }
         }
         if (noparen == 0) {
@@ -7550,9 +7582,14 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
           D->needspace = 0;
         }
         for (i = 0; i < narg; i++) {
+          ExpNode *arg = getnextexpinlist2(&iter, i);
           if (i != 0)
             DumpLiteral(",",D);
-          dumpexp2(D, fs, getnextexpinlist2(&iter, i), 0);
+          if (i == narg-1) {
+            if (D->matchlineinfo && arg->kind == ECONSTRUCTOR && arg->aux <= 0)
+              calcconsargauxline(fs, exp, arg);
+          }
+          dumpexp2(D, fs, arg, 0);
         }
       }
       else if (noparen == 0) {
@@ -8984,6 +9021,10 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
       if (fs->D->matchlineinfo) {
         if (fs->prev == NULL && pc+1 == fs->f->sizecode-1) {
           /* call is before final return of main function */
+          exp->aux = getline(fs->f, pc+1);
+        }
+        else if (IS_OP_TAILCALL(o)) {
+          lua_assert(GET_OPCODE(fs->f->code[pc+1]) == OP_RETURN);
           exp->aux = getline(fs->f, pc+1);
         }
       }
@@ -10526,8 +10567,12 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
               lua_assert(exp->kind == ENIL);
               exp->line = exp->closeparenline = retline;
             }
-            else
-              exp->closeparenline = retline;
+            else {
+              if (exp->kind == ECALL && (exp->aux == 0 || exp->aux == retline))
+                exp->aux = retline;
+              else
+                exp->closeparenline = retline;
+            }
           }
         }
         if (pc+1 == sa->pendingcond.target) {
