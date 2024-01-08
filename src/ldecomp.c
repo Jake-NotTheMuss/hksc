@@ -7497,6 +7497,16 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
                   }
                 }
               }
+              /* check if an expression which normallu=y has multiple returns
+                 only has 1 slot here, which means it is wrapped in parens */
+              if (hasmultret(nextarrayitem)) {
+                if (nextarrayitem->kind == ECALL &&
+                    nextarrayitem->u.call.nret == 1)
+                  nextarrayitem->forceparen = 1;
+                else if (nextarrayitem->kind == EVARARG &&
+                         nextarrayitem->aux == 2)
+                  nextarrayitem->forceparen = 1;
+              }
             }
             if (D->matchlineinfo == 0) {
               nextarrayitem->line = D->nextlinenumber += linestep;
