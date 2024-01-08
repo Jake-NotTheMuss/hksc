@@ -150,7 +150,8 @@ PASS2_SRC=	75_locvar.lua \
 	101_compare.lua \
 	102_conditional2.lua \
 	103_closureline.lua \
-	104_longstrnull.lua
+	104_longstrnull.lua \
+	105_comporder.lua
 
 # tests interesting for compiler/decompiler
 DECOMPILER_SRC=
