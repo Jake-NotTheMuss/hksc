@@ -8486,10 +8486,11 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
     lua_assert(firstexp->info == firstreg);
     if (D->matchlineinfo && firstexp->kind == ENIL && firstexp->aux == lastreg)
     {
-      if (pc+1 < fs->f->sizecode-1 && getline(fs->f, pc+1) == firstexp->line &&
+      if (pc+1 < fs->f->sizecode-1 &&
+          getstartline(fs, pc+1) == firstexp->line &&
           D->linenumber <= firstexp->line - 1) {
         haveRHS = 0;
-        if (D->lastline < firstexp->line - 1) {
+        if (D->linenumber < firstexp->line - 1) {
           skipsemiforlineinfo = 1;
           firstexp->closeparenline = --firstexp->line;
         }
