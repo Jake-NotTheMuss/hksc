@@ -8513,7 +8513,7 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
   if (seenfirstexp == 0) {
     /* no expressions have been dumped, but the items in the hold need to be
        discharged and the line needs to be updated */
-    D->needspace = 0;
+    D->needspace = 1;
     predumpexp2(D,fs,firstexp);
     postdumpexp2(D,fs,firstexp);
   }
