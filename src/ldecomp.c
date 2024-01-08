@@ -9044,6 +9044,17 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
         else
           exp->u.call.narg = lastexp->info-a;
       }
+      else if (exp->u.call.narg > 0) {
+        ExpNode *lastexp = index2exp(fs, sa->lastexpindex);
+        /* check if the last argument has multiple returns but only the first
+           slot is used, in this case, it must be wrapped in parens */
+        if (lastexp != NULL && hasmultret(lastexp)) {
+          if (lastexp->kind == EVARARG && lastexp->aux == 2)
+            lastexp->forceparen = 1;
+          else if (lastexp->kind == ECALL && lastexp->u.call.nret == 1)
+            lastexp->forceparen = 1;
+        }
+      }
       if (exp->u.call.nret == 0) {
         CHECK(fs, sa->openexprkind == -1, "unexpected call statement in open "
               "expression (call returns 0 values)");
