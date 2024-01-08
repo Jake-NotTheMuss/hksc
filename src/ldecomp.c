@@ -7866,6 +7866,8 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
           last->closeparenline = last->line;  /* ensure no parentheses */
         }
       }
+      if (last->kind == EVARARG && last->aux == 2)
+        last->forceparen = 1;
     }
   }
   needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
