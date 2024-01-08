@@ -19,7 +19,7 @@ debug info, but I have yet to test hksc without debug info.
 
 With debug info, all unit tests are passing.
 
-I am working on getting the test programs passing with debug info.
+With debug info, all test programs are passing.
 
 One thing I know that I have not yet addressed is detecting/handling
 assignment conflicts.
