@@ -4274,6 +4274,7 @@ static void updatelastup1(DecompState *D)
 
 static void updatereferences1(DecompState *D)
 {
+  DFuncState *fs = D->fs;
   OpCode o = D->a.insn.o;
   int b = D->a.insn.b;
   int c = D->a.insn.c;
@@ -4297,8 +4298,36 @@ static void updatereferences1(DecompState *D)
     int k = (res & KREF_C) ? INDEXK(c) : (res & KREF_B) ? INDEXK(b) :INDEXK(bx);
     while (--k >= 0) {
       if (iskreferenced(D, k) == 0) {
-        D->a.skippedstorerefpc = D->fs->pc;
-        set_ins_property(D->fs, D->fs->pc, INS_SKIPPEDREF);
+        D->a.skippedstorerefpc = fs->pc;
+        set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
+        break;
+      }
+    }
+  }
+  /* check for skipped constant reference in comparison codes */
+  if (isref && (o == OP_LT || o == OP_LT_BK || o == OP_LE || o == OP_LE_BK)) {
+    /* Consider the difference between the following 2 statements:
+          (1) if a + 1 > 0 then return; end
+          (2) if 0 < a + 1 then return; end
+       Assume `a' is a local variable for simplicity.
+       In the first statement, `1' is encountered, and a constant is generated,
+       and then an opcode is generated, OP_ADD, referencing the constant. Then,
+       `0' is encountered and another constant is generated, and then OP_LT is
+       generated, referencing the constant.
+       In the second statement, `0' is encountered and a constant is generated,
+       and then `1' is encountered and a constant is generated for it, then
+       OP_ADD is generated, referencing `1', the second constant, then OP_LT is
+       generated, referencing `0', the first constant. Thus, the constants are
+       referenced in a different order than they were generated. So order
+       matters in this case. See `addcompare2' for the handling of this case. */
+    int k = -1;
+    if (res & KREF_B)
+      k = INDEXK(b);
+    if ((res & KREF_C) && INDEXK(c) > k)
+      k = INDEXK(c);
+    while (++k < fs->f->sizek) {
+      if (iskreferenced(D, k)) {
+        set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
         break;
       }
     }
@@ -5092,8 +5121,10 @@ static void rescanvars1(DecompState *D, BlockState *bl)
     updateinsn1(D, fs);
     checktestsetend1(D, pc);
     updatelastup1(D);
-    if (test_ins_property(fs, pc, INS_SKIPPEDREF))
-      D->a.skippedstorerefpc = pc;
+    if (test_ins_property(fs, pc, INS_SKIPPEDREF)) {
+      if (isstorecode(D->a.insn.o))
+        D->a.skippedstorerefpc = pc;
+    }
     updatevars1(D, fs);
     /* check for TESTSET start AFTER updating generated variables */
     checktestsetstart1(D, pc);
@@ -9213,7 +9244,14 @@ static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
   if (comp == OP_EQ)
     op = a ? OPR_EQ : OPR_NE;
   else {
-    if (istempreg(fs, b) && istempreg(fs, c) && b > c) {
+    if (istempreg(fs, b) && istempreg(fs, c)) {
+      if (b > c) {
+        int temp = b; b = c; c = temp;
+        a = !a;
+      }
+    }
+    else if (!test_ins_property(fs, pc, INS_SKIPPEDREF) &&
+             referencesk(o, b, c, b)) {
       int temp = b; b = c; c = temp;
       a = !a;
     }
