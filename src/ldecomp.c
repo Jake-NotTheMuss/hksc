@@ -2550,6 +2550,10 @@ static BlockNode *finalizeloopstate1(DFuncState *fs, BlockNode *nextnode)
     case BL_FORLIST: set_ins_property(fs, startpc, INS_FORLIST); break;
   }
   set_ins_property(fs, endpc, INS_LOOPEND);
+  if (kind == BL_REPEAT) {
+    set_ins_property(fs, endpc, INS_FAILJUMP);
+    set_ins_property(fs, endpc, INS_LOOPFAIL);
+  }
   return new_node;
 }
 
@@ -5275,6 +5279,8 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
   switch (node->kind) {
     case BL_REPEAT: {
       /* combine repeat-loops if possible */
+      if (!node->repuntiltrue)
+        check_ins_property(fs, node->endpc, INS_LOOPFAIL);
       if (prevnode != NULL && !node->repuntiltrue &&
           prevnode->kind == BL_REPEAT && prevnode->startpc == node->startpc &&
           laststat <= prevnode->endpc) {
