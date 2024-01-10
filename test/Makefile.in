@@ -37,6 +37,8 @@ HKSCAFLAGS=-L $(HKSC_TARGET_PLAT) $(HKSC_PREFIX_MAP)
 HKSCBFLAGS=$(HKSC_TARGET_PLAT)
 # flags for loading decompilation files
 HKSCDFLAGS=-L $(HKSC_TARGET_PLAT) --file-prefix-map=$*.dec.lua=$*.lua
+# flags for decompiling source files
+HKSCDECOMPFLAGS=$(HKSCAFLAGS) @DECOMPILER_IGNORE_DEBUG@ -d
 
 TESTMAKEFLAGS=
 
@@ -308,8 +310,8 @@ temp-expect:
 # decompiler pass1 test
 .ctest.p1test:
 	@echo Decompiling $*.lua
-	@echo $(HKSC) $(HKSCAFLAGS) -l -d $(srcdir)/$*.lua -o $*.decp1.lua >> $(MAKELOG)
-	@$(HKSC) $(HKSCAFLAGS) -l -d $(srcdir)/$*.lua -o $*.decp1.lua > $*.decp1.log
+	@echo $(HKSC) $(HKSCDECOMPFLAGS) -l $(srcdir)/$*.lua -o $*.decp1.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCDECOMPFLAGS) -l $(srcdir)/$*.lua -o $*.decp1.lua > $*.decp1.log
 	@diff -u $*.p1expect $*.decp1.lua && echo "$*.lua decompiled OK"
 
 
@@ -317,8 +319,8 @@ temp-expect:
 .ctest.dtest:
 	@echo Decompiling $*.lua
 # 	load source and generate a decomp for it
-	@echo $(HKSC) $(HKSCAFLAGS) -d $(srcdir)/$*.lua -o $*.dec.lua >> $(MAKELOG)
-	@$(HKSC) $(HKSCAFLAGS) -l -d $(srcdir)/$*.lua -o $*.dec.lua > $*.dec.log
+	@echo $(HKSC) $(HKSCDECOMPFLAGS) -l $(srcdir)/$*.lua -o $*.dec.lua >> $(MAKELOG)
+	@$(HKSC) $(HKSCDECOMPFLAGS) -l $(srcdir)/$*.lua -o $*.dec.lua > $*.dec.log
 # 	re-compile the decomp to bytecode
 	@echo $(HKSC) $(HKSCDFLAGS) -s $*.dec.lua -o $*.dec.luac >> $(MAKELOG)
 	@$(HKSC) $(HKSCDFLAGS) -s $*.dec.lua -o $*.dec.luac
