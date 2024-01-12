@@ -810,6 +810,22 @@ static int hasmultretuptoreg(ExpNode *exp, int reg)
 }
 
 
+/*
+** returns true if EXP is a multret expression but only uses a single value
+*/
+static int hasmultretsinglereg(ExpNode *exp)
+{
+  lua_assert(exp != NULL);
+  if (hasmultret(exp)) {
+    if (exp->kind == ECALL)
+      return exp->u.call.nret == 1;
+    else if (exp->kind == EVARARG)
+      return exp->aux == 2;
+  }
+  return 0;
+}
+
+
 #ifdef LUA_DEBUG
 static const char *getunoprstring(UnOpr op);
 static const char *getbinoprstring(BinOpr op);
@@ -7497,16 +7513,10 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
                   }
                 }
               }
-              /* check if an expression which normallu=y has multiple returns
-                 only has 1 slot here, which means it is wrapped in parens */
-              if (hasmultret(nextarrayitem)) {
-                if (nextarrayitem->kind == ECALL &&
-                    nextarrayitem->u.call.nret == 1)
-                  nextarrayitem->forceparen = 1;
-                else if (nextarrayitem->kind == EVARARG &&
-                         nextarrayitem->aux == 2)
-                  nextarrayitem->forceparen = 1;
-              }
+              /* check if an expression which normally has multiple returns only
+                 has 1 slot here, which means it is wrapped in parens */
+              if (hasmultretsinglereg(nextarrayitem))
+                nextarrayitem->forceparen = 1;
             }
             if (D->matchlineinfo == 0) {
               nextarrayitem->line = D->nextlinenumber += linestep;
@@ -7859,25 +7869,19 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
          expression to be returned, wrap that expression in parens and put the
          closing paren on the line that the return is mapped to; this preserves
          line info when recompiling */
-      if (last != NULL && line != expline)
-        last->closeparenline = line;
-      if (last->kind == ECALL) {
-        OpCode op = last->u.call.op;
-        lua_assert(IS_OP_CALL(op));
-        /* if OP_TAILCALL is not the opcode, the call expression was discharged
-           before the opcode was generated when compiling, meaning it was
-           wrapped in parentheses; but if OP_TAILCALL is the opcode, the
-           expression was not discharged, and remained a VCALL node when the
-           opcode was generated */
-        if (!IS_OP_TAILCALL(op))
-          last->forceparen = 1;  /* force parentheses to discharge it */
-        else {
-          lua_assert(last->forceparen == 0);
-          last->closeparenline = last->line;  /* ensure no parentheses */
+      if (last != NULL) {
+        if (line != expline)
+          last->closeparenline = line;
+        if (hasmultretsinglereg(last))
+          last->forceparen = 1;
+        /* if this is a call and it has multiple returns, ensure it is not
+           wrapped in parens */
+        else if (last->kind == ECALL) {
+          /* ensure no parentheses while still matching line info */
+          last->closeparenline = last->line;
+          last->aux = line;
         }
       }
-      if (last->kind == EVARARG && last->aux == 2)
-        last->forceparen = 1;
     }
   }
   needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
@@ -9060,12 +9064,8 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
         ExpNode *lastexp = index2exp(fs, sa->lastexpindex);
         /* check if the last argument has multiple returns but only the first
            slot is used, in this case, it must be wrapped in parens */
-        if (lastexp != NULL && hasmultret(lastexp)) {
-          if (lastexp->kind == EVARARG && lastexp->aux == 2)
-            lastexp->forceparen = 1;
-          else if (lastexp->kind == ECALL && lastexp->u.call.nret == 1)
-            lastexp->forceparen = 1;
-        }
+        if (lastexp != NULL && hasmultretsinglereg(lastexp))
+          lastexp->forceparen = 1;
       }
       if (exp->u.call.nret == 0) {
         CHECK(fs, sa->openexprkind == -1, "unexpected call statement in open "
