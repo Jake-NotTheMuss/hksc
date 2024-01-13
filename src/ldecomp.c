@@ -133,6 +133,10 @@ typedef struct {
   int linenumber;  /* output line counter */
   int lastline;
   int nextlinenumber;  /* used when not using line info */
+  int delaysemi;  /* used to delay the final semicolon to match line info with
+                     the final return opcode when it is mapped to a different
+                     line (0 = not delayed, -1 = already delayed, otherwise the
+                     value is the line to dump the semicolon) */
   int needspace;  /* for adding space between tokens */
   int maxtreedepth;  /* maximum number of function states that will be active at
                         once during the decompilation */
@@ -1367,11 +1371,20 @@ static void DumpConstant(DFuncState *fs, int index, DecompState *D)
   DumpTValue(o,D);
 }
 
+static void updateline2(DFuncState *fs, int line, DecompState *D);
+
 /*
 ** dumps a semicolon to output
 */
 static void DumpSemi(DecompState *D)
 {
+  if (D->delaysemi > 0) {
+    DFuncState *fs = D->fs;
+    if (fs->prev == NULL) {
+      updateline2(fs, D->delaysemi, D);
+      D->delaysemi = -1;
+    }
+  }
   DumpLiteral(";",D);
   D->needspace = 1;
 }
@@ -10345,12 +10358,10 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   int inmainfunc = (fs->prev == NULL);
   if (inmainfunc && node->kind == BL_FUNCTION) {
     D->indentlevel = 0;
-    if (D->matchlineinfo) {
-      int lastline = getline(fs->f, fs->f->sizecode-1);
-      if (lastline > D->linenumber) {
-        updateline2(fs, lastline, D);
-        DumpLiteral("; --[[ emitted to match line info ]]",D);
-      }
+    if (D->delaysemi > 0) {
+      updateline2(fs, D->delaysemi, D);
+      DumpLiteral("; --[[ emitted to match line info ]]",D);
+      D->delaysemi = 0;
     }
     /* no tokens needed to leave the main function, just add a line-feed */
     beginline2(fs, 1, D);
@@ -10447,6 +10458,22 @@ static void addparams(DFuncState *fs, const Proto *f)
   fs->nlocvars = f->numparams;
   if (f->numparams)
     pushlocalvars2(fs, 0, f->numparams);
+}
+
+
+static void checkdelaysemi2(DFuncState *fs, int pc)
+{
+  DecompState *D = fs->D;
+  if (D->matchlineinfo == 0 || fs->prev != NULL || D->delaysemi < 0)
+    return;
+  if (pc < fs->f->sizecode-1)
+    pc++;
+  if (pc == fs->f->sizecode-1 && pc > 0) {
+    int retline = getline2(fs, pc);
+    int lastline = getline2(fs, pc-1);
+    if (retline != lastline)
+      D->delaysemi = retline;
+  }
 }
 
 
@@ -10625,9 +10652,9 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
            line than this expression, wrap this expression in parens and put
            the closing paren on the line that the return is mapped to; this
            preserves line info when recompiling */
-        if (fs->prev == NULL && node->kind == BL_FUNCTION &&
-            D->matchlineinfo && pc+1 == fs->f->sizecode-1 &&
-            exp->kind != ECLOSURE) {
+        else if (fs->prev == NULL && node->kind == BL_FUNCTION &&
+                 D->matchlineinfo && pc+1 == fs->f->sizecode-1 &&
+                 exp->kind != ECLOSURE) {
           int retline = getline2(fs, pc+1);
           int expline = getexpline(exp);
           if (retline != expline && expline != 0) {
@@ -10639,7 +10666,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
               if (exp->kind == ECALL && (exp->aux == 0 || exp->aux == retline))
                 exp->aux = retline;
               else
-                exp->closeparenline = retline;
+                D->delaysemi = retline;
             }
           }
         }
@@ -10654,6 +10681,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         }
       }
       else {  /* an A-mode instruction that doesn't clobber A */
+        checkdelaysemi2(fs, pc);
         if (addstore2(sa, fs, pc, o, a, b, c, bx) == 0) { /* not a store */
           /* the current store chain has ended; discharge it */
           checkdischargestores2(sa, fs);
@@ -10689,8 +10717,10 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
           addconditionalnode2(sa, fs, pc, target);
         }
       }
-      else
+      else {
+        checkdelaysemi2(fs, pc);
         checkdischargestores2(sa, fs);
+      }
     }
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
     if (pc == endpc)
@@ -10905,6 +10935,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   D.linenumber=1;
   D.lastline=1;
   D.nextlinenumber=1;
+  D.delaysemi=0;
   D.needspace=0;
   D.maxtreedepth=1;  /* at least a main function */
   VEC_INIT(D.loopstk);
