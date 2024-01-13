@@ -312,7 +312,9 @@ temp-expect:
 	@echo Decompiling $*.lua
 	@echo $(HKSC) $(HKSCDECOMPFLAGS) -l $(srcdir)/$*.lua -o $*.decp1.lua >> $(MAKELOG)
 	@$(HKSC) $(HKSCDECOMPFLAGS) -l $(srcdir)/$*.lua -o $*.decp1.lua > $*.decp1.log
-	@diff -u $*.p1expect $*.decp1.lua && echo "$*.lua decompiled OK"
+	@if test x@DECOMPILER_IGNORE_DEBUG@ != x && test -e $*.p1nexpect; then \
+	diff -u $*.p1nexpect $*.decp1.lua && echo "$*.lua decompiled OK"; else \
+	diff -u $*.p1expect $*.decp1.lua && echo "$*.lua decompiled OK"; fi
 
 
 # decompiler test, run after compiler and bytecode loader tests
