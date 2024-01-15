@@ -1977,7 +1977,7 @@ static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
       lua_assert(sbx >= 0);
       if (test_ins_property(fs, pc, INS_SKIPBOOLLABEL))
         return 0;
-      lua_assert(pc + 1 + sbx <= jumplimit);
+      lua_assert(pc + 1 + sbx <= jumplimit || jumplimit == -1);
       (void)sbx;
       return 0;
     }
