@@ -4853,7 +4853,7 @@ static void updatevarstartpcs1(DFuncState *fs)
               test_ins_property(fs, jumppc, INS_BLOCKEND) ||
               test_ins_property(fs, jumppc, INS_BREAKSTAT))
             break;
-          if (jumppc >= limitpc)
+          if (jumppc >= limitpc || target >= limitpc)
             break;
           if (test_ins_property(fs, jumppc, INS_PASSJUMP))
             target = getjump(fs, target-1);
