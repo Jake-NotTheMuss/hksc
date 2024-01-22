@@ -5306,6 +5306,9 @@ static void onclose1(DecompState *D, int withdebug)
     /* the current loop or if-statement will generate this OP_CLOSE code, no
        need to add a do-block */
     currblock->node->upval = 1;
+    /* update variable endings in this block */
+    for (; reg < fs->nactvar; reg++)
+      getlocvar1(D, reg)->endpc = pc;
     return;
   }
   if (withdebug) {
