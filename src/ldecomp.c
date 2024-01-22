@@ -5307,8 +5307,10 @@ static void onclose1(DecompState *D, int withdebug)
        need to add a do-block */
     currblock->node->upval = 1;
     /* update variable endings in this block */
-    for (; reg < fs->nactvar; reg++)
-      getlocvar1(D, reg)->endpc = pc;
+    if (!withdebug) {
+      for (; reg < fs->nactvar; reg++)
+        getlocvar1(D, reg)->endpc = pc;
+    }
     return;
   }
   if (withdebug) {
