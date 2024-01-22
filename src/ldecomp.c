@@ -4735,6 +4735,7 @@ static void updatevarstartpcs1(DFuncState *fs)
     else if (test_ins_property(fs, initstart, INS_BOOLLABEL)) {
       goto findbblocvar;
     }
+    set_ins_property(fs, initstart, INS_LOCVAREXPR);
     {
       int laststackpush = -1;
       int top = reg;
