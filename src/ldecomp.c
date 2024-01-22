@@ -3876,8 +3876,13 @@ static void commitvarsonstack1(DecompState *D)
   for (i = cast_int(fs->nactvar)-1; i >= 0; i--) {
     LocVar *var = getlocvar1(D, i);
     enum GENVARNOTE note = getvarnote1(D, var);
-    if (note != GENVAR_DISCHARGED)
+    if (note != GENVAR_DISCHARGED) {
       makepersistent1(D, i);
+      if (D->a.bl->seenstat == 0 && i >= D->a.bl->nactvar) {
+        D->a.bl->seenstat = 1;
+        D->a.bl->seenhardstat = 1;
+      }
+    }
   }
 }
 
