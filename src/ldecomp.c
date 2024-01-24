@@ -4992,7 +4992,8 @@ static int jump2(DFuncState *fs, int pc, int offs)
         currblock->isloop && currblock->seenstat == 0) {
       /* this can be a loop condition fail */
       set_ins_property(fs, pc, INS_LOOPFAIL);
-      rollbackvars1(D, currblock->nactvar);
+      if (fs->D->usedebuginfo == 0)
+        rollbackvars1(D, currblock->nactvar);
       D->savedstartpc.used = currblock->savedstartpcbase;
       return -1;
     }
