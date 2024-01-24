@@ -5210,12 +5210,10 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
       BlockState *bl;
       /* the first variable that needs to be ended */
       LocVar *firstvar = getlocvar1(D, varlimit);
+      int firstvarinit = getlocvarinit1(D, firstvar);
       clearsavedvars1(D, varlimit);
-      /* find the earliest parent block containing the first variable (note that
-         the startpc of a local variable is initially set as the clobbering
-         instruction, so a strict less-than works and avoids needing to check if
-         BL has reached the root state) */
-      for (bl = D->a.bl; getlocvarinit1(D, firstvar) < bl->node->startpc; bl--)
+      /* find the earliest parent block containing the first variable */
+      for (bl = D->a.bl; firstvarinit < bl->node->startpc; bl--)
         ;
       earliestbl = bl;
       /* for each block containing a variable that needs to end, end it and see
@@ -5296,7 +5294,7 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
              variable, rescan the block to generate duplicate variables for
              those clobber operations */
           if (nextbl->highestclobbered >= varlimit) {
-            int firstvarindex = firstvar - fs->locvars;
+            volatile int firstvarindex = firstvar - fs->locvars;
             rescanvars1(D, nextbl);
             firstvar = fs->locvars + firstvarindex;
           }
@@ -5359,7 +5357,7 @@ static void updatevarsbeforeopenexpr1(DecompState *D)
 
 /*
 ** returns true if the current OP_CLOSE code will be generated implicitly by the
-** current lexical block without needing to have an inner do-blocm
+** current lexical block without needing to have an inner do-block
 */
 static int
 checkimplicitclose1(DecompState *D, int closedreg, int pc)
@@ -5371,7 +5369,7 @@ checkimplicitclose1(DecompState *D, int closedreg, int pc)
     return 0;  /* OP_CLOSE does not close all variables in the block */
   if (bl->node->kind == BL_FUNCTION)
     return 0;  /* function blocks do not generate OP_CLOSE implcitly */
-  /* now check if the pc of OP_CLOSE is where an implicit one would ne */
+  /* now check if the pc of OP_CLOSE is where an implicit one would be */
   closepc = getnaturalclosepc(bl->node);
   /* at this point, an if-block which has en else-part will not have an
      else-block sibling, so getnaturalclosepc will be inaccurate if there is an
