@@ -66,11 +66,11 @@ enum BLTYPE {
   DEFINSFLAG(TESTSETJUMP)  /* a jump within a testset expression */ \
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
   DEFINSFLAG(LOCVAREXPR)  /* start of a local varible initialization */ \
+  DEFINSFLAG(SAVEDLOCVAREXPR)  /* same as above for a saved local */ \
   DEFINSFLAG(ASSIGNSTART)  /* start of a local statement or store */ \
   DEFINSFLAG(ASSIGNEND)  /* end of a local statement or store */ \
   DEFINSFLAG(SELFUPVAL)  /* OP_CLOSURE uses its own register as an upvalue */ \
   DEFINSFLAG(SKIPPEDREF)  /* pc skips a constant/upvalue reference */ \
-  DEFINSFLAG(STACKPUSH)  /* pc loads a value to a temporary slot */ \
   DEFINSFLAG(VISITED)  /* this instruction has been processed in pass2 */
 
 #define DEFINSFLAG(e)  INS_##e,

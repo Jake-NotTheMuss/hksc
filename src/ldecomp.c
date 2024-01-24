@@ -164,12 +164,13 @@ typedef struct {
   VEC_STRUCT(struct LoopState, loopstk);
   VEC_STRUCT(struct BlockState, blockstk);
   VEC_STRUCT(BlockNode *, freeblocknodes);
-  VEC_STRUCT(lu_byte, varnotes);
+  VEC_STRUCT(int, varnotes);
   /* vector for fixed start-lines for pc which have `fixed lines', that is,
      they correspond to lines in source code that are earlier than the line that
      they are mapped to in debug info */
   VEC_STRUCT(linemap, fixedstartlines);
   VEC_STRUCT(index2pc_t, savedstartpc);
+  VEC_STRUCT(index2pc_t, savedrepeatvars);
   /* constants bitmap - each bit represents whether the corresponding constant
      has been referenced in the current function - used in the first pass when
      generating variable info */
@@ -198,6 +199,9 @@ typedef struct {
     /* if the current testset expression is assigning to an existing local,
        then this holds the slot of that local, otherwise it is -1 */
     int testsetlocvar;
+    /* if the current testset expression is initializing a new local, then this
+       holds the slot of that local, otherwise it is -1 */
+    int testsetnewlocvar;
     /* the pc of the first OP_TESTSET in a testset expression */
     int testsetstart;
     /* generic `prepstart' variable for loops/branches, it is calculated before
@@ -3235,7 +3239,8 @@ static void initblockstate1(DFuncState *fs, BlockState *block, BlockNode *node)
     /* parent block has seen a statement */
     prev->seenstat = 1;
     prev->seenhardstat = 1;
-    prev->lastnecessaryvar = getlastpersistentvar1(D, prev->nactvar);
+    if (D->usedebuginfo == 0)
+      prev->lastnecessaryvar = getlastpersistentvar1(D, prev->nactvar);
   }
   if (isloopnode(node)) {
     pushloopstate1(fs, node->kind, node->startpc, node->endpc+1);
@@ -3369,6 +3374,8 @@ static void updateinsn1(DecompState *D, DFuncState *fs)
 
 
 #define ispersistent(note) ((note) != GENVAR_DISCHARGED)
+#define isonstack(note) \
+  ((note) == GENVAR_ONSTACK || (note) == GENVAR_BELOW_DISCHARGED)
 
 /*
 ** Variable generation notes
@@ -3393,6 +3400,10 @@ enum GENVARNOTE {
      next variable to create; the actual note for this variable defers to the
      next non-FILL variable */
   GENVAR_FILL,
+  /* same as ONSTACK but additionally the next var is DISCHARGED; I have this
+     before ONSTACK so that comparisons to ONSTACK in the code can stay the same
+     instead of changing them to `x <= GENVAR_BELOW_DISCHARGED' */
+  GENVAR_BELOW_DISCHARGED,
   /* value is on the stack, yet to be used; if a variable ends up with this note
      by the end of the analysis, it must not be pruned */
   GENVAR_ONSTACK,
@@ -3404,8 +3415,6 @@ enum GENVARNOTE {
   GENVAR_BELOW_PERSISTENT,  /* a lower slot than a persitent local */
   GENVAR_PERSISTENT,  /* this variable must exist */
   GENVAR_UPVALUE,  /* same as PERSISTENT, but also an upvalue */
-  /* the below notes indicate not to modify the startpc that was given to the
-     variable when it was created (in updatevarstartpcs1) */
   GENVAR_FORLOOPVAR,  /* user variables in a for-loop */
   GENVAR_INITIAL,  /* initial nil variables (only in regular Lua) */
   /* the rest of the notes are used to determine how to name the variabless;
@@ -3417,7 +3426,7 @@ enum GENVARNOTE {
 
 #ifdef LUA_DEBUG
 static const char *const varnotenames[] = {
-  "GENVAR_FILL", "GENVAR_ONSTACK", "GENVAR_DISCHARGED",
+  "GENVAR_FILL","GENVAR_BELOW_DISCHARGED", "GENVAR_ONSTACK", "GENVAR_DISCHARGED",
   "GENVAR_BELOW_PERSISTENT", "GENVAR_PERSISTENT",
   "GENVAR_UPVALUE", "GENVAR_FORLOOPVAR", "GENVAR_INITIAL", "GENVAR_PARAM",
   "GENVAR_FORNUM", "GENVAR_FORLIST"
@@ -3425,9 +3434,17 @@ static const char *const varnotenames[] = {
 #endif /* LUA_DEBUG */
 
 
+static int isstartpcfinal(enum GENVARNOTE note)
+{
+  /* these variable kinds do not require analysis to compute the startpc */
+  return (note == GENVAR_FILL || note >= GENVAR_FORLOOPVAR);
+}
+
+
+
 typedef struct GenLocVar {
   union {
-    enum GENVARNOTE varnote;
+    int varnote;
     TString *varname;
   } u;
   int startpc;  /* first point where variable is active */
@@ -3450,16 +3467,12 @@ static LocVar *getlocvar1(DecompState *D, int r)
   check_exp((D)->fs->nactvar > 0, getlocvar1((D), (D)->fs->nactvar-1))
 
 
-/*
-** I store the NOTE in the VARNAME field, as the notes are only before variable
-** names are generated
-*/
-static enum GENVARNOTE getvarnote1(DecompState *D, struct LocVar *var)
+static int getvarnoteintern1(DecompState *D, struct LocVar *var)
 {
   if (mem_separate_varnotes) {
     int index = var - D->fs->locvars;
     lua_assert(index >= 0 && index < D->varnotes.used);
-    return cast(enum GENVARNOTE, D->varnotes.s[index]);
+    return D->varnotes.s[index];
   }
   else {
     GenLocVar *genvar = cast(void *, var);
@@ -3468,17 +3481,53 @@ static enum GENVARNOTE getvarnote1(DecompState *D, struct LocVar *var)
 }
 
 
-static void setvarnote1(DecompState *D, int r, enum GENVARNOTE note)
+/*
+** I store the NOTE in the VARNAME field, as the notes are only before variable
+** names are generated
+*/
+static enum GENVARNOTE getvarnote1(DecompState *D, struct LocVar *var)
+{
+  int storednote = getvarnoteintern1(D, var);
+  if (storednote < 0)
+    return -(storednote+1);
+  else
+    return GENVAR_DISCHARGED;
+}
+
+
+static int getvarnotepc1(DecompState *D, struct LocVar *var)
+{
+  int storednote = getvarnoteintern1(D, var);
+  lua_assert(storednote >= 0);
+  return storednote;
+}
+
+
+static void setvarnoteintern1(DecompState *D, int r, int storednote)
 {
   if (mem_separate_varnotes) {
     int index = D->fs->a->actvar[r];
     lua_assert(index < D->varnotes.used);
-    D->varnotes.s[index] = cast_byte(note);
+    D->varnotes.s[index] = storednote;
   }
   else {
     GenLocVar *var = cast(void *, getlocvar1(D, r));
-    var->u.varnote = note;
+    var->u.varnote = storednote;
   }
+}
+
+
+static void setvarnote1(DecompState *D, int r, enum GENVARNOTE note)
+{
+  int storednote = -note-1;
+  lua_assert(note != GENVAR_DISCHARGED);
+  setvarnoteintern1(D, r, storednote);
+}
+
+
+static void setvardischarged1(DecompState *D, int r, int pc)
+{
+  setvarnoteintern1(D, r, pc);
 }
 
 
@@ -3488,6 +3537,26 @@ static void promotevar1(DecompState *D, int r, enum GENVARNOTE newnote)
   enum GENVARNOTE note = getvarnote1(D, var);
   if (note < newnote)
     setvarnote1(D, r, newnote);
+}
+
+
+static void promotedischarged1(DecompState *D, int r, int pc)
+{
+  LocVar *var = getlocvar1(D, r);
+  enum GENVARNOTE note = getvarnote1(D, var);
+  if (note < GENVAR_DISCHARGED)
+    setvardischarged1(D, r, pc);
+}
+
+
+static void promotebelowdischarged(DecompState *D, int r)
+{
+  LocVar *var = getlocvar1(D, r);
+  enum GENVARNOTE note = getvarnote1(D, var);
+  if (note == GENVAR_ONSTACK)
+    setvarnote1(D, r, GENVAR_BELOW_DISCHARGED);
+  else
+    promotevar1(D, r, GENVAR_BELOW_DISCHARGED);
 }
 
 
@@ -3536,11 +3605,30 @@ static void deletesavedvar1(DecompState *D, int slot)
     index2pc_t *s = &D->savedstartpc.s[i];
     if (s->state <= 0 && -s->state == slot) {
       int j;
-      int pc = s->pc;
+      /*set_ins_property(D->fs, s->pc, INS_SAVEDLOCVAREXPR);*/
       for (j = i+1; j < D->savedstartpc.used; j++)
         D->savedstartpc.s[j-1] = D->savedstartpc.s[j];
       D->savedstartpc.used--;
-      set_ins_property(D->fs, pc, INS_STACKPUSH);
+    }
+  }
+}
+
+
+static int getlocvarinit1(DecompState *D, LocVar *var);
+
+
+/*
+** restore the initpc of VAR, where PC is the saved startpc to be restored
+*/
+static void restorevarinit1(DecompState *D, DFuncState *fs, LocVar *var, int pc)
+{
+  int oldinitpc = getlocvarinit1(D, var);
+  unset_ins_property(fs, oldinitpc, INS_LOCVAREXPR);
+  while (--pc >= 0) {
+    if (test_ins_property(fs, pc, INS_SAVEDLOCVAREXPR)) {
+      unset_ins_property(fs, pc, INS_SAVEDLOCVAREXPR);
+      set_ins_property(fs, pc, INS_LOCVAREXPR);
+      break;
     }
   }
 }
@@ -3548,7 +3636,7 @@ static void deletesavedvar1(DecompState *D, int slot)
 
 /*
 ** revive a saved local variable that was ended in a previous child block,
-** restoring its original lexical scope, i.e. the current block 
+** restoring its original lexical scope, i.e. the current (parent) block
 */
 static LocVar *revivesavedlocvar1(DecompState *D, int slot)
 {
@@ -3557,18 +3645,20 @@ static LocVar *revivesavedlocvar1(DecompState *D, int slot)
   lua_assert(D->usedebuginfo == 0);
   for (i = D->savedstartpc.used-1; i >= D->a.bl->savedstartpcbase; i--) {
     index2pc_t *s = &D->savedstartpc.s[i];
-    if (s->state <= 0 && -s->state == slot) {
+    if (s->state <= 0 && -s->state >= slot) {
       LocVar *var;
       int j;
       int index = s->index;
       lua_assert(index >= 0 && index < fs->nlocvars);
       var = fs->locvars + index;
+      restorevarinit1(D, fs, var, s->pc);
       var->startpc = s->pc;
       var->endpc = getnaturalvarendpc(D->a.bl->node);
       for (j = i+1; j < D->savedstartpc.used; j++)
         D->savedstartpc.s[j-1] = D->savedstartpc.s[j];
       D->savedstartpc.used--;
-      return var;
+      if (-s->state == slot)
+        return var;
     }
   }
   return NULL;
@@ -3576,8 +3666,60 @@ static LocVar *revivesavedlocvar1(DecompState *D, int slot)
 
 
 /*
+** combine 2 repeat-loops, a child and parent, into 1 loop
+*/
+static void
+meldrepeatloops1(DecompState *D, BlockNode *parent, BlockNode **child)
+{
+  lua_assert(child != NULL);
+  /* combine the repeat-loops */
+  lua_assert(parent->firstchild == *child);
+  parent->firstchild = (*child)->firstchild;
+  freeblnode(D->fs, *child);
+  if (parent->firstchild == NULL)
+    *child = NULL;
+  else {
+    BlockNode *nextchild = parent->firstchild;
+    while (nextchild->nextsibling != NULL)
+      nextchild = nextchild->nextsibling;
+    *child = nextchild;
+  }
+}
+
+
+/*
+** revive a saved repeat-loop variable that ended because it was in the lexical
+** scope of a child repeat-loop that deos not exist
+*/
+static LocVar *revivesavedrepeatvar1(DecompState *D, int r)
+{
+  DFuncState *fs = D->fs;
+  BlockState *bl = D->a.bl;
+  BlockNode *prevnode = D->a.prevnode;
+  /* see if the current block is a repeat-loop and the previous one was a
+     repeat-loop and that they both have the same start label */
+  if (prevnode == NULL || prevnode->kind != BL_REPEAT ||
+      bl->node->kind != BL_REPEAT ||
+      bl->node->startpc != prevnode->startpc ||
+      bl->nactvar > r) {
+    return NULL;  /* conditions not met */
+  }
+  while (D->savedrepeatvars.used) {
+    index2pc_t *s = &D->savedrepeatvars.s[--D->savedrepeatvars.used];
+    LocVar *var = fs->locvars + s->index;
+    var->endpc = getnaturalvarendpc(bl->node);
+    fs->nactvar++;
+    if (s->state == 0)
+      fs->nlocvars++;
+  }
+  meldrepeatloops1(D, bl->node, &D->a.prevnode);
+  return getlocvar1(D, r);
+}
+
+
+/*
 ** clear all saved var entries above or equal to slot LIMIT, and mark
-** INS_STACKPUSH for each cleared entry
+** INS_SAVEDLOCVAREXPR for each cleared entry
 */
 static void clearsavedvars1(DecompState *D, int limit)
 {
@@ -3593,7 +3735,7 @@ static void clearsavedvars1(DecompState *D, int limit)
       for (j = i+1; j < D->savedstartpc.used; j++)
         D->savedstartpc.s[j-1] = D->savedstartpc.s[j];
       D->savedstartpc.used--;
-      set_ins_property(D->fs, pc, INS_STACKPUSH);
+      set_ins_property(D->fs, pc, INS_SAVEDLOCVAREXPR);
     }
   }
   D->savedstartpc.used = 0;
@@ -3617,17 +3759,10 @@ static LocVar *genvar1(DecompState *D, int pc, enum GENVARNOTE note)
   var = &a->locvars[fs->nlocvars];
   var->startpc = pc;
   var->endpc = getnaturalvarendpc(D->a.bl->node);
-  if (mem_separate_varnotes) {
-    D->varnotes.used = fs->nlocvars;
-    VEC_GROW(fs->H, D->varnotes, lu_byte);
-    D->varnotes.s[D->varnotes.used] = cast_byte(note);
-    var->varname = NULL;
-  }
-  else {
-    GenLocVar *genvar = cast(void *, var);
-    genvar->u.varnote = note;
-  }
+  var->varname = NULL;
   a->actvar[fs->nactvar] = fs->nlocvars++;
+  lua_assert(note != GENVAR_DISCHARGED);
+  setvarnote1(D, fs->nactvar, note);
   deletesavedvar1(D, fs->nactvar);
   fs->nactvar++;
   return var;
@@ -3656,10 +3791,7 @@ static int getnextpc1(DFuncState *fs, int pc)
 */
 static void newlocalvar1(DecompState *D, int r, int pc)
 {
-  /* initially I have the startpc as the first evluation code so that I know
-     where the local statement would start. Then later I will update them to
-     their actual startpc */
-  int startpc = pc /*getnextpc1(D->fs, pc)*/;
+  int startpc = getnextpc1(D->fs, pc);
   int i;
   if (D->a.insn.o == OP_LOADNIL) {
     /* when an OP_LOADNIL is shared by a local variable statement and an open
@@ -3681,8 +3813,17 @@ static void newlocalvar1(DecompState *D, int r, int pc)
     makepersistent1(D, r-1);
   }
   genvar1(D, startpc, GENVAR_ONSTACK);
-  (void)getnextpc1;
+  set_ins_property(D->fs, pc, INS_LOCVAREXPR);
 }
+
+
+static void makevarstartnextpc1(DFuncState *fs, LocVar *var, int pc)
+{
+  var->startpc = getnextpc1(fs, pc);
+}
+
+
+static void unmarklocvars1(DecompState *D, DFuncState *fs, int n, int nactvar);
 
 
 /*
@@ -3691,19 +3832,15 @@ static void newlocalvar1(DecompState *D, int r, int pc)
 */
 static int rollbackvars1(DecompState *D, lu_byte n)
 {
-  int ret;
   DFuncState *fs = D->fs;
   int numtodelete = (lua_assert(fs->nactvar >= n), fs->nactvar - n);
   if (numtodelete == 0)
     return 0;
   fs->nlocvars -= numtodelete;
   fs->nactvar = n;
-  ret = numtodelete;
-  if (D->usedebuginfo == 0) do {
-    LocVar *var = &fs->locvars[fs->nlocvars + numtodelete - 1];
-    set_ins_property(fs, var->startpc, INS_STACKPUSH);
-  } while (--numtodelete);
-  return ret;
+  if (D->usedebuginfo == 0)
+    unmarklocvars1(D, fs, numtodelete, n);
+  return numtodelete;
 }
 
 
@@ -3744,7 +3881,7 @@ static void dischargestores1(DecompState *D)
       LocVar *var = getlocvar1(D, i);
       enum GENVARNOTE note = getvarnote1(D, var);
       if (note < GENVAR_DISCHARGED)
-        setvarnote1(D, i, GENVAR_DISCHARGED);
+        setvardischarged1(D, i, store->pc);
     }
   }
   /* if the store is chainable, make sure the registers used to evaluate RHS are
@@ -3755,7 +3892,8 @@ static void dischargestores1(DecompState *D)
     for (i = fs->nactvar-1; i >= store->firstreg; i--, numtodelete++) {
       LocVar *var = getlocvar1(D, i);
       enum GENVARNOTE note = getvarnote1(D, var);
-      if ((var->startpc < store->startpc && var->startpc <= store->laststat) ||
+      int initstart = getlocvarinit1(D, var);
+      if ((initstart < store->startpc && initstart <= store->laststat) ||
           ispersistent(note)) {
         break;
       }
@@ -3771,24 +3909,41 @@ static void dischargestores1(DecompState *D)
 }
 
 
+typedef struct OperandDesc {
+  int r;  /* register */
+  enum OpArgMask mode;
+} OperandDesc;
+
+
 /*
 ** returns the number of register operands in a store instruction, and populates
 ** the array OPERANDS with the operand slot numbers
 */
-static int getstoreoperands(OpCode o, int a, int b, int c, int operands[3])
+static int
+getstoreoperands(OpCode o, int a, int b, int c, OperandDesc operands[3])
 {
   int n = 1;  /* number of register operands, between 1 and 3 */
-  operands[0] = a;
+  operands[0].r = a;
+  operands[0].mode = OpArgR;
   if (IS_OP_SETTABLE(o)) {
-    if (o != OP_SETFIELD && o != OP_SETFIELD_R1 && !ISK(b))
-      operands[n++] = b;
-    if (!ISK(c))
-      operands[n++] = c;
+    if (o != OP_SETFIELD && o != OP_SETFIELD_R1 && !ISK(b)) {
+      operands[n].r = b;
+      operands[n].mode = getBMode(o);
+      n++;
+    }
+    if (!ISK(c)) {
+      operands[n].r = c;
+      operands[n].mode = getCMode(o);
+      n++;
+    }
   }
   else if (o == OP_SETSLOTI || o == OP_SETSLOT || o == OP_SETSLOTS ||
            o == OP_SETSLOTMT) {
-    if (!ISK(c))
-      operands[n++] = c;
+    if (!ISK(c)) {
+      operands[n].r = c;
+      operands[n].mode = getCMode(o);
+      n++;
+    }
   }
   return n;
 }
@@ -3806,7 +3961,7 @@ static int gettemppos(DecompState *D)
     enum GENVARNOTE note = getvarnote1(D, var);
     if (note == GENVAR_DISCHARGED)
       continue;
-    else if (note == GENVAR_ONSTACK) {
+    else if (isonstack(note)) {
       temppos = r;
       break;
     }
@@ -3819,13 +3974,16 @@ static int gettemppos(DecompState *D)
 }
 
 
-static int onoperandreferenced1(DecompState *D, int r, int temppos)
+static int onoperandreferenced1(DecompState *D, OperandDesc o, int temppos)
 {
   DFuncState *fs = D->fs;
   LocVar *var = NULL;
   enum GENVARNOTE note;
+  int r = o.r;
   if (r >= fs->nactvar) {
     var = revivesavedlocvar1(D, r);
+    if (var == NULL)
+      var = revivesavedrepeatvar1(D, r);
     lua_assert(var);
     if (var == NULL)
       return 0;  /* if this happens, something is wrong */
@@ -3834,8 +3992,10 @@ static int onoperandreferenced1(DecompState *D, int r, int temppos)
     var = getlocvar1(D, r);
   note = getvarnote1(D, var);
   if (note <= GENVAR_ONSTACK && var->startpc >= D->a.bl->node->startpc &&
-      r == temppos) {
-    setvarnote1(D, r, GENVAR_DISCHARGED);
+      r == temppos &&
+      (!test_ins_property(fs, getlocvarinit1(D, var), INS_KLOCVAR) ||
+       (o.mode != OpArgK && o.mode != OpArgRK))) {
+    setvardischarged1(D, r, D->fs->pc);
     D->a.lastdischarged.pc = D->fs->pc;
     D->a.lastdischarged.reg = r;
     return 0;
@@ -3855,7 +4015,7 @@ static void checkstoreoperands(DecompState *D, OpCode o, int a, int b, int c)
 {
   int temppos = gettemppos(D);
   int i;
-  int operands[3];
+  OperandDesc operands[3];
   int noperands = getstoreoperands(o, a, b, c, operands);
   for (i = 0; i < noperands; i++) {
     onoperandreferenced1(D, operands[i], temppos - (noperands - 1 - i));
@@ -3891,10 +4051,25 @@ static void commitvarsonstack1(DecompState *D)
 ** TEMPPOS is the slot which R would equal if it were eligible to be a temporary
 ** value
 */
-static void onvarreferenced1(DecompState *D, int r, int temppos)
+static int onvarreferenced1(DecompState *D, int r, int temppos, int istested)
 {
-  if (onoperandreferenced1(D, r, temppos))
+  OperandDesc o;
+  o.r = r;
+  o.mode = OpArgR;
+  /* if the variable is referenced by a test instruction, pass in mode RK to
+     detect lack of optimization of testing a constant value, in the case of
+     a variable initialized with LOADK and than tested:
+        local a = 12;
+        if a then ... end
+     the code must not be optimized to match, so ensure the variable is not
+     marked as DISCHARGED to avoid pruning */
+  if (istested)
+    o.mode = OpArgRK;
+  if (onoperandreferenced1(D, o, temppos)) {
     commitvarsonstack1(D);
+    return 1;
+  }
+  return 0;
 }
 
 
@@ -3915,11 +4090,19 @@ static void recheckfoldableblocks1(DecompState *D)
         nextchild->firstchild->nextsibling == NULL &&
         nextchild->hardstatbeforechild == 0) {
       BlockNode *child = nextchild->firstchild;
+      int i;
       int limitpc = child->startpc-1;
-      lu_byte nactvar, nactvar2;
+      int nactvar = 0, nactvar2 = 0;
       /* check if there are variables starting between the 2 endpoints */
-      getactvar(fs, nextchild->startpc-1, NULL, &nactvar);
-      getactvar(fs, limitpc, NULL, &nactvar2);
+      for (i = 0; i < fs->nlocvars; i++) {
+        struct LocVar *var = &fs->locvars[i];
+        int pc1 = nextchild->startpc-1;
+        int pc2 = limitpc;
+        if (var->startpc <= pc1 && pc1 <= var->endpc)
+          nactvar++;
+        if (var->startpc <= pc2 && pc2 <= var->endpc)
+          nactvar2++;
+      }
       if (nactvar == nactvar2) {
         int prevpc = fs->pc;
         /* no new variables; check if existing locals are clobbered between the
@@ -3935,6 +4118,7 @@ static void recheckfoldableblocks1(DecompState *D)
              child if-block of this if-block can be melded into it */
           nextchild->startpc = child->startpc;
           nextchild->firstchild = child->firstchild;
+          recalcemptiness(nextchild);
           freeblnode(fs, child);
         }
         /* restore pc */
@@ -3947,9 +4131,25 @@ static void recheckfoldableblocks1(DecompState *D)
 }
 
 
+/*
+** updates the startpc and start of initialization of VAR, returning the old
+** start of initialization
+*/
+static int updatevarinit1(DecompState *D, DFuncState *fs, LocVar *var, int pc)
+{
+  int oldinitpc = getlocvarinit1(D, var);
+  unset_ins_property(fs, oldinitpc, INS_LOCVAREXPR);
+  /* set new initpc */
+  set_ins_property(fs, pc, INS_LOCVAREXPR);
+  makevarstartnextpc1(fs, var, pc);
+  return oldinitpc;
+}
+
+
 static void savevarstartpc1(DecompState *D, DFuncState *fs, LocVar *var, int pc,
                             int slot)
 {
+  int oldinitpc;
   index2pc_t *s;
   int index = var - fs->locvars;
   lua_assert(D->usedebuginfo == 0);
@@ -3959,12 +4159,44 @@ static void savevarstartpc1(DecompState *D, DFuncState *fs, LocVar *var, int pc,
   s->index = index;
   s->pc = var->startpc;
   s->state = slot + 1;
-  var->startpc = pc;
+  oldinitpc = updatevarinit1(D, fs, var, pc);
+  set_ins_property(fs, oldinitpc, INS_SAVEDLOCVAREXPR);
   var->endpc = getnaturalvarendpc(D->a.bl->node);
   D->a.bl->nactvar--;
 }
 
 
+static void savenestedrepeatvars1(DecompState *D, DFuncState *fs,BlockState *bl)
+{
+  int prevused = D->savedrepeatvars.used;
+  int nvars = fs->nactvar - bl->nactvar;
+  lua_assert(nvars >= 0);
+  nvars += prevused;
+  if (nvars > D->savedrepeatvars.alloc) {
+    luaM_reallocvector(D->H, D->savedrepeatvars.s, D->savedrepeatvars.alloc,
+                       nvars, index2pc_t);
+    D->savedrepeatvars.alloc = nvars;
+  }
+  D->savedrepeatvars.used = nvars;
+  while (nvars-- > prevused) {
+    LocVar *var = getlocvar1(D, bl->nactvar + nvars);
+    enum GENVARNOTE note = getvarnote1(D, var);
+    index2pc_t *s = &D->savedrepeatvars.s[nvars];
+    s->pc = var->startpc;
+    s->index = var - fs->locvars;
+    s->state = ispersistent(note);
+  }
+}
+
+
+/*
+** this is called when leaving a lexical scope; if you have trouble
+** understanding the difference between this and `revivesavedlocvar1', note that
+** this only restores a variable startpc and initpc if the variable is not
+** necessary within the scope that is being exited, i.e. GENVAR_DISCHARGED;
+** meanwhile, `revivesavedlocvar1' exists the restore the rest of the variables
+** that were not restored here as is needed during analysis
+*/
 static void restorevars1(DecompState *D, DFuncState *fs, BlockState *bl)
 {
   int seenpersvar = 0;
@@ -3978,6 +4210,7 @@ static void restorevars1(DecompState *D, DFuncState *fs, BlockState *bl)
       LocVar *var = fs->locvars + s->index;
       enum GENVARNOTE note = getvarnote1(D, var);
       if (!seenpersvar && note == GENVAR_DISCHARGED) {
+        restorevarinit1(D, fs, var, s->pc);
         /* change the startpc back to the saved one, which is before the child
            block */
         var->startpc = s->pc;
@@ -3986,6 +4219,8 @@ static void restorevars1(DecompState *D, DFuncState *fs, BlockState *bl)
         bl->nactvar++;
       }
       else {  /* variable in child block is necessary */
+        /* change the state of this entry, and keep it; the variable may be
+           restored later if needed */
         int slot = s->state-1;
         s->state = -slot;  /* negative indicates state change */
         seenpersvar = 1;
@@ -3995,8 +4230,10 @@ static void restorevars1(DecompState *D, DFuncState *fs, BlockState *bl)
 }
 
 
+
 static void onvarclobber1(DecompState *D, int r, int pc)
 {
+  DFuncState *fs = D->fs;
   LocVar *var = getlocvar1(D, r);
   enum GENVARNOTE note = getvarnote1(D, var);
   if (note <= GENVAR_ONSTACK)
@@ -4011,17 +4248,15 @@ static void onvarclobber1(DecompState *D, int r, int pc)
       return;
     }
     setvarnote1(D, r, GENVAR_ONSTACK);
-    if (var->startpc >= D->a.bl->node->startpc) {
-      set_ins_property(D->fs, var->startpc, INS_STACKPUSH);
-      var->startpc = pc;
+    if (getlocvarinit1(D, var) >= D->a.bl->node->startpc) {
+      updatevarinit1(D, fs, var, pc);
       /* I want to rescan if-block pairs that can potentially be melded together
          as early as possible so the freed block nodes have a better chance of
          being reused */
       recheckfoldableblocks1(D);
     }
     else {
-      savevarstartpc1(D, D->fs, var, pc, r);
-      var->startpc = pc;
+      savevarstartpc1(D, fs, var, pc, r);
     }
   }
 }
@@ -4040,15 +4275,19 @@ static void updatevarreference1(DecompState *D, OpCode o, int a, int b, int c)
         int temppos = gettemppos(D);
         /* multiple returns are handled elsewhere as an open expression  */
         lua_assert(nret == 1);
-        onvarreferenced1(D, a, temppos);
+        onvarreferenced1(D, a, temppos, 0);
         break;
       }
       /* else this is an empty return, go through */
     }
     /* fallthrough */
     case OP_CLOSE:
+      commitvarsonstack1(D);
+      break;
     case OP_JMP:
-      if (!test_ins_property(fs, fs->pc, INS_SKIPBOOLLABEL))
+      if (!test_ins_property(fs, fs->pc, INS_SKIPBOOLLABEL) &&
+          !test_ins_property(fs, getjump(fs, fs->pc), INS_BOOLLABEL) &&
+          D->a.testsetendlabel == -1)
         commitvarsonstack1(D);
       break;
     default: break;
@@ -4057,7 +4296,7 @@ static void updatevarreference1(DecompState *D, OpCode o, int a, int b, int c)
 }
 
 
-static void ontestset1(DecompState *D);
+static void ontestset1(DecompState *D, int testedreg);
 
 
 /*
@@ -4106,40 +4345,39 @@ static void updatevars1(DecompState *D, DFuncState *fs)
   int pc = fs->pc;
   int intestset = D->a.testsetendlabel != -1;
   lua_assert(o != OP_SETLIST);
+  /* if there is a pending store and this code is not a store or it is not
+     OP_MOVE or OP_MOVE is moving a lower register to a higher register, this is
+     not a store */
+  if (store->pc != -1 && o != OP_DATA && !isstorecode(o) &&
+      (o != OP_MOVE || b < a)) {
+    dischargestores1(D);
+  }
   if (!intestset && beginseval(o, a, b, c, 0) && o != OP_TESTSET) {
     int r = a;
     int lastreg = r;
     int varstartpc = pc;
     if (test_ins_property(fs, pc, INS_BOOLLABEL)) {
-      /* only need to handle 1 of the bool lanels */
+      /* only need to handle 1 of the bool labels */
       if (c) {
         LocVar *var = a < fs->nactvar ? getlocvar1(D, a) : NULL;
         if (var != NULL) {
-          set_ins_property(fs, var->startpc, INS_BBLOCVAR);
+          set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);
           /* if it was on the stack, it is still on the stack; this would be the
-             case in a conditinoal expression with a non-boolean sub-expression,
+             case in a conditional expression with a non-boolean sub-expression,
              for example `local x = a == b and 1', the constant `1' generates
              LOADK, which renders the variable as ONSTACK, which should not
              change after the 2 bool labels that follow; but in the case of a
              single comparison expression, such as `local x = a == b', then
              the variable created for A has been discharged, so `onvarclobber'
              will handle it as if this LOADBOOL was any ordinary clobber code */
-          if (getvarnote1(D, var) != GENVAR_ONSTACK)
-            onvarclobber1(D, a, pc);
+          if (!isonstack(getvarnote1(D, var)))
+            /* pass in the second bool label pc to ensure correct startpc */
+            onvarclobber1(D, a, pc+1);
         }
         else {
           /* a variable may not yet exist for the bool labels, for example, in
              the statement `local x = "a" == 1' */
-          int pc2 = varstartpc;
-          for (; pc2 >= 0; pc2--) {
-            if (GET_OPCODE(fs->f->code[pc2]) == OP_JMP) {
-              int target = getjump(fs, pc2);
-              if (target == pc || target == pc+1) {
-                varstartpc = pc2 - (getjumpcontrol(fs, pc2) != NULL);
-                break;
-              }
-            }
-          }
+          varstartpc = pc+1;
           goto l_addvar;
         }
       }
@@ -4152,14 +4390,18 @@ static void updatevars1(DecompState *D, DFuncState *fs)
         set_ins_property(fs, pc, INS_KLOCVAR);
       }
       l_addvar:
-      /* see if register A can possibly be a local variable in this block */
-      newlocalvar1(D, r, varstartpc);
-      if (o == OP_MOVE)
-        makepersistent1(D, r);
-      if (o == OP_LOADNIL || o == OP_VARARG) {
-        int i;
-        for (i = r+1; i <= lastreg; i++)
-          newlocalvar1(D, i, varstartpc);
+      /* if OP_VARARG does not specify an upper stack limit, it is not part of a
+         local variable statement */
+      if (o != OP_VARARG || lastreg >= r) {
+        /* see if register A can possibly be a local variable in this block */
+        newlocalvar1(D, r, varstartpc);
+        if (o == OP_MOVE)
+          makepersistent1(D, r);
+        if (o == OP_LOADNIL || o == OP_VARARG) {
+          int i;
+          for (i = r+1; i <= lastreg; i++)
+            newlocalvar1(D, i, varstartpc);
+        }
       }
     }
     else {  /* r < fs->nactvar */
@@ -4238,16 +4480,19 @@ static void updatevars1(DecompState *D, DFuncState *fs)
                   This rule applies to LOADK and LOADBOOL (non-label) as well
                   for the same reasons. */
             if (!otherkmode ||
-                !test_ins_property(fs, topvar->startpc, INS_KLOCVAR)) {
-              promotevar1(D, top, GENVAR_DISCHARGED);
+                !test_ins_property(fs, getlocvarinit1(D, topvar), INS_KLOCVAR)){
+              promotedischarged1(D, top, pc);
+              promotebelowdischarged(D, r);
               D->a.lastdischarged.pc = pc;
               D->a.lastdischarged.reg = r;
             }
           }
           /* something like OP_ADD 1 1 x  or OP_ADD 1 x 1 where top == 1 */
           else if (r == top && (b == top-1 || (haveC && c == top-1))) {
-            if (getvarnote1(D, getlocvar1(D, r)) <= GENVAR_DISCHARGED)
+            if (getvarnote1(D, getlocvar1(D, r)) <= GENVAR_DISCHARGED) {
               setvarnote1(D, r, GENVAR_ONSTACK);
+              makevarstartnextpc1(fs, var, pc);
+            }
           }
           else if (r != top || (other != -1 && !ISK(other)))
             /* todo: shpuld this be realtop instead of top? */
@@ -4316,20 +4561,22 @@ static void updatevars1(DecompState *D, DFuncState *fs)
         D->a.testsetlocvar = a;
       }
       if (clobberedvar == NULL || clobberedvar->startpc == pc) {
-        if (clobberedvar == NULL)
+        if (clobberedvar == NULL) {
           newlocalvar1(D, a, pc);
+          D->a.testsetnewlocvar = a;
+        }
         /* since A was not a local, B must be a local */
         if (testedvar != NULL)
           makepersistent1(D, b);
       }
       else {  /* clobberedvar != NULL */
         if (testedvar != NULL)
-          onvarreferenced1(D, b, top);
+          onvarreferenced1(D, b, top, 1);
       }
       D->a.testsetstart = pc;
     }
     else {
-      ontestset1(D);
+      ontestset1(D, b);
     }
   }
   else if (isstorecode(o)) {
@@ -4361,6 +4608,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
   else if (testTMode(o)) {
     int temppos;
     int r1, r2;
+    int committed = 0;
     if (store->pc != -1 && store->pc != pc) {
       ;
     }
@@ -4374,9 +4622,27 @@ static void updatevars1(DecompState *D, DFuncState *fs)
     }
     temppos = gettemppos(D);
     if (r1 != -1)
-      onvarreferenced1(D, r1, temppos - (r2 != -1));
+      committed |= onvarreferenced1(D, r1, temppos - (r2 != -1), 1);
     if (r2 != -1)
-      onvarreferenced1(D, r2, temppos);
+      committed |= onvarreferenced1(D, r2, temppos, 1);
+    if (test_ins_property(fs, pc+1, INS_TESTSETJUMP)) {
+      if (!intestset) {
+        int r = r1 != -1 ? r1 : r2;
+        int testsetreg = GETARG_A(fs->f->code[getjump(fs, pc+1)]);
+        if (!committed && r == testsetreg) {
+          setvarnote1(D, r, GENVAR_ONSTACK);
+          D->a.testsetnewlocvar = r;
+        }
+        else if (testsetreg >= fs->nactvar) {
+          newlocalvar1(D, testsetreg, pc);
+          D->a.testsetnewlocvar = testsetreg;
+        }
+        D->a.testsetstart = pc;
+      }
+      else {
+        ontestset1(D, a);
+      }
+    }
   }
   else if (o != OP_DATA) {
     updatevarreference1(D, o, a, b, c);
@@ -4439,13 +4705,11 @@ static void createexpresult(DecompState *D, int hasendcode, int iscall)
           int nret = GETARG_C(fs->f->code[resultpc]) - 1;
           int i;
           for (i = 0; i < nret; i++)
-            newlocalvar1(D, resultslot+i, D->a.openexpr->startpc);
+            newlocalvar1(D, resultslot+i, D->a.openexpr->endpc);
         }
-        else  /* a tail-call cannot not be assigned to a variable */
-          set_ins_property(fs, startpc, INS_STACKPUSH);
       }
       else  /* not a function call */
-        newlocalvar1(D, resultslot, D->a.openexpr->startpc);
+        newlocalvar1(D, resultslot, D->a.openexpr->endpc);
     }
   }
 }
@@ -4602,7 +4866,8 @@ static void checkslotreferences1(DecompState *D)
   for (i = 0; i < n; i++) {
     if (slots[i] < fs->nactvar) {
       LocVar *var = getlocvar1(D, slots[i]);
-      if (var->startpc < fs->pc && getvarnote1(D, var) < GENVAR_PERSISTENT)
+      if (getlocvarinit1(D, var) < fs->pc &&
+          getvarnote1(D, var) < GENVAR_PERSISTENT)
         makepersistent1(D, slots[i]);
     }
   }
@@ -4643,242 +4908,6 @@ static void printvar(LocVar *var, int i, int note)
 #endif /* LUA_DEBUG */
 
 
-static void updatevarstartpcs1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  LocVar *const vars = fs->locvars;
-  int i;
-  int nildebt = 0;
-  fs->nopencalls = fs->a->sizeopencalls;
-  updatenextopenexpr1(D);
-  for (i = 0; i < fs->nlocvars; i++) {
-    int prevlimit = i ? vars[i-1].startpc : 0;
-    int initstart;  /* start of variable initialization */
-    int reg, limitpc;
-    LocVar *const var = &vars[i];
-    enum GENVARNOTE note = getvarnote1(D, var);
-    if (note == GENVAR_FILL || note >= GENVAR_FORLOOPVAR)
-      continue;  /* these variables have the correct startpc */
-    limitpc = i+1 < fs->nlocvars ? vars[i+1].startpc : fs->f->sizecode-1;
-    if (var->endpc < limitpc)
-      limitpc = var->endpc;
-    fs->pc = var->startpc;
-    /* unless the intialization spans multiple basic blocks, INITSTART is the
-       current value of STARTPC */
-    initstart = fs->pc;
-    while (D->a.openexpr->startpc != -1 && D->a.openexpr->startpc < fs->pc)
-      updatenextopenexpr1(D);
-    updateinsn1(D, fs);
-    reg = D->a.insn.a;
-    if (D->a.insn.o == OP_LOADNIL && D->a.insn.b > D->a.insn.a) {
-      if (nildebt == 0) {
-        int lastreg = D->a.insn.b;
-        if (D->a.openexpr->startpc == fs->pc+1 && D->a.openexpr->sharednil)
-          lastreg = D->a.openexpr->firstreg-1;
-        nildebt = lastreg + 1 - D->a.insn.a;
-      }
-      decnildebt:
-      nildebt--;
-      var->startpc += 1;
-      continue;
-    }
-    if (D->a.insn.o == OP_VARARG) {
-      if (nildebt == 0)
-        nildebt = D->a.insn.b - 1;
-      goto decnildebt;
-    }
-    if (fs->pc == D->a.openexpr->startpc) {
-      int nret;
-      const OpenExpr *expr = D->a.openexpr;
-      if (D->a.openexpr->sharednil)
-        reg = expr->firstreg;
-      nret = GETARG_C(fs->f->code[expr->endpc]) - 1;
-      /* check for call with multiple returns */
-      if (expr->kind == CALLPREP && nret > 1) {
-        for (; nret && i < fs->nlocvars; i++, nret--)
-          vars[i].startpc = expr->endpc+1;
-        continue;
-      }
-    }
-    /* calculate INITSTART if needed */
-    if (test_ins_property(fs, initstart, INS_BBSUBEXPR)) {
-      lua_assert(initstart > 0);
-      lua_assert(GET_OPCODE(fs->f->code[initstart-1]) == OP_JMP);
-      if (!test_ins_property(fs, initstart-1, INS_BRANCHFAIL) &&
-          !test_ins_property(fs, initstart-1, INS_LOOPFAIL)) {
-        int pc;
-        findbblocvar:
-        for (pc = initstart-1; pc >= prevlimit; pc--) {
-          OpCode o = GET_OPCODE(fs->f->code[pc]);
-          int a = GETARG_A(fs->f->code[pc]);
-          if (test_ins_property(fs, pc, INS_WHILESTAT) ||
-              test_ins_property(fs, pc, INS_REPEATSTAT) ||
-              test_ins_property(fs, pc, INS_LOOPEND) ||
-              test_ins_property(fs, pc, INS_BLOCKEND) ||
-              test_ins_property(fs, pc, INS_BRANCHPASS) ||
-              test_ins_property(fs, pc, INS_BRANCHFAIL) ||
-              o == OP_RETURN || o == OP_CLOSE) {
-            pc = initstart;
-            break;
-          }
-          if (o != OP_DATA && testAMode(o) && a < reg) {
-            pc = initstart;
-            break;
-          }
-          if (test_ins_property(fs, pc, INS_BBLOCVAR))
-            break;
-        }
-        if (pc >= prevlimit)
-          initstart = pc;
-      }
-    }
-    else if (test_ins_property(fs, initstart, INS_BOOLLABEL)) {
-      goto findbblocvar;
-    }
-    set_ins_property(fs, initstart, INS_LOCVAREXPR);
-    {
-      int laststackpush = -1;
-      int top = reg;
-      int lastclobbered = -1;
-      expkind kind = VVOID;
-      int type = LUA_TNONE;
-      for (; fs->pc < limitpc; fs->pc++) {
-        int a, b, c;
-        int pc = fs->pc;
-        OpCode o;
-        int isjump;
-        updateinsn1(D, fs);
-        if (pc == D->a.openexpr->startpc) {
-          int dest;
-          const OpenExpr *expr = D->a.openexpr;
-          if (exprisstat(fs, expr))
-            break;
-          if (expr->firstreg < reg)
-            break;
-          if (expr->kind == CONCATPREP) {
-            dest = GETARG_A(fs->f->code[expr->endpc]);
-            if (dest < reg)
-              break;
-          }
-          else
-            dest = expr->firstreg;
-          fs->pc = expr->endpc;
-          top = dest;
-          updatenextopenexpr1(D);
-          lastclobbered = top;
-          kind = VCALL;
-          type = LUA_TNONE;
-          continue;
-        }
-        o = D->a.insn.o;
-        a = D->a.insn.a, b = D->a.insn.b, c = D->a.insn.c;
-        if (test_ins_property(fs, pc, INS_STACKPUSH)) {
-          laststackpush = pc;
-        }
-        if (isstorecode(o) || o == OP_CLOSE || o == OP_RETURN)
-          break;
-        if ((test_ins_property(fs, pc, INS_WHILESTAT) ||
-             test_ins_property(fs, pc, INS_REPEATSTAT) ||
-             test_ins_property(fs, pc, INS_DOSTAT)) && pc > initstart)
-          break;
-        isjump = o == OP_JMP;
-        {
-          int testpc = pc - !isjump + (pc == 0);
-          lua_assert(ispcvalid(fs, testpc));
-          if (test_ins_property(fs, testpc, INS_BLOCKEND) ||
-              test_ins_property(fs, testpc, INS_LOOPEND))
-            break;
-        }
-        if (o == OP_DATA)
-          continue;
-        if (o == OP_LOADNIL || o == OP_LOADK || o == OP_LOADBOOL) {
-          if (test_ins_property(fs, pc+1, INS_SKIPBOOLLABEL)) {
-            fs->pc = getjump(fs, pc+1) - 1;
-            lastclobbered = GETARG_A(fs->f->code[pc+2]);
-            kind = VJMP;
-            type = LUA_TBOOLEAN;
-            continue;
-          }
-          if (o == OP_LOADNIL)
-            type = LUA_TNIL;
-          else if (o == OP_LOADBOOL)
-            type = LUA_TBOOLEAN;
-          else {
-            const TValue *o = &fs->f->k[D->a.insn.bx];
-            type = ttype(o);
-          }
-          kind = VK;
-        }
-        else {
-          kind = VVOID;
-          type = LUA_TNONE;
-        }
-        if (o == OP_MOVE) {
-          fs->pc++;
-          break;
-        }
-        if (beginseval(o, a, b, c, 0)) {
-          if (!beginseval(o, a, b, c, 1)) {
-            if (a >= reg && a <= top) {
-              if (o == OP_UNM && kind == VK && type == LUA_TNUMBER)
-                break;
-              if ((o == OP_NOT || o == OP_NOT_R1) &&
-                  (kind == VK || kind == VJMP))
-                break;
-              top = a;
-            }
-            else
-              break;
-          }
-          else if (a < reg || a == lastclobbered)
-            break;
-          else if (a >= top)
-            top = a;
-          else
-            break;
-          lastclobbered = a;
-          if (test_ins_property(fs, pc, INS_BOOLLABEL)) {
-            fs->pc++;
-            continue;
-          }
-        }
-        else if (testTMode(o) || isjump) {
-          int jumppc = pc + !isjump;
-          int target = getjump(fs, jumppc);
-          /*const Instruction *jc = getjumpcontrol(fs, jumppc);*/
-          if (test_ins_property(fs, jumppc, INS_SKIPBOOLLABEL)) {
-            fs->pc += 2;
-            continue;
-          }
-          if (target <= pc)
-            break;
-          if (test_ins_property(fs, jumppc, INS_BRANCHFAIL) ||
-              test_ins_property(fs, jumppc, INS_BRANCHPASS) ||
-              test_ins_property(fs, jumppc, INS_LOOPFAIL) ||
-              test_ins_property(fs, jumppc, INS_LOOPPASS) ||
-              test_ins_property(fs, jumppc, INS_BLOCKEND) ||
-              test_ins_property(fs, jumppc, INS_BREAKSTAT))
-            break;
-          if (jumppc >= limitpc || target >= limitpc)
-            break;
-          if (test_ins_property(fs, jumppc, INS_PASSJUMP))
-            target = getjump(fs, target-1);
-          fs->pc = target-1;
-          continue;
-        }
-      }
-      if (laststackpush != -1)
-        fs->pc = laststackpush;
-      lua_assert(GET_OPCODE(fs->f->code[fs->pc]) != OP_DATA);
-      if (fs->pc == initstart)
-        fs->pc++;
-      var->startpc = fs->pc;
-    }
-  }
-}
-
-
-
 static void finalizevars1(DFuncState *fs)
 {
   DecompState *D = fs->D;
@@ -4895,7 +4924,6 @@ static void finalizevars1(DFuncState *fs)
   fs->sizelocvars = a->sizelocvars;
   fs->locvars = a->locvars;
   vars = fs->locvars;
-  updatevarstartpcs1(fs);
   D(printf("Local variables\n--------------------------\n"));
   for (i = v = p = 0; i < nvars; i++) {
     struct LocVar *var = &vars[i];
@@ -4989,10 +5017,14 @@ static int jump2(DFuncState *fs, int pc, int offs)
     const BlockState *prevbl = currblock-1;
     /* the current block is a branch, but the parent may not be */
     lua_assert(currblock->isbranch);
-    if (prevbl->t_exitlabel == currblock->t_exitlabel)
-      /* the parent is a branch, unoptimize the jump and set the target to be
-         the end of the parent block */
-      real_target = prevbl->node->endpc + !blockhaselse(prevbl);
+    if (prevbl->t_exitlabel == currblock->t_exitlabel) {
+      if (!blockhaselse(currblock))
+        real_target = target;
+      else
+        /* the parent is a branch, unoptimize the jump and set the target to be
+           the end of the parent block */
+        real_target = prevbl->node->endpc + !blockhaselse(prevbl);
+    }
     else if (pc != currblockendpc)
       /* if jumping before the end of the if-block, the target is the end of the
          if-block */
@@ -5021,6 +5053,7 @@ static int getlastpersistentvar1(DecompState *D, int limit)
 {
   DFuncState *fs = D->fs;
   int i;
+  lua_assert(D->usedebuginfo == 0);
   for (i = cast_int(fs->nactvar)-1; i >= limit; i--) {
     enum GENVARNOTE note = getvarnote1(D, getlocvar1(D, i));
     if (ispersistent(note))
@@ -5098,6 +5131,43 @@ static int getifprepstart(DFuncState *fs, int endpc, int firsttempreg)
 }
 
 
+static int getlocvarinit1(DecompState *D, LocVar *var)
+{
+  DFuncState *fs = D->fs;
+  int pc;
+  lua_assert(D->usedebuginfo == 0);
+  lua_assert(var != NULL);
+  if (isstartpcfinal(getvarnote1(D, var)))
+    return var->startpc;
+  for (pc = var->startpc-1; pc >= 0; pc--) {
+    if (test_ins_property(fs, pc, INS_LOCVAREXPR))
+      return pc;
+  }
+  return 0;
+}
+
+
+static void unmarklocvars1(DecompState *D, DFuncState *fs, int n, int nactvar)
+{
+  LocVar *var = NULL;
+  lua_assert(n >= 0);
+  for (; n; n--) {
+    int initpc;
+    var = &fs->locvars[fs->nlocvars + n - 1];
+    initpc = getlocvarinit1(D, var);
+    unset_ins_property(fs, initpc, INS_LOCVAREXPR);
+  }
+  if (nactvar && var) {
+    LocVar *topvar = getlocvar1(D, nactvar-1);
+    if (getvarnote1(D, topvar) == GENVAR_BELOW_DISCHARGED) {
+      int dischargepc = getvarnotepc1(D, var);
+      makevarstartnextpc1(fs, topvar, dischargepc);
+    }
+  }
+}
+
+
+
 /*
 ** if needed, end existing variables that will be used as temporary slots in the
 ** pending open expression
@@ -5123,14 +5193,9 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
       if (!skipcurrblock) {
         int numtodelete = (fs->nactvar - varlimit);
         fs->nlocvars -= numtodelete;
-        /* mark INS_STACKPUSH on each delete variable startpc, used later when
-           correcting the generated variable startpcs */
-        if (D->usedebuginfo == 0) {
-          for (; numtodelete; numtodelete--) {
-            LocVar *var = &fs->locvars[fs->nlocvars + numtodelete - 1];
-            set_ins_property(fs, var->startpc, INS_STACKPUSH);
-          }
-        }
+        /* unmark INS_LOCVAREXPR on each deleted variable */
+        if (D->usedebuginfo == 0)
+          unmarklocvars1(D, fs, numtodelete, varlimit);
       }
     }
     else {
@@ -5143,7 +5208,7 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
          the startpc of a local variable is initially set as the clobbering
          instruction, so a strict less-than works and avoids needing to check if
          BL has reached the root state) */
-      for (bl = D->a.bl; firstvar->startpc < bl->node->startpc; bl--)
+      for (bl = D->a.bl; getlocvarinit1(D, firstvar) < bl->node->startpc; bl--)
         ;
       earliestbl = bl;
       /* for each block containing a variable that needs to end, end it and see
@@ -5171,16 +5236,12 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
           int numtodelete = (fs->nactvar - varlimit);
           fs->nlocvars -= numtodelete;
           fs->nactvar = nextbl->nactvar = varlimit;
-          /* mark INS_STACKPUSH on each delete variable startpc, used later when
-             correcting the generated variable startpcs */
-          if (D->usedebuginfo == 0) {
-            for (; numtodelete; numtodelete--) {
-              LocVar *var = &fs->locvars[fs->nlocvars + numtodelete - 1];
-              set_ins_property(fs, var->startpc, INS_STACKPUSH);
-            }
-          }
+          /* unmark INS_LOCVAREXPR on each deleted variable */
+          if (D->usedebuginfo == 0)
+            unmarklocvars1(D, fs, numtodelete, varlimit);
         }
         else {
+          LocVar *lastvar = NULL;
           int isclose, closereg;
           if (!iscurrblock) {
             int kind = nextbl->node->kind;
@@ -5205,9 +5266,10 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
             closereg = GETARG_A(fs->f->code[blockendpc]);
           }
           for (i = varlimit; i < fs->nactvar && i < blockvarlimit; i++)
-            if (getlocvar1(D, i)->startpc > blockendpc) break;
+            if (getlocvarinit1(D, getlocvar1(D, i)) > blockendpc) break;
           for (i--; i >= varlimit; i--) {
             LocVar *var = getlocvar1(D, i);
+            if (lastvar == NULL) lastvar = var;
             /* if OP_CLOSE ends the variable, the endpc is the same as OP_CLOSE,
                or if this is in a parent block, use BLOCKENDPC+1*/
             if (!iscurrblock)
@@ -5218,6 +5280,8 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
               var->endpc = pc;
             firstvar = var;
           }
+          if (lastvar)
+            fs->nlocvars = lastvar + 1 - fs->locvars;
         }
         if (nextbl != NULL) {
           fs->nactvar = nextbl->nactvar = varlimit;
@@ -5232,7 +5296,7 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
         }
         if (firstvar != NULL) {
           /* some variables were ended; a do-block needs to be created */
-          newblock = createdoblock(fs, firstvar->startpc, blockendpc);
+          newblock = createdoblock(fs, getlocvarinit1(D, firstvar), blockendpc);
           /* insert the new block into the sibling chain */
           addnodetostate1(bl, newblock);
           ret = newblock;
@@ -5246,16 +5310,43 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
       fs->nactvar = cast_byte(varlimit);
     }
   }
+  if (D->savedrepeatvars.used) {
+    int base = D->a.bl->nactvar;
+    int newused = varlimit - base;
+    /* ensure D->savedrepeatvars.used + base == varlimit */
+    if (newused < D->savedrepeatvars.used)
+      D->savedrepeatvars.used = newused;
+  }
   return ret;
 }
 
 
 static void updatevarsbeforeopenexpr1(DecompState *D)
 {
+  DFuncState *fs = D->fs;
   const OpenExpr *expr = D->a.openexpr;  /* the pending open expression */
   closelocalvars1(D, expr->firstreg, expr->startpc, 0);
-  if (expr->firstreg > 0 && D->fs->nactvar >= expr->firstreg)
-    makepersistent1(D, expr->firstreg-1);
+  if (expr->firstreg > 0 && D->fs->nactvar >= expr->firstreg) {
+    int r = expr->firstreg-1;
+    for (; r >= 0; r--) {
+      LocVar *var = getlocvar1(D, r);
+      enum GENVARNOTE note = getvarnote1(D, var);
+      /* ONSTACK variables may be discharged later; otherwise, the variable
+         must exist because this open expression is using a higher slot */
+      if (!isonstack(note)) {
+        makepersistent1(D, r);
+        break;
+      }
+    }
+  }
+  else if (expr->firstreg > 0) {
+    int r = expr->firstreg-1;
+    if (fs->nactvar <= r) {
+      LocVar *var = revivesavedlocvar1(D, fs->nactvar);
+      if (var == NULL)
+        revivesavedrepeatvar1(D, fs->nactvar);
+    }
+  }
 }
 
 
@@ -5338,13 +5429,12 @@ static void onclose1(DecompState *D, int withdebug)
 ** OP_TESTSET handler for testset expressions (does not handle the first
 ** OP_TESTSET code in the expression; that is handled in updatevars1)
 */
-static void ontestset1(DecompState *D)
+static void ontestset1(DecompState *D, int testedreg)
 {
   DFuncState *fs = D->fs;
   lua_assert(D->a.testsetendlabel != -1);
   lua_assert(D->usedebuginfo == 0);
   if (D->a.testsetlocvar != -1) {
-    int testedreg = D->a.insn.b;
     lua_assert(D->a.testsetlocvar == D->a.insn.a);
     if (!test_ins_property(fs, fs->pc, INS_LEADER)) {
       closelocalvars1(D, testedreg, D->a.testsetstart, 0);
@@ -5403,8 +5493,14 @@ static void checktestsetstart1(DecompState *D, int pc)
   if (D->a.insn.o == OP_TESTSET) {
     label = getjump(fs, pc+1);
     settestsetlabel:
-    if (label > D->a.testsetendlabel)
+    if (label > D->a.testsetendlabel) {
       D->a.testsetendlabel = label;
+      if (D->a.testsetnewlocvar != -1) {
+        int r = D->a.testsetnewlocvar;
+        LocVar *var = check_exp(r < fs->nactvar, getlocvar1(D, r));
+        var->startpc = label;
+      }
+    }
   }
   else if (test_ins_property(fs, pc, INS_TESTSETJUMP)) {
     lua_assert(D->a.insn.o == OP_JMP);
@@ -5419,6 +5515,7 @@ static void checktestsetend1(DecompState *D, int pc)
   if (pc == D->a.testsetendlabel) {
     D->a.testsetendlabel = -1;
     D->a.testsetlocvar = -1;
+    D->a.testsetnewlocvar = -1;
     D->a.testsetstart = -1;
     setlaststat1(D, pc, 1);
   }
@@ -5597,6 +5694,9 @@ static int enterblock1(DecompState *D, DFuncState *fs, int needvars)
 
 static int leaveblock1(DecompState *D, DFuncState *fs)
 {
+  /* true if this block is a child repeat-loop with the same start label as its
+     parent block and its parent block is also a repeat-loop */
+  int isnestedrepeat = 0;
   BlockState *bl = D->a.bl;
   BlockNode *node = bl->node;
   BlockNode *const prevnode = D->a.prevnode;
@@ -5610,11 +5710,24 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
       if (prevnode != NULL && !node->repuntiltrue &&
           prevnode->kind == BL_REPEAT && prevnode->startpc == node->startpc &&
           laststat <= prevnode->endpc) {
-        /* combine the repeat-loops */
-        lua_assert(node->firstchild == prevnode);
-        node->firstchild = prevnode->firstchild;
-        freeblnode(fs, prevnode);
+        int i;
+        int havepersvar = 0;
+        for (i = 0; i < D->savedrepeatvars.used; i++) {
+          index2pc_t *s = &D->savedrepeatvars.s[i];
+          if (s->state) {
+            havepersvar = 1;
+            break;
+          }
+        }
+        if (!havepersvar) {
+          BlockNode *prevnode1 = prevnode;
+          /* combine the repeat-loops */
+          meldrepeatloops1(D, node, &prevnode1);
+        }
       }
+      if ((bl-1)->node->kind == BL_REPEAT && !(bl-1)->node->repuntiltrue &&
+          (bl-1)->node->startpc == node->startpc)
+        isnestedrepeat = 1;
       break;
     }
     case BL_IF: {
@@ -5698,10 +5811,11 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
       }
       if (isstorecode(nextop) || nextop == OP_MOVE) {
         int i, noperands;
-        int operands[3];
+        OperandDesc operands[3];
         if (nextop == OP_MOVE) {
           noperands = 1;
-          operands[0] = nextB;
+          operands[0].r = nextB;
+          operands[0].mode = OpArgR;
         }
         else
           noperands = getstoreoperands(nextop, nextA, nextB, nextC, operands);
@@ -5709,7 +5823,7 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
            then this block must be destroyed so the variable can live outside of
            it and be used in the next store operation */
         for (i = 0; i < noperands; i++)
-          if (operands[i] >= bl->nactvar) break;
+          if (operands[i].r >= bl->nactvar) break;
         if (i < noperands) {
           removenode:
           /* destroy the block */
@@ -5737,11 +5851,18 @@ static int leaveblock1(DecompState *D, DFuncState *fs)
     }
     default: break;
   }
-  if (D->usedebuginfo == 0 && bl->node->kind != BL_FUNCTION) {
-    restorevars1(D, fs, bl);
+  if (D->usedebuginfo == 0) {
+    if (isnestedrepeat)
+      savenestedrepeatvars1(D, fs, bl);
+    else {
+      D->savedrepeatvars.used = 0;
+      if (bl->node->kind != BL_FUNCTION)
+        restorevars1(D, fs, bl);
+    }
+    /*if (!isnestedrepeat)*/
+      prunevars1(D, bl->nactvar);
+    recheckfoldableblocks1(D);
   }
-  prunevars1(D, bl->nactvar);
-  recheckfoldableblocks1(D);
   D->a.prevnode = node;
   /* NODE can be NULL if it was removed and PREVNODE was also NULL */
   D->a.nextnode = node ? node->nextsibling : NULL;
@@ -5783,6 +5904,7 @@ static void simblock1(DFuncState *fs)
   D->a.laststat = -1;
   D->a.testsetendlabel = -1;
   D->a.testsetlocvar = -1;
+  D->a.testsetnewlocvar = -1;
   D->a.testsetstart = -1;
   D->a.prevnode = NULL;
   D->a.lastdischarged.pc = -1;
@@ -5861,13 +5983,11 @@ static void simblock1(DFuncState *fs)
         isstat = (kind == RETPREP || kind == FORNUMPREP || kind == FORLISTPREP);
       if (isstat) {
         setlaststat1(D, D->a.openexpr->endpc, 1);
-        if (needvars)
-          set_ins_property(fs, pc, INS_STACKPUSH);
       }
       if (!isstat) {
         if (checkexpclobber(D))
           inassignment = 0;
-        if (needvars)
+        if (needvars && D->a.testsetendlabel == -1)
         createexpresult(D, kind != HASHTABLEPREP && kind != EMPTYTABLE, iscall);
       }
       /* advance to the end of the expression */
@@ -5942,7 +6062,7 @@ static void simblock1(DFuncState *fs)
              an extra pc will also be marked as LOCVAREXPR, but that doesn't
              cause any problems */
           /*set_ins_property(fs, var->startpc, INS_LOCVAREXPR);*/
-          set_ins_property(fs, var->startpc, INS_BBLOCVAR);
+          set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);
           if (test_ins_property(fs, target, INS_BOOLLABEL))
             target += (GETARG_C(fs->f->code[target]) != 0);
           else if (test_ins_property(fs, pc, INS_PASSJUMP))
@@ -6035,7 +6155,7 @@ static void simblock1(DFuncState *fs)
                 break;
               if (currnode->endpc < prevnode->endpc)
                 break;
-              if (prevbl->statbeforechild) {
+              if (prevnode->hardstatbeforechild) {
                 goto addrepuntiltrue;
                 /* todo: this is actually a break out of repeat-until-true */
               }
@@ -6052,6 +6172,7 @@ static void simblock1(DFuncState *fs)
               prevnode->upval |= currnode->upval;
               recalcemptiness(prevnode);
               freeblnode(fs, currnode);
+              D->savedstartpc.used = D->a.bl->savedstartpcbase;
               popblockstate1(fs);
               D->a.bl = getcurrblock1(fs);
             }
@@ -11252,6 +11373,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   VEC_INIT(D.varnotes);
   VEC_INIT(D.fixedstartlines);
   VEC_INIT(D.savedstartpc);
+  VEC_INIT(D.savedrepeatvars);
   D.kmap = NULL;
   D.sizekmap = 0;
   D.holdfirst = NULL;
@@ -11270,9 +11392,10 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   VEC_FREE(H, D.loopstk, LoopState);
   VEC_FREE(H, D.blockstk, BlockState);
   VEC_FREE(H, D.freeblocknodes, BlockNode *);
-  VEC_FREE(H, D.varnotes, lu_byte);
+  VEC_FREE(H, D.varnotes, int);
   VEC_FREE(H, D.fixedstartlines, linemap);
   VEC_FREE(H, D.savedstartpc, index2pc_t);
+  VEC_FREE(H, D.savedrepeatvars, index2pc_t);
   freekmap(&D);
   if (status) D.status = status;
   return D.status;
