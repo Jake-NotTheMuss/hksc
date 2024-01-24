@@ -3531,20 +3531,24 @@ static void setvardischarged1(DecompState *D, int r, int pc)
 }
 
 
-static void promotevar1(DecompState *D, int r, enum GENVARNOTE newnote)
+static int hasnoteorhigher1(DecompState *D, int r, enum GENVARNOTE note)
 {
   LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(D, var);
-  if (note < newnote)
+  enum GENVARNOTE currnote = getvarnote1(D, var);
+  return currnote >= note;
+}
+
+
+static void promotevar1(DecompState *D, int r, enum GENVARNOTE newnote)
+{
+  if (!hasnoteorhigher1(D, r, newnote))
     setvarnote1(D, r, newnote);
 }
 
 
 static void promotedischarged1(DecompState *D, int r, int pc)
 {
-  LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(D, var);
-  if (note < GENVAR_DISCHARGED)
+  if (!hasnoteorhigher1(D, r, GENVAR_DISCHARGED))
     setvardischarged1(D, r, pc);
 }
 
@@ -3563,8 +3567,11 @@ static void promotebelowdischarged(DecompState *D, int r)
 static void makepersistent1(DecompState *D, int r)
 {
   promotevar1(D, r, GENVAR_PERSISTENT);
-  for (r--; r >= 0; r--)
-    promotevar1(D, r, GENVAR_BELOW_PERSISTENT);
+  for (r--; r >= 0; r--) {
+    if (hasnoteorhigher1(D, r, GENVAR_BELOW_PERSISTENT))
+      break;
+    setvarnote1(D, r, GENVAR_BELOW_PERSISTENT);
+  }
 }
 
 
