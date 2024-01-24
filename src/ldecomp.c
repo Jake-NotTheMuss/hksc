@@ -5194,7 +5194,8 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
     if (lastnecessaryvar < varlimit) {
       BlockState *bl;
       LocVar *firstvar = getlocvar1(D, varlimit);
-      for (bl = D->a.bl; firstvar->startpc < bl->node->startpc; bl--)
+      int firstvarinit = getlocvarinit1(D, firstvar);
+      for (bl = D->a.bl; firstvarinit < bl->node->startpc; bl--)
         bl->nactvar = cast_byte(varlimit);
       clearsavedvars1(D, varlimit);
       /* no variables need to end early, just roll back the extra variables as
