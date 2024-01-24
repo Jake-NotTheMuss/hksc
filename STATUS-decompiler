@@ -21,5 +21,7 @@ With debug info, all unit tests are passing.
 
 With debug info, all test programs are passing.
 
+Without debug info, all pass1 unit tests are passing.
+
 One thing I know that I have not yet addressed is detecting/handling
 assignment conflicts.
