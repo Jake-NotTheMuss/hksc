@@ -3841,6 +3841,7 @@ static int rollbackvars1(DecompState *D, lu_byte n)
 {
   DFuncState *fs = D->fs;
   int numtodelete = (lua_assert(fs->nactvar >= n), fs->nactvar - n);
+  lua_assert(D->usedebuginfo == 0);
   if (numtodelete == 0)
     return 0;
   fs->nlocvars -= numtodelete;
