@@ -4695,16 +4695,19 @@ static void createexpresult(DecompState *D, int hasendcode, int iscall)
   int kind = D->a.openexpr->kind;
   int resultslot = GETARG_A(fs->f->code[resultpc]);
   OpCode nextop;
+  int nextA;
   int nextB;
   {
     Instruction next = fs->f->code[D->a.openexpr->endpc+1];
     nextop = GET_OPCODE(next);
+    nextA = GETARG_A(next);
     nextB = GETARG_B(next);
   }
   /* see if the open expression discharges the resulting value to an existing
      local variable; if it doesn't, create a local variable for the result to
      be implicitly stored (i.e. the first free slot)  */
-  if ((!exprpushesresult(kind) || nextop != OP_MOVE || nextB != resultslot)) {
+  if ((!exprpushesresult(kind) || nextop != OP_MOVE || nextA > nextB ||
+       nextB != resultslot)) {
     if (resultslot >= fs->nactvar) {
       if (iscall) {
         OpCode op = GET_OPCODE(fs->f->code[resultpc]);
@@ -4714,6 +4717,8 @@ static void createexpresult(DecompState *D, int hasendcode, int iscall)
           int i;
           for (i = 0; i < nret; i++)
             newlocalvar1(D, resultslot+i, D->a.openexpr->endpc);
+          if (nret > 1)
+            makepersistent1(D, resultslot+nret-1);
         }
       }
       else  /* not a function call */
@@ -5973,6 +5978,7 @@ static void simblock1(DFuncState *fs)
     checktestsetend1(D, pc);
     /* check if entering an open expression */
     if (pc == D->a.openexpr->startpc) {
+      int startnactvar = 0;
       int kind = D->a.openexpr->kind;
       int iscall = (kind == CALLPREP);
       if (kind == FORNUMPREP || kind == FORLISTPREP)
@@ -5984,6 +5990,7 @@ static void simblock1(DFuncState *fs)
         if (D->a.store->pc != -1)
           dischargestores1(D);
         updatevarsbeforeopenexpr1(D);
+        startnactvar = fs->nactvar;
       }
       if (iscall)
         isstat = iscallstat(fs, D->a.openexpr->endpc);
@@ -6003,6 +6010,13 @@ static void simblock1(DFuncState *fs)
         updatereferences1(D);
         if (test_ins_property(fs, pc, INS_ASSIGNEND))
           inassignment = 0;
+        if (needvars) {
+          /* note variables used as source in OP_MOVE */
+          if (D->a.insn.o == OP_MOVE && D->a.insn.b < D->a.insn.a) {
+            if (D->a.insn.b < startnactvar)
+              makepersistent1(D, D->a.insn.b);
+          }
+        }
         pc = ++fs->pc;
         updateinsn1(D, fs);
       }
