@@ -1070,7 +1070,7 @@ static int isfieldname(TString *name)
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
-static int varisaugmented(struct LocVar *var) {
+static int varisaugmented(const struct LocVar *var) {
   TString *name = var->varname;
   lua_assert(name != NULL);
   return (*getstr(name) == '(');
