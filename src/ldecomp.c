@@ -998,44 +998,49 @@ static SlotDesc *getslotdesc(DFuncState *fs, int reg)
 
 
 /*
-** populates the `upvalues' array with the names of the upvalues from PARENT
-** that FS uses
+** get the pc of the last encountered closure in the function FS
 */
-static void getupvaluesfromparent(DFuncState *fs, DFuncState *parent)
+static int getlastclosurepc(DecompState *D, DFuncState *fs)
+{
+  int lastclpc = D->lastcl.pc;
+  lua_assert(ispcvalid(fs, lastclpc));
+  lua_assert(GET_OPCODE(fs->f->code[lastclpc]) == OP_CLOSURE);
+  return lastclpc;
+}
+
+
+/*
+** populates the `upvalues' array with the names of the upvalues from PARENT
+** that FS uses (only call when not using debug info)
+*/
+static void initupvalues(DFuncState *fs, DFuncState *parent)
 {
   DecompState *D = fs->D;
-  const Instruction *code;
-  int i, pc;
-  lua_assert(parent != NULL && parent->f != NULL);
-  code = parent->f->code;
-  lua_assert(ispcvalid(parent, D->lastcl.pc));
-  lua_assert(GET_OPCODE(code[D->lastcl.pc]) == OP_CLOSURE);
-  pc = D->lastcl.pc+1;
-  i = 0;
-  while (1) {
+  int i, pc = getlastclosurepc(D, parent)+1;
+  lua_assert(D->usedebuginfo == 0);
+  for (i = 0;
+       i < fs->sizeupvalues && GET_OPCODE(parent->f->code[pc]) == OP_DATA;
+       i++, pc++) {
     TString *upvalue;
-    int a, bx;
-    Instruction insn = code[pc++];
-    OpCode op = GET_OPCODE(insn);
-    if (op != OP_DATA)
-      break;
+    int argBx = GETARG_Bx(parent->f->code[pc]);
     lua_assert(i < fs->sizeupvalues);
-    a = GETARG_A(insn);
-    bx = GETARG_Bx(insn);
-    if (a == 1) {
-      lua_assert(isregvalid(parent, bx));
-      lua_assert(test_reg_property(parent, bx, REG_LOCAL));
-      upvalue = getslotdesc(parent, bx)->u.locvar->varname;
+    /* check which kind of upvalue is encoded */
+    switch (GETARG_A(parent->f->code[pc])) {
+      case 1:  /* Bx is a register */
+        lua_assert(isregvalid(parent, argBx));
+        check_reg_property(parent, argBx, REG_LOCAL);
+        upvalue = getslotdesc(parent, argBx)->u.locvar->varname;
+        break;
+      case 2:  /* Bx is an upvalue index in PARENT */
+        lua_assert(argBx < parent->sizeupvalues);
+        upvalue = parent->upvalues[argBx];
+        break;
     }
-    else {
-      lua_assert(bx < parent->sizeupvalues);
-      upvalue = parent->upvalues[bx];
-    }
-    fs->upvalues[i++] = upvalue;
+    fs->upvalues[i] = upvalue;
   }
-  CHECK(fs, i == fs->sizeupvalues, "not enough OP_DATA codes for number of "
-        "upvalues");
+  CHECK(fs, i == fs->sizeupvalues, "not enough OP_DATA codes after OP_CLOSURE");
 }
+
 
 #define IS_RESERVED(ts) \
   ((ts)->tsv.reserved > 0 && (ts)->tsv.reserved < MARKED_GLOBAL)
@@ -1230,8 +1235,8 @@ static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
   a->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
   memset(a->regproperties, 0, a->sizeregproperties * sizeof(SlotDesc));
 #ifdef HKSC_DECOMP_HAVE_PASS2
-  if (fs->prev != NULL)
-    getupvaluesfromparent(fs, fs->prev);
+  if (D->usedebuginfo == 0 && fs->prev != NULL)
+    initupvalues(fs, fs->prev);
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 }
 
