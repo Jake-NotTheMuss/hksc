@@ -4098,20 +4098,22 @@ static void recheckfoldableblocks1(DecompState *D)
         nextchild->firstchild->nextsibling == NULL &&
         nextchild->hardstatbeforechild == 0) {
       BlockNode *child = nextchild->firstchild;
-      int i;
-      int limitpc = child->startpc-1;
-      int nactvar = 0, nactvar2 = 0;
+      int i, nactvar;
+      const int startpc = nextchild->startpc-1;
+      const int limitpc = child->startpc-1;
       /* check if there are variables starting between the 2 endpoints */
-      for (i = 0; i < fs->nlocvars; i++) {
-        struct LocVar *var = &fs->locvars[i];
-        int pc1 = nextchild->startpc-1;
-        int pc2 = limitpc;
-        if (var->startpc <= pc1 && pc1 <= var->endpc)
+      for (i = nactvar = 0; i < fs->nlocvars; i++) {
+        const struct LocVar *var = &fs->locvars[i];
+        /* does variable exist at the start of the outer if-block */
+        int var_exists_1 = (var->startpc <= startpc && startpc <= var->endpc);
+        /* does variable exist at the start of the inner if-block */
+        int var_exists_2 = (var->startpc <= limitpc && limitpc <= var->endpc);
+        if (var_exists_1 != var_exists_2)
+          break;  /* variable starts between the outer and inner block start */
+        if (var_exists_1)
           nactvar++;
-        if (var->startpc <= pc2 && pc2 <= var->endpc)
-          nactvar2++;
       }
-      if (nactvar == nactvar2) {
+      if (i == fs->nlocvars) {
         int prevpc = fs->pc;
         /* no new variables; check if existing locals are clobbered between the
            2 endpoints */
