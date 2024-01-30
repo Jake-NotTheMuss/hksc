@@ -4477,6 +4477,29 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           for (i = fs->nactvar; i <= b; i++)
             newlocalvar1(D, i, pc);
         }
+        else if (o == OP_MOVE && b > a && b < fs->nactvar)
+          makepersistent1(D, b);
+        {
+          /* update variable notes for referenced register operands */
+          int slots[3];
+          int nslots = referencesslot(o, a, b, c, slots);
+          int expectedstartpc = pc;
+          while (nslots--) {
+            int r = slots[nslots];
+            if (r < fs->nactvar) {
+              LocVar *var = getlocvar1(D, r);
+              enum GENVARNOTE note = getvarnote1(D, var);
+              if (r < D->a.bl->nactvar)
+                makepersistent1(D, r);
+              /* if the value is on the stack and was evaluated immediately
+                 before the next operand or the final operation */
+              else if (isonstack(note) && var->startpc == expectedstartpc) {
+                expectedstartpc = getlocvarinit1(D, var);
+                setvardischarged1(D, r, pc);
+              }
+            }
+          }
+        }
       }
       else { /* R is both operand and destination (r == b || r == c) */
         LocVar *var = getlocvar1(D, r);
