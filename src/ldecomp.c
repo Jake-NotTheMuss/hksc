@@ -1491,6 +1491,50 @@ static void updateline2(DFuncState *fs, int line, DecompState *D)
 }
 
 
+#if !defined(LUA_COMPAT_LSTR) || LUA_COMPAT_LSTR != 2
+static size_t getlstrlevel(const TString *ts)
+{
+  int inbracket = 0;
+  size_t count = 0;
+  size_t level = 0;
+  const char *str = check_exp(ts, getstr(ts));
+  size_t len = ts->tsv.len;
+  for (; len; str++, len--) {
+    if (inbracket) {
+      if (*str == '=')
+        count++;
+      else {
+        if (*str == ']') {
+          /* end of end bracket */
+          if (count+1 > level)
+            level = count+1;
+        }
+        inbracket = 0;
+        count = 0;
+      }
+    }
+    else if (*str == ']')
+      inbracket = 1;
+  }
+  return level;
+}
+
+
+static void dumplstrquote(DecompState *D, size_t level, const char *s)
+{
+  lua_assert(*s == '[' || *s == ']');
+  DumpBlock(s, 1, D);
+  while (level--)
+    DumpLiteral("=",D);
+  DumpBlock(s, 1, D);
+}
+#else /* LUA_COMPAT_LSTR */
+#define getlstrlevel(ts) 0  /* level 0 is always ok */
+#define dumplstrquote(D,l,s) DumpLiteral(s, D)
+#endif /* LUA_COMPAT_LSTR */
+
+
+
 /*
 ** dumps a string constant as a long string `[[...]]'
 */
@@ -1498,11 +1542,13 @@ static void emitlongstring2(ExpNode *exp, DecompState *D)
 {
   int endline = exp->line;  /* last line of the string */
   const TString *ts = rawtsvalue(exp->u.k);
+  const size_t requiredlevel = getlstrlevel(ts);
   const char *str;
   size_t len;
   int numlinefeeds = 0;  /* number LF characters in the string */
   int numleadinglines;  /* number of lines the string starts with in source
                            (skipped by lexer) */
+  (void)requiredlevel;  /* avoid warnings when `requiredlevel' is not used */
   lua_assert(D->matchlineinfo);
   lua_assert(ts != NULL);
   /* count number of new lines in the string */
@@ -1516,7 +1562,7 @@ static void emitlongstring2(ExpNode *exp, DecompState *D)
   lua_assert(endline >= D->linenumber);
   numleadinglines = (endline - D->linenumber) - numlinefeeds;
   /* start emitting the string */
-  DumpLiteral("[[",D);
+  dumplstrquote(D,requiredlevel,"[[");
   D->noindent = 1;
   if (numleadinglines)
     beginline2(D->fs, numleadinglines, D);
@@ -1544,7 +1590,7 @@ static void emitlongstring2(ExpNode *exp, DecompState *D)
       break;
     }
   }
-  DumpLiteral("]]",D);
+  dumplstrquote(D,requiredlevel,"]]");
   D->noindent = 0;
 }
 
