@@ -8,7 +8,6 @@
 #include <ctype.h>
 #include <locale.h>
 #include <string.h>
-#include <stdlib.h> /* TODO:  */
 
 #define llex_c
 #define LUA_CORE
@@ -306,6 +305,7 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
                       token);
       }
       if (token == TK_LITERALLUD) {
+        /* check if the value fits in a short literal */
         if (sizeof(void *) < 8) {
 #ifdef LUA_UI64_S
           if (literal.hi != 0)
@@ -566,7 +566,7 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           if (ts->tsv.reserved > 0)  /* reserved word? */ {
             int token = ts->tsv.reserved - 1 + FIRST_RESERVED;
 #if !HKSC_STRUCTURE_EXTENSION_ON
-            /* hstructure and hmake are not supported in the cod builds */
+            /* check if hstructure or hmake are used without structs enabled */
             if (token == TK_STRUCT || token == TK_MAKE)
             {
               luaX_inputerror(ls, "The reserved words \"hmake\" and "

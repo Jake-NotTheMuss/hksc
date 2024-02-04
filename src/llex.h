@@ -10,14 +10,22 @@
 #include "lobject.h"
 #include "lzio.h"
 
+
+/*
+** Supported modes for interpreting input
+*/
 enum TextModes {
   ASCII,
   UTF8
 };
 
 
+/* the first reserved token ID */
 #define FIRST_RESERVED  0x400001
 
+/*
+** define reserved token enumerations from `ltoken.def'
+*/
 #define DEFTOKFIRST(name, text) name = FIRST_RESERVED,
 #define DEFTOK(name, text) name,
 enum RESERVED {
@@ -42,9 +50,10 @@ union max_token_length {
 
 /* array with token `names' */
 LUAI_DATA const char *const luaX_tokens [];
+/* array with type names used by the compiler */
 LUAI_DATA const char *const luaX_typenames [];
 
-#define luaX_typename(t)  luaX_typenames[(t)+2]
+#define luaX_typename(t)  luaX_typenames[(t)+2]  /* lowest type is TANY (-2) */
 
 
 typedef union {
