@@ -12010,6 +12010,7 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
   DecompState D;
   int status;
   struct SDecompiler sd;
+  lua_assert(MAX_INSFLAG <= 32);
   D.H=H;
   D.fs=NULL;
   D.writer=w;
