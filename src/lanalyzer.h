@@ -42,7 +42,6 @@ enum BLTYPE {
   DEFINSFLAG(LEADER)  /* instruction is a leader */ \
   DEFINSFLAG(BBSUBEXPR) \
   DEFINSFLAG(KLOCVAR)  /* local initialization that pushes a constant */ \
-  DEFINSFLAG(BBLOCVAR) \
   DEFINSFLAG(FIXEDSTARTLINE)  /* pc corresponds to an earlier source line than \
                              it is mapped to (referred to as `fixed' line) */ \
   DEFINSFLAG(FAILJUMP)  /* a jump-on-false */ \
@@ -286,6 +285,7 @@ typedef struct SlotDesc {
   union {
     struct LocVar *locvar;  /* the local variable that is in this register */
     int expindex;  /* if pending, the ExpNode that is in this register */
+    int lastclobber;  /* used in `pass1' */
   } u;
 } SlotDesc;
 

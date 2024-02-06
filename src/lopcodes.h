@@ -226,9 +226,17 @@ LUAI_FUNC Instruction luaP_setarg_b(Instruction *i, int b);
    (o) == OP_SETTABLE_BK || (o) == OP_SETTABLE_N || (o) == OP_SETTABLE_N_BK || \
    (o) == OP_SETTABLE_S || (o) == OP_SETTABLE_S_BK)
 
+#define IS_OP_SETSLOT(o) \
+  ((o) == OP_SETSLOTN || (o) == OP_SETSLOTI || (o) == OP_SETSLOT || \
+   (o) == OP_SETSLOTS || (o) == OP_SETSLOTMT)
+
 #define CASE_OP_SETTABLE \
   case OP_SETFIELD: case OP_SETFIELD_R1: case OP_SETTABLE: \
   case OP_SETTABLE_BK: case OP_SETTABLE_N: case OP_SETTABLE_N_BK: \
   case OP_SETTABLE_S: case OP_SETTABLE_S_BK
+
+#define CASE_OP_GETTABLE \
+  case OP_GETFIELD: case OP_GETFIELD_R1: case OP_GETTABLE: \
+  case OP_GETTABLE_S: case OP_GETTABLE_N
 
 #endif

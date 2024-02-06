@@ -93,9 +93,10 @@ struct DFuncState;
 
 struct HoldItem; /* used in pass2 to hold onto strings before dumping them */
 
+/* `pass1' structs */
 struct LoopState;
 struct BlockState;
-struct pendingstorechain1;
+struct PendingStoreState;
 
 typedef struct linemap {
   int pc, line;
@@ -130,6 +131,7 @@ typedef struct index2pc_s {
   luaM_growvector(H,(name).s,(name).used,(name).alloc,T,MAX_INT,"")
 
 #define SIZE_STATIC_KMAP 2
+#define SIZE_UPVAL_MAP 8 /* LUAI_MAXUPVALUES is less then 250 */
 
 /*
 ** DecompState - state of decompilation across all functions
@@ -178,6 +180,7 @@ typedef struct {
   /* if the function has <= 32*SIZE_STATIC_KMAP constants, no heap allocation is
      needed, this static array can be used */
   lu_int32 kmap_1[SIZE_STATIC_KMAP];
+  lu_int32 upvalmap[SIZE_UPVAL_MAP];
   int sizekmap;
   /* this structure is for per-function data that only needs to be instanced
      once at any time, because it is only needed in the initial passes where
@@ -185,7 +188,7 @@ typedef struct {
   struct {
     const OpenExpr *openexpr;
     struct BlockState *bl;
-    struct pendingstorechain1 *store;
+    struct PendingStoreState *store;
     BlockNode *prevnode, *nextnode;
     /* data for last stack value discharge */
     struct { int pc, reg, savedstartpc; } lastdischarged;
@@ -194,7 +197,9 @@ typedef struct {
     int nclose;
     int skippedstorerefpc;
     int lastup;
+    int lastk;
     int laststat;
+    int secondlaststat;  /* needed for `struct PendingStoreState' */
     int testsetendlabel;  /* current TESTSET end label or -1 */
     /* if the current testset expression is assigning to an existing local,
        then this holds the slot of that local, otherwise it is -1 */
@@ -269,20 +274,42 @@ static void freekmap (DecompState *D)
 
 
 /*
-** set bit K in the constants bitmap, marking it as having been referenced
-*/
-static void setkreferenced (DecompState *D, unsigned int k)
-{
-  D->kmap[k >> 5] |= (1u << (k & 31));
-}
-
-
-/*
 ** test bit K in the constants bitmap
 */
 static int iskreferenced (DecompState *D, unsigned int k)
 {
   return ((D->kmap[k >> 5] & (1u << (k & 31))) != 0);
+}
+
+
+/*
+** set bit K in the constants bitmap, marking it as having been referenced
+*/
+static int setkreferenced (DecompState *D, unsigned int k)
+{
+  int ret = iskreferenced(D, k);
+  D->kmap[k >> 5] |= (1u << (k & 31));
+  return !ret;  /* return true if it was not already set */
+}
+
+
+/*
+** test bit U in the upval bitmap
+*/
+static int isupvalreferenced (DecompState *D, unsigned int u)
+{
+  return ((D->upvalmap[u >> 5] & (1u << (u & 31))) != 0);
+}
+
+
+/*
+** set bit U in the upval bitmap, marking it as having been referenced
+*/
+static int setupvalreferenced (DecompState *D, unsigned int u)
+{
+  int ret = isupvalreferenced(D, u);
+  D->upvalmap[u >> 5] |= (1u << (u & 31));
+  return !ret;  /* return true if it was not already set */
 }
 
 
@@ -724,6 +751,23 @@ static OpenExpr *newopenexpr(DFuncState *fs, int firstreg, int startpc,
   expr->firstreg = firstreg;
   expr->sharednil = 0;
   return expr;
+}
+
+
+static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
+
+
+/*
+** sets the next OpenExpr entry directly
+*/
+static void setnextopenexpr(DecompState *D, DFuncState *fs, int index)
+{
+  fs->nopencalls = index;
+  lua_assert(index >= 0 && index <= fs->a->sizeopencalls);
+  if (index < fs->a->sizeopencalls)
+    D->a.openexpr = &fs->a->opencalls[index];
+  else
+    D->a.openexpr = &dummyexpr;
 }
 
 
@@ -2956,8 +3000,6 @@ static void simloop1(DFuncState *fs)
   set_ins_property(fs, 0, INS_LEADER);
 }
 
-static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
-
 
 static void updatenextopenexpr0(DecompState *D)
 {
@@ -2968,6 +3010,7 @@ static void updatenextopenexpr0(DecompState *D)
   else
     D->a.openexpr = &dummyexpr;
 }
+
 
 static void rescanloops(DFuncState *fs)
 {
@@ -3155,11 +3198,23 @@ static void markbbexpr1(DFuncState *fs)
 
 static int getevalstart(DFuncState *fs, int pc, int firstreg)
 {
+  const int jumplimit = pc+1;
+  DecompState *D = fs->D;
   const Instruction *code = fs->f->code;
+  const int savednopencalls = fs->nopencalls;
   int nextpossiblestart = pc;
+  while (D->a.openexpr->endpc > pc)
+    updatenextopenexpr0(D);
   for (; pc >= 0; pc--) {
-    Instruction i = code[pc];
-    if (beginstempexpr(fs, i, pc, firstreg, pc+1, &nextpossiblestart)) {
+    Instruction i;
+    OpCode o;
+    if (pc == D->a.openexpr->endpc) {
+      pc = D->a.openexpr->startpc;
+      updatenextopenexpr0(D);
+    }
+    i = code[pc];
+    o = GET_OPCODE(i);
+    if (beginstempexpr(fs, i, pc, firstreg, jumplimit, &nextpossiblestart)) {
       break;  /* found the beginning */
     }
     else if (GET_OPCODE(i) == OP_LOADNIL && GETARG_A(i) < firstreg) {
@@ -3169,6 +3224,7 @@ static int getevalstart(DFuncState *fs, int pc, int firstreg)
       break;
     }
   }
+  setnextopenexpr(D, fs, savednopencalls);
   return (pc < 0 ? 0 : pc);
 }
 
@@ -3191,6 +3247,7 @@ typedef struct BlockState {
   int highestclobbered;
   int highestclobberedresetpc;
   int savedlastup;
+  int savedlastk;
   int prepstart;
   /* - the highest register clobbered since the last open expression or block
      start, not counting clobbers within open expressions themselves
@@ -3283,6 +3340,7 @@ static void initblockstate1(DFuncState *fs, BlockState *block, BlockNode *node)
   block->highestclobbered = -1;
   block->highestclobberedresetpc = node->startpc;
   block->savedlastup = -1;
+  block->savedlastk = -1;
   block->lastnecessaryvar = -1;
   block->savedstartpcbase = D->savedstartpc.used;
   if (D->blockstk.used > 1) {
@@ -3379,6 +3437,7 @@ static void resethighestclob1(DecompState *D, int pc)
   D->a.bl->highestclobbered = -1;
   D->a.bl->highestclobberedresetpc = pc;
   D->a.bl->savedlastup = D->a.lastup;
+  D->a.bl->savedlastk = D->a.lastk;
 }
 
 
@@ -3626,17 +3685,65 @@ static void makepersistent1(DecompState *D, int r)
 }
 
 
+static void setslotclobber1(DFuncState *fs, int r, int pc, expkind k)
+{
+  SlotDesc *slot = getslotdesc(fs, r);
+  slot->flags = cast_byte(k);
+  slot->u.lastclobber = pc;
+}
+
+
+static int getslotclobber1(DFuncState *fs, int r)
+{
+  return getslotdesc(fs, r)->u.lastclobber;
+}
+
+
+static expkind getslotexpkind1(DFuncState *fs, int r)
+{
+  return cast(expkind, getslotdesc(fs, r)->flags);
+}
+
+
 /*
 ** data for the pending store chain when generating variables
 */
-struct pendingstorechain1 {
+typedef struct PendingStoreState {
+  int newconstants;  /* number of new constants encountered during the chain */
+  int newupvals;
   int pc;  /* current pc */
   int startpc;  /* pc of first store code */
   int firstreg;  /* first reg used to evaluate RHS */
   int lastreg;  /* last reg used to evaluate RHS */
   int laststat;  /* pc of previous statement if any */
+  int secondlaststat;  /* this is used if `laststat' was a clobber instruction
+                          immediately before the store chain which was actually
+                          the last store in the assignment, but did not require
+                          a store-code because it the destination was a local */
   int lastup;  /* highest referenced upvalue before the store chain */
+  int lastk;  /* highest referenced constant before the store chain */
+  int dischargelimit;
+  int RHS_skipped_ref;
   int upval;  /* true if there is an OP_SETUPVAL code in the store chain */
+  int lowestnewupval;  /* lowest new upval reference */
+} PendingStoreState;
+
+
+static const struct PendingStoreState pending_store_init = {
+  0,  /* newconstants */
+  0,  /* newupvals */
+  -1,  /* pc */
+  -1,  /* startpc */
+  -1,  /* firstreg */
+  -1,  /* lastreg */
+  -1,  /* laststat */
+  -1,  /* secondlaststat */
+  -1,  /* lastup */
+  -1,  /* lastk */
+  -1,  /* dischargelimit */
+  0,  /* RHS_skipped_ref */
+  0,  /* upval */
+  -1  /* lowestnewupval */
 };
 
 
@@ -3648,6 +3755,21 @@ static void updatenextopenexpr1(DecompState *D)
     D->a.openexpr = &dummyexpr;
   else
     D->a.openexpr = &fs->a->opencalls[--fs->nopencalls];
+}
+
+
+/*
+** return the last OpenExpr entry that was processed; the last one must exist
+*/
+static const OpenExpr *getlastopenexpr1(DecompState *D)
+{
+  DFuncState *fs = D->fs;
+  const OpenExpr *expr = D->a.openexpr;
+  lua_assert(fs->nopencalls >= 0);
+  if (expr == &dummyexpr)  /* last one was the final one */
+    return &fs->a->opencalls[0];
+  else
+    return expr+1;
 }
 
 
@@ -3841,6 +3963,17 @@ static int getnextpc1(DFuncState *fs, int pc)
     if (nextpc >= fs->f->sizecode) break;
   } while (GET_OPCODE(fs->f->code[nextpc]) == OP_DATA);
   return nextpc;
+  while (++pc < fs->f->sizecode && GET_OPCODE(fs->f->code[pc]) == OP_DATA)
+    ;
+  return pc;
+}
+
+
+static int getprevpc1(DFuncState *fs, int pc)
+{
+  while (--pc > 0 && GET_OPCODE(fs->f->code[pc]) == OP_DATA)
+    ;
+  return pc;
 }
 
 
@@ -3908,63 +4041,304 @@ static int rollbackvars1(DecompState *D, lu_byte n)
 */
 static void setlaststat1(DecompState *D, int pc, int hardstat)
 {
+  D->a.secondlaststat = D->a.laststat;
   D->a.laststat = pc;
   D->a.bl->seenstat = 1;
   if (hardstat) D->a.bl->seenhardstat = 1;
 }
 
 
+#define STORE_CHAIN_OPTIONAL 1
+#define STORE_CHAIN_NECESSARY 2
+
 /*
 ** return true if the pending assignments can be grouped as one statement
 */
-static int storeischainable1(DecompState *D, struct pendingstorechain1 *store)
+static int storeischainable1(DecompState *D, struct PendingStoreState *store)
 {
-  return (D->a.skippedstorerefpc >= store->startpc ||
-          (store->upval && D->a.lastup == store->lastup));
+  /* if the LHS store codes reference new constants in reverse order, or if
+     there are new constants referenced in the RHS evluation codes, and they
+     skip new constant indices from the following store codes, then it must be a
+     store chain */
+  if (D->a.skippedstorerefpc >= store->startpc || store->RHS_skipped_ref)
+    return STORE_CHAIN_NECESSARY;
+  /* next check if chaining the store is possible while still generating
+     matching bytecode: if the store codes reference multiple new constants or
+     multiple new upvalues, than the order in which they are referenced must be
+     preserved by not chaining them, also if the store codes reference an
+     upvalue index greater than those which had been referenced up until the
+     store codes, than it must not be chained to preserve oredr of upvalue
+     referenced; otherwise, chaining is optional */
+  else if ((!store->upval || D->a.lastup == store->lastup) &&
+           D->a.lastk == store->lastk &&
+           store->newconstants < 2 && store->newupvals < 2)
+    return STORE_CHAIN_OPTIONAL;
+  return 0;
 }
+
+
+/*
+** return true if the variable in R is discharged by pending assignment STORE
+*/
+static int isvarprimedforstore(DecompState *D, int r, PendingStoreState *store,
+                               int expectedstartpc)
+{
+  DFuncState *fs = D->fs;
+  LocVar *var = getlocvar1(D, r);
+  int n = store->lastreg - r;  /* number of assignments away from the last */
+  if (n == 0 && r >= getlastpersistentvar1(D, store->lastreg))
+    /* last value pushed, first value stored; var starts on the first store */
+    return (var->startpc == expectedstartpc);
+  else {
+    LocVar *nextvar = check_exp(r+1 < fs->nactvar, getlocvar1(D, r+1));
+    int nextvarinit = getlocvarinit1(D, nextvar);
+    /* var starts immediately on the next source value evaluation or the 2
+       variables have the same startpc */
+    return (var->startpc == nextvar->startpc || var->startpc == nextvarinit);
+  }
+}
+
+
+static int
+check_conflict_var(DecompState *D, int r, int RHSstart, int *nconflicts)
+{
+  DFuncState *fs = D->fs;
+  LocVar *safecopyvar = check_exp(isregvalid(fs, r), getlocvar1(D, r));
+  if (safecopyvar->startpc == RHSstart - *nconflicts) {
+    int initpc = getlocvarinit1(D, safecopyvar);
+    Instruction insn = fs->f->code[initpc];
+    int a = GETARG_A(insn), b = GETARG_B(insn);
+    /* initialization should only be 1 OP_MOVE code, than the variable starts
+       directly after */
+    if (initpc+1 == safecopyvar->startpc && GET_OPCODE(insn) == OP_MOVE) {
+      /* it is always a lower reg moved to the first free reg */
+      if (a == r && a > b) {
+        (*nconflicts)++;
+        setvardischarged1(D, a, fs->pc);
+        makepersistent1(D, b);
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+
+/*
+** corresponds to `check_conflict' in `lparser.c'; check if some variables can
+** be discharged by detecting an OP_MOVE generated to resolve assignment
+** conflicts during parsing
+*/
+static void check_conflict(DecompState *D, struct PendingStoreState *store)
+{
+  DFuncState *fs = D->fs;
+  const int savedpc = fs->pc;
+  const int startpc = store->startpc;  /* first store code */
+  /* get the first code that pushes the stored values to compare with variable
+     startpcs */
+  const int prepstart = getevalstart(fs, startpc-1, store->firstreg);
+  int nconflicts = 0;  /* number of conflicts detected so far */
+  for (fs->pc = startpc; fs->pc <= store->pc; fs->pc++) {
+    updateinsn1(D, fs);
+    if (D->a.insn.o == OP_DATA)
+      continue;
+    /* assignment conflicts are caused by VINDEXED or VSLOT expressions */
+    if (IS_OP_SETTABLE(D->a.insn.o)) {
+      /* VINDEXED - check table and index operands */
+      int table = D->a.insn.a;
+      int index = D->a.insn.b;
+      if (table < fs->nactvar)
+        check_conflict_var(D, table, prepstart, &nconflicts);
+      if (!ISK(index) && index != table && index < fs->nactvar)
+        check_conflict_var(D, index, prepstart, &nconflicts);
+    }
+    else if (IS_OP_SETSLOT(D->a.insn.o)) {
+      /* VSLOT - check struct operand */
+      int hstruct = D->a.insn.a;
+      if (hstruct < fs->nactvar)
+        check_conflict_var(D, hstruct, prepstart, &nconflicts);
+    }
+  }
+  fs->pc = savedpc;
+  updateinsn1(D, fs);
+}
+
+
+static int storehasclobbercode1(DecompState *D, PendingStoreState *store)
+{
+  DFuncState *fs = D->fs;
+  int prevpc = getprevpc1(fs, store->startpc);
+  if (prevpc >= 0 && store->laststat == prevpc) {
+    OpCode op = GET_OPCODE(fs->f->code[prevpc]);
+    int a = GETARG_A(fs->f->code[prevpc]);
+    if (a < store->firstreg && beginseval(op, 0, 0, 0, 0)) {
+      if (GET_OPCODE(fs->f->code[store->pc]) == OP_MOVE) {
+        int src = GETARG_B(fs->f->code[store->pc]);
+        expkind k = getslotexpkind1(fs, src);
+        if (k != VNONRELOC)
+          return 2;  /* yes */
+      }
+
+      return 1;  /* optional */
+    }
+  }
+  return 0;
+}
+
+
+static void commitvarsonstack1(DecompState *D);
+static void updatevarsbeforestore1(DecompState *D, int pc,
+                                   PendingStoreState *store);
 
 
 static void dischargestores1(DecompState *D)
 {
   DFuncState *fs = D->fs;
-  struct pendingstorechain1 *store = D->a.store;
+  struct PendingStoreState *store = D->a.store;
+  int hasclobbercode = storehasclobbercode1(D, store);
+  int ischainable;
   lua_assert(store->pc != -1);
   lua_assert(store->startpc != -1);
   lua_assert(store->lastreg != -1);
   lua_assert(store->firstreg != -1);
+  ischainable = storeischainable1(D, store);
+  if (ischainable == STORE_CHAIN_NECESSARY) {
+    /* this is where DISCHARGELIMIT is needed; it tells you whether variables
+       need to be closed in order to allow the assignment to use temporary stack
+       values */
+    if (store->dischargelimit >= store->firstreg) {
+      /* need to end some vars to make the store chainable */
+      /* end of RHS preparation will be the last time LASTREG was clobbered */
+      int endofprep = getslotclobber1(fs, store->lastreg);
+      /* using ENDOFPREP, find start of preparation code, which is used to know
+         where to end the do-block which will close the variables early */
+      int prepstart = getevalstart(fs, endofprep, store->firstreg);
+      if (prepstart > 0) {
+        updatevarsbeforestore1(D, prepstart, store);
+      }
+    }
+  }
+  /* see if the assignment ends with a local that is set by a non-store code,
+     due to the final expression not being VNONRELOC and the final variable
+     being a local, and include that code in the store if so */
+  if (store->startpc > 0 && store->laststat == store->startpc-1) {
+    if (hasclobbercode) {
+      int initpc = getprevpc1(fs, store->startpc);
+      OpCode op = GET_OPCODE(fs->f->code[initpc]);
+      if (op == OP_CONCAT) {  /* handle special case */
+        const OpenExpr *concat = getlastopenexpr1(D);
+        initpc = concat->startpc;
+      }
+      /* find the start of the relocatable expression that was assigned directly
+         to the local variable */
+      else if (store->lastreg+1 < fs->nactvar) {
+        /* get the last variable that is not discharged, it must not be greater
+           then LASTREG, since variables above LASTREG should be temporary
+           values used to evluate the last RHS expression */
+        int r = getlastpersistentvar1(D, store->lastreg+1);
+        /* since the laststat was the clobber code, get the actual laststat */
+        int laststat = store->secondlaststat;
+        if (r <= store->lastreg) {
+          /* for all discharged variables, find the first evluation pc and use
+             the lowest of all of them */
+          for (r = store->lastreg+1; r < fs->nactvar; r++) {
+            LocVar *var = getlocvar1(D, r);
+            int dischargepc = getvarnotepc1(D,var);
+            int varinit = getlocvarinit1(D, var);
+            lua_assert(getvarnote1(D, var) == GENVAR_DISCHARGED);
+            /* make sure this varibale was not discharged by a previous
+               statement before possibly using its result */
+            if (dischargepc > laststat) {
+              if (varinit < initpc)
+                initpc = varinit;
+            }
+          }
+        }
+      }
+      store->startpc = initpc;
+      if (store->laststat >= initpc)
+        store->laststat = store->secondlaststat;
+    }
+  }
+  /* if this is a single store and there are no out-of-order constant
+     references, check if the source variable needs to be kept (not pruned) */
+  if (store->pc == store->startpc && ischainable < STORE_CHAIN_NECESSARY) {
+    LocVar *var = getlocvar1(D, store->lastreg);
+    int initcode = getlocvarinit1(D, var);
+    OpCode o = GET_OPCODE(fs->f->code[initcode]);
+    if (o == OP_LOADK && store->newconstants > 0)
+      /* this handles `local _ = 1; a = _' which is different from `a = 1' */
+      goto nochain;
+    else if (o == OP_GETUPVAL && store->upval && store->lastup < D->a.lastup)
+      /* consider the code
+            local a, b
+            local function c()
+                a = b -- a is upval[0], b is upval[1]
+            end
+         compared to
+            local a, b
+            local function c()
+                local _ = b;  -- b is upval[0]
+                a = _ -- a is upval[1]
+            end
+         the way to catch this is by comparing store->lastup to D->a.lastup; if
+         D->lastup is greater than store->lastup, than a new highest upvalue
+         index has been encountered during the store chain, meaning the upvalues
+         are referenced in order (the second case)  */
+      goto nochain;
+    /* else it can be handled normally */
+  }
   /* if the store chain lasts more than 1 pc and it is not chainable, make sure
-     any registers used as RHS values are made local variables */
-  if (store->startpc != store->pc && !storeischainable1(D, store)) {
-    int i;
-    for (i = store->firstreg; i < fs->nactvar; i++) {
-      LocVar *var = getlocvar1(D, i);
-      enum GENVARNOTE note = getvarnote1(D, var);
-      if (note < GENVAR_DISCHARGED)
-        setvardischarged1(D, i, store->pc);
+     any registers used as RHS values are kept local variables */
+  if (store->startpc != store->pc && !ischainable) {
+    nochain:
+    if (fs->nactvar) {
+      makepersistent1(D, fs->nactvar-1);
+      commitvarsonstack1(D);
     }
   }
   /* if the store is chainable, make sure the registers used to evaluate RHS are
      temporary */
-  else if (store->startpc != store->pc &&
-           fs->nactvar && fs->nactvar-1 == store->lastreg) {
-    int i, numtodelete = 0;
-    for (i = fs->nactvar-1; i >= store->firstreg; i--, numtodelete++) {
-      LocVar *var = getlocvar1(D, i);
-      enum GENVARNOTE note = getvarnote1(D, var);
-      int initstart = getlocvarinit1(D, var);
-      if ((initstart < store->startpc && initstart <= store->laststat) ||
-          ispersistent(note)) {
+  else {
+    const int startpc = store->startpc;
+    const int numonstack = getlastpersistentvar1(D, store->lastreg)+1;
+    int r, expectedstartpc = startpc;
+    /* handle extra values not used in the RHS expression list */
+    /* R starts at the highest non-discharged variable */
+    for (r = numonstack-1; r > store->lastreg; r--) {
+      LocVar *var = getlocvar1(D, r);
+      if (var->startpc != expectedstartpc)
         break;
-      }
+      expectedstartpc = getlocvarinit1(D, var);
     }
-    if (numtodelete) {
-      rollbackvars1(D, fs->nactvar - numtodelete);
+    /* note that if there are no extra values, store->lastreg may be discharged
+       if it was pushed and then immediately stored, and in that case R will not
+       equal LASTREG, so also check if LASTREG is the last variable, i.e. there
+       were no extra values */
+    if (r == store->lastreg || store->lastreg == fs->nactvar-1) {
+      const int laststat = store->laststat;
+      /* discharge extra values on stack */
+      while (++r < numonstack)
+        setvardischarged1(D, r, store->pc);
+      for (r = store->lastreg; r >= store->firstreg; r--) {
+        LocVar *var = getlocvar1(D, r);
+        enum GENVARNOTE note = getvarnote1(D, var);
+        int initstart = getlocvarinit1(D, var);
+        if (initstart < startpc && initstart <= laststat)
+          break;
+        else if (ispersistent(note) &&
+                 !isvarprimedforstore(D, r, store, expectedstartpc))
+          break;
+        setvardischarged1(D, r, store->pc);
+      }
+      /* if all RHS values are discharged, check for save copies of table or
+         struct variables generated with OP_MOVE to fix conflicts */
+      if (store->startpc != store->pc && r < store->firstreg)
+        check_conflict(D, store);
     }
   }
   /* clear pending data */
-  store->pc = store->startpc = store->firstreg = store->lastreg = -1;
-  store->laststat = store->lastup = -1;
-  store->upval = 0;
+  *store = pending_store_init;
 }
 
 
@@ -4292,7 +4666,7 @@ static void restorevars1(DecompState *D, DFuncState *fs, BlockState *bl)
 
 
 
-static void onvarclobber1(DecompState *D, int r, int pc)
+static int onvarclobber1(DecompState *D, int r, int pc)
 {
   DFuncState *fs = D->fs;
   LocVar *var = getlocvar1(D, r);
@@ -4306,7 +4680,7 @@ static void onvarclobber1(DecompState *D, int r, int pc)
         break;
     if (i != r) {
       makepersistent1(D, r);
-      return;
+      return 1;
     }
     setvarnote1(D, r, GENVAR_ONSTACK);
     if (getlocvarinit1(D, var) >= D->a.bl->node->startpc) {
@@ -4319,7 +4693,9 @@ static void onvarclobber1(DecompState *D, int r, int pc)
     else {
       savevarstartpc1(D, fs, var, pc, r);
     }
+    return 0;
   }
+  return 1;
 }
 
 
@@ -4398,11 +4774,12 @@ static void checkunaryvaroptimization1(DFuncState *fs, OpCode o, int pc, int r)
 
 static void updatevars1(DecompState *D, DFuncState *fs)
 {
+  expkind k = VRELOCABLE;  /* from lparser.h expkind */
   OpCode o = D->a.insn.o;
   int a = D->a.insn.a;
   int b = D->a.insn.b;
   int c = D->a.insn.c;
-  struct pendingstorechain1 *store = D->a.store;
+  struct PendingStoreState *store = D->a.store;
   int pc = fs->pc;
   int intestset = D->a.testsetendlabel != -1;
   lua_assert(o != OP_SETLIST);
@@ -4422,7 +4799,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
       if (c) {
         LocVar *var = a < fs->nactvar ? getlocvar1(D, a) : NULL;
         if (var != NULL) {
-          set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);
+          /*set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);*/
           /* if it was on the stack, it is still on the stack; this would be the
              case in a conditional expression with a non-boolean sub-expression,
              for example `local x = a == b and 1', the constant `1' generates
@@ -4439,11 +4816,25 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           /* a variable may not yet exist for the bool labels, for example, in
              the statement `local x = "a" == 1' */
           varstartpc = pc+1;
+          k = VJMP;
           goto l_addvar;
         }
       }
       return;
     }
+    /* determine the expression kind based on the opcode */
+    /*switch (o) {
+      case OP_LOADNIL: lastreg = b; k = VNIL; break;
+      case OP_VARARG: lastreg = r + b - 2; k = VVARARG; break;
+      case OP_LOADBOOL: k = b ? VTRUE : VFALSE; break;
+      case OP_LOADK: k = ttisnumber(&fs->f->k[D->a.insn.bx]) ? VKNUM : VK;
+        break;
+      case OP_GETUPVAL: k = VUPVAL; break;
+      case OP_GETGLOBAL: case OP_GETGLOBAL_MEM: k = VGLOBAL; break;
+      CASE_OP_GETTABLE: k = VINDEXED; break;
+      case OP_GETSLOT: case OP_GETSLOTMT: k = VSLOT; break;
+      default: k = VRELOCABLE; break;
+    }*/
     if (o == OP_LOADNIL || o == OP_VARARG)
       lastreg = (o == OP_LOADNIL) ? b : r + b - 2;
     if (r >= fs->nactvar) {  /* clobbering a free register */
@@ -4466,19 +4857,20 @@ static void updatevars1(DecompState *D, DFuncState *fs)
       }
     }
     else {  /* r < fs->nactvar */
+      int isstat = 0;
       int laststored = lastreg;
       if (laststored >= fs->nactvar)
         laststored = fs->nactvar-1;
       if (beginseval(o, a, b, c, 1)) {
         int i;
         for (i = r; i <= laststored; i++)
-          onvarclobber1(D, i, pc);
+          isstat |= onvarclobber1(D, i, pc);
         if (o == OP_LOADNIL && b >= fs->nactvar) {
           for (i = fs->nactvar; i <= b; i++)
             newlocalvar1(D, i, pc);
         }
-        else if (o == OP_MOVE && b > a && b < fs->nactvar)
-          makepersistent1(D, b);
+        /*else if (o == OP_MOVE && b < a && b < fs->nactvar)
+          makepersistent1(D, b);*/
         {
           /* update variable notes for referenced register operands */
           int slots[3];
@@ -4593,7 +4985,7 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           goto l_addvar;
       }
       else {  /* OP_MOVE is a store */
-        if (o == OP_MOVE) {
+        if (o == OP_MOVE && b > a) {
           if (store->lastreg == -1) {
             store->lastreg = store->firstreg = b;
             store->pc = pc;
@@ -4602,11 +4994,19 @@ static void updatevars1(DecompState *D, DFuncState *fs)
             store->firstreg = b;
             store->pc = pc;
           }
+          else if (b > store->firstreg && store->lastreg == store->firstreg) {
+            store->lastreg = store->firstreg = b;
+            store->startpc = -1;
+            store->pc = pc;
+          }
           if (store->pc == pc && store->startpc == -1) {
             store->startpc = pc;
             store->laststat = D->a.laststat;
+            store->secondlaststat = D->a.secondlaststat;
             store->lastup = D->a.lastup;
+            store->lastk = D->a.lastk;
           }
+          isstat = 1;
         }
       }
       /* update highest clobbered if needed */
@@ -4615,7 +5015,17 @@ static void updatevars1(DecompState *D, DFuncState *fs)
         if (D->rescan == 0 && D->a.bl->highestclobbered < lastreg)
           D->a.bl->highestclobbered = lastreg;
         /* update last statement pc */
-        setlaststat1(D, pc, 0);
+        if (isstat) setlaststat1(D, pc, 0);
+      }
+      if (isstat && store->pc == -1) {
+        int r = fs->nactvar;
+        while (--r >= 0) {
+          enum GENVARNOTE note = getvarnote1(D, getlocvar1(D, r));
+          if (ispersistent(note) && !isonstack(note))
+            break;
+        }
+        store->dischargelimit = r;
+        commitvarsonstack1(D);
       }
     }
     if (o == OP_CLOSURE) {
@@ -4629,6 +5039,8 @@ static void updatevars1(DecompState *D, DFuncState *fs)
       }
       pc = fs->pc;
     }
+    for (; r <= lastreg; r++)
+      setslotclobber1(fs, r, pc, k);
   }
   else if (o == OP_TESTSET) {
     /* A = B if (bool)B equals C */
@@ -4654,12 +5066,14 @@ static void updatevars1(DecompState *D, DFuncState *fs)
           makepersistent1(D, b);
       }
       else {  /* clobberedvar != NULL */
+        setslotclobber1(fs, a, pc, VRELOCABLE);
         if (testedvar != NULL)
           onvarreferenced1(D, b, top, 1);
       }
       D->a.testsetstart = pc;
     }
     else {
+      setslotclobber1(fs, a, pc, VRELOCABLE);
       ontestset1(D, b);
     }
   }
@@ -4676,8 +5090,6 @@ static void updatevars1(DecompState *D, DFuncState *fs)
     else if (srcreg+1 == store->firstreg || store->firstreg == -1) {
       store->firstreg = srcreg;
       store->pc = pc;
-      if (o == OP_SETUPVAL || o == OP_SETUPVAL_R1)
-        store->upval = 1;
     }
     else {
       dischargestores1(D);
@@ -4685,7 +5097,9 @@ static void updatevars1(DecompState *D, DFuncState *fs)
     if (store->pc == pc && store->startpc == -1) {
       store->startpc = pc;
       store->laststat = D->a.laststat;
+      store->secondlaststat = D->a.secondlaststat;
       store->lastup = D->a.lastup;
+      store->lastk = D->a.lastk;
     }
     setlaststat1(D, pc, 1);
   }
@@ -4770,6 +5184,7 @@ static void createexpresult(DecompState *D, int hasendcode, int iscall)
   int resultpc = hasendcode ? D->a.openexpr->endpc : startpc;
   int kind = D->a.openexpr->kind;
   int resultslot = GETARG_A(fs->f->code[resultpc]);
+  int nslots;
   OpCode nextop;
   int nextA;
   int nextB;
@@ -4801,6 +5216,12 @@ static void createexpresult(DecompState *D, int hasendcode, int iscall)
         newlocalvar1(D, resultslot, D->a.openexpr->endpc);
     }
   }
+  if (iscall)
+    nslots = GETARG_C(fs->f->code[resultpc]) - 1;
+  else
+    nslots = 1;
+  while (nslots-- > 0)
+    setslotclobber1(fs, resultslot+nslots, D->a.openexpr->endpc, VNONRELOC);
 }
 
 
@@ -4864,26 +5285,102 @@ static void createinitiallocals1(DecompState *D)
 }
 
 
+/*
+** return true if a constant index higher than K has already been referenced
+*/
+static int waskskipped1(DecompState *D, int k)
+{
+  while (++k < D->fs->f->sizek)
+    if (iskreferenced(D, k)) return 1;
+  return 0;
+}
+
+
+/*
+** return true if a constant index lower than K has not yet been referenced
+*/
+static int doeskskip1(DecompState *D, int k)
+{
+  while (--k >= 0)
+    if (iskreferenced(D, k) == 0) return 1;
+  return 0;
+}
+
+
+/*
+** return true if an upvalue index higher than UP has already been referenced
+*/
+static int wasupvalskipped1(DecompState *D, int up)
+{
+  while (++up < D->fs->f->sizeupvalues)
+    if (isupvalreferenced(D, up)) return 1;
+  return 0;
+}
+
+
+/*
+** return true if an upvalue index lower than UP has not yet been referenced
+*/
+static int doesupvalskip1(DecompState *D, int up)
+{
+  while (--up >= 0)
+    if (isupvalreferenced(D, up) == 0) return 1;
+  return 0;
+}
+
+
 static void updatelastup1(DecompState *D)
 {
+  DFuncState *fs = D->fs;
   OpCode o = D->a.insn.o;
   int b = D->a.insn.b;
   /* update the highest upvalue referenced */
   if (o == OP_GETUPVAL || o == OP_SETUPVAL || o == OP_SETUPVAL_R1) {
     int up = b;
-    if (up > D->a.lastup) {
-      if (up > D->a.lastup+1 && o != OP_GETUPVAL) {
-        D->a.skippedstorerefpc = D->fs->pc;
-        /*set_ins_property(D->fs, D->fs->pc, INS_SKIPPEDREF);*/
+    if (D->a.store->pc != -1)
+       D->a.store->upval = 1;
+    /* same as with constant references, upvalue references are used to check if
+       a store chain is necessary */
+    if (setupvalreferenced(D, up)) {
+      if (D->a.store->pc != -1) {
+        if (wasupvalskipped1(D, up) || doesupvalskip1(D, up)) {
+          D->a.skippedstorerefpc = fs->pc;
+          set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
+        }
+        if (D->a.store->lowestnewupval == -1 || D->a.store->lowestnewupval > up)
+          D->a.store->lowestnewupval = up;
+        if (D->a.store->newupvals < 2)
+          D->a.store->newupvals++;
       }
-      D->a.lastup = up;
+      else {  /* OP_GETUPVAL */
+        if (doesupvalskip1(D, up)) {
+          D->a.store->RHS_skipped_ref = 1;
+          set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
+        }
+      }
     }
+    if (up > D->a.lastup)
+      D->a.lastup = up;
   }
+}
+
+
+static int updatekreference1(DecompState *D, int k, int *newconstantref)
+{
+  if (k > D->a.lastk)
+    D->a.lastk = k;
+  if (setkreferenced(D, k)) {
+    *newconstantref = k;
+    return 1;
+  }
+  return 0;
 }
 
 
 static void updatereferences1(DecompState *D)
 {
+  int newconstants = 0;
+  int newconstantref = -1;
   DFuncState *fs = D->fs;
   OpCode o = D->a.insn.o;
   int b = D->a.insn.b;
@@ -4893,27 +5390,40 @@ static void updatereferences1(DecompState *D)
   int res = referencesk(o, b, c, bx);
   int isref = 0;
   if (res & KREF_B) {
-    setkreferenced(D, INDEXK(b));
+    newconstants += updatekreference1(D, INDEXK(b), &newconstantref);
     isref = 1;
   }
   if (res & KREF_C) {
-    setkreferenced(D, INDEXK(c));
+    newconstants += updatekreference1(D, INDEXK(c), &newconstantref);
     isref = 1;
   }
   else if (res & KREF_BX) {
-    setkreferenced(D, INDEXK(bx));
+    newconstants += updatekreference1(D, INDEXK(bx), &newconstantref);
     isref = 1;
   }
-  if (isstorecode(o) && isref) {
-    int k = (res & KREF_C) ? INDEXK(c) : (res & KREF_B) ? INDEXK(b) :INDEXK(bx);
-    while (--k >= 0) {
-      if (iskreferenced(D, k) == 0) {
-        D->a.skippedstorerefpc = fs->pc;
-        set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-        break;
-      }
+  if (isstorecode(o) && newconstants) {
+    int k = newconstantref;
+    /* detect the necessity of a store-chain by checking order of constant
+       references in the code; in store chains, the variables are stored in
+       reverse order to how they are written in the code, so any new constant
+       references in the store chain will be in descending order, and any
+       constants referenced in the code that pushes the RHS expressions will
+       skip over eany new constants referenced in the store codes */
+    if (waskskipped1(D, k) || doeskskip1(D, k)) {
+      D->a.skippedstorerefpc = fs->pc;
+      set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
     }
   }
+  else if (D->a.store->pc == -1 && newconstants) {
+    if (doeskskip1(D, newconstantref)) {
+      set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
+      D->a.store->RHS_skipped_ref = 1;
+    }
+  }
+  if (newconstants < 0)
+    newconstants = -newconstants;
+  if (D->a.store->startpc != -1)
+    D->a.store->newconstants += newconstants;
   /* check for skipped constant reference in comparison codes */
   if (isref && (o == OP_LT || o == OP_LT_BK || o == OP_LE || o == OP_LE_BK)) {
     /* Consider the difference between the following 2 statements:
@@ -5133,6 +5643,7 @@ static int jump2(DFuncState *fs, int pc, int offs)
 }
 
 
+static void rescancode1(DecompState *D, int startpc, int endpc, BlockState *bl);
 static void rescanvars1(DecompState *D, BlockState *bl);
 
 
@@ -5410,12 +5921,37 @@ static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
 }
 
 
+static void
+updatevarsbeforestore1(DecompState *D, int pc, PendingStoreState *store)
+{
+  BlockNode *block;
+  PendingStoreState savedstore = *store;
+  int firstreg = store->firstreg;
+  *store = pending_store_init;  /* don't discharge the current store yet */
+  block = closelocalvars1(D, firstreg, pc, 0);
+  D->a.prevnode = block;
+  D->a.laststat = block->endpc;
+  D->a.secondlaststat = -1;
+  rescancode1(D, pc, savedstore.startpc, NULL);
+  *store = savedstore;
+  store->laststat = D->a.laststat;
+  store->secondlaststat = D->a.secondlaststat;
+  /*if (firstreg > 0 && fs->nactvar >= firstreg) {
+    int r = firstreg-1;
+    for (; r >= 0; r--) {
+      LocVar *var = getlocvar1(D, r);
+      enum GENVARNOTE getvarnote1(D, var);
+    }
+  }*/
+}
+
+
 static void updatevarsbeforeopenexpr1(DecompState *D)
 {
   DFuncState *fs = D->fs;
   const OpenExpr *expr = D->a.openexpr;  /* the pending open expression */
   closelocalvars1(D, expr->firstreg, expr->startpc, 0);
-  if (expr->firstreg > 0 && D->fs->nactvar >= expr->firstreg) {
+  if (expr->firstreg > 0 && fs->nactvar >= expr->firstreg) {
     int r = expr->firstreg-1;
     for (; r >= 0; r--) {
       LocVar *var = getlocvar1(D, r);
@@ -5611,23 +6147,26 @@ static void checktestsetend1(DecompState *D, int pc)
 }
 
 
-static void rescanvars1(DecompState *D, BlockState *bl)
+static void rescancode1(DecompState *D, int startpc, int endpc, BlockState *bl)
 {
   DFuncState *fs = D->fs;
-  int startnactvar = fs->nactvar;
-  int savedlastup = D->a.lastup;
-  int savedpc = fs->pc;
-  int pc = bl->highestclobberedresetpc;
-  int limitpc = bl == D->a.bl ? fs->pc : (bl+1)->node->startpc;
-  BlockNode *nextchild = bl->node->firstchild;
+  const int savedlastup = D->a.lastup;
+  const int savedlastk = D->a.lastk;
+  const int startnactvar = fs->nactvar;
+  const int savedpc = fs->pc;
   int nextchildstartpc;
-  D->rescan = 1;
-  D->a.lastup = bl->savedlastup;
-  /* find the next node that comes after PC */
-  while (nextchild != NULL && blstartpc(nextchild) < pc)
-    nextchild = nextchild->nextsibling;
-  nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  for (fs->pc = pc; pc < limitpc; pc = ++fs->pc) {
+  BlockNode *nextchild = NULL;
+  if (bl != NULL) {
+    nextchild = bl->node->firstchild;
+    /* find the next node that comes after STARTPC */
+    while (nextchild != NULL && blstartpc(nextchild) < startpc)
+      nextchild = nextchild->nextsibling;
+    nextchildstartpc = nextchild ? nextchild->startpc : -1;
+  }
+  else
+    nextchildstartpc = -1;
+  for (fs->pc = startpc; fs->pc < endpc; ++fs->pc) {
+    int pc = fs->pc;
     if (pc == nextchildstartpc) {
       fs->pc = nextchild->endpc;
       nextchild = nextchild->nextsibling;
@@ -5636,19 +6175,32 @@ static void rescanvars1(DecompState *D, BlockState *bl)
     }
     updateinsn1(D, fs);
     checktestsetend1(D, pc);
-    updatelastup1(D);
     if (test_ins_property(fs, pc, INS_SKIPPEDREF)) {
       if (isstorecode(D->a.insn.o))
         D->a.skippedstorerefpc = pc;
+      else
+        D->a.store->RHS_skipped_ref = 1;
     }
     updatevars1(D, fs);
+    updatereferences1(D);
     /* check for TESTSET start AFTER updating generated variables */
     checktestsetstart1(D, pc);
   }
-  prunevars1(D, startnactvar);
+  if (bl != NULL)
+    prunevars1(D, startnactvar);
   D->rescan = 0;
   D->a.lastup = savedlastup;
+  D->a.lastk = savedlastk;
   fs->pc = savedpc;
+  updateinsn1(D, fs);
+}
+
+
+static void rescanvars1(DecompState *D, BlockState *bl)
+{
+  int startpc = bl->highestclobberedresetpc;
+  int endpc = bl == D->a.bl ? D->fs->pc : (bl+1)->node->startpc;
+  rescancode1(D, startpc, endpc, bl);
 }
 
 
@@ -5979,7 +6531,7 @@ static void endvarshere1(DFuncState *fs, int pc)
 static void simblock1(DFuncState *fs)
 {
   DecompState *D = fs->D;
-  struct pendingstorechain1 store = {-1,-1,-1,-1,-1,-1,0};
+  struct PendingStoreState store = pending_store_init;
   const int needvars = (D->usedebuginfo == 0);
   int nextnodestart;
   int inassignment = 0;
@@ -5990,7 +6542,9 @@ static void simblock1(DFuncState *fs)
   D->a.store = &store;
   D->a.skippedstorerefpc = -1;
   D->a.lastup = 0;
+  D->a.lastk = 0;
   D->a.laststat = -1;
+  D->a.secondlaststat = -1;
   D->a.testsetendlabel = -1;
   D->a.testsetlocvar = -1;
   D->a.testsetnewlocvar = -1;
@@ -6003,7 +6557,8 @@ static void simblock1(DFuncState *fs)
   D->a.nextnode = fs->root->firstchild;
   nextnodestart = NODE_STARTPC(D->a.nextnode);
   /* intiailize referenced-constants bitmap */
-  allockmap(fs->D, fs->f->sizek);
+  allockmap(D, fs->f->sizek);
+  memset(D->upvalmap, 0, sizeof(D->upvalmap));
   /* set starting position of open expressions, which is the last one, as they
      are created in reverse order */
   updatenextopenexpr1(D);
@@ -6109,6 +6664,8 @@ static void simblock1(DFuncState *fs)
     if (needvars) {
       if (pc < fs->f->sizecode-1)
         updatevars1(D, fs);
+      else if (D->a.store->pc != -1)
+        dischargestores1(D);
     }
     else {  /* have debug info */
       /* if a new variable starts here or an active variable is clobbered, mark
@@ -6151,6 +6708,7 @@ static void simblock1(DFuncState *fs)
             test_ins_property(fs, pc+1, INS_BBSUBEXPR) &&
             target <= D->a.bl->node->endpc) {
           LocVar *var = getlocvar1(D, D->a.openexpr->firstreg);
+          (void)var;
           /* an incorrect pc will be marked as the start of the statement
              when correcting the startpc of variables later, (this is
              because this variable is about to be deleted before scanning
@@ -6160,7 +6718,7 @@ static void simblock1(DFuncState *fs)
              an extra pc will also be marked as LOCVAREXPR, but that doesn't
              cause any problems */
           /*set_ins_property(fs, var->startpc, INS_LOCVAREXPR);*/
-          set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);
+          /*set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);*/
           if (test_ins_property(fs, target, INS_BOOLLABEL))
             target += (GETARG_C(fs->f->code[target]) != 0);
           else if (test_ins_property(fs, pc, INS_PASSJUMP))
@@ -6874,6 +7432,7 @@ static void pass1(DFuncState *fs)
   markfollowblock1(fs, func);
   if (fs->D->matchlineinfo)
     recordfixedstartlines1(fs);
+  memset(fs->a->regproperties, 0, fs->a->sizeregproperties * sizeof(SlotDesc));
   /* end of pass1 post-processing */
   (void)badcode;
   (void)updatefirstclob1;
@@ -8957,6 +9516,8 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       else {
         if (i != 0)
           DumpComma(D);
+        if (hasmultretsinglereg(src))
+          src->forceparen = 1;
         dumpexp2(D, fs, src, 0);
       }
       lastsrc = src;
@@ -11158,7 +11719,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     if (pc == sa->pendingcond.target) {
        finalizeconditionalnode2(sa, fs, pc);
     }
-    if (testAMode(o)) { /* A is a register */
+    if (testAMode(o) || o == OP_DATA) { /* A is a register */
       ExpNode *exp;
       lua_assert(!test_ins_property(fs, pc, INS_BREAKSTAT));
       if (sa->pc == node->startpc && node->parentnilvars)
