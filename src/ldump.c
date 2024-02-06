@@ -265,7 +265,7 @@ static void DumpConstants(const Proto *f, DumpState *D)
         DumpChar(bvalue(o),D);
         break;
       case LUA_TLIGHTUSERDATA:
-        DumpSize(cast(size_t, pvalue(o)),D);
+        DumpSize(hlvalue(o),D);
         break;
       case LUA_TNUMBER:
         DumpNumber(nvalue(o),D);
@@ -455,7 +455,7 @@ static void GetStructuresReferenced(const Proto *f, DumpState *D)
       case OP_CHECKTYPE_D: {
         int id = GETARG_Bx(insn);
         if (id != -1) {
-          setpvalue(&key, cast(void *, cast(size_t, id)));
+          sethlvalue(&key, cast(size_t, id));
           val = luaH_set(H, t, &key);
           if (!ttisboolean(val))
             setbvalue(val, 1);
@@ -515,7 +515,7 @@ static void DumpProto(DumpState *D, Table *t, short id)
   TValue key, *val;
   hksc_State *H = D->H;
   StructProto *proto;
-  setpvalue(&key, id2pvalue(id));
+  sethlvalue(&key, cast(size_t, id));
   val = luaH_set(H, t, &key);
   if (ttisboolean(val))  /* already dumped this structure */
     return;
@@ -561,7 +561,7 @@ static void DumpStructures(DumpState *D)
     setnilvalue(key);
     while (luaH_next(H, t, key)) {
       if (ttislightuserdata(key))
-        DumpProto(D, dumped_protos, pvalue2id(key));
+        DumpProto(D, dumped_protos, cast(short, hlvalue(key)));
     }
     killtemp(obj2gco(dumped_protos));
   }

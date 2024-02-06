@@ -67,6 +67,7 @@ struct lua_ui64_s { /* typedef'd as lu_int64 */
 typedef union {
   GCObject *gc;
   void *p;
+  size_t hl;  /* for half literals, avoids casting int to pointer */
   lua_Number n;
   lu_int64 l;
   int b;
@@ -103,6 +104,7 @@ typedef struct lua_TValue {
 #define ttype(o)  ((o)->tt)
 #define gcvalue(o)  check_exp(iscollectable(o), (o)->value.gc)
 #define pvalue(o)  check_exp(ttislightuserdata(o), (o)->value.p)
+#define hlvalue(o)  check_exp(ttislightuserdata(o), (o)->value.hl)
 #define nvalue(o)  check_exp(ttisnumber(o), (o)->value.n)
 #define ui64value(o)  check_exp(ttisui64(o), (o)->value.l)
 #define rawtsvalue(o)  check_exp(ttisstring(o), &(o)->value.gc->ts)
@@ -135,6 +137,9 @@ typedef struct lua_TValue {
 
 #define setpvalue(obj,x) do \
   { TValue *i_o=(obj); i_o->value.p=(x); i_o->tt=LUA_TLIGHTUSERDATA; } while(0)
+
+#define sethlvalue(obj,x) do \
+  { TValue *i_o=(obj); i_o->value.hl=(x); i_o->tt=LUA_TLIGHTUSERDATA; } while(0)
 
 #define setbvalue(obj,x) do \
   { TValue *i_o=(obj); i_o->value.b=(x); i_o->tt=LUA_TBOOLEAN; } while(0)
@@ -173,10 +178,6 @@ typedef struct lua_TValue {
   { const TValue *o2=(obj2); TValue *o1=(obj1); \
     o1->value = o2->value; o1->tt=o2->tt; }
 
-
-/* convert an integral type to and from a pointer */
-#define i2pvalue(i,t)  cast(void *, cast(size_t, cast(unsigned t, i)))
-#define pvalue2i(p,t)  cast(t, cast(size_t, p))
 
 /*
 ** different types of sets, according to destination
@@ -338,45 +339,6 @@ struct StructProto;
 
 #if HKSC_STRUCTURE_EXTENSION_ON
 
-/*
-** Structure Prototypes
-*/
-typedef struct StructProto {
-  size_t nslots;  /* number of slots in this structure definition */
-  lu_byte hasmeta;  /* true if a meta slot has been defined */
-  lu_byte hasproxy;  /* true if a proxy table slot has been defined */
-  short id;  /* unique structure id */
-  TString *name;  /* structure name */
-} StructProto;
-
-
-/* the maximum valid struct prototype id */
-#define LAST_STRUCT_ID ((LUAI_MAXSTRUCTS)-1)
-
-
-#define getproto(u)  cast(StructProto *, (u)+1)
-#define getprotoslots(p)  cast(StructSlot *, (p)+1)
-#define sizestruct(n) (sizeof(StructProto) + (n) * sizeof(StructSlot))
-
-#define id2pvalue(id)  i2pvalue(id, short)
-#define pvalue2id(o)  pvalue2i(pvalue(o), short)
-
-/*
-** reserved slot types
-*/
-#define SLOT_RESERVED_NONE  0  /* not a reserved slot */
-#define SLOT_RESERVED_META  1  /* meta slot */
-#define SLOT_RESERVED_PROXY  2  /* proxy table slot */
-#define SLOT_RESERVED_INTERNAL  3  /* struct prototype slot */
-#define NUM_SLOTS_RESERVED  3
-
-#define SLOT_INDEX_INTERNAL  0
-#define SLOT_INDEX_META  1
-#define SLOT_INDEX_PROXY  2
-
-#define getmetaslot(p)  getprotoslots(p)+SLOT_INDEX_META
-#define getproxytableslot(p)  getprotoslots(p)+SLOT_INDEX_PROXY
-
 /* maximum number of slot definitions allowed per structure prototype */
 #define MAX_STRUCT_SLOTS  224
 
@@ -391,6 +353,49 @@ typedef struct StructSlot {
   lu_byte index;  /* slot index in its parent structure prototype */
   lu_byte position;  /* slot position according to struct layout */
 } StructSlot;
+
+/*
+** Structure Prototypes
+*/
+typedef struct StructProto {
+  size_t nslots;  /* number of slots in this structure definition */
+  lu_byte hasmeta;  /* true if a meta slot has been defined */
+  lu_byte hasproxy;  /* true if a proxy table slot has been defined */
+  short id;  /* unique structure id */
+  TString *name;  /* structure name */
+  StructSlot slots[MAX_STRUCT_SLOTS];
+} StructProto;
+
+
+/* the maximum valid struct prototype id */
+#define LAST_STRUCT_ID ((LUAI_MAXSTRUCTS)-1)
+
+
+#define getproto(u)  cast(StructProto *, (u)+1)
+#define getprotoslots(p)  cast(StructSlot *, (p)->slots)
+#define sizestruct(n) (offsetof(StructProto, slots) + (n) * sizeof(StructSlot))
+
+/*
+** reserved slot types
+*/
+#define SLOT_RESERVED_NONE  0  /* not a reserved slot */
+#define SLOT_RESERVED_META  1  /* meta slot */
+#define SLOT_RESERVED_PROXY  2  /* proxy table slot */
+#define SLOT_RESERVED_INTERNAL  3  /* struct prototype slot */
+#define NUM_SLOTS_RESERVED  3
+
+/*
+** reserved slot indices; the order of reserved slots is:
+**  0 - struct internals (userdata containing StructProto)
+**  1 - struct meta (table/struct)
+**  2 - struct backing (table for keys which do not resolve to slots)
+*/
+#define SLOT_INDEX_INTERNAL  0
+#define SLOT_INDEX_META  1
+#define SLOT_INDEX_PROXY  2
+
+#define getmetaslot(p)  (getprotoslots(p)+SLOT_INDEX_META)
+#define getproxytableslot(p)  (getprotoslots(p)+SLOT_INDEX_PROXY)
 
 
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */

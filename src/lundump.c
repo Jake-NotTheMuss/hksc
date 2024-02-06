@@ -309,7 +309,7 @@ static void LoadConstants(LoadState *S, Proto *f)
         setbvalue(o,LoadChar(S)!=0);
         break;
       case LUA_TLIGHTUSERDATA:
-        setpvalue(o,cast(void *, LoadSize(S)));
+        sethlvalue(o,LoadSize(S));
         break;
       case LUA_TNUMBER:
         setnvalue(o,LoadNumber(S));
@@ -552,14 +552,14 @@ static void UpdateStructCodes(LoadState *S, Proto *f)
       case OP_CHECKTYPE_D: {
         int oldid = GETARG_Bx(insn);
         int newid;
-        setpvalue(&key, i2pvalue(oldid, int));
+        sethlvalue(&key, cast(size_t, oldid));
         val = luaH_get(t, &key);
         if (!ttislightuserdata(val)) {
           error(S, "Malformed opcode stream: not all referenced prototypes "
                 "serialized.");
           return;
         }
-        newid = pvalue2i(pvalue(val), int);
+        newid = cast_int(hlvalue(val));
         SETARG_Bx(f->code[i], newid);
         break;
       }
@@ -604,7 +604,7 @@ static void LoadStructures(LoadState *S)
     }
     {  /* add it to the table */
       TValue key, *val;
-      setpvalue(&key, id2pvalue(id));
+      sethlvalue(&key, cast(size_t, id));
       val = luaH_set(S->H, S->protos, &key);
       setuvalue(val, pdata);
     }

@@ -304,13 +304,13 @@ static TString *structname (LexState *ls) {
 static void initstruct (LexState *ls, TString *name) {
   hksc_State *H = ls->H;
   if (Settings(H).emit_struct) {
-    StructProto *p = &ls->current_proto.p;
+    StructProto *p = &ls->current_proto;
     p->nslots = 0;
     p->hasmeta = 0;
     p->hasproxy = 0;
     p->id = LAST_STRUCT_ID;
     p->name = name;
-    luaR_addreservedslots(H, &ls->current_proto.p, ls->current_proto.s);
+    luaR_addreservedslots(H, &ls->current_proto);
   }
 }
 
@@ -318,16 +318,16 @@ static void initstruct (LexState *ls, TString *name) {
 static void finalizestruct (LexState *ls) {
   hksc_State *H = ls->H;
   if (Settings(H).emit_struct) {
-    StructProto *p = &ls->current_proto.p;
-    StructProto *p1;
-    if (p->nslots == NUM_SLOTS_RESERVED)
+    StructProto *new_proto = &ls->current_proto;
+    StructProto *vm_proto;
+    if (new_proto->nslots == NUM_SLOTS_RESERVED)
       luaX_semerror(ls, "Empty structure definitions are not allowed.");
-    p1 = luaR_getstructbyname(H, p->name);
-    if (p1 != NULL) {
-      if (!luaR_compareproto(p, ls->current_proto.s, p1, getprotoslots(p1)))
+    vm_proto = luaR_getstructbyname(H, new_proto->name);
+    if (vm_proto != NULL) {
+      if (!luaR_compareproto(new_proto, vm_proto))
       {
         type_error(ls, "Structure '%s' already has a different definition.",
-                   p->name);
+                   new_proto->name);
       }
       return;
     }
@@ -335,7 +335,7 @@ static void finalizestruct (LexState *ls) {
       luaX_inputerror(ls, "Cannot define another structure in this VM: too "
                       "many structure prototypes.");
     }
-    luaR_addstructproto(H, p);
+    luaR_addstructproto(H, new_proto);
   }
 }
 
@@ -343,7 +343,7 @@ static void finalizestruct (LexState *ls) {
 static void addstructproxy (LexState *ls) {
   hksc_State *H = ls->H;
   if (Settings(H).emit_struct) {
-    StructProto *p = &ls->current_proto.p;
+    StructProto *p = &ls->current_proto;
     if (p->hasproxy)
       luaX_semerror(ls, "Duplicate 'proxytable' slot definition.");
     p->hasproxy = 1;
@@ -354,7 +354,7 @@ static void addstructproxy (LexState *ls) {
 static void addstructmeta (LexState *ls, TString *typename) {
   hksc_State *H = ls->H;
   if (Settings(H).emit_struct) {
-    StructProto *p = &ls->current_proto.p;
+    StructProto *p = &ls->current_proto;
     StructSlot *metaslot;
     int metatype;
     StructProto *metaproto;
@@ -382,7 +382,7 @@ static void addstructmeta (LexState *ls, TString *typename) {
       metaproto = NULL;
     }
     p->hasmeta = 1;
-    metaslot = &ls->current_proto.s[SLOT_INDEX_META];
+    metaslot = &ls->current_proto.slots[SLOT_INDEX_META];
     metaslot->typeid = metatype;
     metaslot->structid = metaproto ? metaproto->id : 0;
   }
@@ -392,11 +392,11 @@ static void addstructmeta (LexState *ls, TString *typename) {
 static void addstructslot (LexState *ls, TString *slotname, TString *typename) {
   hksc_State *H = ls->H;
   if (Settings(H).emit_struct) {
-    StructProto *p = &ls->current_proto.p;
+    StructProto *p = &ls->current_proto;
     int type;
     size_t i;
     for (i = 0; i < p->nslots; i++) {
-      if (ls->current_proto.s[i].name == slotname) {
+      if (ls->current_proto.slots[i].name == slotname) {
         luaX_semerror(ls, "Duplicate slot name.");
         break;
       }
@@ -426,12 +426,12 @@ static void addstructslot (LexState *ls, TString *slotname, TString *typename) {
                        typename);
           }
         }
-        luaR_addslot(H, p, ls->current_proto.s, slotname, LUA_TSTRUCT,
+        luaR_addslot(H, p, slotname, LUA_TSTRUCT,
                      slotproto->id);
       }
       else {
         if (type == LUA_TANY) type = LUA_TNIL;
-        luaR_addslot(H, p, ls->current_proto.s, slotname, type, -1);
+        luaR_addslot(H, p, slotname, type, -1);
       }
     }
   }

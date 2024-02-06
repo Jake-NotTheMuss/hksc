@@ -243,13 +243,13 @@ static int addmemoslot (FuncState *fs, int kslot)
   Proto *f = fs->f;
   int oldsize = f->sizek;
   TValue key;
-  setpvalue(&key, cast(void *, cast(size_t, kslot)));
+  sethlvalue(&key, cast(size_t, kslot));
   idx = luaH_set(H, fs->h, &key);
   if (ttislightuserdata(idx)) {
-    return cast_int(cast(size_t, pvalue(idx)));
+    return cast_int(hlvalue(idx));
   }
   else {
-    setpvalue(idx, cast(void *, cast(size_t, fs->nk)));
+    sethlvalue(idx, cast(size_t, fs->nk));
     /* reserve 2 more slots */
     luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
                     MAXARG_Bx, "constant table overflow");
@@ -305,7 +305,7 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
   lua_assert(type == TK_LITERALLUD || type == TK_LITERALUI64);
   if (type == TK_LITERALLUD &&
       (hksc_getintliteralsenabled(fs->H) & INT_LITERALS_LUD))
-    setpvalue(&o, lua_ui64tolud(l));
+    sethlvalue(&o, lua_ui64tolud(l));
   else if (type == TK_LITERALUI64) {
     if ((hksc_getintliteralsenabled(fs->H) & INT_LITERALS_UI64) == 0)
       goto literals_not_enabled;

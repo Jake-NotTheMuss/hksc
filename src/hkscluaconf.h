@@ -398,11 +398,10 @@
 
 #ifdef LUA_UI64_S
 #define lua_ui64_testlow4bits(x) (((x).lo & 0xf) != 0)
-#define lua_ui64tolud(x) (cast(void *, cast(size_t, (x).lo) | \
-  (cast(size_t, (x).hi) << 32)))
+#define lua_ui64tolud(x) (cast(size_t, (x).lo) | (cast(size_t, (x).hi) << 32))
 #else
 #define lua_ui64_testlow4bits(x) (((x) & 0xf) != 0)
-#define lua_ui64tolud(x) (cast(void *, cast(size_t, (x))))
+#define lua_ui64tolud(x) cast(size_t, (x))
 #endif /* LUA_UI64_S */
 
 #define LUAI_MAXUI642STR 17 /* 16 hex digits and \0 */

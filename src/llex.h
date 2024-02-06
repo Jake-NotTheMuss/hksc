@@ -88,10 +88,7 @@ typedef struct LexState {
   TString *source;  /* current source name */
   char decpoint;  /* locale decimal point */
 #if HKSC_STRUCTURE_EXTENSION_ON
-  struct {
-    StructProto p;
-    StructSlot s[MAX_STRUCT_SLOTS];
-  } current_proto;
+  StructProto current_proto;
   StructProto *cons_proto;  /* structure in the current HMAKE expression */
 #endif
 } LexState;

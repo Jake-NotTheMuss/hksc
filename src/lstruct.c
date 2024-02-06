@@ -137,9 +137,9 @@ lu_byte luaR_index2pos(hksc_State *H, lu_byte n) {
 }
 
 
-StructSlot *luaR_addslot(hksc_State *H, StructProto *proto, StructSlot *slots,
-                         TString *name, int type, short structid) {
-  StructSlot *slot = slots + proto->nslots;
+StructSlot *luaR_addslot(hksc_State *H, StructProto *proto, TString *name,
+                         int type, short structid) {
+  StructSlot *slot = getprotoslots(proto) + proto->nslots;
   lua_assert(type >= 0);
   lua_assert(proto->nslots < MAX_STRUCT_SLOTS);
   slot->name = name;
@@ -153,20 +153,20 @@ StructSlot *luaR_addslot(hksc_State *H, StructProto *proto, StructSlot *slots,
 }
 
 
-void luaR_addreservedslots(hksc_State *H, StructProto *proto, StructSlot *slots)
+void luaR_addreservedslots(hksc_State *H, StructProto *proto)
 {
   /* add internal slot */
-  StructSlot *slot = luaR_addslot(H, proto, slots,
+  StructSlot *slot = luaR_addslot(H, proto,
                                   G(H)->slotnames[SLOT_RESERVED_INTERNAL],
                                   LUA_TNIL, 0);
   slot->reserved = SLOT_RESERVED_INTERNAL;
   slot->position = 0;  /* internal slot position is 0 */
   /* meta slot */
-  slot = luaR_addslot(H, proto, slots, G(H)->slotnames[SLOT_RESERVED_META],
+  slot = luaR_addslot(H, proto, G(H)->slotnames[SLOT_RESERVED_META],
                       LUA_TNIL, 0);
   slot->reserved = SLOT_RESERVED_META;
   /* prpxy table slot */
-  slot = luaR_addslot(H, proto, slots, G(H)->slotnames[SLOT_RESERVED_PROXY],
+  slot = luaR_addslot(H, proto, G(H)->slotnames[SLOT_RESERVED_PROXY],
                       LUA_TTABLE, -1);
   slot->reserved = SLOT_RESERVED_PROXY;
 }
@@ -186,32 +186,33 @@ StructSlot *luaR_findslot(StructProto *proto, TString *name) {
 /*
 ** compare 2 structure prototypes
 */
-int luaR_compareproto(StructProto *p1, StructSlot *s1, StructProto *p2,
-                      StructSlot *s2) {
+int luaR_compareproto(StructProto *p1, StructProto *p2) {
   size_t i;
   if (p1->nslots != p2->nslots)
-    return 0;
+    return 1;
   if (p1->hasmeta != p2->hasmeta)
-    return 0;
+    return 1;
   if (p1->hasproxy != p2->hasproxy)
-    return 0;
+    return 1;
   if (p1->name != p2->name)
-    return 0;
+    return 1;
   for (i = 0; i < p1->nslots; i++) {
+    StructSlot *s1 = getprotoslots(p1)+i;
+    StructSlot *s2 = getprotoslots(p2)+i;
     if (s1[i].name != s2[i].name)
-      return 0;
+      return 1;
     if (s1[i].structid != s2[i].structid)
-      return 0;
+      return 1;
     if (s1[i].typeid != s2[i].typeid)
-      return 0;
+      return 1;
     if (s1[i].reserved != s2[i].reserved)
-      return 0;
+      return 1;
     if (s1[i].index != s2[i].index)
-      return 0;
+      return 1;
     if (s1[i].position != s2[i].position)
-      return 0;
+      return 1;
   }
-  return 1;
+  return 0;
 }
 
 
@@ -219,7 +220,7 @@ static StructProto *getloadedproto(hksc_State *H, Table *t, short id,
                                 const char *protoname, const char *slotname) {
   TValue key;
   const TValue *res;
-  setpvalue(&key, id2pvalue(id));
+  sethlvalue(&key, cast(size_t, id));
   res = luaH_get(t, &key);
   if (ttisnil(res)) {
     luaD_setferror(H, "Error when loading structure prototype '%s': "
@@ -390,7 +391,7 @@ void luaR_mergeprototypes(hksc_State *H, Table *t) {
         if (slot->typeid == LUA_TSTRUCT) {
           TValue k;
           const TValue *v;
-          setpvalue(&k, id2pvalue(slot->structid));
+          sethlvalue(&k, cast(size_t, slot->structid));
           v = luaH_get(t, &k);
           if (ttisuserdata(v))
             /* update the referenced struct id */
@@ -407,7 +408,7 @@ void luaR_mergeprototypes(hksc_State *H, Table *t) {
     TValue *v = luaH_set(H, t, key);
     /* replace the value with just the struct id so that the userdata can be
        collected */
-    setpvalue(v, id2pvalue(p->id));
+    sethlvalue(v, cast(size_t, p->id));
     killtemp(obj2gco(u));  /* the load userdata can be collected */
   }
   setnilvalue(key);
