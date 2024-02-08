@@ -192,6 +192,10 @@ typedef struct {
     BlockNode *prevnode, *nextnode;
     /* data for last stack value discharge */
     struct { int pc, reg, savedstartpc; } lastdischarged;
+    /* these 3 fields indicate whether the constants `nil', `true', or `false'
+       appear in the function constants table within the range MAXINDEXRK, and
+       therefore could be encoded in a RK operand as a constant */
+    int isnilrk, istruerk, isfalserk;
     int minexprstartpc;  /* used in initial pass for openexpr1 */
     int currvarlimit;
     int nclose;
@@ -1218,6 +1222,33 @@ static int getforloopstartline(DFuncState *fs, BlockNode *node)
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+
+
+static void scanconstants (DecompState *D, const Proto *f)
+{
+  int i;
+  D->a.isnilrk = 0; D->a.istruerk = 0; D->a.isfalserk = 0;
+  /* check if true, false, or nil exist within MAXINDEXRK */
+  /* if any of the given values does not exist in the array within MAXINDEXRK,
+     then any non-label OP_LOADBOOL or OP_LOADNIL that loads that value can
+     certainly not be optimized as an RK operand in the next instruction, which
+     is important for ensuring matching bytecode, as knowing if variables can be
+     pruned is required, and that relies on knowing if/how expression operands
+     can be optimized at the bytecode level */
+  for (i = 0; i <= MAXINDEXRK && i < f->sizek; i++) {
+    const TValue *o = &f->k[i];
+    switch (ttype(o)) {
+      case LUA_TNIL:
+        D->a.isnilrk = 1; break;
+      case LUA_TBOOLEAN:
+        if (bvalue(o)) D->a.istruerk = 1;
+        else D->a.isfalserk = 1;
+        break;
+      default: break;
+    }
+  }
+}
 
 
 static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
@@ -4839,7 +4870,27 @@ static void updatevars1(DecompState *D, DFuncState *fs)
       lastreg = (o == OP_LOADNIL) ? b : r + b - 2;
     if (r >= fs->nactvar) {  /* clobbering a free register */
       if (opLoadsK(o)) {
-        set_ins_property(fs, pc, INS_KLOCVAR);
+        int isklocvar = 1;
+        if (o == OP_LOADK && D->a.insn.bx > MAXINDEXRK)
+          /* index too big to fit in RK operand, so this is as optimal as it can
+             be, meaning it can possibly be discharged in the next operation */
+          isklocvar = 0;
+        else if (D->a.lastk >= MAXINDEXRK) {
+          /* if MAXINDEXRK constants have already been encountered so far, check
+             if the loaded bool or nil value exists in the constants array
+             within the range MAXINDEXRK; if not, it cannot be encoded as an RK
+             operand */
+          if (o == OP_LOADBOOL) {
+            if (b && !D->a.istruerk)
+              isklocvar = 0;
+            else if (!D->a.isfalserk)
+              isklocvar = 0;
+          }
+          else if (o == OP_LOADNIL && !D->a.isnilrk)
+            isklocvar = 0;
+        }
+        if (isklocvar)
+          set_ins_property(fs, pc, INS_KLOCVAR);
       }
       l_addvar:
       /* if OP_VARARG does not specify an upper stack limit, it is not part of a
@@ -4957,10 +5008,31 @@ static void updatevars1(DecompState *D, DFuncState *fs)
                   for the same reasons. */
             if (!otherkmode ||
                 !test_ins_property(fs, getlocvarinit1(D, topvar), INS_KLOCVAR)){
+              int rkmode = (r == c && haveC) ? getCMode(o) : getBMode(o);
               promotedischarged1(D, top, pc);
-              promotebelowdischarged(D, r);
               D->a.lastdischarged.pc = pc;
               D->a.lastdischarged.reg = r;
+              /* promotebelowdischarged is used to indicate that the startpc of
+                 variable R may be updated later if TOP is pruned, i.e. it is
+                 still discharged by the end of the lexical block; you only want
+                 to do this if R was not initialized with a constant that could
+                 have been encoded into an RK operand (INS_KLOCVAR)
+                 example:
+                    local a = nil; -- OP_LOADNIL
+                    a = a + g; -- OP_GETGLOBAL, OP_ADD
+                 if the startpc of `a' was updated to start after the OP_ADD,
+                 which would happen if promotebelowdischarged(D, r) was called,
+                 than the `nil' would be encoded into OP_ADD, and different
+                 bytecode would be generated */
+              /* also, r == b is required; otherwise, the instruction does not
+                 follow the expected bytecode pattern of pushing values and
+                 discharging them to evluate an expression; therefore, TOP is
+                 still discharged, but the variable startpc should still be kept
+                 as it was even if TOP is pruned later */
+              if (r == b &&
+                  ((rkmode != OpArgRK && rkmode != OpArgK) ||
+                   !test_ins_property(fs, getlocvarinit1(D, var), INS_KLOCVAR)))
+                promotebelowdischarged(D, r);
             }
           }
           /* something like OP_ADD 1 1 x  or OP_ADD 1 x 1 where top == 1 */
@@ -7415,6 +7487,7 @@ static void finalizevectors1(DFuncState *fs)
 static void pass1(DFuncState *fs)
 {
   BlockNode *func;
+  scanconstants(fs->D, fs->f);
   simloop1(fs);
   finalizevectors1(fs);
   rescanloops(fs);
