@@ -12012,6 +12012,30 @@ static void MarkGlobals(const Proto *f)
 }
 
 
+/*
+** I use the `reserved' field of TString to encode marked globals, to make the
+** decompiler easier to port to regular Lua, but it will interfere the parser
+** if the globals are not unmarked.
+*/
+static void UnmarkGlobals(const Proto *f)
+{
+  int i;
+  for (i = 0; i < f->sizek; i++) {
+    const TValue *o = &f->k[i];
+    if (ttype(o) == LUA_TSTRING) {
+      TString *ts = rawtsvalue(o);
+      /* max value of a reserved word is NUM_RESERVED */
+      if (ts->tsv.reserved > NUM_RESERVED) {
+        printf("unmarking global '%s'\n", getstr(ts));
+        ts->tsv.reserved = 0;
+      }
+    }
+  }
+  for (i = 0; i < f->sizep; i++)
+    UnmarkGlobals(f->p[i]);
+}
+
+
 static void prescan_enterfunc(DecompState *D)
 {
   D->funcidx++;
@@ -12071,6 +12095,8 @@ static void f_decompiler (hksc_State *H, void *ud) {
     prescan_nodebug(D, f);
   lua_assert(D->funcidx == 0);
   DecompileFunction(D, f);
+  if (D->usedebuginfo == 0)
+    UnmarkGlobals(f);
   UNUSED(H);
 }
 
