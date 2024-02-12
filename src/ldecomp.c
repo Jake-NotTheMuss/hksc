@@ -7284,6 +7284,34 @@ static void fixblockendings1(DFuncState *fs, BlockNode *node)
 }
 
 
+/*
+** check if NODE needs a non-zero PARENTNILVARS field
+*/
+static void checkparentnilvars1(DFuncState *fs, BlockNode *node)
+{
+  BlockNode *child = check_exp(node != NULL, node->firstchild);
+  /* check for variables that start inside a do-block but are part of the parent
+     lexical scope, due to LOADNIL optimization, for example:
+        local a = nil;
+        do
+            local b = nil;
+            local function c() return b; end
+        end */
+  if (node->kind == BL_DO && node->parentnilvars == 0 &&
+      GET_OPCODE(fs->f->code[node->startpc]) == OP_LOADNIL) {
+    const int varendpc = getnaturalvarendpc(node);
+    LocVar *var;
+    for (; (var = getnextlocvaratpc1(fs, node->startpc+1)) != NULL &&
+         var->endpc > varendpc; node->parentnilvars++)
+      ;
+  }
+  while (child != NULL) {
+    checkparentnilvars1(fs, child);
+    child = child->nextsibling;
+  }
+}
+
+
 static int getconditionstart(DFuncState *fs, int pc, int startlimit)
 {
   int i;
@@ -7502,6 +7530,8 @@ static void pass1(DFuncState *fs)
   finalizelexicalblocks1(fs, func);
   fs->nlocvars = 0;
   fixblockendings1(fs, func);
+  fs->nlocvars = 0;
+  checkparentnilvars1(fs, func);
   markfollowblock1(fs, func);
   if (fs->D->matchlineinfo)
     recordfixedstartlines1(fs);
