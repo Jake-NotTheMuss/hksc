@@ -9178,7 +9178,7 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
         /* this is the last expression, check if parens need to be added to
            preserve line info */
         lua_assert(firstexp != NULL && exp != NULL);
-        if (firstexp->line != exp->line)
+        if (firstexp->line > exp->line)
           exp->closeparenline = firstexp->line;
       }
       DumpComma(D);
@@ -9604,6 +9604,8 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
   lastsrc->kind = ENIL;
   lastsrc->aux = lastsrcreg;
   lastsrc->info = exp->info;
+  lastsrc->line = 0;
+  lastsrc->closeparenline = 0;
   D(lprintf("lastsrcreg = %d\n", lastsrcreg));
   for (;;) { /* tarverse the chain to dump RHS values */
     /* get expression to assigm */
@@ -9643,6 +9645,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
         dummy.line = exp->line;
         dummy.closeparenline = exp->closeparenline;
         dummy.pending = 1;
+        dummy.forceparen = 0;
       }
       lua_assert(lastsrc != NULL);
       if (lastsrc->kind == EVARARG && lastsrc->info+lastsrc->aux-1 >= i)
