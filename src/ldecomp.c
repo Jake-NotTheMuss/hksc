@@ -9771,6 +9771,7 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
           DumpComma(D);
         lastexp->pending = 1;
         dumpexp2(D, fs, lastexp, 0);
+        seenfirstexp = 1;
       }
       else {
         DumpLiteral("UNHANDLED CASE in initlocvar2\n",D);
