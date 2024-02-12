@@ -9706,6 +9706,7 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
       firstexp->closeparenline = firstexp->line;
       firstexp->info = firstreg;
       firstexp->aux = lastreg;
+      firstexp->forceparen = 0;
       lastexp = firstexp;
     }
     /*lua_assert(firstexp == checkexpinreg2(fs, firstreg));*/
