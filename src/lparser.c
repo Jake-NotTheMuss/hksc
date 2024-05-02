@@ -1282,6 +1282,34 @@ static int codeconstructor (LexState *ls, expdesc *t) {
 }
 
 
+#ifdef HKSC_TABLESIZE_EXTENSION
+static void numconstexpr (LexState *ls, expdesc *v);
+
+static void constructorsizes (LexState *ls, struct ConsControl *cc) {
+  if (testnext(ls, ':')) {
+    int na = cc->na, nh = cc->nh;
+    expdesc e;
+    if (testnext(ls, ','))
+      goto gethashsize;
+    numconstexpr(ls, &e);
+    na = cast_int(e.u.nval);
+    if (testnext(ls, ',')) {
+      gethashsize: numconstexpr(ls, &e);
+      nh = cast_int(e.u.nval);
+    }
+#if HKSC_STRUCTURE_EXTENSION_ON
+    if (Settings(ls->H).emit_struct && cc->proto && !cc->proto->hasproxy)
+      return;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+    if (na > cc->na)
+      cc->na = na;
+    if (nh > cc->nh)
+      cc->nh = nh;
+  }
+}
+#endif /* HKSC_TABLESIZE_EXTENSION */
+
+
 static void constructor (LexState *ls, expdesc *t) {
   /* constructor -> ?? */
   FuncState *fs = ls->fs;
@@ -1320,6 +1348,9 @@ static void constructor (LexState *ls, expdesc *t) {
   } while (testnext(ls, ',') || testnext(ls, ';'));
   check_match(ls, '}', '{', line);
   lastlistfield(fs, &cc);
+#ifdef HKSC_TABLESIZE_EXTENSION
+  constructorsizes(ls, &cc);
+#endif /* HKSC_TABLESIZE_EXTENSION */
   SETARG_B(fs->f->code[pc], luaO_int2fb(cc.na)); /* set initial array size */
   SETARG_C(fs->f->code[pc], luaO_int2fb(cc.nh));  /* set initial table size */
 }
@@ -1725,6 +1756,54 @@ static BinOpr subexpr (LexState *ls, expdesc *v, unsigned int limit) {
 static void expr (LexState *ls, expdesc *v) {
   subexpr(ls, v, 0);
 }
+
+
+#ifdef HKSC_TABLESIZE_EXTENSION
+static BinOpr numconstsubexpr (LexState *ls, expdesc *v, unsigned int limit) {
+  BinOpr op;
+  UnOpr uop;
+  enterlevel(ls);
+  uop = getunopr(ls->t.token);
+  if (uop == OPR_MINUS) {
+    luaX_next(ls);
+    numconstexpr(ls, v);
+  }
+  else {
+    if (uop != OPR_NOUNOPR)
+      luaX_syntaxerror(ls,"unexpected operator in constant numeric expression");
+    check(ls, TK_NUMBER);
+    simpleexp(ls, v);
+  }
+  lua_assert(v->k = VKNUM);
+  /* expand while operators have priorities higher than `limit' */
+  op = getbinopr(ls->t.token);
+  while (op != OPR_NOBINOPR && priority[op].left > limit) {
+    expdesc v2;
+    BinOpr nextop;
+    if (op == OPR_CONCAT || op >= OPR_NE)
+      luaX_syntaxerror(ls,"unexpected operator in constant numeric expression");
+    luaX_next(ls);
+    /* read sub-expression with higher priority */
+    nextop = numconstsubexpr(ls, &v2, priority[op].right);
+    luaK_posfix(ls->fs, op, v, &v2);
+    op = nextop;
+  }
+  leavelevel(ls);
+  return op;  /* return first untreated operator */
+}
+
+static void numconstexpr (LexState *ls, expdesc *v) {
+  if (ls->t.token == '(') {
+    int line = ls->linenumber;
+    luaX_next(ls);
+    numconstexpr(ls, v);
+    check_match(ls, '(', ')', line);
+    return;
+  }
+  numconstsubexpr(ls, v, 0);
+}
+
+#endif /* HKSC_TABLESIZE_EXTENSION */
 
 /* }==================================================================== */
 

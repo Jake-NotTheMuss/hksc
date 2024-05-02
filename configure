@@ -66,6 +66,8 @@ Lua/Hksc Options:
   --no-emu-ui64            Disable using C structs to emulate UI64
   --multi-plat             Enable multi-platform targeting
   --no-multi-plat          Disable multi-platform targeting (default)
+  --with-table-size        Enable table size extension
+  --no-table-size          Disable table size extension
   --                       Stop handling options
 
 Advanced Options:
@@ -135,6 +137,7 @@ debug_pass=
 test_static=0
 compat_vararg=1
 lua_multiplat=0
+with_table_size=0
 HKSC_TARGET_PLAT=
 
 STRUCTURE_EXTENSION_ON=0
@@ -187,6 +190,8 @@ for opt; do
 		--no-emu-ui64) emu_ui64=0 ;;
 		--multi-plat*) lua_multiplat=1;;
 		--no-multi-plat*) lua_multiplat=0;;
+		--with-table-size) with_table_size=1;;
+		--no-table-size) with_table_size=0;;
 		--target=*) lua_multiplat=1; HKSC_TARGET_PLAT=-m${opt#*=};;
 		--debug) debug=1 ;;
 		--release) debug=0 ;;
@@ -463,6 +468,7 @@ logvar lua_codt6
 logvar lua_codt7
 logvar lua_codiw6
 logvar lua_multiplat
+logvar with_table_size
 logvar HKSC_TARGET_PLAT
 logvar GETGLOBAL_MEMOIZATION
 logvar STRUCTURE_EXTENSION_ON
@@ -645,6 +651,7 @@ s/@LUACONFIG_CODT6@/$lua_codt6/g
 s/@LUACONFIG_CODT7@/$lua_codt7/g
 s/@LUACONFIG_CODIW6@/$lua_codiw6/g
 s/@LUACONFIG_MULTIPLAT@/$lua_multiplat/g
+s/@LUACONFIG_TABLESIZE@/$with_table_size/g
 s/@LUACONFIG_FROMSOFT_TTABLES@/$HKSC_FROMSOFT_TTABLES/g
 s/@HKSC_GETGLOBAL_MEMOIZATION@/$GETGLOBAL_MEMOIZATION/g
 s/@HKSC_STRUCTURE_EXTENSION_ON@/$STRUCTURE_EXTENSION_ON/g
