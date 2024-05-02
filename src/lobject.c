@@ -78,7 +78,8 @@ int luaO_rawequalObj (const TValue *t1, const TValue *t2) {
     case LUA_TBOOLEAN:
       return bvalue(t1) == bvalue(t2);  /* boolean true must be 1 !! */
     case LUA_TLIGHTUSERDATA:
-      return pvalue(t1) == pvalue(t2);
+      /* the compiler uses half-literals in lightuserdata, not pointers */
+      return hlvalue(t1) == hlvalue(t2);
     case LUA_TUI64:
 #ifdef LUA_UI64_S
       return ui64value(t1).hi == ui64value(t2).hi &&
@@ -167,23 +168,6 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
   char *endptr;
   *result = lua_str2ui64(s, &endptr, suffix-s);
   return (endptr == suffix);
-}
-
-
-int luaO_ptr2str(char *str, void *p) {
-  size_t s = cast(size_t, p);
-  if (sizeof(size_t) <= sizeof(long))
-    return sprintf(str, "%lx", cast(unsigned long, s));
-  else {
-    lu_int64 x;
-#ifdef LUA_UI64_S
-    x.hi = cast(lu_int32, s >> 32);
-    x.lo = cast(lu_int32, s & 0xFFFFFFFFul);
-#else /* !LUA_UI64_S */
-    x = cast(lu_int64, s);
-#endif /* LUA_UI64_S */
-    return lua_ui642str(str, x);
-  }
 }
 
 

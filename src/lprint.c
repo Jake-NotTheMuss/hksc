@@ -62,11 +62,10 @@ static void PrintUI64(const lu_int64 literal)
   printf("0x%shl", buff);
 }
 
-static void PrintLUD(void *p)
+static void PrintLUD(size_t s)
 {
-  char buff[LUAI_MAXUI642STR];
-  luaO_ptr2str(buff, p);
-  printf("0x%shi", buff);
+  unsigned long x = cast(unsigned long, s);
+  printf("0x%lxhi", x);
 }
 
 static void PrintConstant(const Proto *f, int i)
@@ -81,7 +80,7 @@ static void PrintConstant(const Proto *f, int i)
       printf(bvalue(o) ? "true" : "false");
       break;
     case LUA_TLIGHTUSERDATA:
-      PrintLUD(pvalue(o));
+      PrintLUD(hlvalue(o));
       break;
     case LUA_TNUMBER:
       printf(LUA_NUMBER_FMT,nvalue(o));
