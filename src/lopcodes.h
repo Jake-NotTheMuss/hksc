@@ -216,7 +216,7 @@ LUAI_DATA const OpCodeDesc luaP_opmodes[NUM_OPCODES];
 
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
-
+#define getOpName(m)  (luaP_opnames[m])
 
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50
