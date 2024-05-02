@@ -83,6 +83,8 @@ Developer Options:
   --standard-lua           Generate LOADNIL and while-loop line mappings like
                            standard Lua 5.1 (this should only be enabled for
                            testing reasons)
+  --no-rk                  Do not encode constants as RK operands
+  --with-rk
   --no-standard-lua
 EOF
 	exit $1
@@ -144,6 +146,7 @@ GETGLOBAL_MEMOIZATION=0
 HKSC_FROMSOFT_TTABLES=0
 
 HKSC_TEST_WITH_STANDARD_LUA=0
+HKSC_NO_RK=0
 
 test -e "$config_file" && . ./"$config_file"
 
@@ -193,6 +196,8 @@ for opt; do
 		--test-without-debug | --test-no-debug) test_with_debug=0  ;;
 		--standard-lua) HKSC_TEST_WITH_STANDARD_LUA=1 ;;
 		--no-standard-lua) HKSC_TEST_WITH_STANDARD_LUA=0 ;;
+		--no-rk) HKSC_NO_RK=1 ;;
+		--with-rk) HKSC_NO_RK=0 ;;
 		--debug-pass=*) debug_pass=${opt#*=} ;;
 		--test-static) test_static=1;;
 		--test-both) test_static=0;;
@@ -468,6 +473,7 @@ logvar WITHDOUBLES
 logvar HKSC_FROMSOFT_TTABLES
 
 logvar HKSC_TEST_WITH_STANDARD_LUA
+logvar HKSC_NO_RK
 
 printvar CC
 printvar CFLAGS
@@ -647,6 +653,7 @@ s/@HKSC_WITHNATIVEINT@/$WITHNATIVEINT/g
 s/@HKSC_WITHDOUBLES@/$WITHDOUBLES/g
 s/@HKSC_TESTING@/$testing/g
 s/@HKSC_TEST_WITH_STANDARD_LUA@/$HKSC_TEST_WITH_STANDARD_LUA/g
+s/@HKSC_NO_RK@/$HKSC_NO_RK/g
 s/@HKSC_DEBUG_PASS@/$debug_pass/g
 " > "$config_h_TMP"
 

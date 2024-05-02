@@ -121,7 +121,11 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 /* gets the index of the constant */
 #define INDEXK(r)  ((int)(r) & ~BITRK)
 
+#if !defined HKSC_NO_RK || defined ldecomp_c
 #define MAXINDEXRK  (BITRK - 1)
+#else
+#define MAXINDEXRK  (-1)
+#endif /* HKSC_NO_RK */
 
 /* code a constant index as a RK value */
 #define RKASK(x)  ((x) | BITRK)
