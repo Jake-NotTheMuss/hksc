@@ -67,24 +67,41 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 
 
 /* creates a mask with `n' 1 bits at position `p' */
-#define MASK1(n,p)  ((~((~(Instruction)0)<<n))<<p)
+#define MASK1(n,p)  ((~((~(Instruction)0)<<(n)))<<(p))
 
 /* creates a mask with `n' 0 bits at position `p' */
 #define MASK0(n,p)  (~MASK1(n,p))
+
+
+#define ISBK(o) \
+  (getOpMode(o) == iABC && (getBMode(o) == OpArgUK || getBMode(o) == OpArgRK))
 
 /*
 ** the following macros help to manipulate instructions
 */
 
 #define GET_OPCODE(i)  (cast(OpCode, ((i)>>POS_OP) & MASK1(SIZE_OP,0)))
-#define SET_OPCODE(i,o)  luaP_set_opcode(&(i), (o))
+#define SET_OPCODE(i,o) do { \
+  OpCode newop = (o), oldop = GET_OPCODE(i); \
+  if (ISBK(oldop)) \
+    newop |= oldop & 1; \
+  (i) = (((i)&MASK0(SIZE_OP,POS_OP)) | \
+  (cast(Instruction, o)<<POS_OP)&MASK1(SIZE_OP,POS_OP)); \
+} while (0)
 
 #define GETARG_A(i)  (cast(int, ((i)>>POS_A) & MASK1(SIZE_A,0)))
 #define SETARG_A(i,u)  ((i) = (((i)&MASK0(SIZE_A,POS_A)) | \
     ((cast(Instruction, u)<<POS_A)&MASK1(SIZE_A,POS_A))))
 
-#define GETARG_B(i) luaP_getarg_b((i))
-#define SETARG_B(i,b) luaP_setarg_b(&(i),(b))
+#define GETARG_B(i) \
+  (cast(int, ((i)>>POS_B) & MASK1(SIZE_B+ISBK(GET_OPCODE(i)),0)))
+#define SETARG_B(i,b) do { \
+  OpCode oldop = GET_OPCODE(i); \
+  int masksize = SIZE_B + ISBK(oldop); \
+  (i) = (((i)&MASK0(masksize,POS_B)) | \
+  ((cast(Instruction, b)<<POS_B)&MASK1(masksize,POS_B))); \
+} while (0)
+
 
 #define GETARG_C(i)  (cast(int, ((i)>>POS_C) & MASK1(SIZE_C,0)))
 #define SETARG_C(i,b)  ((i) = (((i)&MASK0(SIZE_C,POS_C)) | \
@@ -199,11 +216,7 @@ LUAI_DATA const OpCodeDesc luaP_opmodes[NUM_OPCODES];
 
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
-#define getOpName(m)  (luaP_opnames[m])
 
-LUAI_FUNC Instruction luaP_set_opcode(Instruction *i, OpCode o);
-LUAI_FUNC int luaP_getarg_b(Instruction i);
-LUAI_FUNC Instruction luaP_setarg_b(Instruction *i, int b);
 
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50

@@ -1467,11 +1467,11 @@ void luaK_posfix (FuncState *fs, BinOpr op, expdesc *e1, expdesc *e2) {
       break;
     }
     case OPR_CONCAT: {
-      luaK_exp2val(fs, e2);
-      if (e2->k == VRELOCABLE && GET_OPCODE(getcode(fs, e2)) == OP_CONCAT) {
-        lua_assert(e1->u.s.info == GETARG_B(getcode(fs, e2))-1);
+      Instruction *pi = (luaK_exp2val(fs, e2), &getcode(fs, e2));
+      if (e2->k == VRELOCABLE && GET_OPCODE(*pi) == OP_CONCAT) {
+        lua_assert(e1->u.s.info == GETARG_B(*pi)-1);
         freeexp(fs, e1);
-        SETARG_B(getcode(fs, e2), e1->u.s.info);
+        SETARG_B(*pi, e1->u.s.info);
         e1->k = VRELOCABLE; e1->u.s.info = e2->u.s.info;
       }
       else {
