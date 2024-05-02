@@ -169,29 +169,29 @@ enum OpR1Mode {
 
 /*
 ** instruction properties
+** currently using 20 bits for each opcode
+** enum OpMode opmode : 2;
+** enum OpArgMask bmode : 3;
+** enum OpArgMask cmode : 3;
+** int useRA : 1;
+** int tmode : 1;
+** int makeR1 : 1;
+** enum OpR1Mode r1Mode : 2;
+** OpCode r1Version : SIZE_OP;
 */
-struct OpCodeDesc {
-  enum OpMode mode;
-  enum OpArgMask opc;
-  enum OpArgMask opb;
-  lu_byte useRA;
-  lu_byte test;
-  lu_byte makeR1;
-  enum OpR1Mode r1Mode;
-  OpCode r1Version;
-};
+typedef lu_byte OpCodeDesc[3];
 
 
-LUAI_DATA const struct OpCodeDesc luaP_opmodes[NUM_OPCODES];
+LUAI_DATA const OpCodeDesc luaP_opmodes[NUM_OPCODES];
 
-#define getOpMode(m)  (luaP_opmodes[m].mode)
-#define getCMode(m)   (luaP_opmodes[m].opc)
-#define getBMode(m)   (luaP_opmodes[m].opb)
-#define testAMode(m)  (luaP_opmodes[m].useRA)
-#define testTMode(m)  (luaP_opmodes[m].test)
-#define testMakeR1(m) (luaP_opmodes[m].makeR1)
-#define getR1Mode(m)  (luaP_opmodes[m].r1Mode)
-#define getR1Version(m) (luaP_opmodes[m].r1Version)
+#define getOpMode(m)  (cast(enum OpMode, luaP_opmodes[m][0] & 3))
+#define getCMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m][0] >> 5) & 7))
+#define getBMode(m)  (cast(enum OpArgMask, (luaP_opmodes[m][0] >> 2) & 7))
+#define testAMode(m)  (cast(int, luaP_opmodes[m][1] & (1 << 0)))
+#define testTMode(m)  (cast(int, luaP_opmodes[m][1] & (1 << 1)))
+#define testMakeR1(m)  (cast(int, luaP_opmodes[m][1] & (1 << 2)))
+#define getR1Mode(m)  (cast(enum OpR1Mode, (luaP_opmodes[m][1] >> 3) & 3))
+#define getR1Version(m)  (cast(OpCode, luaP_opmodes[m][2]))
 
 
 LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */

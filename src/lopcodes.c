@@ -25,8 +25,10 @@ const char *const luaP_opnames[NUM_OPCODES+1] = {
 ** opcode modes
 */
 #define DEFCODE(name,mode,test,useRA,bmode,cmode,makeR1,useR1,r1Version) \
-  {i##mode,OpArg##cmode,OpArg##bmode,useRA,test,makeR1,useR1,r1Version},
-const struct OpCodeDesc luaP_opmodes[NUM_OPCODES] = {
+  { cast_byte(i##mode | (OpArg##bmode<<2) | (OpArg##cmode<<5)), \
+    cast_byte((useRA) | ((test)<<1) | ((makeR1)<<2) | ((useR1)<<3)), \
+    cast_byte(r1Version) },
+const OpCodeDesc luaP_opmodes[NUM_OPCODES] = {
 #include "lopcodes.def"
 };
 #undef DEFCODE
