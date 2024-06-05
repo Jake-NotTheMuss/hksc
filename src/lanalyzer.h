@@ -15,7 +15,7 @@
 #if defined(ldecomp_c) || defined(lanalyzer_c)
 
 /*
-** basic block types
+** lexical block types
 */
 #define BLTYPE_TABLE \
   DEFBLTYPE(FUNCTION)   /* a Lua function */      \
@@ -40,32 +40,28 @@ enum BLTYPE {
 */
 #define INSFLAG_TABLE \
   DEFINSFLAG(LEADER)  /* instruction is a leader */ \
-  DEFINSFLAG(BBSUBEXPR) \
+  DEFINSFLAG(SEQPT)  /* a statement boundary */ \
+  DEFINSFLAG(ENDSCOPE)  /* end of a lexical scope */ \
   DEFINSFLAG(KLOCVAR)  /* local initialization that pushes a constant */ \
   DEFINSFLAG(FIXEDSTARTLINE)  /* pc corresponds to an earlier source line than \
                              it is mapped to (referred to as `fixed' line) */ \
+  DEFINSFLAG(CONSTRUCTOR)  /* inside a constructor */ \
+  DEFINSFLAG(CONSTRUCTOR_SETTABLE)  /* a settable op in a constructor */ \
   DEFINSFLAG(FAILJUMP)  /* a jump-on-false */ \
   DEFINSFLAG(PASSJUMP)  /* a jump past a jump-on-false */ \
   DEFINSFLAG(BRANCHFAIL) /* false-jump in an if-statement condition */ \
   DEFINSFLAG(BRANCHPASS) /* true-jump in an if-statement condition */ \
   DEFINSFLAG(LOOPFAIL)  /* false-jump in a loop condition */ \
   DEFINSFLAG(LOOPPASS)  /* true-jump in a loop condition */ \
-  DEFINSFLAG(REPEATSTAT)  /* first pc in a repeat-loop */ \
-  DEFINSFLAG(WHILESTAT)  /* first pc in a while-loop */ \
-  DEFINSFLAG(FORLIST)  /* first pc in a list for-loop */ \
-  DEFINSFLAG(FORNUM)  /* first pc in a numeric for-loop */ \
   DEFINSFLAG(BLOCKEND)  /* last pc in a non-loop block */ \
   DEFINSFLAG(AUGBREAK)  /* augmented break in a repeat-loop with upvalues */ \
-  DEFINSFLAG(LOOPEND)  /* last pc in a loop */ \
   DEFINSFLAG(BREAKSTAT)  /* pc is a break instruction */ \
-  DEFINSFLAG(DOSTAT)  /* pc begins a block */ \
   DEFINSFLAG(BOOLLABEL)  /* an OP_LOADBOOL label */ \
   DEFINSFLAG(SKIPBOOLLABEL)  /* a jump over 2 bool labels */ \
   DEFINSFLAG(NILLABEL)  /* an OP_LOADNIL label */ \
-  DEFINSFLAG(TESTSETJUMP)  /* a jump within a testset expression */ \
   DEFINSFLAG(BLOCKFOLLOW)  /* is a valid pc for `return' or `break' */ \
   DEFINSFLAG(LOCVAREXPR)  /* start of a local varible initialization */ \
-  DEFINSFLAG(SAVEDLOCVAREXPR)  /* same as above for a saved local */ \
+  DEFINSFLAG(DISCHARGEDLOCVAREXPR)  /* same as above for a saved local */ \
   DEFINSFLAG(ASSIGNSTART)  /* start of a local statement or store */ \
   DEFINSFLAG(ASSIGNEND)  /* end of a local statement or store */ \
   DEFINSFLAG(SELFUPVAL)  /* OP_CLOSURE uses its own register as an upvalue */ \
@@ -142,31 +138,31 @@ typedef struct BlockState2 {
 
 
 typedef enum {
-  VOIDPREP,  /* use this kind when you need to traverse an instruction sequence
-                but not record it as an open expression */
   CALLPREP,  /* function-call preparation code */
   CONCATPREP,  /* concat preparation code */
   FORNUMPREP,  /* numeric for-loop preparation code */
   FORLISTPREP,  /* list for-loop preparation code */
-  SETLISTPREP,  /* code evaluating items in a table constructor */
-  HASHTABLEPREP,  /* code constructing a table with only hash items */
+  SETLISTPREP,  /* code evaluating a table constructor with array items */
+  HASHTABLEPREP,  /* code evaluating a table constructor with only hash items */
   EMPTYTABLE,  /* an empty table constructor */
-  RETPREP  /* return statement preparation code */
+  RETPREP,  /* return statement preparation code */
+  VOIDPREP  /* use this kind when you need to traverse an instruction sequence
+               but not record it as an open expression */
 } openexptype;
 
 typedef struct OpenExpr {
   int startpc, endpc;
+  /* sharednil is a single bit, but I use an int to encode other information
+     when `sharednil' is not applicable */
+  int sharednil;
 #ifdef LUA_DEBUG
   /* use the enum type when debugging so it's easy to tell what kind it is */
   openexptype kind;
-  unsigned sharednil : 1;
-  unsigned firstreg : 15;
 #else
-  /* save space otherwise */
-  unsigned kind : 4;
-  unsigned sharednil : 1;
-  unsigned firstreg : 11;  /* need at least 8 bits */
+  /* save space otherwise (3 bits needed for the expression kind) */
+  lu_byte kind;
 #endif
+  lu_byte firstreg;  /* 8-bit register index */
 } OpenExpr;
 
 
@@ -197,6 +193,10 @@ typedef enum {
 } expnodekind;
 
 
+/*
+** note: An int or larger is needed for ExpNode indices there can be as many
+** ExpNodes at a time as there can be instructions in a program
+*/
 typedef struct ExpNode {
   expnodekind kind;
   union {
@@ -282,10 +282,21 @@ typedef struct ExpNode {
 
 typedef struct SlotDesc {
   lu_byte flags;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  struct {
+    lu_byte type;  /* type of value in this slot */
+    const struct StructProto *proto;
+  } t;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   union {
+    /* fields used by source code generator */
     struct LocVar *locvar;  /* the local variable that is in this register */
     int expindex;  /* if pending, the ExpNode that is in this register */
-    int lastclobber;  /* used in `pass1' */
+    /* fields used by ExpressionParser */
+    struct {
+      int firstactive;  /* the pc after the evaluation of a value in this slot*/
+      int aux;  /* extra value based on flags */
+    } s;
   } u;
 } SlotDesc;
 
@@ -294,12 +305,16 @@ typedef struct SlotDesc {
 LUAI_FUNC Analyzer *luaA_newanalyzer (hksc_State *H);
 LUAI_FUNC void luaA_freeanalyzer (hksc_State *H, Analyzer *a);
 
-/*
-** call this to allocate a bitmap big enough for NK constants; the caller can
-** then reference a->kmap
-*/
-LUAI_FUNC void luaA_allockmap (hksc_State *H, Analyzer *a, int nk);
-LUAI_FUNC void luaA_freekmap (hksc_State *H, Analyzer *a);
-
 #endif /* HKSC_DECOMPILER */
+
+#ifndef HKSC_VERSION
+#define CASE_OP_SETTABLE case OP_SETTABLE
+#define CASE_OP_CALL case OP_CALL: CASE_OP_TAILCALL
+#define CASE_OP_TAILCALL case OP_TAILCALL
+#define IS_OP_SETTABLE(o)  ((o) == OP_SETTABLE)
+#define IS_OP_SETSLOT(o)  0
+#define IS_OP_CALL(o)  ((o) == OP_CALL || IS_OP_TAILCALL(o))
+#define IS_OP_TAILCALL(o)  ((o) == OP_TAILCALL)
+#endif /* HKSC_VERSION */
+
 #endif

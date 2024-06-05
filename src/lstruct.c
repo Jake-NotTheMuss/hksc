@@ -172,7 +172,7 @@ void luaR_addreservedslots(hksc_State *H, StructProto *proto)
 }
 
 
-StructSlot *luaR_findslot(StructProto *proto, TString *name) {
+StructSlot *luaR_findslot(const StructProto *proto, const TString *name) {
   size_t i;
   for (i = 0; i < proto->nslots; i++) {
     StructSlot *slot = getprotoslots(proto)+i;

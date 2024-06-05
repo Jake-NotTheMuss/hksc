@@ -50,30 +50,6 @@ Analyzer *luaA_newanalyzer (hksc_State *H) {
 }
 
 
-void luaA_allockmap (hksc_State *H, Analyzer *a, int nk) {
-  int numblocks = (nk + 31) >> 5;
-  if (numblocks > 1) {
-    a->kmap = luaM_newvector(H, numblocks, lu_int32);
-    memset(a->kmap, 0, sizeof(lu_int32) * a->sizekmap);
-  }
-  else if (numblocks == 1) {
-    a->kmap = &a->kmap_1;
-    a->kmap_1 = 0;
-  }
-  a->sizekmap = numblocks;
-}
-
-
-void luaA_freekmap (hksc_State *H, Analyzer *a) {
-  if (a->sizekmap > 1) {
-    lua_assert(a->kmap != &a->kmap_1);
-    luaM_freearray(H, a->kmap, a->sizekmap, lu_int32);
-  }
-  a->kmap = NULL;
-  a->sizekmap = 0;
-}
-
-
 void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   struct BlockNode *bn;
   luaM_freearray(H, a->insproperties, a->sizeinsproperties, InstructionFlags);
@@ -82,7 +58,6 @@ void luaA_freeanalyzer (hksc_State *H, Analyzer *a) {
   luaM_freearray(H, a->locvars, a->sizelocvars, struct LocVar);
   luaM_freearray(H, a->upvalues, a->sizeupvalues, TString *);
   luaM_freearray(H, a->actvar, a->sizeactvar, unsigned short);
-  luaA_freekmap(H, a);
   bn = a->bllist.first;
   while (bn != NULL) {
     struct BlockNode *next = bn->next;

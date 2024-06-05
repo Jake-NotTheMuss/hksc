@@ -14,6 +14,8 @@
 #define ldecomp_c
 #define LUA_CORE
 
+#define FuncState CompilerFuncState
+
 #include "hksclua.h"
 
 #include "lanalyzer.h"
@@ -26,10 +28,19 @@
 #include "lparser.h"
 #include "lstate.h"
 #include "lstring.h"
+#ifdef HKSC_VERSION
+#include "lstruct.h"
+#endif /* HKSC_VERSION */
 #include "lundump.h"
 #include "lzio.h"
 
+/* end of includes */
+#undef FuncState
+
+
 #ifdef HKSC_DECOMPILER
+
+#define lua_static_assert(x)  { int assertion[(x) * 2 - 1]; (void)assertion; }
 
 #ifdef HKSC_DECOMP_DEBUG_PASS1
 #undef HKSC_DECOMP_HAVE_PASS2
@@ -37,111 +48,130 @@
 #define HKSC_DECOMP_HAVE_PASS2
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
 
+#ifndef HKSC_VERSION
+#define hksc_State lua_State
+#endif /* HKSC_VERSION */
+
+/*
+** additional reserved values for TStrings to resolve conflicts between global
+** names and generated local names (i.e. f0_local0)
+*/
 #define MARKED_GLOBAL cast_byte(NUM_RESERVED+1)
 #define CONFLICTING_GLOBAL cast_byte(NUM_RESERVED+2)
 
 
-/*
-** Check whether an op loads a constant into register A. Helps determine if a
-** tested expression starts evaluating at an instruction. Ops that load
-** constants warrant their own statements, as otherwise the constant would be
-** indexed as an operand directly in the test-instruction.
-*/
-#define opLoadsK(o) ((o) == OP_LOADK || (o) == OP_LOADBOOL || (o) == OP_LOADNIL)
-
-
-#ifdef LUA_DEBUG
-
-#define DEFBLTYPE(e)  #e,
-static const char *const bltypenames [] = {
-  BLTYPE_TABLE
-  "MAX_BLTYPE"
+enum DecompPhase {
+  DECOMP_PHASE_INITIAL,
+  DECOMP_PHASE_DETECT_LOOPS,
+  DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION,
+  DECOMP_PHASE_PARSE_CONSTRUCTORS,
+  DECOMP_PHASE_PARSE_ASSIGNMENTS,
+  DECOMP_PHASE_PARSE_EXPRESSIONS,
+  DECOMP_PHASE_SCAN_LEXICAL,
+  /* number of decompiler phases */
+  DECOMP_PHASE_COUNT,
+  /* first bytecode scan phase */
+  DECOMP_PHASE_FIRST_BYTECODE_SCAN = DECOMP_PHASE_DETECT_LOOPS
 };
-#undef DEFBLTYPE
 
-#define DEFINSFLAG(e)  "INS_" #e,
-static const char *const insflagnames [] = {
-  INSFLAG_TABLE
-  "MAX_INSFLAG"
-};
-#undef DEFINSFLAG
-
-#define DEFREGFLAG(e)  "REG_" #e,
-static const char *const regflagnames [] = {
-  REGFLAG_TABLE
-  "MAX_REGFLAG"
-};
-#undef DEFREGFLAG
-
-#define bltypename(v) (bltypenames[v])
-#define insflagname(v) (insflagnames[v])
-#define regflagname(v) (regflagnames[v])
-
-#else /* !LUA_DEBUG */
-
-#define bltypename(v) ("")
-#define insflagname(v) ("")
-#define regflagname(v) ("")
-
-#endif /* LUA_DEBUG */
+#define changephase(D,p) ((D)->phase = (p))
+#define assertphase(D,p) lua_assert((D)->phase == (p));
 
 
 /* for formatting decimal integers in generated variable names */
 #define INT_CHAR_MAX_DEC (3 * sizeof(int) * (CHAR_BIT/8))
 
-struct DFuncState;
+struct FuncState;  /* decompiler function state */
 
-struct HoldItem; /* used in pass2 to hold onto strings before dumping them */
+struct HoldItem;  /* used in pass2 to hold onto strings before dumping them */
 
 /* `pass1' structs */
 struct LoopState;
 struct BlockState;
-struct PendingStoreState;
+
+/*
+** while OponExpr describes a section of code that must push values to the free
+** stack space, StackExpr describes code which looks like an open expression,
+** but may be clobbering local variables or free stack space
+*/
+typedef struct StackExpr {
+  /* first and last pc of the expression */
+  int startpc, endpc;
+  /* if this expression has a jump, the offset (I use the offset to save some
+     bits, as you only need SIZE_Bx-1 to represent an unsigned offset, and it is
+     unsigned because conditional expressions only have forward jumps with
+     non-zero offsets; a value of zero indicates no jump) */
+  unsigned int jump : (SIZE_Bx-1);
+  /* first register pushed to */
+  unsigned int firstreg : SIZE_A;
+  /* last register with a value yet to be used at the time of ENDPC */
+  unsigned int lastreg : SIZE_A;
+} StackExpr;
+
+
+#ifndef HKSC_VERSION
+#define HKSC_STRUCTURE_EXTENSION_ON 0
+#endif /* HKSC_VERSION */
+
+
+struct ConsControl {
+#if HKSC_STRUCTURE_EXTENSION_ON
+  const struct StructProto *proto;
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  int startpc, endpc;
+  int setlist;  /* pc of last SETLIST */
+  int nhash;
+};
+
+
+struct StoreList;
 
 typedef struct linemap {
   int pc, line;
 } linemap;
 
+
 /*
-** an entry to map a local variable to a saved startpc; this is used when
-** generating local variables to properly compute the lifetime of a variable
-** when it may exist in both a parent and child block
+** macros to define and create vectors of element type T
 */
-typedef struct index2pc_s {
-  int index;  /* the index of the LocVar in fs->locvars */
-  int pc;  /* the variable startpc */
-  int state;  /* encodes both the slot and the state: a positive value indicates
-                 state 1, and subtract 1 to get the slot number, the first state
-                 is where the variable startpc is saved while a child block is
-                 being processed, where the variable started in the parent
-                 block; a negative value indicates state 2, where the variable
-                 is ended so that it only exists in the child block, but it may
-                 need to be rezurrected later if the slot gets referenced again,
-                 take the negative of this value to get the slot number */
-} index2pc_t;
+#define VEC_DECL(T,name) struct { T *s; int used, alloc; } name
 
-#define VEC_STRUCT(T,name) \
-  struct { T *s; int used, alloc; } name
+#define VEC_GROW(H,v) do { \
+  if ((v).used+1 > (v).alloc) \
+    (v).s=luaM_growaux_(H, (v).s, &(v).alloc, sizeof((v).s[0]), MAX_INT, ""); \
+} while (0)
 
-#define VEC_INIT(name) ((name).s = NULL, (name).used = 0, (name).alloc = 0)
+#define VEC_FREE(H,v) do { \
+  luaM_freemem(H, (v).s, (v).alloc * sizeof((v).s[0])); \
+  (v).s = NULL; (v).used = (v).alloc = 0; \
+} while (0)
 
-#define VEC_FREE(H,name,T) luaM_freearray(H, (name).s, (name).alloc, T)
 
-#define VEC_GROW(H,name,T) \
-  luaM_growvector(H,(name).s,(name).used,(name).alloc,T,MAX_INT,"")
+#define bitmapnumblocks(n) cast_int((cast(unsigned int, (n)) + 31) >> 5)
 
-#define SIZE_STATIC_KMAP 2
-#define SIZE_UPVAL_MAP 8 /* LUAI_MAXUPVALUES is less then 250 */
+/*
+** static sizes of bitmaps
+** - kmap is the constants bitmap, used to mark which constants have been
+**   referenced so far - 8 blocks gives 256 bits, which will usually be enough
+**   for a program, but if more is needed, a heap-allocated bitmap is used
+** - upvalmap is the upvalues bitmap, used to mark which upvalues have been
+**   referenced so far - at most 8 blocks is needed
+*/
+#define SIZE_STATIC_KMAP bitmapnumblocks(256)
+/* LUAI_MAXUPVALUES is less then 250 */
+#define SIZE_UPVAL_MAP bitmapnumblocks(250)
 
 /*
 ** DecompState - state of decompilation across all functions
 */
 typedef struct {
   hksc_State *H;
-  struct DFuncState *fs;  /* current function state */
+  struct FuncState *fs;  /* current function state */
   lua_Writer writer;
   void *data;
   const char *name;  /* input name */
+  const Proto *mainfunc;
+  enum DecompPhase phase;
   int status;
   int rescan;  /* true if rescanning code in the first pass */
   int usedebuginfo;  /* true if using debug info */
@@ -163,16 +193,24 @@ typedef struct {
   /* Pass 1 dynamic vectors - instances of these arrays to do not need to exist
      per-function, because the first pass is not recursive, i.e. each closure in
      the program is analyzed consecutively */
-  VEC_STRUCT(struct LoopState, loopstk);
-  VEC_STRUCT(struct BlockState, blockstk);
-  VEC_STRUCT(BlockNode *, freeblocknodes);
-  VEC_STRUCT(int, varnotes);
+#define VEC_LIST \
+  DEF_VEC(struct LoopState, loopstk) \
+  DEF_VEC(int, blockstk) \
+  DEF_VEC(BlockNode *, freeblocknodes) \
+  DEF_VEC(int, varnotes) \
+  DEF_VEC(StackExpr, stackexpr) \
+  DEF_VEC(struct ConsControl, cons) \
+  DEF_VEC(BlockNode, loopnodes) \
+  DEF_VEC(int, cons_pc) \
+  DEF_VEC(struct ConsControl, cons_state) \
+  DEF_VEC(linemap, fixedstartlines)
+#define DEF_VEC(T,n) VEC_DECL(T,n);
+  VEC_LIST
+#undef DEF_VEC
   /* vector for fixed start-lines for pc which have `fixed lines', that is,
      they correspond to lines in source code that are earlier than the line that
      they are mapped to in debug info */
-  VEC_STRUCT(linemap, fixedstartlines);
-  VEC_STRUCT(index2pc_t, savedstartpc);
-  VEC_STRUCT(index2pc_t, savedrepeatvars);
+  /*VEC_DECL(linemap, fixedstartlines);*/
   /* constants bitmap - each bit represents whether the corresponding constant
      has been referenced in the current function - used in the first pass when
      generating variable info */
@@ -182,28 +220,32 @@ typedef struct {
   lu_int32 kmap_1[SIZE_STATIC_KMAP];
   lu_int32 upvalmap[SIZE_UPVAL_MAP];
   int sizekmap;
+  struct ExpressionParser *parser;
   /* this structure is for per-function data that only needs to be instanced
      once at any time, because it is only needed in the initial passes where
      functions are processsed consecutively, not recursively */
   struct {
-    const OpenExpr *openexpr;
-    struct BlockState *bl;
-    struct PendingStoreState *store;
+    const OpenExpr *openexpr;  /* next OpenExpr to process while scanning */
+    struct BlockState *bl;  /* current block scope */
+    /* prevnode is the lexical scope that was just left, nextnode is the next
+       child scope to enter while scanning */
     BlockNode *prevnode, *nextnode;
-    /* data for last stack value discharge */
+    /* the current building StackExpr which will be moved to the stack once it
+       has ended */
+    BlockNode *currscope;
+    StackExpr currexpr;
+    /* the endpc of the OpenExpr within the current StackExpr if the OpenExpr
+       starts at the same pc, or -1 */
+    int currexpr_open;
+    struct StoreList *currstore;
+    /* some bits to encode new upvalue and constant references in the current
+       instruction while scanning, updated on each instruction */
+    lu_int32 newref;
     struct { int pc, reg, savedstartpc; } lastdischarged;
-    /* these 3 fields indicate whether the constants `nil', `true', or `false'
-       appear in the function constants table within the range MAXINDEXRK, and
-       therefore could be encoded in a RK operand as a constant */
-    int isnilrk, istruerk, isfalserk;
     int minexprstartpc;  /* used in initial pass for openexpr1 */
     int currvarlimit;
     int nclose;
-    int skippedstorerefpc;
-    int lastup;
-    int lastk;
     int laststat;
-    int secondlaststat;  /* needed for `struct PendingStoreState' */
     int testsetendlabel;  /* current TESTSET end label or -1 */
     /* if the current testset expression is assigning to an existing local,
        then this holds the slot of that local, otherwise it is -1 */
@@ -223,6 +265,13 @@ typedef struct {
       OpCode o;
       int a, b, c, bx, sbx;
     } insn;
+    lu_byte currexpr_expectedreg;
+    /* these 3 bits indicate whether the constants `nil', `true', and `false'
+       appear in the function constants table within the range MAXINDEXRK, and
+       therefore will be encoded in a RK operand as a constant when used as an
+       operand in arithmetic or table access */
+    unsigned int isnilrk : 1, istruerk : 1, isfalserk : 1;
+    unsigned int inassignment : 1;
   } a;
   /* Pass 2 data that does not need to exist per-function */
   struct HoldItem *holdfirst;  /* first hold item in the chain */
@@ -237,13 +286,18 @@ typedef struct {
 } DecompState;
 
 
+/******************************************************************************/
+/* Bitmaps */
+/******************************************************************************/
+
+
 /*
 ** ensure D->kmap has enough space for NK constants
 */
 static void allockmap (DecompState *D, int nk)
 {
   int prevnumblocks = D->sizekmap;
-  int numblocks = (nk + 31) >> 5;
+  int numblocks = bitmapnumblocks(nk);
   if (prevnumblocks > SIZE_STATIC_KMAP) {
     /* current vector is dynamically allocated, grow if needed */
     if (numblocks > prevnumblocks) {
@@ -263,9 +317,6 @@ static void allockmap (DecompState *D, int nk)
 }
 
 
-/*
-** free D->kmap
-*/
 static void freekmap (DecompState *D)
 {
   if (D->sizekmap > SIZE_STATIC_KMAP) {
@@ -277,49 +328,88 @@ static void freekmap (DecompState *D)
 }
 
 
-/*
-** test bit K in the constants bitmap
-*/
-static int iskreferenced (DecompState *D, unsigned int k)
-{
-  return ((D->kmap[k >> 5] & (1u << (k & 31))) != 0);
+static int bitmaptest (const lu_int32 *bitmap, unsigned int index) {
+  return (bitmap[index >> 5] & (1u << (index & 31))) != 0;
+}
+
+
+static int bitmapset (lu_int32 *bitmap, unsigned int index) {
+  int wasunset = !bitmaptest(bitmap, index);
+  bitmap[index >> 5] |= cast(lu_int32, 1) << (index & 31);
+  return wasunset;
 }
 
 
 /*
-** set bit K in the constants bitmap, marking it as having been referenced
+** return the position of the first set bit in BLOCK
 */
-static int setkreferenced (DecompState *D, unsigned int k)
-{
-  int ret = iskreferenced(D, k);
-  D->kmap[k >> 5] |= (1u << (k & 31));
-  return !ret;  /* return true if it was not already set */
+static int findfirstset (lu_int32 block) {
+  int bit = 0;
+  if ((block & 0xffff) == 0)
+    block >>= 16, bit += 16;
+  if ((block & 0xff) == 0)
+    block >>= 8, bit += 8;
+  if ((block & 0xf) == 0)
+    block >>= 4, bit += 4;
+  if ((block & 3) == 0)
+    block >>= 2, bit += 2;
+  if ((block & 1) == 0)
+    bit += 1;
+  return bit;
 }
 
 
 /*
-** test bit U in the upval bitmap
+** find the first set or unset bit in the bitmap within NBITS starting at OFFSET
 */
-static int isupvalreferenced (DecompState *D, unsigned int u)
-{
-  return ((D->upvalmap[u >> 5] & (1u << (u & 31))) != 0);
+static int bitmapfind (const lu_int32 *bitmap, int nbits, int offset, int set) {
+  int i, numblocks = bitmapnumblocks(nbits);
+  lua_assert(offset >= 0 && offset <= nbits);
+  /* skip over completely set or unset blocks, starting at bit OFFSET */
+  i = bitmapnumblocks(offset+1)-1;
+  if (i < numblocks) {
+    /* the first test excludes the bits before the offset */
+    const lu_int32 excludedbits = (1u << (offset & 31)) - 1;
+    const lu_int32 comparebits = set ? 0 : ~0u;
+    lu_int32 firstblock = bitmap[0];
+    firstblock = set ? firstblock & ~excludedbits : firstblock | excludedbits;
+    /* traverse blocks */
+    if (firstblock == comparebits) do ;
+    while (++i < numblocks && bitmap[i] == comparebits);
+    /* check for block partially set */
+    if (i < numblocks) {
+      lu_int32 block = set ? bitmap[i] : ~bitmap[i];
+      /* exclude any extra bits at the end of the bitmap */
+      if (i == numblocks-1 && (nbits & 31)) {
+        block &= (1u << (nbits & 31)) - 1;
+        if (block == 0) return -1;
+      }
+      return findfirstset(block) + (cast(unsigned int, i) << 5);
+    }
+  }
+  return -1;
 }
 
 
+#define bitmapfindunset(b,n,o) bitmapfind(b,n,o,0)
+#define bitmapfindset(b,n,o) bitmapfind(b,n,o,1)
+
+
 /*
-** set bit U in the upval bitmap, marking it as having been referenced
+** return true if BIT is set consecutively, meaning all bits before BIT are set
+** and all bits after BIT are unset
 */
-static int setupvalreferenced (DecompState *D, unsigned int u)
-{
-  int ret = isupvalreferenced(D, u);
-  D->upvalmap[u >> 5] |= (1u << (u & 31));
-  return !ret;  /* return true if it was not already set */
+static int isbitconsecutive (const lu_int32 *bitmap, int nbits, int bit) {
+  lua_assert(bit < nbits);
+  lua_assert(bitmaptest(bitmap, bit));
+  return (bitmapfindunset(bitmap, bit, 0) == -1 &&
+          bitmapfindset(bitmap, nbits, bit+1) == -1);
 }
 
 
 /* a decompiled function */
-typedef struct DFuncState {
-  struct DFuncState *prev;  /* enclosing function */
+typedef struct FuncState {
+  struct FuncState *prev;  /* enclosing function */
   DecompState *D;  /* decompiler state */
   Analyzer *a;  /* function analyzer data */
   const Proto *f;  /* current function header */
@@ -334,6 +424,7 @@ typedef struct DFuncState {
                                in the current block node */
   int startlinemapbase;  /* local base of FIXEDSTARTLINES for this funcstate */
   int pc;
+  int freereg;
   int inopenexpr;
   int sizelocvars;
   int sizeupvalues;
@@ -343,256 +434,104 @@ typedef struct DFuncState {
   int lastcallexp;  /* exp index of last function call node */
   int curr_constructor;  /* exp index of current table constructor */
   int nopencalls;  /* number of OpenExpr entries created */
-} DFuncState;
+} FuncState;
 
 
 #ifdef LUA_DEBUG
 #define D(x) x
 
-static void lprintf(const char *fmt, ...)
-{
-  va_list argp;
-  va_start(argp, fmt);
-  for (;;) {
-    const char *e = strchr(fmt, '%');
-    if (e == NULL) break;
-    printf("%.*s", cast_int(e-fmt), fmt);
-    switch (*(e+1)) {
-      case 's': {
-        const char *s = va_arg(argp, char *);
-        if (s == NULL) s = "(null)";
-        fputs(s, stdout);
-        break;
-      }
-      case 'R': /* register flag */
-        printf("%s", regflagname(va_arg(argp, int)));
-        break;
-      case 'I': /* instruction flag */
-        printf("%s", insflagname(va_arg(argp, int)));
-        break;
-      case 'i': /* pc */
-        printf("%d", va_arg(argp, int)+1);
-        break;
-      case 'o': /* opcode */
-        printf("OP_%s", getOpName(va_arg(argp, OpCode)));
-        break;
-      case 'O': { /* opcode + operands */
-        Instruction i = va_arg(argp, Instruction);
-        OpCode o = GET_OPCODE(i);
-        int a = GETARG_A(i);
-        int b = GETARG_B(i);
-        int c = GETARG_C(i);
-        int bx = GETARG_Bx(i);
-        int sbx = GETARG_sBx(i);
-        printf("OP_%s ", getOpName(o));
-        switch (getOpMode(o)) {
-          case iABC:
-            printf("%d", a);
-            if (getBMode(o)!=OpArgN) {
-              if (ISK(b)) printf(" K(%d)", INDEXK(b));
-              else printf(" %d", b);
-            }
-            if (getCMode(o)!=OpArgN) {
-              if (ISK(c)) printf(" K(%d)", INDEXK(c));
-              else printf(" %d", c);
-            }
-            break;
-          case iABx:
-            printf("%d %d", a, bx);
-            break;
-          case iAsBx:
-            if (o == OP_JMP) printf("%d",sbx);
-            else printf("%d %d", a, sbx);
-            break;
-        }
-        break;
-      }
-      case 'B': { /* BlockNode * */
-        BlockNode *block = va_arg(argp, BlockNode *);
-        if (block != NULL)
-          printf("(%s) (%d-%d)", bltypename(block->kind), block->startpc+1,
-                 block->endpc+1);
-        else
-          printf("(NULL)");
-        break;
-      }
-      case 'b': { /* BlockNode * (type only) */
-        BlockNode *block = va_arg(argp, BlockNode *);
-        if (block != NULL)
-          printf("%s", bltypename(block->kind));
-        else
-          printf("(NULL)");
-        break;
-      }
-      case 'c':
-        putchar(va_arg(argp, int));
-        break;
-      case 'd':
-        printf("%d", va_arg(argp, int));
-        break;
-      case 'u':
-        printf("%u", va_arg(argp, unsigned int));
-        break;
-      case 'p':
-        printf("%p", va_arg(argp, void *));
-        break;
-      case '%':
-        putchar('%');
-        break;
-      default:
-        putchar('%');
-        putchar(*(e+1));
-        break;
-    }
-    fmt = e+2;
-  }
-  if (*fmt != '\0')
-    printf("%s", fmt);
-  va_end(argp);
+/******************************************************************************/
+/* Debug print functions */
+/******************************************************************************/
+
+static const char *blocktypename (int i) {
+#define DEFBLTYPE(e)  #e,
+  static const char *const blocktypenames [] = { BLTYPE_TABLE NULL };
+#undef DEFBLTYPE
+  return blocktypenames[i];
 }
 
-static void printinsflags(DFuncState *fs, int pc, const char *preamble)
-{
+
+static void printinsflags (const FuncState *fs, int pc) {
+#define DEFINSFLAG(e)  "INS_" #e,
+  static const char *const insflagnames [] = { INSFLAG_TABLE NULL };
+#undef DEFINSFLAG
   int i;
-  lprintf("%spc (%i):", preamble, pc);
+  printf("pc (%d):", pc+1);
   for (i = 0; i < MAX_INSFLAG; i++) {
     if (fs->a->insproperties[pc] & (1 << i))
-      lprintf("  %I", i);
+      printf("  %s", insflagnames[i]);
   }
-  lprintf("\n");
+  printf("\n");
 }
-
-
-#ifdef HKSC_DECOMP_HAVE_PASS2
-static void printregflags(DFuncState *fs, int reg, const char *preamble)
-{
-  int i;
-  lprintf("%sreg (%d):", preamble, reg);
-  for (i = 0; i < MAX_REGFLAG; i++) {
-    if (fs->a->regproperties[reg].flags & (1 << i))
-      lprintf("  %R", i);
-  }
-  lprintf("\n");
-}
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
-
 
 #else /* !LUA_DEBUG */
 #define D(x) ((void)0)
-#define printinsflags(fs,pc,preamble) ((void)0)
 #endif /* LUA_DEBUG */
 
 
-#define CHECK(fs,c,msg) if (!(c)) badcode(fs,msg)
+#define CHECK(fs,c,msg) if (!(c)) fatalerror(fs,msg)
 
-static void badcode(DFuncState *fs, const char *msg)
-{
+static void fatalerror (FuncState *fs, const char *msg) {
   const char *name = fs->D->name;
   luaD_setferror(fs->H, "%s: bad code in precompiled chunk: %s", name, msg);
   luaD_throw(fs->H, LUA_ERRSYNTAX);
 }
 
 
-static int ispcvalid(DFuncState *fs, int pc)
-{
+static int ispcvalid (const FuncState *fs, int pc) {
   return (pc >= 0 && pc < fs->f->sizecode);
 }
 
 
-static int isregvalid(DFuncState *fs, int reg)
-{
+static int isregvalid (const FuncState *fs, int reg) {
   return (reg >= 0 && reg < fs->f->maxstacksize);
 }
 
 
-/*
-** test_ins_property - check if flag PROP is set on the instruction at PC
-*/
-static int test_ins_property(DFuncState *fs, int pc, int prop)
-{
+static int test_ins_property (const FuncState *fs, int pc, int prop) {
   lua_assert(ispcvalid(fs, pc));
-  return ((fs->a->insproperties[pc] & (1 << prop)) != 0);
-}
-
-#define check_ins_property(fs,pc,prop) lua_assert(test_ins_property(fs,pc,prop))
-
-
-/*
-** set_ins_property - set flag PROP for the instruction at PC
-*/
-static void set_ins_property(DFuncState *fs, int pc, int prop)
-{
-  lua_assert(ispcvalid(fs, pc));
-#ifdef LUA_DEBUG
-  lprintf("  marking pc (%i) as %I\n", pc, prop);
-  lua_assert(pc >= 0 && pc < fs->f->sizecode);
-  printinsflags(fs, pc, "  previous flags for ");
-#endif /* LUA_DEBUG */
-  fs->a->insproperties[pc] |= (1 << prop);
+  return ((fs->a->insproperties[pc] & (cast(lu_int32, 1) << prop)) != 0);
 }
 
 
-/*
-** unset_ins_property - clear flag PROP for the instruction at PC
-*/
-static void unset_ins_property(DFuncState *fs, int pc, int prop)
-{
+static void set_ins_property (FuncState *fs, int pc, int prop) {
   lua_assert(ispcvalid(fs, pc));
-#ifdef LUA_DEBUG
-  lprintf("  clearing flag %I for pc (%i)\n", prop, pc);
-#endif /* LUA_DEBUG */
-  fs->a->insproperties[pc] &= ~(1 << prop);
+  fs->a->insproperties[pc] |= (cast(lu_int32, 1) << prop);
 }
 
 
-/*
-** init_ins_property - set flag PROP on the instruction at PC, assert the flag
-** was not previously set
-*/
-#define init_ins_property(fs,pc,prop) \
-  (lua_assert(!test_ins_property(fs,pc,prop)), set_ins_property(fs,pc,prop))
-
+static void unset_ins_property (FuncState *fs, int pc, int prop) {
+  lua_assert(ispcvalid(fs, pc));
+  fs->a->insproperties[pc] &= ~(cast(lu_int32, 1) << prop);
+}
 
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
-/*
-** set_reg_property - set flag PROP for register REG
-*/
-static void set_reg_property(DFuncState *fs, int reg, int prop)
-{
+static void set_reg_property (FuncState *fs, int reg, int prop) {
   lua_assert(isregvalid(fs, reg));
-#ifdef LUA_DEBUG
-  lprintf("  marking register (%d) as %R\n", reg, prop);
-  printregflags(fs, reg, "  previous flags for ");
-#endif /* LUA_DEBUG */
   fs->a->regproperties[reg].flags |= (1 << prop);
 }
 
-/*
-** unset_reg_property - clear flag PROP for register REG
-*/
-static void unset_reg_property(DFuncState *fs, int reg, int prop)
-{
+
+static void unset_reg_property (FuncState *fs, int reg, int prop) {
   lua_assert(isregvalid(fs, reg));
-#ifdef LUA_DEBUG
-  lprintf("  clearing flag %R for register (%d)\n", prop, reg);
-#endif /* LUA_DEBUG */
   fs->a->regproperties[reg].flags &= ~(1 << prop);
 }
 
-/*
-** test_reg_property - test flag PROP for register REG
-*/
-static int test_reg_property(DFuncState *fs, int reg, int prop)
-{
+static int test_reg_property(const FuncState *fs, int reg, int prop) {
   lua_assert(isregvalid(fs, reg));
   return ((fs->a->regproperties[reg].flags & (1 << prop)) != 0);
 }
 
-#define check_reg_property(fs,reg,val) lua_assert(test_reg_property(fs,reg,val))
-
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+
+/******************************************************************************/
+/* BlockNode functions */
+/******************************************************************************/
+
 
 /*
 ** the startpc of a node or -1 if node is NULL
@@ -629,9 +568,6 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
 }
 
 
-/*
-** true if NODE represents a loop scope
-*/
 static int isloopnode(const BlockNode *node)
 {
   int k = node->kind;
@@ -639,9 +575,6 @@ static int isloopnode(const BlockNode *node)
 }
 
 
-/*
-** re-calculate the emptiness of a block
-*/
 static void recalcemptiness(BlockNode *node) {
   node->isempty = (node->endpc < node->startpc);
 }
@@ -650,9 +583,8 @@ static void recalcemptiness(BlockNode *node) {
 /*
 ** true if the if-block represented by NODE has en else-part
 */
-static int haselsepart(const BlockNode *node) {
-  lua_assert(node != NULL);
-  lua_assert(node->kind == BL_IF);
+static int haselsepart (const BlockNode *node) {
+  lua_assert(node != NULL && node->kind == BL_IF);
   return (node->nextsibling != NULL && node->nextsibling->kind == BL_ELSE);
 }
 
@@ -662,8 +594,7 @@ static int haselsepart(const BlockNode *node) {
 ** meaning that the node alone generates the OP_CLOSE code, not an inner
 ** do-block
 */
-static int getnaturalclosepc(const BlockNode *node)
-{
+static int getnaturalclosepc (const BlockNode *node) {
   switch (node->kind) {
     case BL_FORLIST: return node->endpc-2;
     case BL_IF: return node->endpc - haselsepart(node);
@@ -676,8 +607,7 @@ static int getnaturalclosepc(const BlockNode *node)
 /*
 ** returns the natural endpc for local variables declared inside NODE
 */
-static int getnaturalvarendpc(const BlockNode *node)
-{
+static int getnaturalvarendpc (const BlockNode *node) {
   int pc;
   switch (node->kind) {
     /* repeat-loops without upvalues have variables end 1 after the endpc,
@@ -696,6363 +626,11 @@ static int getnaturalvarendpc(const BlockNode *node)
 }
 
 
-#ifdef HKSC_DECOMP_HAVE_PASS2
-/*
-** true if CHILD is a tail-block of PARENT, i.e. CHILD is the last statement in
-** PARENT
-*/
-static int istailblock(const BlockNode *parent, const BlockNode *child) {
-  int hasendcode;
-  if (child->nextsibling != NULL)
-    return 0;
-  switch (parent->kind) {
-    case BL_REPEAT: return 0;
-    case BL_DO: case BL_ELSE: hasendcode = 0; break;
-    case BL_IF: hasendcode = haselsepart(parent); break;
-    case BL_FORLIST: hasendcode = 2; break;
-    default: hasendcode = 1; break;
-  }
-  return (child->endpc + hasendcode == parent->endpc);
-}
-
-static int issinglelinefunc(DFuncState *fs, const BlockNode *func)
-{
-  const Proto *f = fs->f;
-  lua_assert(func->kind == BL_FUNCTION);
-  if (fs->D->usedebuginfo == 0)
-    return 0;
-  return (getline(f, func->startpc) == getline(f, func->endpc));
-}
-
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
-
-
-static int getforloopbase(const Instruction *code, const BlockNode *node) {
-  lua_assert(isforloop(node));
-  if (node->kind == BL_FORNUM)
-    return GETARG_A(code[node->endpc]);
-  else
-    return GETARG_A(code[node->endpc-1]);
-}
-
-
-/*
-** creates a new OpenExpr entry
-*/
-static OpenExpr *newopenexpr(DFuncState *fs, int firstreg, int startpc,
-                             int endpc, int kind)
-{
-  OpenExpr *expr;
-  hksc_State *H = fs->H;
-  Analyzer *a = fs->a;
-  lua_assert(fs->nopencalls >= 0 && fs->nopencalls <= a->sizeopencalls);
-  luaM_growvector(H, a->opencalls, fs->nopencalls, a->sizeopencalls, OpenExpr,
-                  MAX_INT, "too many OpenExpr entries");
-  expr = &a->opencalls[fs->nopencalls++];
-  expr->kind = kind;
-  expr->startpc = startpc;
-  expr->endpc = endpc;
-  expr->firstreg = firstreg;
-  expr->sharednil = 0;
-  return expr;
-}
-
-
-static const OpenExpr dummyexpr = {-1, -1, VOIDPREP, -1, 0};
-
-
-/*
-** sets the next OpenExpr entry directly
-*/
-static void setnextopenexpr(DecompState *D, DFuncState *fs, int index)
-{
-  fs->nopencalls = index;
-  lua_assert(index >= 0 && index <= fs->a->sizeopencalls);
-  if (index < fs->a->sizeopencalls)
-    D->a.openexpr = &fs->a->opencalls[index];
-  else
-    D->a.openexpr = &dummyexpr;
-}
-
-
-#ifdef HKSC_DECOMP_HAVE_PASS2
-
-/*
-** returns the next free expression in the expression node stack and increment
-** the number of stack elements in use
-*/
-static ExpNode *newexp(DFuncState *fs)
-{
-  hksc_State *H = fs->H;
-  Analyzer *a = fs->a;
-  lua_assert(a->pendingstk.used >= 0 &&
-             a->pendingstk.used <= a->pendingstk.total);
-  luaM_growvector(H, a->pendingstk.u.s2, a->pendingstk.used, a->pendingstk.total,
-                  ExpNode, MAX_INT, "too many expression nodes");
-  return &a->pendingstk.u.s2[a->pendingstk.used++];
-}
-
-
-#define prevexp(fs,exp) index2exp(fs, exp->previndex)
-
-static int exp2index(DFuncState *fs, ExpNode *exp)
-{
-  if (exp == NULL)
-    return 0;
-  else {
-    lua_assert(exp >= fs->a->pendingstk.u.s2 &&
-               exp < fs->a->pendingstk.u.s2+fs->a->pendingstk.used);
-    return exp-fs->a->pendingstk.u.s2+1;
-  }
-}
-
-
-static ExpNode *index2exp(DFuncState *fs, int index)
-{
-  if (index == 0)
-    return NULL;
-  else
-    return fs->a->pendingstk.u.s2+(index-1);
-}
-
-
-#define checkfirstexp(fs) check_exp(getfirstexp(fs) != NULL, getfirstexp(fs))
-#define checktopexp(fs) check_exp(gettopexp(fs) != NULL, gettopexp(fs))
-
-static ExpNode *getfirstexp(DFuncState *fs)
-{
-  int used = fs->a->pendingstk.used;
-  if (used == 0)
-    return NULL;
-  else {
-    lua_assert(used > 0);
-    return &fs->a->pendingstk.u.s2[0];
-  }
-}
-
-
-static ExpNode *gettopexp(DFuncState *fs)
-{
-  int used = fs->a->pendingstk.used;
-  if (used == 0)
-    return NULL;
-  else {
-    lua_assert(used > 0);
-    return &fs->a->pendingstk.u.s2[used-1];
-  }
-}
-
-
-static int hasmultret(ExpNode *exp)
-{
-  return (exp->kind == ECALL || exp->kind == EVARARG);
-}
-
-
-static int ishashtable(ExpNode *exp)
-{
-  lua_assert(exp->kind == ECONSTRUCTOR);
-  return (exp->u.cons.narray == 0 &&  exp->u.cons.nhash != 0);
-}
-
-
-static int getexpline(ExpNode *exp)
-{
-  int line = exp->line;
-  if (exp->kind == ECONSTRUCTOR && exp->aux > 0)
-    line = exp->aux;  /* use line-mapping of OP_SETLIST or final hash item */
-  return line;
-}
-
-
-static int gethighestexpreg(ExpNode *exp)
-{
-  int numextraregs = 0;
-  if (hasmultret(exp))
-    numextraregs = exp->kind == ECALL ? exp->u.call.nret-1 : exp->aux-2;
-  return exp->info + numextraregs;
-}
-
-
-/*
-** check if an expression returns multiple values REG is the last one clobbered
-*/
-static int hasmultretuptoreg(ExpNode *exp, int reg)
-{
-  if (hasmultret(exp))
-    return gethighestexpreg(exp) == reg;
-  return 0;
-}
-
-
-/*
-** returns true if EXP is a multret expression but only uses a single value
-*/
-static int hasmultretsinglereg(ExpNode *exp)
-{
-  lua_assert(exp != NULL);
-  if (hasmultret(exp)) {
-    if (exp->kind == ECALL)
-      return exp->u.call.nret == 1;
-    else if (exp->kind == EVARARG)
-      return exp->aux == 2;
-  }
-  return 0;
-}
-
-
-#ifdef LUA_DEBUG
-static const char *getunoprstring(UnOpr op);
-static const char *getbinoprstring(BinOpr op);
-
-static void debugexp(DFuncState *fs, ExpNode *exp, int indent)
-{
-  if (exp == NULL) {
-    lprintf("(ExpNode *)0\n");
-    return;
-  }
-  lprintf("exp: %d", exp->info);
-  if ((exp->kind == ENIL || exp->kind == EVARARG) && exp->aux != exp->info)
-    lprintf("-%d", exp->aux);
-  lprintf(" <- ");
-  switch (exp->kind) {
-    case EVOID:
-      lprintf("(void)");
-      break;
-    case ENIL:
-      lprintf("'nil'");
-      break;
-    case ETRUE:
-      lprintf("'true'");
-      break;
-    case EFALSE:
-      lprintf("'false'");
-      break;
-    case EVARARG:
-      lprintf("'...'");
-      break;
-    case ELITERAL: {
-      TValue *o = exp->u.k;
-      switch (ttype(o)) {
-        case LUA_TNIL:
-          lprintf("'nil'");
-          break;
-        case LUA_TBOOLEAN:
-          lprintf("'%s'", bvalue(o) ? "true" : "false");
-          break;
-        case LUA_TLIGHTUSERDATA: {
-          char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-          luaO_ptr2str(s, pvalue(o));
-          lprintf("%s", s);
-          break;
-        }
-        case LUA_TNUMBER: {
-          char s[LUAI_MAXNUMBER2STR];
-          sprintf(s, "%g", nvalue(o));
-          lprintf("%s", s);
-          break;
-        }
-        case LUA_TSTRING:
-          lprintf("%s", getstr(luaO_kstring2print(fs->H, rawtsvalue(o))));
-          break;
-        case LUA_TUI64: {
-          char s[LUAI_MAXUI642STR+sizeof("0xhl")-1];
-          lua_ui642str(s+2, ui64value(o));
-          s[0] = '0'; s[1] = 'x';
-          strcat(s, "hl");
-          lprintf("%s", s);
-          break;
-        }
-        default:
-          lprintf("? type=%d", ttype(o));
-          break;
-      }
-      break;
-    }
-    case ECALL:
-      lprintf("[CALL %d,  %d ret, %d arg]", exp->info, exp->u.call.nret,
-              exp->u.call.narg);
-      break;
-    case ECONCAT:
-      /*lprintf("[CONCAT %d..%d]", index2exp(fs, exp->u.concat.firstindex)->info,
-              index2exp(fs, exp->u.concat.lastindex)->info);*/
-      break;
-    case EGLOBAL:
-      lprintf("_G.%s", getstr(exp->u.name));
-      break;
-    case EUPVAL:
-      lprintf("upval=%s", getstr(exp->u.name));
-      break;
-    case EBINOP:
-      lprintf("[BINOP %s  %d, %d]", getbinoprstring(exp->u.binop.op),
-              exp->u.binop.b, exp->u.binop.c);
-      break;
-    case EUNOP:
-      lprintf("[UNOP %s  %d]", getunoprstring(exp->u.unop.op),
-              exp->u.unop.b);
-      break;
-    case ECONSTRUCTOR:
-      lprintf("'{}' %d, %d", exp->u.cons.arrsize, exp->u.cons.hashsize);
-      break;
-    case ESTORE:
-      lprintf("STORE (from %d)", exp->u.store.srcreg);
-      break;
-    case ECONDITIONAL: {
-      int i;
-      lprintf("[CONDITIONAL '%s']\n", getbinoprstring(exp->u.cond.goiftrue ?
-                                                      OPR_AND : OPR_OR));
-      for (i=0;i<=indent;i++)
-        lprintf("  ");
-      lprintf("- ");
-      debugexp(fs, index2exp(fs, exp->u.cond.e1), indent+1);
-      for (i=0;i<=indent;i++)
-        lprintf("  ");
-      lprintf("- ");
-      debugexp(fs, index2exp(fs, exp->u.cond.e2), indent+1);
-      return;
-    }
-    default:
-      break;
-  }
-  lprintf("\n");
-  if (prevexp(fs,exp) == NULL)
-    return;
-  indent++;
-  {
-    int i;
-    for (i = 0; i < indent; i++)
-      lprintf("  ");
-  }
-  lprintf("- ");
-  debugexp(fs, prevexp(fs,exp), indent);
-}
-#else /* LUA_DEBUG */
-#define debugexp(fs,exp,indent) ((void)(exp))
-#endif /* LUA_DEBUG */
-
-
-
-/*
-** returns the SlotDesc entry for a given register
-*/
-static SlotDesc *getslotdesc(DFuncState *fs, int reg)
-{
-  SlotDesc *slot;
-  Analyzer *a = fs->a;
-  lua_assert(isregvalid(fs, reg));
-  slot = &a->regproperties[reg];
-  return slot;
-}
-
-
-/*
-** get the pc of the last encountered closure in the function FS
-*/
-static int getlastclosurepc(DecompState *D, DFuncState *fs)
-{
-  int lastclpc = D->lastcl.pc;
-  lua_assert(ispcvalid(fs, lastclpc));
-  lua_assert(GET_OPCODE(fs->f->code[lastclpc]) == OP_CLOSURE);
-  return lastclpc;
-}
-
-
-/*
-** populates the `upvalues' array with the names of the upvalues from PARENT
-** that FS uses (only call when not using debug info)
-*/
-static void initupvalues(DFuncState *fs, DFuncState *parent)
-{
-  DecompState *D = fs->D;
-  int i, pc = getlastclosurepc(D, parent)+1;
-  lua_assert(D->usedebuginfo == 0);
-  for (i = 0;
-       i < fs->sizeupvalues && GET_OPCODE(parent->f->code[pc]) == OP_DATA;
-       i++, pc++) {
-    TString *upvalue;
-    int argBx = GETARG_Bx(parent->f->code[pc]);
-    lua_assert(i < fs->sizeupvalues);
-    /* check which kind of upvalue is encoded */
-    switch (GETARG_A(parent->f->code[pc])) {
-      case 1:  /* Bx is a register */
-        lua_assert(isregvalid(parent, argBx));
-        check_reg_property(parent, argBx, REG_LOCAL);
-        upvalue = getslotdesc(parent, argBx)->u.locvar->varname;
-        break;
-      case 2:  /* Bx is an upvalue index in PARENT */
-        lua_assert(argBx < parent->sizeupvalues);
-        upvalue = parent->upvalues[argBx];
-        break;
-    }
-    fs->upvalues[i] = upvalue;
-  }
-  CHECK(fs, i == fs->sizeupvalues, "not enough OP_DATA codes after OP_CLOSURE");
-}
-
-
-#define IS_RESERVED(ts) \
-  ((ts)->tsv.reserved > 0 && (ts)->tsv.reserved < MARKED_GLOBAL)
-
-
-/*
-** returns true if NAME can be written as a field
-*/
-static int isfieldname(TString *name)
-{
-  const char *str;
-  lua_assert(name != NULL);
-  if (IS_RESERVED(name))
-    return 0;
-  str = getstr(name);
-  if (isalpha(*str) || *str == '_') {
-    size_t i;
-    for (i = 1; i < name->tsv.len; i++) {
-      if (!isalnum(str[i]) && str[i] != '_')
-        return 0;
-    }
-    return 1;
-  }
-  return 0;
-}
-
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
-
-
-static int varisaugmented(const struct LocVar *var) {
-  TString *name = var->varname;
-  lua_assert(name != NULL);
-  return (*getstr(name) == '(');
-}
-
-
-/*
-** call this version before debug info is generated in pass1
-*/
-static int getline1(DFuncState *fs, int pc) {
-  return getline(fs->f, pc);
-}
-
-
-/*
-** add a new entry for a fixed start-line LINE at PC
-*/
-static void addfixedstartline(DFuncState *fs, int pc, int line)
-{
-  DecompState *D = fs->D;
-  linemap *map;
-  if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
-    return;  /* already have an entry for PC */
-  set_ins_property(fs, pc, INS_FIXEDSTARTLINE);
-  VEC_GROW(fs->H, D->fixedstartlines, linemap);
-  map = &D->fixedstartlines.s[D->fixedstartlines.used++];
-  map->pc = pc;
-  map->line = line;
-}
-
-
-#ifdef HKSC_DECOMP_HAVE_PASS2
-/*
-** call this version to get the mapped line from debug info; okay to call if not
-** using debug info or matching line info
-*/
-static int getline2(DFuncState *fs, int pc) {
-  lua_assert(ispcvalid(fs, pc));
-  if (fs->D->matchlineinfo)
-    return fs->f->lineinfo[pc];
-  else
-    return fs->D->nextlinenumber;
-}
-
-
-/*
-** get the fixed start-line entry at PC; entry must exist (before calling, check
-** if test_ins_property(fs, pc, INS_FIXEDSTARTLINE) is true)
-*/
-static int getfixedstartline(DFuncState *fs, int pc)
-{
-  DecompState *D = fs->D;
-  int n = D->fixedstartlines.used - fs->startlinemapbase;
-  linemap *map = D->fixedstartlines.s + fs->startlinemapbase;
-  lua_assert(n >= 0);
-  check_ins_property(fs, pc, INS_FIXEDSTARTLINE);
-  for (; n > 0; map++, n--) {
-    if (map->pc == pc)
-      return map->line;
-  }
-  lua_assert(0);
-  return 0;
-}
-
-
-/*
-** call this if you need the actual source code line that begins the expression
-** at pc; this accounts for OP_CLOSURE line mapping to the end of the function
-** rather than the beginning; only call if matching line info
-*/
-static int getstartline(DFuncState *fs, int pc)
-{
-  lua_assert(fs->D->matchlineinfo);
-  /* if PC is the start of a while-loop/for-loop, it has a fixed start-line */
-  if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
-    return getfixedstartline(fs, pc);
-  /* if the next code is CLOSURE, the mapped line will be the end of the
-     function, but you want the start line, so return LINEDEFINED */
-  if (GET_OPCODE(fs->f->code[pc]) == OP_CLOSURE) {
-    int bx = GETARG_Bx(fs->f->code[pc]);
-    const Proto *f = fs->f->p[bx];
-    return f->linedefined;
-  }
-  return fs->f->lineinfo[pc];
-}
-
-
-/*
-** return the fixed start-line of a for-loop given its NODE, or zero if its
-** start line is not fixed (it should always be fixed in both Lua and Havok
-** Script)
-*/
-static int getforloopstartline(DFuncState *fs, BlockNode *node)
-{
-  int pc, startline;
-  lua_assert(isforloop(node));
-  lua_assert(fs->D->matchlineinfo);
-  pc = node->endpc - (node->kind == BL_FORLIST);
-  startline = getline(fs->f, pc);
-  return node->fixedstartline ? startline : 0;
-}
-
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
-
-
-
-static void scanconstants (DecompState *D, const Proto *f)
-{
-  int i;
-  D->a.isnilrk = 0; D->a.istruerk = 0; D->a.isfalserk = 0;
-  /* check if true, false, or nil exist within MAXINDEXRK */
-  /* if any of the given values does not exist in the array within MAXINDEXRK,
-     then any non-label OP_LOADBOOL or OP_LOADNIL that loads that value can
-     certainly not be optimized as an RK operand in the next instruction, which
-     is important for ensuring matching bytecode, as knowing if variables can be
-     pruned is required, and that relies on knowing if/how expression operands
-     can be optimized at the bytecode level */
-  for (i = 0; i <= MAXINDEXRK && i < f->sizek; i++) {
-    const TValue *o = &f->k[i];
-    switch (ttype(o)) {
-      case LUA_TNIL:
-        D->a.isnilrk = 1; break;
-      case LUA_TBOOLEAN:
-        if (bvalue(o)) D->a.istruerk = 1;
-        else D->a.isfalserk = 1;
-        break;
-      default: break;
-    }
-  }
-}
-
-
-static void open_func (DFuncState *fs, DecompState *D, const Proto *f) {
-  hksc_State *H = D->H;
-  Analyzer *a = luaA_newanalyzer(H);
-  D->loopstk.used = D->blockstk.used = 0;
-  fs->a = a;
-  fs->prev = D->fs;  /* linked list of funcstates */
-  fs->D = D;
-  fs->H = H;
-  D->fs = fs;
-  fs->f = f;
-  fs->root = NULL;
-  fs->idx = D->funcidx++;
-  fs->nlocvars = 0;
-  fs->nactvar = 0;
-  fs->pc = 0;
-  fs->inopenexpr = 0;
-  fs->startlinemapbase = D->fixedstartlines.used;
-  if (f->name)
-    D(lprintf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
-             getstr(f->name)));
-  else
-    D(lprintf("-- Decompiling anonymous function (%d)\n", D->funcidx));
-  if (D->usedebuginfo) { /* have debug info */
-    D(lprintf("using debug info for function '%s'\n", f->name ? getstr(f->name):
-             "(anonymous)"));
-    fs->sizelocvars = f->sizelocvars;
-    fs->locvars = f->locvars;
-    fs->sizeupvalues = f->sizeupvalues;
-    fs->upvalues = f->upvalues;
-  }
-  else {
-    fs->sizelocvars = 0;
-    a->sizelocvars = fs->sizelocvars;
-    a->locvars = NULL;
-    fs->locvars = a->locvars;
-    fs->sizeupvalues = f->nups;
-    a->sizeupvalues = fs->sizeupvalues;
-    a->upvalues = luaM_newvector(H, a->sizeupvalues, TString *);
-    memset(a->upvalues, 0, a->sizeupvalues * sizeof(TString *));
-    fs->upvalues = a->upvalues;
-    fs->sizeupvalues = a->sizeupvalues;
-  }
-  a->sizeactvar = f->maxstacksize;
-  a->actvar = luaM_newvector(H, a->sizeactvar, unsigned short);
-  memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
-  fs->nopencalls = 0;
-  fs->firstclob = -1;
-  fs->firstclobnonparam = -1;
-  fs->firstfree = 0;
-  fs->lastcallexp = 0;
-  fs->curr_constructor = 0;
-  /* allocate vectors for instruction and register properties */
-  a->sizeinsproperties = f->sizecode; /* flags for each instruction */
-  a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
-  memset(a->insproperties, 0, f->sizecode * sizeof(InstructionFlags));
-  a->sizeregproperties = f->maxstacksize; /* flags for each register */
-  a->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
-  memset(a->regproperties, 0, a->sizeregproperties * sizeof(SlotDesc));
-#ifdef HKSC_DECOMP_HAVE_PASS2
-  if (D->usedebuginfo == 0 && fs->prev != NULL)
-    initupvalues(fs, fs->prev);
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
-}
-
-
-static void close_func (DecompState *D) {
-  DFuncState *fs = D->fs;
-  D->funcidx--;
-  UNUSED(fs->locvars);
-  UNUSED(fs->sizelocvars);
-  D->fs = fs->prev;
-  D->fixedstartlines.used = fs->startlinemapbase;
-  killtemp(obj2gco(fs->a)); /* make analyzer collectable */
-  UNUSED(fs->a);
-}
-
-
-/*
-** updates the first pc that clobbers a register
-*/
-static void updatefirstclob1(DFuncState *fs, int pc, int reg)
-{
-  lua_assert(isregvalid(fs, reg));
-  fs->firstclob = pc;
-  if (reg >= fs->f->numparams)
-    fs->firstclobnonparam = pc;
-}
-
-
-static BlockNode *addblnode(DFuncState *fs, int startpc, int endpc, int kind) {
-  DecompState *D = fs->D;
-  BlockNode *new_node;
-  if (D->freeblocknodes.used > 0)
-    new_node = D->freeblocknodes.s[--D->freeblocknodes.used];
-  else {
-    Analyzer *a = fs->a;
-    BlockNode *curr = a->bllist.first;
-    new_node = luaM_new(fs->H, BlockNode);
-    new_node->next = curr;
-    a->bllist.first = new_node;
-    if (curr == NULL)
-      a->bllist.last = new_node;
-  }
-  initblnode(new_node, startpc, endpc, kind);
-  D(lprintf("recording new block node of type %b (%i-%i)\n", new_node, startpc,
-            endpc));
-  return new_node;
-}
-
-
-static void freeblnode(DFuncState *fs, BlockNode *node)
-{
-  hksc_State *H = fs->H;
-  DecompState *D = fs->D;
-  VEC_GROW(H, D->freeblocknodes, BlockNode *);
-  D->freeblocknodes.s[D->freeblocknodes.used++] = node;
-}
-
-
-#define DumpLiteral(s,D) DumpBlock("" s, sizeof(s)-1, D)
-#define DumpString(s,D) DumpBlock(s, strlen(s), D)
-
-static void DumpBlock(const void *b, size_t size, DecompState *D)
-{
-#if defined LUA_DEBUG && defined HKSC_DECOMP_HAVE_PASS2
-  /* newline is acceptable when dumping only dumping the newline and no other
-     characters */
-  if (*cast(char *, b) != '\n')
-    lua_assert(memchr(b, '\n', size) == NULL);
-  else {
-    size_t i;
-    for (i = 0; i < size; i ++)
-      lua_assert(cast(char *, b)[i] == '\n');
-  }
-#endif /* LUA_DEBUG */
-  if (D->status==0)
-  {
-    lua_unlock(D->H);
-    D->status=(*D->writer)(D->H,b,size,D->data);
-    D->lastline = D->linenumber;
-    lua_lock(D->H);
-  }
-}
-
-
-/*
-** declarations for dump functions used by both passes
-*/
-static void DumpIndentation(DecompState *D);
-
-
-#ifdef HKSC_DECOMP_HAVE_PASS2
-
-/*
-** dumps a TString data to output
-*/
-static void DumpTString(const TString *ts, DecompState *D)
-{
-  lua_assert(ts != NULL);
-  DumpBlock(getstr(ts), ts->tsv.len, D);
-}
-
-
-static const char *TValueToString(const TValue *o, DecompState *D)
-{
-  TString *res;
-  switch (ttype(o))
-  {
-    case LUA_TNIL:
-      return "nil";
-    case LUA_TBOOLEAN:
-      return bvalue(o) ? "true" : "false";
-    case LUA_TLIGHTUSERDATA: {
-      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      luaO_ptr2str(s, pvalue(o));
-      res = luaS_new(D->H, s);
-      break;
-    }
-    case LUA_TNUMBER: {
-      char s[LUAI_MAXNUMBER2STR];
-      lua_number2str(s, nvalue(o));
-      res = luaS_new(D->H, s);
-      break;
-    }
-    case LUA_TSTRING:
-      res = luaO_kstring2print(D->H, rawtsvalue(o));
-      break;
-    case LUA_TUI64: {
-      char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
-      lua_ui642str(s+2, ui64value(o));
-      s[0] = '0'; s[1] = 'x';
-      strcat(s, "hl");
-      res = luaS_new(D->H, s);
-      break;
-    }
-    default:
-      return "";
-  }
-  return getstr(res);
-}
-
-
-/*
-** prints a Lua object as it would appear in source code to output
-*/
-static void DumpTValue(const TValue *o, DecompState *D)
-{
-  /* resulting string will not have embedded null bytes, strlen is ok */
-  const char *str = TValueToString(o, D);
-  DumpString(str, D);
-}
-
-
-/*
-** dumps a constant indexed by INDEX from the constant table
-*/
-static void DumpConstant(DFuncState *fs, int index, DecompState *D)
-{
-  const Proto *f = fs->f;
-  const TValue *o = &f->k[index];
-  DumpTValue(o,D);
-}
-
-static void updateline2(DFuncState *fs, int line, DecompState *D);
-
-/*
-** dumps a semicolon to output
-*/
-static void DumpSemi(DecompState *D)
-{
-  if (D->delaysemi > 0) {
-    DFuncState *fs = D->fs;
-    if (fs->prev == NULL) {
-      updateline2(fs, D->delaysemi, D);
-      D->delaysemi = -1;
-    }
-  }
-  DumpLiteral(";",D);
-  D->needspace = 1;
-}
-
-
-/*
-** dumps a comma to output
-*/
-static void DumpComma(DecompState *D)
-{
-  DumpLiteral(",",D);
-  D->needspace = 1;
-}
-
-/*
-** dumps a space to output
-*/
-static void DumpSpace(DecompState *D)
-{
-  DumpLiteral(" ",D);
-  D->needspace = 0;
-}
-
-
-/*
-** checks if a pending space is needed and discharges it
-*/
-static void CheckSpaceNeeded(DecompState *D)
-{
-  if (D->needspace)
-    DumpSpace(D);
-}
-
-
-/*
-** dumps N linefeeds to output and updates the current line counter
-*/
-static void beginline2(DFuncState *fs, int n, DecompState *D)
-{
-  static const char lf[] = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
-  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
-  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
-  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
-  const int buffsize = cast_int(sizeof(lf)-1);
-  /* save the lastline as you don't want to update it in this case */
-  int lastline = D->linenumber;
-  D->linenumber += n;
-  D(lprintf("adding %d line%s, updating D->linenumber to (%d)\n",
-            n, n == 1 ? "" : "s", D->linenumber));
-  lua_assert(n > 0);
-  while (n > buffsize) {
-    DumpBlock(lf, buffsize, D);
-    n -= buffsize;
-  }
-  lua_assert(n >= 0 && n <= buffsize);
-  if (n != 0)
-    DumpBlock(lf, n, D);
-  if (D->noindent == 0)
-    DumpIndentation(D);
-  D->lastline = lastline;  /* restore last line */
-  D->needspace = 0;
-  UNUSED(fs);
-}
-
-
-/*
-** updates the line counter, dumping new lines to output if needed
-*/
-static void updateline2(DFuncState *fs, int line, DecompState *D)
-{
-  if (line > D->linenumber) {
-    int lines_needed = line - D->linenumber;
-    beginline2(fs, lines_needed, D);
-    lua_assert(D->linenumber == line);
-  }
-}
-
-
-#if !defined(LUA_COMPAT_LSTR) || LUA_COMPAT_LSTR != 2
-static size_t getlstrlevel(const TString *ts)
-{
-  int inbracket = 0;
-  size_t count = 0;
-  size_t level = 0;
-  const char *str = check_exp(ts, getstr(ts));
-  size_t len = ts->tsv.len;
-  for (; len; str++, len--) {
-    if (inbracket) {
-      if (*str == '=')
-        count++;
-      else {
-        if (*str == ']') {
-          /* end of end bracket */
-          if (count+1 > level)
-            level = count+1;
-        }
-        inbracket = 0;
-        count = 0;
-      }
-    }
-    else if (*str == ']')
-      inbracket = 1;
-  }
-  return level;
-}
-
-
-static void dumplstrquote(DecompState *D, size_t level, const char *s)
-{
-  lua_assert(*s == '[' || *s == ']');
-  DumpBlock(s, 1, D);
-  while (level--)
-    DumpLiteral("=",D);
-  DumpBlock(s, 1, D);
-}
-#else /* LUA_COMPAT_LSTR */
-#define getlstrlevel(ts) 0  /* level 0 is always ok */
-#define dumplstrquote(D,l,s) DumpLiteral(s, D)
-#endif /* LUA_COMPAT_LSTR */
-
-
-
-/*
-** dumps a string constant as a long string `[[...]]'
-*/
-static void emitlongstring2(ExpNode *exp, DecompState *D)
-{
-  int endline = exp->line;  /* last line of the string */
-  const TString *ts = rawtsvalue(exp->u.k);
-  const size_t requiredlevel = getlstrlevel(ts);
-  const char *str;
-  size_t len;
-  int numlinefeeds = 0;  /* number LF characters in the string */
-  int numleadinglines;  /* number of lines the string starts with in source
-                           (skipped by lexer) */
-  (void)requiredlevel;  /* avoid warnings when `requiredlevel' is not used */
-  lua_assert(D->matchlineinfo);
-  lua_assert(ts != NULL);
-  /* count number of new lines in the string */
-  for (str = getstr(ts), len = ts->tsv.len; ; numlinefeeds++) {
-    const char *s = memchr(str, '\n', len);
-    if (s == NULL) break;
-    len -= cast(size_t, s+1-str);
-    str = s+1;
-  }
-  /* calculate number of leading lines that were skipped by lexer */
-  lua_assert(endline >= D->linenumber);
-  numleadinglines = (endline - D->linenumber) - numlinefeeds;
-  /* start emitting the string */
-  dumplstrquote(D,requiredlevel,"[[");
-  D->noindent = 1;
-  if (numleadinglines)
-    beginline2(D->fs, numleadinglines, D);
-  str = getstr(ts);
-  len = ts->tsv.len;
-  for (;;) {
-    /* use memchr instead of strchr in case there are embedded null bytes */
-    const char *s = memchr(str, '\n', len);
-    if (s != NULL) {
-      int numlines;
-      size_t blocksize = cast(size_t, s-str);
-      DumpBlock(str, blocksize, D);
-      str = s;
-      len -= blocksize;
-      /* advance over new lines */
-      while (*++s == '\n')
-        ;
-      numlines = s-str;
-      beginline2(D->fs, numlines, D);
-      len -= cast(size_t, numlines);
-      str = s;
-    }
-    else {
-      DumpBlock(str, len, D);
-      break;
-    }
-  }
-  dumplstrquote(D,requiredlevel,"]]");
-  D->noindent = 0;
-}
-
-#endif /* HKSC_DECOMP_HAVE_PASS2 */
-
-
-/*
-** dumps indentation of to the current indentation level using tabs
-*/
-static void DumpIndentation(DecompState *D)
-{
-  static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
-  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 32 */
-  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 48 */
-  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t"; /* 64 */
-  const int buffsize = cast_int(sizeof(tabs)-1);
-  int indentlevel = D->indentlevel;
-  lua_assert(indentlevel >= 0);
-  while (indentlevel > buffsize) {
-    DumpBlock(tabs, buffsize, D);
-    indentlevel -= buffsize;
-  }
-  lua_assert(indentlevel >= 0 && indentlevel <= buffsize);
-  if (indentlevel != 0)
-    DumpBlock(tabs, indentlevel, D);
-}
-
-
-#ifdef LUA_DEBUG
-
-static void debugblnode1(DFuncState *fs, BlockNode *node, int indent) {
-  BlockNode *child, *nextsibling;
-  int i;
-  lua_assert(node != NULL);
-  child = node->firstchild;
-  nextsibling = node->nextsibling;
-  for (i = 0; i < indent; i++)
-    lprintf("  ");
-  if (indent) lprintf("- ");
-  lprintf("(%i-%i) %b ", node->startpc, node->endpc, node);
-  if (nextsibling != NULL)
-    lprintf("(sibling (%i-%i) %b)\n", nextsibling->startpc, nextsibling->endpc,
-            nextsibling);
-  else
-    lprintf("(NO sibling)\n");
-  lua_assert(node->visited == 0);
-  node->visited = 1;
-  while (child != NULL) {
-    debugblnode1(fs, child, indent+1);
-    child = child->nextsibling;
-  }
-}
-
-
-static void unvisittree(DFuncState *fs, BlockNode *node)
-{
-  BlockNode *child;
-  node->visited = 0;
-  child = node->firstchild;
-  while (child != NULL) {
-    unvisittree(fs, child);
-    child = child->nextsibling;
-  }
-}
-
-
-static void debugblnode(DFuncState *fs, BlockNode *node)
-{
-  debugblnode1(fs, node, 0);
-  unvisittree(fs, node);
-}
-
-
-static void debugblocksummary(DFuncState *fs)
-{
-  BlockNode *node = fs->root;
-  lprintf("BLOCK SUMMARY\n"
-         "-------------------\n");
-  lua_assert(node != NULL);
-  lua_assert(node->kind == BL_FUNCTION);
-  lua_assert(node->nextsibling == NULL);
-  debugblnode(fs, node);
-  lprintf("-------------------\n");
-}
-
-
-static void debugopenexpr(const OpenExpr *e)
-{
-  static const char *const typenames[] = {
-    "VOID",
-    "PRECALL",
-    "PRECONCAT",
-    "PREFORNUM",
-    "PREFORLIST",
-    "PRESETLIST",
-    "HASHTABLEPREP",
-    "EMPTYTABLE",
-    "PRERETURN"
-  };
-  lprintf("(%i-%i, reg %d) %s\n", e->startpc, e->endpc, e->firstreg,
-          typenames[e->kind]);
-}
-
-
-static void debugopenexprsummary(DFuncState *fs)
-{
-  int i;
-  lprintf("OPEN EXPRESSION SUMMARY\n"
-         "-------------------\n");
-  for (i = fs->a->sizeopencalls-1; i >= 0; i--)
-    debugopenexpr(&fs->a->opencalls[i]);
-  lprintf("-------------------\n");
-}
-
-
-static void debugpass1summary(DFuncState *fs)
-{
-  debugblocksummary(fs); lprintf("\n");
-  debugopenexprsummary(fs); lprintf("\n");
-  {
-    int pc;
-    for (pc = 0; pc < fs->f->sizecode; pc++)
-      printinsflags(fs, pc, "");
-  }
-}
-
-
-static void checktreevisited(BlockNode *node)
-{
-  BlockNode *child;
-  lua_assert(node != NULL);
-  child = node->firstchild;
-  lua_assert(node->visited);
-  while (child != NULL) {
-    checktreevisited(child);
-    child = child->nextsibling;
-  }
-}
-
-
-#else /* !LUA_DEBUG */
-
-#define debugpass1summary(fs)  ((void)(fs))
-#define checktreevisited(node)  ((void)(node))
-
-#endif /* LUA_DEBUG */
-
-
-/*
-** returns true if open expressions of type KIND leave a result in a free
-** register that is yet to be used
-*/
-static int exprpushesresult(int kind)
-{
-  switch (kind) {
-    case CALLPREP: case SETLISTPREP: case HASHTABLEPREP: case EMPTYTABLE:
-    return 1;
-    /* CONCAT can store its result to a local register */
-    default: return 0;
-  }
-}
-
-
-static int exprisstat(DFuncState *fs, const OpenExpr *expr)
-{
-  int kind = expr->kind;
-  switch (kind) {
-    case CALLPREP:
-      return GETARG_C(fs->f->code[expr->endpc]) == 1;
-    case FORNUMPREP:
-    case FORLISTPREP:
-    case RETPREP:
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-
-static int isstorecode(OpCode o)
-{
-  switch (o) {
-    CASE_OP_SETTABLE:
-    case OP_SETGLOBAL:
-    case OP_SETUPVAL:
-    case OP_SETUPVAL_R1:
-    case OP_SETSLOTN:
-    case OP_SETSLOTI:
-    case OP_SETSLOT:
-    case OP_SETSLOTS:
-    case OP_SETSLOTMT:
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-
-static int iscallstat(DFuncState *fs, int pc)
-{
-  OpCode o = GET_OPCODE(fs->f->code[pc]);
-  return (IS_OP_CALL(o) && GETARG_C(fs->f->code[pc]) == 1);
-}
-
-
-/*
-** true if an operation clobbers a register while using it as an operand
-*/
-#define continueseval(o,a,b,c) (beginseval(o,a,b,c,0) && !beginseval(o,a,b,c,1))
-
-/*
-** Check if the given operation O clobbers register A without depending on what
-** was previously in register A. if CHECKDEP is false, the check will not take
-** into account dependencies related to registers that both read and clobbered.
-*/
-static int beginseval(OpCode o, int a, int b, int c, int checkdep) {
-  switch (o) {
-    /* these operations never depend on what's in A */
-    case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
-    case OP_LOADBOOL:
-    case OP_LOADK:
-    case OP_LOADNIL:
-    case OP_GETUPVAL:
-    case OP_NEWTABLE:
-    case OP_NEWSTRUCT:
-    case OP_CLOSURE:
-    case OP_VARARG:
-      return 1;
-    /* these operations depend on what's in B and B may equal A */
-    case OP_GETFIELD: case OP_GETFIELD_R1:
-    case OP_MOVE:
-    case OP_UNM:
-    case OP_NOT: case OP_NOT_R1:
-    case OP_LEN:
-    case OP_TESTSET:
-    case OP_GETSLOT:
-    case OP_GETSLOTMT:
-    case OP_SELFSLOT:
-    case OP_SELFSLOTMT:
-    case OP_GETFIELD_MM:
-      return !checkdep || a != b;
-    /* these operations depend on what's in B and C and B or C may equal A */
-    case OP_SELF:
-    case OP_GETTABLE_S:
-    case OP_GETTABLE_N:
-    case OP_GETTABLE:
-    case OP_CONCAT:
-    /* arithmetic operations */
-    case OP_ADD: case OP_ADD_BK:
-    case OP_SUB: case OP_SUB_BK:
-    case OP_MUL: case OP_MUL_BK:
-    case OP_DIV: case OP_DIV_BK:
-    case OP_MOD: case OP_MOD_BK:
-    case OP_POW: case OP_POW_BK:
-#ifdef LUA_CODT7
-    case OP_LEFT_SHIFT: case OP_LEFT_SHIFT_BK:
-    case OP_RIGHT_SHIFT: case OP_RIGHT_SHIFT_BK:
-    case OP_BIT_AND: case OP_BIT_AND_BK:
-    case OP_BIT_OR: case OP_BIT_OR_BK:
-#endif /* LUA_CODT7 */
-      return !checkdep || (a != b && a != c);
-    /* the remaining operations do not clobber A or do depend on A */
-    default:
-      return 0;
-  }
-}
-
-
-static int clobberslocal(DFuncState *fs, OpCode o, int a, int b, int c)
-{
-  return (beginseval(o, a, b, c, 0) && a < fs->nactvar);
-}
-
-
-#define KREF_B (1 << 0)
-#define KREF_C (1 << 1)
-#define KREF_BX (1 << 2)
-
-static int referencesk(OpCode o, int b, int c, int bx)
-{
-  int res = 0;
-  int barg;
-  int bmask;
-  switch (getOpMode(o)) {
-    case iABC:
-      bmask = KREF_B;
-      barg = b;
-      /* see if C is a K index */
-      switch (getCMode(o)) {
-        case OpArgRK:
-          if (!ISK(c)) break;
-          /* fallthrough */
-        case OpArgK:
-          res |= KREF_C;
-          break;
-        default: break;
-      }
-      checkargb:
-      /* see if B is a K index */
-      switch (getBMode(o)) {
-        case OpArgRK:
-          if (!ISK(barg)) break;
-          /* fallthrough */
-        case OpArgK:
-          res |= bmask;
-          break;
-        default: break;
-      }
-      break;
-    case iABx:
-      bmask = KREF_BX;
-      barg = bx;
-      goto checkargb;
-    default: break;
-  }
-  return res;
-}
-
-static int referencesslot(OpCode o, int a, int b, int c, int slots[3])
-{
-  int n = 0;
-  /* handle store codes */
-  if (isstorecode(o))
-    slots[n++] = a;
-  switch (o) {
-    case OP_VARARG:
-    case OP_LOADNIL:
-      return 0;
-    case OP_SETLIST:
-      slots[0] = a;
-      return 1;
-    default: break;
-  }
-  switch (getBMode(o)) {
-    case OpArgRK:
-      if (ISK(b)) break;
-      /* fallthrough */
-    case OpArgR:
-      slots[n++] = b;
-      break;
-    default: break;
-  }
-  switch (getCMode(o)) {
-    case OpArgRK:
-      if (ISK(c)) break;
-      /* fallthrough */
-    case OpArgR:
-      slots[n++] = c;
-      break;
-    default: break;
-  }
-  return n;
-}
-
-
-static int getlowestslotreferenced(OpCode o, int a, int b, int c, int base)
-{
-  int slots[3];
-  int nslots = referencesslot(o, a, b, c, slots);
-  int lowest = -1;
-  int i;
-  for (i = 0; i < nslots; i++)
-    if (slots[i] < lowest && slots[i] >= base) lowest = slots[i];
-  return lowest;
-}
-
-
-static int getjump (DFuncState *fs, int pc)
-{
-  return pc+1+GETARG_sBx(fs->f->code[pc]);
-}
-
-
-static const Instruction *getjumpcontrol (DFuncState *fs, int pc) {
-  Instruction *pi = &fs->f->code[pc];
-  if (pc >= 1 && testTMode(GET_OPCODE(*(pi-1))))
-    return pi-1;
-  else
-    return NULL;
-}
-
-
-static int isjumpcontroltest (DFuncState *fs, int pc, int *testedreg) {
-  const Instruction *jc = getjumpcontrol(fs, pc);
-  int ret = 0;
-  if (jc) {
-    OpCode o = GET_OPCODE(*jc);
-    ret = (o == OP_TEST || o == OP_TEST_R1 || o == OP_TESTSET);
-    if (testedreg) *testedreg = GETARG_A(*jc);
-  }
-  return ret;
-}
-
-
-/*
-** get the register(s) tested by a jump control code JC, and store them in R1
-** and R2; returns how many registers are tested (1 or 2)
-*/
-static int getregstested (Instruction jc, int *r1, int *r2) {
-  OpCode o = GET_OPCODE(jc);
-  lua_assert(testTMode(o));
-  if (testAMode(o)) {
-    *r1 = GETARG_A(jc);
-    return 1;
-  }
-  else {  /* comparison opcode */
-    int numregs=0;
-    int b = GETARG_B(jc);
-    int c = GETARG_C(jc);
-    if (ISK(b)) b = c;
-    else numregs++;
-    numregs+= !ISK(c);
-    *r1 = b;
-    *r2 = c;
-    return numregs;
-  }
-}
-
-
-/*
-** create a do-block node from a do-block state
-*/
-static BlockNode *createdoblock(DFuncState *fs, int startpc, int endpc)
-{
-  BlockNode *node;
-  lua_assert(ispcvalid(fs, startpc));
-  lua_assert(ispcvalid(fs, endpc));
-  node = addblnode(fs, startpc, endpc, BL_DO);
-  set_ins_property(fs, startpc, INS_DOSTAT);
-  set_ins_property(fs, endpc, INS_BLOCKEND);
-  return node;
-}
-
-
-/*
-** Check if the given instruction I begins a temporary expression in register
-** FISRTREG. PC is the pc of I. JUMPLIMIT is a pc used to check if a preceding
-** jump instruction jumps to somewhere within the temporary expression
-** evaluation, meaning it is part of the temporary expression. CODE is the
-** instruction array which contains I, used for single look-behinds.
-*/
-static int beginstempexpr(DFuncState *fs, Instruction i, int pc,
-                          int firstreg, int jumplimit, int *nextstart)
-{
-  const Instruction *code = fs->f->code;
-  OpCode o = GET_OPCODE(i);
-  int a = GETARG_A(i);
-  int b = GETARG_B(i);
-  int c = GETARG_C(i);
-  if (jumplimit == -1)
-    lua_assert(GET_OPCODE(code[pc-1]) != OP_JMP);
-  switch (o) {
-    case OP_JMP: {
-      /* This jump must be part of the temporary expression. Otherwise, the
-         caller has made a mistake by calling after they have already found the
-         beginning of the expression. */
-      int sbx = GETARG_sBx(i);
-      lua_assert(sbx >= 0);
-      if (test_ins_property(fs, pc, INS_SKIPBOOLLABEL))
-        return 0;
-      lua_assert(pc + 1 + sbx <= jumplimit || jumplimit == -1);
-      (void)sbx;
-      return 0;
-    }
-    case OP_LOADBOOL:
-      /* OP_LOADBOOL may begin an expression, unless it is a label */
-      if (test_ins_property(fs, pc, INS_BOOLLABEL))
-        return 0;
-      /* this instruction may not be marked as INS_BOOLLABEL yet */
-      else if ((pc-1) >= 0) {
-        Instruction prev = code[pc-1];
-        if (GET_OPCODE(prev) == OP_LOADBOOL && GETARG_C(prev))
-          return 0; /* one result of a boolean expression */
-      }
-      /* fallthrough */
-    default:
-      /* OP_TESTSET is handled in `beginseval' */
-      if (testTMode(o) && o != OP_TESTSET) { /* conditional expression */
-        if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP) {
-          checkjumptarget:
-          {
-            const Instruction *jumpcontrol = getjumpcontrol(fs, pc-1);
-            int jumpoffs = GETARG_sBx(code[pc-1]);
-            int target = pc + jumpoffs;
-            if (jumpcontrol == NULL || target > jumplimit || jumpoffs <= 0)
-              return 1; /* the previous jump is not part of this expression */
-            else {
-              /* jumpcontrol != NULL && target <= jumplimit && jumpoffs >= 0 */
-              int testedreg;
-              if (isjumpcontroltest(fs, pc-1, &testedreg)) {
-                if (testedreg >= firstreg)
-                  /* jump control tests FIRSTREG; the jump is part of this
-                     expression */
-                  return 0;
-                else
-                  /* jump control tests an earlier resgister; if the jump target
-                     is the endpc, it is not part of this expression */
-                  return (target == jumplimit);
-              }
-              else  /* comparison op */
-                /* comparison ops that are part of this expression will emit
-                   jumps to boolean labels before endpc, so checking target
-                   against the endpc is sufficient */
-                return (target == jumplimit);
-            }
-          }
-        }
-        if (testAMode(o)) { /* OP_TEST */
-          if (a < firstreg) {
-            /* This instruction tests a local variable and is not preceded by a
-               jump. Check if the preceding instruction uses a free register */
-            checkprevreg:
-            if ((pc-1) >= 0) {
-              Instruction prev = code[pc-1];
-              OpCode prevop = GET_OPCODE(prev);
-              int prevA = GETARG_A(prev);
-              if (prevop == OP_DATA) {
-                pc--; goto checkprevreg;  /* skip OP_DATA */
-              }
-              return !(testAMode(prevop) && prevA >= firstreg);
-            }
-            else return 1; /* this is the first instruction */
-          }
-        }
-        else { /* comparison op */
-          if ((ISK(b) || b < firstreg) && (ISK(c) || c < firstreg))
-            /* Same as above. */
-            goto checkprevreg;
-        }
-      }
-      else if (testAMode(o)) { /* A is a register */
-        if (beginseval(o, a, b, c, 1)) {
-          if (nextstart != NULL && a >= firstreg) *nextstart = pc;
-          if (a == firstreg) {
-            if ((pc-1) >= 0 && GET_OPCODE(code[pc-1]) == OP_JMP)
-              goto checkjumptarget;
-            /* clobbers the first free register without using what was
-               previously stored inside it, and there is no jump to precede this
-               instruction; this is the start of a temporary expression. */
-            return 1;
-          }
-        }
-      }
-      return 0;
-  }
-}
-
-
-static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc);
-
-
-/* 
-** common LOADBOOL handler for initial pass
-*/
-static void onloadbool1(DFuncState *fs, int pc, int c)
-{
-  if (c) {
-    set_ins_property(fs, pc, INS_BOOLLABEL);
-    set_ins_property(fs, pc+1, INS_BOOLLABEL);
-  }
-}
-
-/*
-** common jump handler for initial pass
-*/
-static void onjump1(DFuncState *fs, int pc, int offs)
-{
-  const Instruction *jc = getjumpcontrol(fs, pc);
-  /* check if this jump skips over a pair of bool labels */
-  if (jc == NULL && offs >= 2 && test_ins_property(fs, pc+1, INS_BOOLLABEL))
-    set_ins_property(fs, pc, INS_SKIPBOOLLABEL);
-  if (jc)
-    set_ins_property(fs, pc, INS_LEADER);  /* jump instruction is leader */
-  /* JMP cannot be the last instruction */
-  set_ins_property(fs, pc+1, INS_LEADER); /* next instriction is leader */
-  set_ins_property(fs, pc+1+offs, INS_LEADER);  /* jump target is leader */
-}
-
-
-/*
-** finds and marks the beginning of an open expression of type KIND; recursing
-** into nested open expressions is not necessary, as only the start/end pc of
-** root open expressions are needed by the second pass analyzer (VOIDPREP calls
-** are treated differently than other calls, however, so recursion does happen
-** in that case since VOIDPREP expressions are not recorded)
-*/
-static void openexpr1(DFuncState *fs, int firstreg, int kind, LocVar *locvar)
-{
-  DecompState *D = fs->D;
-  const Instruction *code = fs->f->code;
-  int endpc = fs->pc;
-  int nextpossiblestart = endpc;
-  int pc;
-  int sharednil = 0;
-  /* VOIDPREP calls already have ca->pc at the correct value; other kinds have
-     a particular opcode that ends the expression (e.g. OP_RETURN), and that
-     opcode has already been visited in those cases */
-  if (kind != VOIDPREP) fs->pc--;
-  else {
-    /* if this is a local variable expression and the local variable ends 1
-       after the endpc of the expression, such as the following case:
-          if a then
-              local a = 12;
-          end
-       keep the endpc as it is (in the above case, the LOADK instruction), so
-       that the jump for `if a' does not get included as part of the expression;
-       this has the side effect of a false positive in cases such as the
-       following:
-          local a = a and 12; -- generates same code as above
-       the above code would be detected as an if-block because the local
-       variable `a' ends on the same pc as the jump target, so the jump will
-       not be counted as part of the expression. This is usually okay because
-       the decompiler will still generate matching debug for it anyway (whether
-       a branch or a confitional expression, the variable will have the same
-       lifespan in either case); it is a problem if the conditional tests a
-       constant, e.g.:
-          local a = 1 or 5;
-       this would be detected as an if-statement, but it would generate
-       different code when re-compiled because of optimization; constant tests
-       are optimized in if-statements, but not in conditional expressions; this
-       is handled after the code analysis is done */
-    if (locvar == NULL || locvar->endpc != endpc+1)
-      endpc++;  /* endpc needs to be (fs->pc+1) in all cases */
-  }
-  fs->inopenexpr++;
-  for (pc = fs->pc; (pc = fs->pc) >= 0; fs->pc--) {
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
-    int b = GETARG_B(i);
-    int c = GETARG_C(i);
-    switch (o) {
-      case OP_LOADBOOL:
-        onloadbool1(fs, pc, c);
-        break;
-      case OP_JMP:
-        onjump1(fs, pc, GETARG_sBx(i));
-        break;
-      case OP_CALL:
-      case OP_CALL_I:
-      case OP_CALL_I_R1:
-      case OP_CALL_C:
-      case OP_CALL_M:
-      case OP_CONCAT:
-        if (kind == VOIDPREP) {
-          openexpr1(fs,
-                    o == OP_CONCAT ? b : a,
-                    o == OP_CONCAT ? CONCATPREP : CALLPREP, NULL);
-          goto postrecursion;
-        }
-        else
-        /* a nested end-of-expression code can clobber FIRSTREG, but it does not
-           begin an open expression... unless the previous code is OP_LOADNIL
-           and OP_LOADNIL clobbers a register less than FIRSTREG; if that is the
-           case, do not mark OP_LOADNIL as the start of this expression;
-           instead, mark whatever NEXTPOSSIBLESTART was, which is why it is
-           still updated here */
-          nextpossiblestart = pc;
-        continue;
-      case OP_SETLIST:
-        if (kind == VOIDPREP) {
-          openexpr1(fs, a, SETLISTPREP, NULL);
-          postrecursion:
-          pc = fs->pc;
-          i = code[pc];
-          o = GET_OPCODE(i);
-          a = GETARG_A(i);
-          b = GETARG_B(i);
-          c = GETARG_C(i);
-        }
-        break;
-      case OP_NEWTABLE:
-        if (kind == VOIDPREP) {
-          if (c) {
-            /* walk back up the code vector to find the earliest possible end of
-               this constructor */
-            hashtableexpr1(fs, c, a, pc);
-          }
-          else
-            newopenexpr(fs, a, pc, pc, EMPTYTABLE);
-        }
-        break;
-      CASE_OP_SETTABLE:
-        if (kind == VOIDPREP && locvar != NULL) {
-          openexpr1(fs, a, HASHTABLEPREP, NULL);
-          goto postrecursion;
-        }
-        break;
-      default:
-        break;
-    }
-    if ((kind == SETLISTPREP || kind == HASHTABLEPREP) &&
-        o == OP_NEWTABLE && a == firstreg)
-      break;  /* found start of table */
-    if (beginstempexpr(fs, i, pc, firstreg, endpc, &nextpossiblestart)) {
-      break;  /* found the beginning */
-    }
-    else if (o == OP_LOADNIL && a < firstreg) {
-      /* found an OP_LOADNIL that clobbers an earlier register; mark
-         NEXTPOSSIBLESTART as the start */
-      pc = nextpossiblestart;
-      sharednil = 1;
-      break;
-    }
-    if (pc == 0 || pc == D->a.minexprstartpc)
-      break;
-  }
-  if (pc < 0) pc = 0;
-  if (kind != VOIDPREP) {
-    newopenexpr(fs, firstreg, pc, endpc, kind)->sharednil = sharednil;
-  }
-  fs->pc = pc;
-  fs->inopenexpr--;
-}
-
-
-/*
-** traverse a local variable initialized expression
-*/
-static void locvarexpr1(DFuncState *fs, int nvars, struct LocVar *var)
-{
-  int endpc = fs->pc;
-  int reg;  /* register of first local variable that is initialized */
-  lua_assert(nvars > 0);
-  lua_assert(fs->nactvar >= nvars);
-  reg = fs->nactvar-nvars;
-  openexpr1(fs, reg, VOIDPREP, var);
-  fs->nactvar -= nvars;
-  set_ins_property(fs, fs->pc, INS_LOCVAREXPR);
-  set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
-  set_ins_property(fs, endpc, INS_ASSIGNEND);
-}
-
-
-static struct LocVar *getactvar(DFuncState *fs, int pc, int *nv, lu_byte *na);
-
-
-/*
-** traverse a local varibale assignment
-*/
-static int clobberexpr1(DFuncState *fs, OpCode o, int a, int b, int c)
-{
-  int reg = a;
-  DecompState *D = fs->D;
-  int endpc = fs->pc;
-  int pc = fs->pc;
-  int minstartpc = 0;
-  int lowest = getlowestslotreferenced(o, a, b, c, fs->nactvar);
-  if (lowest < fs->nactvar) {
-    set_ins_property(fs, pc, INS_ASSIGNEND);
-    set_ins_property(fs, pc, INS_ASSIGNSTART);
-    return 0;
-  }
-  lua_assert(D->usedebuginfo);
-  lua_assert(reg < fs->nactvar);
-  for (; pc > 0; pc--)
-    if (getactvar(fs, pc, NULL, NULL)) {
-      minstartpc = pc;
-      /* if the previous code is OP_LOADNIL, allow that code to be processed in
-         case it is shared by the open expression */
-      if (pc > 0 && GET_OPCODE(fs->f->code[pc-1]) == OP_LOADNIL)
-        minstartpc--;
-      break;
-    }
-  D->a.minexprstartpc = minstartpc;
-  /* TODO: the endpc in openexpr1 will be 1 more than this function's endpc,
-     which shouldn't matter since no open expression is created for VOIDPREP,
-     but in case it does matter in the future, use a local LocVar struct with
-     special values, passed as the 4th argument to indicate that this expression
-     is for a local variable clobber, so that openexpr1 will know not to
-     increment endpc in this case */
-  openexpr1(fs, reg, VOIDPREP, NULL);
-  D->a.minexprstartpc = 0;
-  set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
-  set_ins_property(fs, endpc, INS_ASSIGNEND);
-  return 1;
-}
-
-
-static void moveexpr1(DFuncState *fs, int src)
-{
-  int endpc = --fs->pc;
-  openexpr1(fs, src, VOIDPREP, NULL);
-  set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
-  set_ins_property(fs, endpc, INS_ASSIGNEND);
-}
-
-
-/*
-** traverse a stored open expression
-*/
-static void storeexpr1(DFuncState *fs, OpCode o, int a, int c)
-{
-  DecompState *D = fs->D;
-  int endpc;
-  int reg = a;
-  if (D->usedebuginfo == 0)
-    return;  /* not using debug info - don't know which registers are local */
-  /* get the lowest temporary register used in the operation */
-  if (reg < fs->nactvar) {
-    if (o == OP_SETSLOTN || !IS_OP_SETTABLE(o) || ISK(c) || c < fs->nactvar)
-      return;  /* doesn't use a temporary register */
-    else
-      reg = c;  /* C is the lowest temporary register */
-  }
-  lua_assert(isregvalid(fs, reg));
-  endpc = --fs->pc;  /* advance over the store code */
-  openexpr1(fs, reg, VOIDPREP, NULL);
-  set_ins_property(fs, fs->pc, INS_ASSIGNSTART);
-  set_ins_property(fs, endpc, INS_ASSIGNEND);
-}
-
-
-/*
-** finds the earliest possible endpc for a SETLIST open expression with only
-** hash items (the exact number cannot be known if operand C is graeter than 16
-** due to the conversion with `luaO_fb2int')
-*/
-static void hashtableexpr1(DFuncState *fs, int argC, int firstreg, int pc)
-{
-  const Instruction *code = fs->f->code;
-  OpenExpr *result;
-  int startpc = pc;
-  int endpc = pc;
-  int numhashitems = 0;  /* number of hash items found so far */
-  int minhashsize = luaO_fb2int(argC-1)+1;
-  int maxhashsize = luaO_fb2int(argC);
-  (void)minhashsize;
-  for (pc = startpc+1; pc < fs->f->sizecode-1; pc++) {
-    Instruction i = code[pc];
-    OpCode o = GET_OPCODE(i);
-    int a = GETARG_A(i);
-    int b = GETARG_B(i);
-    int c = GETARG_C(i);
-    if (o == OP_MOVE && b == firstreg) {
-      /* found the end, as the constructor is being moved to a local variable */
-      break;
-    }
-    /* check if this opcode sets a table index */
-    if (IS_OP_SETTABLE(o)) {
-      if (fs->D->usedebuginfo && GET_OPCODE(code[pc-1]) == OP_CLOSURE) {
-        const Proto *p = fs->f->p[GETARG_Bx(code[pc-1])];
-        if (p->name != NULL)
-          break;  /* cannot have a named function inside a constructor */
-      }
-      if (a == firstreg) {
-        numhashitems++;
-        endpc = pc;
-        if (numhashitems == maxhashsize)
-          break;
-      }
-      else if (a < firstreg)
-        break;
-    }
-    /* if there is any other store code, the constructor has ended */
-    else if (isstorecode(o))
-      break;
-    else if (beginseval(o, a, b, c, 0) && a <= firstreg)
-      break;
-  }
-  /* remove any open expressions that were created inside this hashtable */
-  while (fs->nopencalls > 0) {
-    OpenExpr *e = &fs->a->opencalls[fs->nopencalls-1];
-    if (e->startpc < endpc) {
-      lua_assert(e->endpc <= endpc);
-      fs->nopencalls--;
-    }
-    else
-      break;
-  }
-  result = newopenexpr(fs, firstreg, startpc, endpc, HASHTABLEPREP);
-  if (numhashitems == 0) {
-    result->kind = EMPTYTABLE;
-    lua_assert(endpc == startpc);
-  }
-}
-
-
-
-/*
-** returns the first local variable that starts at PC; also sets the number of
-** active local variables at PC for P_NACTVAR, and sets NVARS to the number of
-** variables that start at PC
-*/
-static struct LocVar *getactvar(DFuncState *fs, int pc, int *nv, lu_byte *na)
-{
-  int i,n=0;
-  lu_byte nact=0;
-  LocVar *firstvar = NULL;
-  lua_assert(ispcvalid(fs, pc));
-  for (i = fs->sizelocvars-1; i >= 0; i--) {
-    struct LocVar *var = &fs->locvars[i];
-    if (var->startpc <= pc && pc <= var->endpc)
-      nact++;
-    if (var->startpc == pc) {
-      firstvar = var;
-      n++;
-    }
-  }
-  if (nv) *nv = n;
-  if (na) *na = nact;
-  return firstvar;
-}
-
-
-/*
-** use this version in `loop1', before local variable info is generated when not
-** using loaded debug info; after `gendebug1' runs, you should use `getactvar'
-*/
-static struct LocVar *getactvar1(DFuncState *fs, int pc, int *nv, lu_byte *na)
-{
-  if (fs->D->usedebuginfo == 0)
-    return NULL;
-  return getactvar(fs, pc, nv, na);
-}
-
-
-/*
-** updates the number of active local variables at PC; returns the first
-** variable that starts at PC, sets NVARS to the number of variables that start
-** at PC
-*/
-static struct LocVar *updateactvar1(DFuncState *fs, int pc, int *nvars)
-{
-  return getactvar1(fs, pc, nvars, &fs->nactvar);
-}
-
-
-/*
-** return whether the line at PC was fixed to the start-line of a loop starting
-** at TARGET
-*/
-static int isjumplinefixed(DFuncState *fs, int pc, int target)
-{
-  lua_assert(ispcvalid(fs, pc));
-  lua_assert(ispcvalid(fs, target));
-  lua_assert(pc >= target);
-  lua_assert(fs->D->usedebuginfo);
-  {
-    int pcline = getline1(fs, pc);
-    int targetline = getline1(fs, target);
-    if (pcline > targetline)
-      return 0;  /* line was not fixed */
-    else if (pcline < targetline)
-      return 1;  /* line was fixed */
-    else {
-      int i;
-      for (i = target+1; i < pc; i++) {
-        if (getline1(fs, i) > targetline)
-          return 1;  /* line was fixed */
-      }
-      return 0;  /* line may have been fixed but it does not manifest */
-    }
-  }
-}
-
-
-typedef struct LoopState {
-  /* the start and end label of the loop */
-  int startlabel, endlabel;
-  /* BREAKLABEL and EXITLABEL may vary between each other and from ENDLABEL */
-  /* the label that break statements will target */
-  int breaklabel;
-  /* the exit label for the loop condition */
-  int exitlabel;
-  unsigned kind : 4;
-  unsigned unsure : 1;
-  unsigned hasbreak : 2;
-} LoopState;
-
-
-static const LoopState dummyloop = {
-  -1, -1, -1, -1, BL_FUNCTION, 0, 0
-};
-
-
-static void setlooplabels(DFuncState *fs, LoopState *loop);
-
-
-static void setloophasbreak(DFuncState *fs, const LoopState *loop, int pc)
-{
-  LoopState *loop1;
-  if (loop == &dummyloop)
-    return;
-  loop1 = ((LoopState *)loop);
-  if (loop1->unsure == 0)
-    loop1->hasbreak = 2;
-  else if (loop1->hasbreak == 0)
-    loop1->hasbreak = 1;
-  if (loop1->hasbreak == 2)
-    set_ins_property(fs, pc, INS_BREAKSTAT);
-}
-
-
-static LoopState *pushloopstate1(DFuncState *fs, int kind, int start, int end)
-{
-  hksc_State *H = fs->H;
-  DecompState *D = fs->D;
-  LoopState *loop;
-  VEC_GROW(H, D->loopstk, LoopState);
-  loop = &D->loopstk.s[D->loopstk.used++];
-  loop->kind = kind;
-  loop->startlabel = start;
-  loop->endlabel = end;
-  loop->unsure = 0;
-  loop->hasbreak = 0;
-  setlooplabels(fs, loop);
-  return loop;
-}
-
-#define poploopstate1(fs)  popnloopstate1(fs, 1)
-static LoopState *popnloopstate1(DFuncState *fs, int n)
-{
-  DecompState *D = fs->D;
-  lua_assert(D->loopstk.used >= n);
-  return &D->loopstk.s[(D->loopstk.used -= n)];
-}
-
-
-#define getcurrloop1(fs)  gettoploop1(fs, 1)
-
-static const LoopState *gettoploop1(DFuncState *fs, int n)
-{
-  DecompState *D = fs->D;
-  lua_assert(n > 0);
-  if (D->loopstk.used < n)
-    return &dummyloop;
-  return &D->loopstk.s[D->loopstk.used-n];
-}
-
-
-static BlockNode *finalizeloopstate1(DFuncState *fs, BlockNode *nextnode)
-{
-  const LoopState *loop = getcurrloop1(fs);
-  int kind = loop->kind;
-  int startpc = loop->startlabel;
-  int endpc = loop->endlabel-1;
-  BlockNode *new_node;
-  int skip = (loop->unsure && loop->hasbreak < 2);
-  poploopstate1(fs);
-  if (skip)
-    return nextnode;
-  new_node = addblnode(fs, startpc, endpc, kind);
-  if (nextnode != NULL && nextnode->endpc <= endpc) {
-    BlockNode *temp;
-    new_node->firstchild = nextnode;
-    /* find the first child that is outside of this new node and make it the
-       next sibling */
-    while (nextnode->nextsibling && nextnode->nextsibling->endpc <= endpc)
-      nextnode = nextnode->nextsibling;
-    temp = nextnode->nextsibling;
-    nextnode->nextsibling = NULL;
-    nextnode = temp;
-  }
-  new_node->nextsibling = nextnode;
-  switch (kind) {
-    case BL_WHILE: set_ins_property(fs, startpc, INS_WHILESTAT); break;
-    case BL_REPEAT: set_ins_property(fs, startpc, INS_REPEATSTAT); break;
-    case BL_FORNUM: set_ins_property(fs, startpc, INS_FORNUM); break;
-    case BL_FORLIST: set_ins_property(fs, startpc, INS_FORLIST); break;
-  }
-  set_ins_property(fs, endpc, INS_LOOPEND);
-  if (kind == BL_REPEAT) {
-    set_ins_property(fs, endpc, INS_FAILJUMP);
-    set_ins_property(fs, endpc, INS_LOOPFAIL);
-  }
-  return new_node;
-}
-
-
-/*
-** returns non-NULL if TARGET is any of the exit-labels of LOOP, returning the
-** pointer to the first label that matches TARGET
-*/
-static const int *isloopexit(const LoopState *loop, int target)
-{
-  if (target == loop->exitlabel)
-    return &loop->exitlabel;
-  else if (target == loop->breaklabel)
-    return &loop->breaklabel;
-  else if (target == loop->endlabel)
-    return &loop->endlabel;
-  return NULL;
-}
-
-
-static int isloopbreak(const LoopState *loop, int target)
-{
-  const int *label = isloopexit(loop, target);
-  return (label && *label == loop->breaklabel);
-}
-
-
-static void
-calcloopunsure(DFuncState *fs, LoopState *loop, const LoopState *outerloop)
-{
-  int target = getjump(fs, loop->endlabel-1);
-  if (target == outerloop->startlabel) {
-    if (outerloop->kind == BL_WHILE) {
-      if (fs->D->usedebuginfo)
-        loop->unsure = !isjumplinefixed(fs, loop->endlabel-1, target);
-      else
-        loop->unsure = 1;
-    }
-    else if (outerloop->kind == BL_REPEAT &&
-             getjumpcontrol(fs, outerloop->endlabel-1) == NULL)
-      loop->unsure = 1;
-  }
-}
-
-
-static void jump1(DFuncState *fs, int pc, int offs)
-{
-  DecompState *D = fs->D;
-  const LoopState *currloop = getcurrloop1(fs);
-  int loopkind = -1;
-  int target = pc + 1 + offs; /* the jump target pc */
-  const Instruction *jc = getjumpcontrol(fs, pc);
-  int tested = (jc != NULL);  /* is it a tested jump */
-  /* check if this jump interacts with bool labels */
-  if (test_ins_property(fs, target, INS_BOOLLABEL) ||
-      test_ins_property(fs, pc, INS_SKIPBOOLLABEL))
-    return; /* this jump is part of a boolean expression */
-  if (offs < 0 && tested) {
-    if (GET_OPCODE(*jc) == OP_TFORLOOP)
-      loopkind = BL_FORLIST;
-    else {  /* possibly a repeat-loop jump */
-      if (1 || target > currloop->startlabel) {
-        const int *label = isloopexit(currloop, target);
-        if (label == NULL || *label != currloop->exitlabel)
-          loopkind = BL_REPEAT;
-      }
-    }
-  }
-  else {
-    if (!tested && isloopbreak(currloop, target)) {
-      setloophasbreak(fs, currloop, pc);
-      return;
-    }
-    if (offs < 0) {
-      /* the final jump in a while-loop will have its line fixed to the start
-         line of the loop; if the line for this jump is greater than the start
-         line, this cannot be a while-loop */
-      if (D->usedebuginfo && getline1(fs, pc) > getline1(fs, target))
-        loopkind = BL_REPEAT;
-      else
-        loopkind = BL_WHILE;
-    }
-    else if (currloop->unsure && !isloopexit(currloop, target)) {
-      const LoopState *loop;
-      int i;
-      /* check if this jump breaks from an outer loop and not the current one */
-      for (i = 2; (loop = gettoploop1(fs, i))->kind != BL_FUNCTION; i++) {
-        if (isloopexit(loop, target)) {
-          popnloopstate1(fs, i-1);
-          jump1(fs, pc, offs);
-          return;
-        }
-      }
-    }
-    /* check is there is a break out of an outer repeat-loop; in that case, the
-       outer loop and current loop are one loop */
-    else if (!tested &&
-             currloop->kind == BL_REPEAT && !isloopbreak(currloop, target)) {
-      const LoopState *loop;
-      int i;
-      for (i = 2; (loop = gettoploop1(fs, i))->kind == BL_REPEAT; i++) {
-        if (loop->startlabel != currloop->startlabel)
-          break;
-        if (isloopbreak(loop, target)) {
-          popnloopstate1(fs, i-1);
-          jump1(fs, pc, offs);
-          return;
-        }
-      }
-    }
-  }
-  if (loopkind != -1) {
-    pushloopstate1(fs, loopkind, target, pc+1);
-    calcloopunsure(fs, (LoopState*)getcurrloop1(fs), gettoploop1(fs, 2));
-  }
-}
-
-
-static void setlooplabels(DFuncState *fs, LoopState *loop)
-{
-  int endlabel = loop->endlabel;
-  lua_assert(ispcvalid(fs, endlabel));
-  loop->breaklabel = loop->exitlabel = endlabel;
-  if (GET_OPCODE(fs->f->code[endlabel]) == OP_JMP) {
-    /* breaks will jump to the label targeted by the jump at ENDLABEL */
-    int breaklabel = getjump(fs, endlabel);
-    loop->breaklabel = breaklabel;
-    loop->exitlabel = breaklabel;
-    /* if the break label is a bool label, and the bool labels have a jump
-       before them to skip the labels, exits from the loop condition will
-       target the end of the bool labels, that is, 1 pc after the second bool
-       label, not the jump target of the jump which skips them */
-    if (test_ins_property(fs, breaklabel, INS_BOOLLABEL)) {
-      int prevpc = breaklabel - 1 - !GETARG_C(fs->f->code[breaklabel]);
-      if (test_ins_property(fs, prevpc, INS_SKIPBOOLLABEL))
-        loop->exitlabel = prevpc + 3;
-    }
-  }
-}
-
-
-/*
-** record open expressions, loops, and testset expressions
-*/
-static void simloop1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  const Instruction *code = fs->f->code;
-  BlockNode *nextnode = NULL;
-  int pendingbreak = -1;
-  /*int n, r1, r2, r3;*/
-  /* walk through code backwards */
-  fs->pc = fs->f->sizecode-1;
-  D->a.minexprstartpc = 0;
-  for (fs->pc--; fs->pc >= 0; fs->pc--) {
-    int pc = fs->pc;
-    OpCode o = GET_OPCODE(code[pc]);
-    int a = GETARG_A(code[pc]);
-    int b = GETARG_B(code[pc]);
-    int c = GETARG_C(code[pc]);
-    int bx = GETARG_Bx(code[pc]);
-    int sbx = GETARG_sBx(code[pc]);
-    /* get the first local variable that starts on the next pc */
-    int nvars;
-    LocVar *nextvar = updateactvar1(fs, pc+1, &nvars);
-    if (nextvar) {
-      if (o != OP_FORPREP && !test_ins_property(fs, pc+1, INS_FORLIST)) {
-        locvarexpr1(fs, nvars, nextvar);
-        goto checkloopend;
-      }
-    }
-    if (fs->nactvar) {
-      lua_assert(D->usedebuginfo);
-      if (o != OP_TESTSET && clobberslocal(fs, o, a, b, c)) {
-        if (o == OP_MOVE && b >= fs->nactvar) {
-          moveexpr1(fs, b);
-          goto checkloopend;
-        }
-        else {
-          if (clobberexpr1(fs, o, a, b, c))
-            goto checkloopend;
-        }
-      }
-    }
-    switch (o) {
-      case OP_JMP: {
-        const Instruction *jc = getjumpcontrol(fs, pc);
-        onjump1(fs, pc, sbx);
-        if (test_ins_property(fs, pc+1, INS_FORLIST)) {
-          updateactvar1(fs, pc, &nvars);
-          openexpr1(fs, GETARG_A(code[pc+1+sbx]), FORLISTPREP, NULL);
-        }
-        else if (jc == NULL || GET_OPCODE(*jc) != OP_TESTSET)
-          jump1(fs, pc, sbx);
-        break;
-      }
-      case OP_FORLOOP: { /* a numeric for-loop */
-        int target = pc + 1 + sbx; /* start of for-loop */
-        pushloopstate1(fs, BL_FORNUM, target, pc+1);
-        set_ins_property(fs, pc+1, INS_LEADER);
-        set_ins_property(fs, target, INS_LEADER);
-        break;
-      }
-      case OP_FORPREP: { /* mark the start of preparation code */
-        int target = pc + 1 + sbx; /* start of for-loop */
-        updateactvar1(fs, pc, &nvars);
-        openexpr1(fs, a, FORNUMPREP, NULL);
-        set_ins_property(fs, pc+1, INS_LEADER);
-        set_ins_property(fs, target, INS_LEADER);
-        break;
-      }
-      /* mark open expressions */
-      CASE_OP_CALL:
-        openexpr1(fs, a, CALLPREP, NULL);
-        break;
-      case OP_CONCAT:
-        openexpr1(fs, b, CONCATPREP, NULL);
-        break;
-      case OP_RETURN: {
-        int nret = b-1;
-        if (nret == 0)
-          break;
-        /* return statements with more than 1 value always push the returned
-           values to the stack; if using debug info, a single-return can also be
-           differentiated between an open expression and a local variable */
-        if (nret != 1 || (fs->D->usedebuginfo && a >= fs->nactvar))
-          openexpr1(fs, a, RETPREP, NULL);
-        break;
-      }
-      case OP_SETLIST:
-        openexpr1(fs, a, SETLISTPREP, NULL);
-        break;
-      case OP_NEWTABLE:
-        if (c)
-          hashtableexpr1(fs, c, a, pc);
-        else
-          /* array-only tables are already handled with OP_SETLIST */
-          newopenexpr(fs, a, pc, pc, EMPTYTABLE);
-        break;
-      /* mark bool labels */
-      case OP_LOADBOOL:
-        onloadbool1(fs, pc, c);
-        break;
-      /* mark nil labels */
-      case OP_LOADNIL:
-        /* LOADNIL cannot be the last instruction */
-        if (GET_OPCODE(code[pc+1]) == OP_LOADNIL) {
-          int nextA = GETARG_A(code[pc+1]);
-          /* if these 2 nil codes could have been optimized, the next pc must
-             have been a possible leader when the code was generated; but it may
-             not actually have been rendered a leader if the basic block
-             boundary was optimized away, for example, in an if-true block:
-                local a = nil;
-                if true then -- falls through with no jump emitted in bytecode
-                    local b = nil;
-                end */
-          if (nextA >= a && nextA <= b+1)
-            set_ins_property(fs, pc+1, INS_NILLABEL);
-        }
-        break;
-      /* note which registers a closure uses as upvalues and if it uses its own
-         register as an upvalue */
-      case OP_CLOSURE: {
-        int nup = fs->f->p[bx]->nups;
-        int nupn;
-        for (nupn = nup; nupn > 0; nupn--)
-          if (GETARG_A(code[pc+nupn]) == 1 && GETARG_Bx(code[pc+nupn]) == a)
-            set_ins_property(fs, pc, INS_SELFUPVAL);
-        break;
-      }
-      default: {
-        if (isstorecode(o)) {
-          storeexpr1(fs, o, a, c);
-        }
-      }
-    }
-    checkloopend:
-    /* update vars after possibly traversing extra codes */
-    pc = fs->pc;
-    o = GET_OPCODE(code[pc]);
-    /*n = referencesslot(code[fs->pc], &r1, &r2, &r3);*/
-    if (getcurrloop1(fs)->hasbreak == 1) {
-      if (pendingbreak == -1)
-        pendingbreak = pc;
-      if (o != OP_JMP && testTMode(o) == 0) {
-        ((LoopState *)getcurrloop1(fs))->hasbreak = 2;
-        set_ins_property(fs, pendingbreak, INS_BREAKSTAT);
-        pendingbreak = -1;
-      }
-    }
-    while (pc == getcurrloop1(fs)->startlabel)
-      nextnode = finalizeloopstate1(fs, nextnode);
-  }
-  fs->root = addblnode(fs, 0, fs->f->sizecode-1, BL_FUNCTION);
-  fs->root->firstchild = nextnode;
-  fs->D->loopstk.used = 0;
-  set_ins_property(fs, 0, INS_LEADER);
-}
-
-
-static void updatenextopenexpr0(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  lua_assert(fs->nopencalls >= 0);
-  if (fs->nopencalls < fs->a->sizeopencalls)
-    D->a.openexpr = &fs->a->opencalls[fs->nopencalls++];
-  else
-    D->a.openexpr = &dummyexpr;
-}
-
-
-static void rescanloops(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  const LoopState *currloop = getcurrloop1(fs);
-  const Instruction *code = fs->f->code;
-  int pc;
-  fs->nopencalls = 0;
-  updatenextopenexpr0(D);
-  /* walk through code backwards */
-  for (pc = fs->f->sizecode-1; pc >= 0; pc--) {
-    OpCode o = GET_OPCODE(code[pc]);
-    int sbx = GETARG_sBx(code[pc]);
-    int target = pc+1+sbx;
-    const Instruction *jc;
-    /* only 1 loop can end per instruction; */
-    if (test_ins_property(fs, pc, INS_LOOPEND)) {
-      /* loop kind doesn't matter, just record the start and end labels */
-      currloop = pushloopstate1(fs, BL_WHILE, target, pc+1);
-      continue;
-    }
-    /* check if entering an open expression */
-    if (pc == D->a.openexpr->endpc) {
-      /* skip to the start of the expression, avoiding any jumps within it */
-      pc = D->a.openexpr->startpc;
-      /* update next open expression */
-      updatenextopenexpr0(D);
-      goto l1;
-    }
-    jc = getjumpcontrol(fs, pc);
-    if (o != OP_JMP ||
-        test_ins_property(fs, pc, INS_BREAKSTAT) ||
-        test_ins_property(fs, target, INS_BOOLLABEL) ||
-        test_ins_property(fs, pc, INS_SKIPBOOLLABEL) ||
-        (jc && GET_OPCODE(*jc) == OP_TESTSET))
-      goto l1;
-    /* set properties for this jump instruction */
-    if (sbx < 0 &&
-        (target == currloop->startlabel || isloopexit(currloop, target)))
-      set_ins_property(fs, pc, INS_FAILJUMP);
-    else if (sbx >= 0) {
-      if (target > pc+2 && GET_OPCODE(fs->f->code[target-1]) == OP_JMP) {
-        const Instruction *jc2 = getjumpcontrol(fs, target-1);
-        if (jc2 && GET_OPCODE(*jc2) == OP_TESTSET) {
-          set_ins_property(fs, pc, INS_TESTSETJUMP);
-          goto l1;
-        }
-      }
-      if (test_ins_property(fs, target-1, INS_FAILJUMP)) {
-        if (getjump(fs, target-1) == target)
-          set_ins_property(fs, pc, INS_FAILJUMP);
-        else if (getjumpcontrol(fs, target-1) != NULL)
-          set_ins_property(fs, pc, INS_PASSJUMP);
-        else {
-          /* TODO: mark else-branch point if needed at (target-1) */
-          unset_ins_property(fs, target-1, INS_FAILJUMP);
-          set_ins_property(fs, pc, INS_FAILJUMP);
-        }
-      }
-      else if (test_ins_property(fs, target-1, INS_PASSJUMP))
-        set_ins_property(fs, pc, INS_FAILJUMP);
-      else
-        set_ins_property(fs, pc, INS_FAILJUMP);
-    }
-    l1:
-    /* pop loop states which begin here */
-    while (pc == currloop->startlabel) {
-      poploopstate1(fs);
-      currloop = getcurrloop1(fs);
-    }
-  }
-#ifdef LUA_DEBUG
-  for (pc = 0; pc < fs->f->sizecode-1; pc++)
-    lua_assert(!(test_ins_property(fs, pc, INS_FAILJUMP) &&
-                 test_ins_property(fs, pc, INS_PASSJUMP)));
-#endif /* LUA_DEBUG */
-  fs->D->loopstk.used = 0;
-  fs->nopencalls = fs->a->sizeopencalls;
-}
-
-
-static void markbbexpr1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  const Instruction *code = fs->f->code;
-  int pc;
-  lua_assert(D->usedebuginfo == 0);
-  fs->nopencalls = 0;
-  updatenextopenexpr0(D);
-  for (pc = fs->f->sizecode-2; pc > 0; pc--) {
-    int reg, startlabel, endlabel, nextlabel;
-    const Instruction *jc;
-    if (test_ins_property(fs, pc-1, INS_BREAKSTAT))
-      continue;
-    if (test_ins_property(fs, pc-1, INS_LOOPEND))
-      continue;
-    if (GET_OPCODE(code[pc-1]) != OP_JMP)
-      continue;
-    endlabel = getjump(fs, pc-1);
-    if (endlabel <= pc)
-      continue;
-    startlabel = pc;
-    nextlabel = pc+1;
-    for (; nextlabel < endlabel; nextlabel++)
-      if (test_ins_property(fs, nextlabel, INS_LEADER)) break;
-    if (nextlabel != endlabel) {
-      int nextlabeltested = testTMode(GET_OPCODE(code[nextlabel-1])) != 0;
-      if (!test_ins_property(fs, nextlabel + nextlabeltested, INS_BBSUBEXPR))
-        continue;
-    }
-    jc = getjumpcontrol(fs, pc-1);
-    if (test_ins_property(fs, pc-1, INS_PASSJUMP))
-      endlabel = getjump(fs, endlabel-1);
-    if (endlabel <= pc)
-      continue;
-    if (jc && testAMode(GET_OPCODE(*jc))) {
-      /* if OP_TESTSET basic blocks are always treated as sub-expressions */
-      if (GET_OPCODE(*jc) == OP_TESTSET) {
-        set_ins_property(fs, pc, INS_BBSUBEXPR);
-        continue;
-      }
-      reg = GETARG_A(*jc);
-    }
-    else {  /* comparison op or untested */
-      if (test_ins_property(fs, pc-1, INS_SKIPBOOLLABEL))
-        reg = GETARG_A(code[pc]);
-      else if (test_ins_property(fs, endlabel, INS_BOOLLABEL))
-        reg = GETARG_A(code[endlabel]);
-      else {
-        Instruction i = code[getjump(fs, pc-1)];
-        reg = GETARG_A(i);
-        if (!beginseval(GET_OPCODE(i), reg, GETARG_B(i), GETARG_C(i), 0))
-          continue;
-      }
-    }
-    while (D->a.openexpr->startpc != -1 && D->a.openexpr->endpc >= nextlabel)
-      updatenextopenexpr0(D);
-    for (pc = nextlabel-1; pc >= startlabel; pc--) {
-      Instruction insn = code[pc];
-      OpCode o = GET_OPCODE(code[pc]);
-      int a = GETARG_A(insn), b = GETARG_B(insn), c = GETARG_C(insn);
-      if (pc == D->a.openexpr->endpc) {
-        if (exprisstat(fs, D->a.openexpr) || D->a.openexpr->firstreg < reg)
-          break;
-        /* skip to the start of the expression, avoiding any jumps within it */
-        pc = D->a.openexpr->startpc;
-        /* update next open expression */
-        updatenextopenexpr0(D);
-        continue;
-      }
-      if (o == OP_DATA)
-        continue;
-      if (o == OP_RETURN ||
-          o == OP_CLOSE ||
-          o == OP_TFORLOOP ||
-          o == OP_FORLOOP ||
-          o == OP_FORPREP)
-        break;
-      if (test_ins_property(fs, pc, INS_BREAKSTAT))
-        break;
-      if (test_ins_property(fs, pc, INS_LOOPEND))
-        break;
-      if (test_ins_property(fs, pc, INS_NILLABEL))
-        break;
-      if (test_ins_property(fs, pc, INS_LEADER))
-        continue;
-      if (beginseval(o, a, b, c, 0) && a < reg)
-        break;
-      if (beginstempexpr(fs, insn, pc, reg, -1, NULL))
-        break;  /* found the beginning */
-    }
-    if (pc < startlabel) {
-      set_ins_property(fs, startlabel, INS_BBSUBEXPR);
-    }
-    pc = startlabel;
-  }
-  fs->nopencalls = fs->a->sizeopencalls;
-}
-
-
-/******************************************************************************/
-/* Block Analyzer - generates branches/blocks and variables if needed */
-/******************************************************************************/
-
-
-static int getevalstart(DFuncState *fs, int pc, int firstreg)
-{
-  const int jumplimit = pc+1;
-  DecompState *D = fs->D;
-  const Instruction *code = fs->f->code;
-  const int savednopencalls = fs->nopencalls;
-  int nextpossiblestart = pc;
-  while (D->a.openexpr->endpc > pc)
-    updatenextopenexpr0(D);
-  for (; pc >= 0; pc--) {
-    Instruction i;
-    OpCode o;
-    if (pc == D->a.openexpr->endpc) {
-      pc = D->a.openexpr->startpc;
-      updatenextopenexpr0(D);
-    }
-    i = code[pc];
-    o = GET_OPCODE(i);
-    if (beginstempexpr(fs, i, pc, firstreg, jumplimit, &nextpossiblestart)) {
-      break;  /* found the beginning */
-    }
-    else if (GET_OPCODE(i) == OP_LOADNIL && GETARG_A(i) < firstreg) {
-      /* found an OP_LOADNIL that clobbers an earlier register; mark
-         NEXTPOSSIBLESTART as the start */
-      pc = nextpossiblestart;
-      break;
-    }
-  }
-  setnextopenexpr(D, fs, savednopencalls);
-  return (pc < 0 ? 0 : pc);
-}
-
-
-typedef struct BlockState {
-  BlockNode *node;  /* corresponding node */
-  union {
-    const LoopState *loop;  /* enclosing loop */
-    /* for converting pointer to index when growing the loop stack after the
-       intiail pass */
-    int loopindex;
-  } l;
-  int savedstartpcbase;
-  /* the true-exit label for an if-statement */
-  int t_exitlabel;
-  /* the jump label for a false branch-condition */
-  int f_exitlabel;
-  int exitlabel;
-  int lastnecessaryvar;
-  int highestclobbered;
-  int highestclobberedresetpc;
-  int savedlastup;
-  int savedlastk;
-  int prepstart;
-  /* - the highest register clobbered since the last open expression or block
-     start, not counting clobbers within open expressions themselves
-     HIGHESTCLOBBEREd would tell you which variables need to be duplicated in
-     the case where the variable would need to end before the open expression,
-     but it started in the parent block. So the variable must end in the parent
-     block before entering the child block, then a new variable begins and ends
-     in the child block, achieved with a do-statement wrapped around the
-     variable.
-     For example, consider the following Lua code:
-      do
-          local _ = 12; -- LOADK 0
-          _ = 34; -- LOADK 0
-          a = _; -- SETGLOBAL
-      end -- variable ends, first temporary is reset to 0
-      repeat
-          do
-              local _ = 12; -- LOADK 0
-          end -- variable ends, first temporary is reset to 0
-          a(1, 2); -- an open expression starting at 0
-      until a;
-     In the above case, the decompiler will encounter the first LOADK code
-     clobbering register 0, and create a local variable. It encounters the
-     second LOADK and SETGLOBAL after, then it enters the repeat-loop. It is now
-     in a child block. The `highestclobbered' field for the parent block (the
-     main function in this case) will be 0, because that is the highest register
-     that had a value written to it. In the repeat-loop, LOADK is encountered,
-     and it is treated as an assignment to an existing local variabe, because
-     slot 0 accesses the variable `_' as far as the decompiler is aware. But
-     then it encounters the open expression given by `a(1, 2)', which uses slot
-     0 as a temporary register, which means the variable `_' must be ended early
-     via a do-block. 
-     */
-  lu_byte nactvar;  /* # active locals outside the breakable structure */
-  lu_byte nforloopvars;  /* # for-loop variables */
-  unsigned seenstat : 1;
-  /* a hard statement is a return, break, store outside of a table constructor,
-     etc., things that could never be confused with a subexpression; clobbering
-     a register is not a hard statement unless debug info shows that the
-     register is a local variable, but when not using debug info, the clobber is
-     marked as a statement but not a hard statement */
-  unsigned seenhardstat : 1;
-  unsigned isloop : 1;
-  unsigned isbranch : 1;
-  unsigned statbeforechild : 1;
-} BlockState;
-
-
-static void setbranchlabels(DFuncState *fs, BlockState *block)
-{
-  int endpc = block->node->endpc;
-  int exitlabel = endpc+1;
-  lua_assert(ispcvalid(fs, exitlabel));
-  if (GET_OPCODE(fs->f->code[exitlabel]) == OP_JMP) {
-    exitlabel = getjump(fs, exitlabel);
-    /* if the break label is a bool label, and the bool labels have a jump
-       before them to skip the labels, exits from the loop condition will
-       target the end of the bool labels, that is, 1 pc after the second bool
-       label, not the jump target of the jump which skips them */
-    if (test_ins_property(fs, exitlabel, INS_BOOLLABEL)) {
-      int prevpc = exitlabel - 1 - !GETARG_C(fs->f->code[exitlabel]);
-      if (test_ins_property(fs, prevpc, INS_SKIPBOOLLABEL))
-        exitlabel = prevpc + 3;
-    }
-  }
-  /* false exit targets the else-part */
-  block->f_exitlabel = exitlabel;
-  if (GET_OPCODE(fs->f->code[endpc]) == OP_JMP &&
-      !test_ins_property(fs, endpc, INS_BREAKSTAT)) {
-    /* true exit is the end of the statement */
-    block->t_exitlabel = getjump(fs, endpc);
-  }
-  else {
-    /* no else-part */
-    block->t_exitlabel = block->f_exitlabel;
-  }
-}
-
-static int getlastpersistentvar1(DecompState *D, int limit);
-
-
-static void initblockstate1(DFuncState *fs, BlockState *block, BlockNode *node)
-{
-  DecompState *D = fs->D;
-  block->node = node;
-  block->nactvar = fs->nactvar;
-  block->seenstat = 0;
-  block->seenhardstat = 0;
-  block->statbeforechild = 0;
-  block->highestclobbered = -1;
-  block->highestclobberedresetpc = node->startpc;
-  block->savedlastup = -1;
-  block->savedlastk = -1;
-  block->lastnecessaryvar = -1;
-  block->savedstartpcbase = D->savedstartpc.used;
-  if (D->blockstk.used > 1) {
-    BlockState *prev = block-1;
-    /* parent block has seen a statement */
-    prev->seenstat = 1;
-    prev->seenhardstat = 1;
-    if (D->usedebuginfo == 0)
-      prev->lastnecessaryvar = getlastpersistentvar1(D, prev->nactvar);
-  }
-  if (isloopnode(node)) {
-    pushloopstate1(fs, node->kind, node->startpc, node->endpc+1);
-    block->isloop = 1;
-    block->isbranch = 0;
-    block->t_exitlabel = block->f_exitlabel = -1;
-  }
-  else if (node->kind == BL_IF) {
-    block->isbranch = 1;
-    block->isloop = 0;
-    setbranchlabels(fs, block);
-  }
-  else {
-    block->isbranch = block->isloop = 0;
-    block->t_exitlabel = block->f_exitlabel = -1;
-  }
-  block->l.loop = getcurrloop1(fs);
-  block->nforloopvars = 0;
-}
-
-
-static BlockState *pushblockstate1(DFuncState *fs, BlockNode *node)
-{
-  hksc_State *H = fs->H;
-  DecompState *D = fs->D;
-  BlockState *block;
-  lua_assert(node != NULL);
-  VEC_GROW(H, D->blockstk, BlockState);
-  block = &D->blockstk.s[D->blockstk.used++];
-  initblockstate1(fs, block, node);
-  return block;
-}
-
-
-/*
-** insert a new loop into the middle of the block state stack
-*/
-static BlockState *insertloopstate1(DFuncState *fs, BlockNode *node)
-{
-  hksc_State *H = fs->H;
-  DecompState *D = fs->D;
-  BlockState *block;
-  const LoopState *base = D->loopstk.s;
-  int i;
-  /* if the loop stack needs to grow, the pointers may be invalidated */
-  if (D->loopstk.used >= D->loopstk.alloc) {
-    /* covert pointers to indices in BlockStates before growing the stack */
-    for (i = 0; i < D->blockstk.used; i++) {
-      BlockState *block = &D->blockstk.s[i];
-      if (block->l.loop == &dummyloop)
-        block->l.loopindex = -1;
-      else
-        block->l.loopindex = block->l.loop - base;
-    }
-    VEC_GROW(H, D->loopstk, LoopState);
-    base = D->loopstk.s;
-    /* convert indices back to pointers */
-    for (i = 0; i < D->blockstk.used; i++) {
-      BlockState *block = &D->blockstk.s[i];
-      if (block->l.loopindex == -1)
-        block->l.loop = &dummyloop;
-      else
-        block->l.loop = base + block->l.loopindex;
-    }
-  }
-  VEC_GROW(H, D->blockstk, BlockState);
-  /* make room to insert a block state */
-  for (i = D->blockstk.used; i > 1; i--) {
-    BlockState *bl = &D->blockstk.s[i-1];
-    if (blstartpc(bl->node) < node->startpc)
-      break;
-    D->blockstk.s[i] = D->blockstk.s[i-1];
-  }
-  D->a.bl = &D->blockstk.s[D->blockstk.used++];
-  block = &D->blockstk.s[i];
-  initblockstate1(fs, block, node);
-  if (i < D->blockstk.used-1)
-    block->savedstartpcbase = (block+1)->savedstartpcbase;
-  return block;
-}
-
-
-static void resethighestclob1(DecompState *D, int pc)
-{
-  D->a.bl->highestclobbered = -1;
-  D->a.bl->highestclobberedresetpc = pc;
-  D->a.bl->savedlastup = D->a.lastup;
-  D->a.bl->savedlastk = D->a.lastk;
-}
-
-
-static BlockState *popblockstate1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  BlockState *block;
-  lua_assert(D->blockstk.used > 0);
-  block = &D->blockstk.s[--D->blockstk.used];
-  fs->nactvar = block->nactvar;
-  if (isloopnode(block->node)) {
-    if (isforloop(block->node))
-      fs->nactvar -= 3;
-    poploopstate1(fs);
-  }
-  return block;
-}
-
-
-#define getcurrblock1(fs)  gettopblock1(fs, 1)
-
-static BlockState *gettopblock1(DFuncState *fs, int n)
-{
-  DecompState *D = fs->D;
-  lua_assert(n > 0);
-  if (D->blockstk.used < n)
-    return NULL;
-  return &D->blockstk.s[D->blockstk.used-n];
-}
-
-
-static void updateinsn1(DecompState *D, DFuncState *fs)
-{
-  Instruction i;
-  lua_assert(ispcvalid(fs, fs->pc));
-  i = fs->f->code[fs->pc];
-  D->a.insn.o = GET_OPCODE(i);
-  D->a.insn.a = GETARG_A(i);
-  D->a.insn.b = GETARG_B(i);
-  D->a.insn.c = GETARG_C(i);
-  D->a.insn.bx = GETARG_Bx(i);
-  D->a.insn.sbx = GETARG_sBx(i);
-}
-
-
-#define ispersistent(note) ((note) != GENVAR_DISCHARGED)
-#define isonstack(note) \
-  ((note) == GENVAR_ONSTACK || (note) == GENVAR_BELOW_DISCHARGED)
-
-/*
-** Variable generation notes
-** These notes describe the level of necessity of a variable's creation at a
-** particular pc
-**
-** The different states of a created variable
-** - clobbered
-** - discharged
-** - referenced, at this point the variable must be committed
-**
-** if you clobber a register than reference it, it does not need to be a
-** variable, but if it is referenced without being clobbered immediately before,
-** it must be a variable
-**
-** a stack value becomes discharged if it is clobbered without reading it, or
-** a lower slot is clobbered without reading it; if another value is pushed, the
-** slot is still pending discharge
-*/
-enum GENVARNOTE {
-  /* FILL is used when there is stack space between the last variable and the
-     next variable to create; the actual note for this variable defers to the
-     next non-FILL variable */
-  GENVAR_FILL,
-  /* same as ONSTACK but additionally the next var is DISCHARGED; I have this
-     before ONSTACK so that comparisons to ONSTACK in the code can stay the same
-     instead of changing them to `x <= GENVAR_BELOW_DISCHARGED' */
-  GENVAR_BELOW_DISCHARGED,
-  /* value is on the stack, yet to be used; if a variable ends up with this note
-     by the end of the analysis, it must not be pruned */
-  GENVAR_ONSTACK,
-  /* value on the stack was used immediately; if a variable ends up with this
-     note by the end of the analysis, it may be pruned */
-  GENVAR_DISCHARGED,
-  /* the below notes are for variables which must not be pruned from the
-     generated variable info */
-  GENVAR_BELOW_PERSISTENT,  /* a lower slot than a persitent local */
-  GENVAR_PERSISTENT,  /* this variable must exist */
-  GENVAR_UPVALUE,  /* same as PERSISTENT, but also an upvalue */
-  GENVAR_FORLOOPVAR,  /* user variables in a for-loop */
-  GENVAR_INITIAL,  /* initial nil variables (only in regular Lua) */
-  /* the rest of the notes are used to determine how to name the variabless;
-     PARAM variables will be named following the pattern "f%d_par%d" */
-  GENVAR_PARAM,  /* function parameters */
-  GENVAR_FORNUM,  /* augmented numeric for-loop variables */
-  GENVAR_FORLIST  /* augmented list for-loop variables */
-};
-
-#ifdef LUA_DEBUG
-static const char *const varnotenames[] = {
-  "GENVAR_FILL","GENVAR_BELOW_DISCHARGED", "GENVAR_ONSTACK", "GENVAR_DISCHARGED",
-  "GENVAR_BELOW_PERSISTENT", "GENVAR_PERSISTENT",
-  "GENVAR_UPVALUE", "GENVAR_FORLOOPVAR", "GENVAR_INITIAL", "GENVAR_PARAM",
-  "GENVAR_FORNUM", "GENVAR_FORLIST"
-};
-#endif /* LUA_DEBUG */
-
-
-static int isstartpcfinal(enum GENVARNOTE note)
-{
-  /* these variable kinds do not require analysis to compute the startpc */
-  return (note == GENVAR_FILL || note >= GENVAR_FORLOOPVAR);
-}
-
-
-
-typedef struct GenLocVar {
-  union {
-    int varnote;
-    TString *varname;
-  } u;
-  int startpc;  /* first point where variable is active */
-  int endpc;    /* first point where variable is dead */
-} GenLocVar;
-
-
-/* check if GenLocVar will be compatible with LocVar, and in case it is not, a
-   separate vector will be used for variable notes */
-static const int mem_separate_varnotes = sizeof(GenLocVar) != sizeof(LocVar);
-
-
-static LocVar *getlocvar1(DecompState *D, int r)
-{
-  return &D->fs->locvars[D->fs->a->actvar[r]];
-}
-
-
-#define getlastlocvar1(D)  \
-  check_exp((D)->fs->nactvar > 0, getlocvar1((D), (D)->fs->nactvar-1))
-
-
-static int getvarnoteintern1(DecompState *D, struct LocVar *var)
-{
-  if (mem_separate_varnotes) {
-    int index = var - D->fs->locvars;
-    lua_assert(index >= 0 && index < D->varnotes.used);
-    return D->varnotes.s[index];
-  }
-  else {
-    GenLocVar *genvar = cast(void *, var);
-    return genvar->u.varnote;
-  }
-}
-
-
-/*
-** I store the NOTE in the VARNAME field, as the notes are only before variable
-** names are generated
-*/
-static enum GENVARNOTE getvarnote1(DecompState *D, struct LocVar *var)
-{
-  int storednote = getvarnoteintern1(D, var);
-  if (storednote < 0)
-    return -(storednote+1);
-  else
-    return GENVAR_DISCHARGED;
-}
-
-
-static int getvarnotepc1(DecompState *D, struct LocVar *var)
-{
-  int storednote = getvarnoteintern1(D, var);
-  lua_assert(storednote >= 0);
-  return storednote;
-}
-
-
-static void setvarnoteintern1(DecompState *D, int r, int storednote)
-{
-  if (mem_separate_varnotes) {
-    int index = D->fs->a->actvar[r];
-    lua_assert(index < D->varnotes.used);
-    D->varnotes.s[index] = storednote;
-  }
-  else {
-    GenLocVar *var = cast(void *, getlocvar1(D, r));
-    var->u.varnote = storednote;
-  }
-}
-
-
-static void setvarnote1(DecompState *D, int r, enum GENVARNOTE note)
-{
-  int storednote = -note-1;
-  lua_assert(note != GENVAR_DISCHARGED);
-  setvarnoteintern1(D, r, storednote);
-}
-
-
-static void setvardischarged1(DecompState *D, int r, int pc)
-{
-  setvarnoteintern1(D, r, pc);
-}
-
-
-static int hasnoteorhigher1(DecompState *D, int r, enum GENVARNOTE note)
-{
-  LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE currnote = getvarnote1(D, var);
-  return currnote >= note;
-}
-
-
-static void promotevar1(DecompState *D, int r, enum GENVARNOTE newnote)
-{
-  if (!hasnoteorhigher1(D, r, newnote))
-    setvarnote1(D, r, newnote);
-}
-
-
-static void promotedischarged1(DecompState *D, int r, int pc)
-{
-  if (!hasnoteorhigher1(D, r, GENVAR_DISCHARGED))
-    setvardischarged1(D, r, pc);
-}
-
-
-static void promotebelowdischarged(DecompState *D, int r)
-{
-  LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(D, var);
-  if (note == GENVAR_ONSTACK)
-    setvarnote1(D, r, GENVAR_BELOW_DISCHARGED);
-  else
-    promotevar1(D, r, GENVAR_BELOW_DISCHARGED);
-}
-
-
-static void makepersistent1(DecompState *D, int r)
-{
-  promotevar1(D, r, GENVAR_PERSISTENT);
-  for (r--; r >= 0; r--) {
-    if (hasnoteorhigher1(D, r, GENVAR_BELOW_PERSISTENT))
-      break;
-    setvarnote1(D, r, GENVAR_BELOW_PERSISTENT);
-  }
-}
-
-
-static void setslotclobber1(DFuncState *fs, int r, int pc, expkind k)
-{
-  SlotDesc *slot = getslotdesc(fs, r);
-  slot->flags = cast_byte(k);
-  slot->u.lastclobber = pc;
-}
-
-
-static int getslotclobber1(DFuncState *fs, int r)
-{
-  return getslotdesc(fs, r)->u.lastclobber;
-}
-
-
-static expkind getslotexpkind1(DFuncState *fs, int r)
-{
-  return cast(expkind, getslotdesc(fs, r)->flags);
-}
-
-
-/*
-** data for the pending store chain when generating variables
-*/
-typedef struct PendingStoreState {
-  int newconstants;  /* number of new constants encountered during the chain */
-  int newupvals;
-  int pc;  /* current pc */
-  int startpc;  /* pc of first store code */
-  int firstreg;  /* first reg used to evaluate RHS */
-  int lastreg;  /* last reg used to evaluate RHS */
-  int laststat;  /* pc of previous statement if any */
-  int secondlaststat;  /* this is used if `laststat' was a clobber instruction
-                          immediately before the store chain which was actually
-                          the last store in the assignment, but did not require
-                          a store-code because it the destination was a local */
-  int lastup;  /* highest referenced upvalue before the store chain */
-  int lastk;  /* highest referenced constant before the store chain */
-  int dischargelimit;
-  int RHS_skipped_ref;
-  int upval;  /* true if there is an OP_SETUPVAL code in the store chain */
-  int lowestnewupval;  /* lowest new upval reference */
-} PendingStoreState;
-
-
-static const struct PendingStoreState pending_store_init = {
-  0,  /* newconstants */
-  0,  /* newupvals */
-  -1,  /* pc */
-  -1,  /* startpc */
-  -1,  /* firstreg */
-  -1,  /* lastreg */
-  -1,  /* laststat */
-  -1,  /* secondlaststat */
-  -1,  /* lastup */
-  -1,  /* lastk */
-  -1,  /* dischargelimit */
-  0,  /* RHS_skipped_ref */
-  0,  /* upval */
-  -1  /* lowestnewupval */
-};
-
-
-static void updatenextopenexpr1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  lua_assert(fs->nopencalls >= 0);
-  if (fs->nopencalls == 0)
-    D->a.openexpr = &dummyexpr;
-  else
-    D->a.openexpr = &fs->a->opencalls[--fs->nopencalls];
-}
-
-
-/*
-** return the last OpenExpr entry that was processed; the last one must exist
-*/
-static const OpenExpr *getlastopenexpr1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  const OpenExpr *expr = D->a.openexpr;
-  lua_assert(fs->nopencalls >= 0);
-  if (expr == &dummyexpr)  /* last one was the final one */
-    return &fs->a->opencalls[0];
-  else
-    return expr+1;
-}
-
-
-/*
-** remove the entry in D->savedstartpc for the local variable in SLOT; this
-** needs to happen when a new local variable is generated in SLOT
-*/
-static void deletesavedvar1(DecompState *D, int slot)
-{
-  int i;
-  lua_assert(D->usedebuginfo == 0);
-  for (i = D->savedstartpc.used-1; i >= D->a.bl->savedstartpcbase; i--) {
-    index2pc_t *s = &D->savedstartpc.s[i];
-    if (s->state <= 0 && -s->state == slot) {
-      int j;
-      /*set_ins_property(D->fs, s->pc, INS_SAVEDLOCVAREXPR);*/
-      for (j = i+1; j < D->savedstartpc.used; j++)
-        D->savedstartpc.s[j-1] = D->savedstartpc.s[j];
-      D->savedstartpc.used--;
-    }
-  }
-}
-
-
-static int getlocvarinit1(DecompState *D, LocVar *var);
-
-
-/*
-** restore the initpc of VAR, where PC is the saved startpc to be restored
-*/
-static void restorevarinit1(DecompState *D, DFuncState *fs, LocVar *var, int pc)
-{
-  int oldinitpc = getlocvarinit1(D, var);
-  unset_ins_property(fs, oldinitpc, INS_LOCVAREXPR);
-  while (--pc >= 0) {
-    if (test_ins_property(fs, pc, INS_SAVEDLOCVAREXPR)) {
-      unset_ins_property(fs, pc, INS_SAVEDLOCVAREXPR);
-      set_ins_property(fs, pc, INS_LOCVAREXPR);
-      break;
-    }
-  }
-}
-
-
-/*
-** revive a saved local variable that was ended in a previous child block,
-** restoring its original lexical scope, i.e. the current (parent) block
-*/
-static LocVar *revivesavedlocvar1(DecompState *D, int slot)
-{
-  DFuncState *fs = D->fs;
-  int i;
-  lua_assert(D->usedebuginfo == 0);
-  for (i = D->savedstartpc.used-1; i >= D->a.bl->savedstartpcbase; i--) {
-    index2pc_t *s = &D->savedstartpc.s[i];
-    if (s->state <= 0 && -s->state >= slot) {
-      LocVar *var;
-      int j;
-      int index = s->index;
-      lua_assert(index >= 0 && index < fs->nlocvars);
-      var = fs->locvars + index;
-      restorevarinit1(D, fs, var, s->pc);
-      var->startpc = s->pc;
-      var->endpc = getnaturalvarendpc(D->a.bl->node);
-      for (j = i+1; j < D->savedstartpc.used; j++)
-        D->savedstartpc.s[j-1] = D->savedstartpc.s[j];
-      D->savedstartpc.used--;
-      if (-s->state == slot)
-        return var;
-    }
-  }
-  return NULL;
-}
-
-
-/*
-** combine 2 repeat-loops, a child and parent, into 1 loop
-*/
-static void
-meldrepeatloops1(DecompState *D, BlockNode *parent, BlockNode **child)
-{
-  lua_assert(child != NULL);
-  /* combine the repeat-loops */
-  lua_assert(parent->firstchild == *child);
-  parent->firstchild = (*child)->firstchild;
-  freeblnode(D->fs, *child);
-  if (parent->firstchild == NULL)
-    *child = NULL;
-  else {
-    BlockNode *nextchild = parent->firstchild;
-    while (nextchild->nextsibling != NULL)
-      nextchild = nextchild->nextsibling;
-    *child = nextchild;
-  }
-}
-
-
-/*
-** revive a saved repeat-loop variable that ended because it was in the lexical
-** scope of a child repeat-loop that deos not exist
-*/
-static LocVar *revivesavedrepeatvar1(DecompState *D, int r)
-{
-  DFuncState *fs = D->fs;
-  BlockState *bl = D->a.bl;
-  BlockNode *prevnode = D->a.prevnode;
-  /* see if the current block is a repeat-loop and the previous one was a
-     repeat-loop and that they both have the same start label */
-  if (prevnode == NULL || prevnode->kind != BL_REPEAT ||
-      bl->node->kind != BL_REPEAT ||
-      bl->node->startpc != prevnode->startpc ||
-      bl->nactvar > r) {
-    return NULL;  /* conditions not met */
-  }
-  while (D->savedrepeatvars.used) {
-    index2pc_t *s = &D->savedrepeatvars.s[--D->savedrepeatvars.used];
-    LocVar *var = fs->locvars + s->index;
-    var->endpc = getnaturalvarendpc(bl->node);
-    fs->nactvar++;
-    if (s->state == 0)
-      fs->nlocvars++;
-  }
-  meldrepeatloops1(D, bl->node, &D->a.prevnode);
-  return getlocvar1(D, r);
-}
-
-
-/*
-** clear all saved var entries above or equal to slot LIMIT, and mark
-** INS_SAVEDLOCVAREXPR for each cleared entry
-*/
-static void clearsavedvars1(DecompState *D, int limit)
-{
-  int i;
-  if (D->usedebuginfo)
-    return;
-  for (i = D->savedstartpc.used-1; i >= 0; i--) {
-    index2pc_t *s = &D->savedstartpc.s[i];
-    int slot = s->state <= 0 ? -s->state : s->state-1;
-    if (slot >= limit) {
-      int j;
-      int pc = s->pc;
-      for (j = i+1; j < D->savedstartpc.used; j++)
-        D->savedstartpc.s[j-1] = D->savedstartpc.s[j];
-      D->savedstartpc.used--;
-      set_ins_property(D->fs, pc, INS_SAVEDLOCVAREXPR);
-    }
-  }
-  D->savedstartpc.used = 0;
-}
-
-
-/*
-** record a local variable starting at PC with the given NOTE
-*/
-static LocVar *genvar1(DecompState *D, int pc, enum GENVARNOTE note)
-{
-  DFuncState *fs = D->fs;
-  Analyzer *a = fs->a;
-  struct LocVar *var;
-  /* never generate a variable if using debug info */
-  lua_assert(D->usedebuginfo == 0);
-  luaM_growvector(fs->H, a->locvars, fs->nlocvars, a->sizelocvars, LocVar,
-                  SHRT_MAX, "");
-  fs->locvars = a->locvars;
-  fs->sizelocvars = a->sizelocvars;
-  var = &a->locvars[fs->nlocvars];
-  var->startpc = pc;
-  var->endpc = getnaturalvarendpc(D->a.bl->node);
-  var->varname = NULL;
-  a->actvar[fs->nactvar] = fs->nlocvars++;
-  lua_assert(note != GENVAR_DISCHARGED);
-  setvarnote1(D, fs->nactvar, note);
-  deletesavedvar1(D, fs->nactvar);
-  fs->nactvar++;
-  return var;
-}
-
-
-/*
-** use this when you want the next instruction that is not OP_DATA; for example,
-** variables that are initialized by OP_GETTABLE will start after the 2 OP_DATA
-** codes, and variables initialized by OP_GETGLOBAL_MEM will start after the
-** OP_DATA code
-*/
-static int getnextpc1(DFuncState *fs, int pc)
-{
-  int nextpc = pc;
-  do {
-    nextpc++;
-    if (nextpc >= fs->f->sizecode) break;
-  } while (GET_OPCODE(fs->f->code[nextpc]) == OP_DATA);
-  return nextpc;
-  while (++pc < fs->f->sizecode && GET_OPCODE(fs->f->code[pc]) == OP_DATA)
-    ;
-  return pc;
-}
-
-
-static int getprevpc1(DFuncState *fs, int pc)
-{
-  while (--pc > 0 && GET_OPCODE(fs->f->code[pc]) == OP_DATA)
-    ;
-  return pc;
-}
-
-
-/*
-** add a new local variable in reg R, where PC is the current pc
-*/
-static void newlocalvar1(DecompState *D, int r, int pc)
-{
-  int startpc = getnextpc1(D->fs, pc);
-  int i;
-  if (D->a.insn.o == OP_LOADNIL) {
-    /* when an OP_LOADNIL is shared by a local variable statement and an open
-       expression, such as `local a, b, c; (nil)(1, 2);', variables should not
-       be created for the extra nil slots used by the open expression */
-    if (D->a.openexpr->startpc == pc+1 && D->a.openexpr->sharednil) {
-      int firsttemp = D->a.openexpr->firstreg;
-      /* if rescanning, the next open expression should never start after PC */
-      lua_assert(D->rescan == 0);
-      if (r >= firsttemp)
-        return;
-    }
-  }
-  for (i = D->fs->nactvar; i < r; i++)
-    genvar1(D, startpc, GENVAR_FILL);
-  /* if the position below R is free, then it must be a local if it is not being
-     used in favor of R */
-  if (r > 0 && getvarnote1(D, getlocvar1(D, r-1)) == GENVAR_DISCHARGED) {
-    makepersistent1(D, r-1);
-  }
-  genvar1(D, startpc, GENVAR_ONSTACK);
-  set_ins_property(D->fs, pc, INS_LOCVAREXPR);
-}
-
-
-static void makevarstartnextpc1(DFuncState *fs, LocVar *var, int pc)
-{
-  var->startpc = getnextpc1(fs, pc);
-}
-
-
-static void unmarklocvars1(DecompState *D, DFuncState *fs, int n, int nactvar);
-
-
-/*
-** revert fs->nactvar back to N, erasing any active variables that have been
-** created from that point; returns number of variables deleted
-*/
-static int rollbackvars1(DecompState *D, lu_byte n)
-{
-  DFuncState *fs = D->fs;
-  int numtodelete = (lua_assert(fs->nactvar >= n), fs->nactvar - n);
-  lua_assert(D->usedebuginfo == 0);
-  if (numtodelete == 0)
-    return 0;
-  fs->nlocvars -= numtodelete;
-  fs->nactvar = n;
-  if (D->usedebuginfo == 0)
-    unmarklocvars1(D, fs, numtodelete, n);
-  return numtodelete;
-}
-
-
-/*
-** update the last statement-ending pc to PC
-*/
-static void setlaststat1(DecompState *D, int pc, int hardstat)
-{
-  D->a.secondlaststat = D->a.laststat;
-  D->a.laststat = pc;
-  D->a.bl->seenstat = 1;
-  if (hardstat) D->a.bl->seenhardstat = 1;
-}
-
-
-#define STORE_CHAIN_OPTIONAL 1
-#define STORE_CHAIN_NECESSARY 2
-
-/*
-** return true if the pending assignments can be grouped as one statement
-*/
-static int storeischainable1(DecompState *D, struct PendingStoreState *store)
-{
-  /* if the LHS store codes reference new constants in reverse order, or if
-     there are new constants referenced in the RHS evluation codes, and they
-     skip new constant indices from the following store codes, then it must be a
-     store chain */
-  if (D->a.skippedstorerefpc >= store->startpc || store->RHS_skipped_ref)
-    return STORE_CHAIN_NECESSARY;
-  /* next check if chaining the store is possible while still generating
-     matching bytecode: if the store codes reference multiple new constants or
-     multiple new upvalues, than the order in which they are referenced must be
-     preserved by not chaining them, also if the store codes reference an
-     upvalue index greater than those which had been referenced up until the
-     store codes, than it must not be chained to preserve oredr of upvalue
-     referenced; otherwise, chaining is optional */
-  else if ((!store->upval || D->a.lastup == store->lastup) &&
-           D->a.lastk == store->lastk &&
-           store->newconstants < 2 && store->newupvals < 2)
-    return STORE_CHAIN_OPTIONAL;
-  return 0;
-}
-
-
-/*
-** return true if the variable in R is discharged by pending assignment STORE
-*/
-static int isvarprimedforstore(DecompState *D, int r, PendingStoreState *store,
-                               int expectedstartpc)
-{
-  DFuncState *fs = D->fs;
-  LocVar *var = getlocvar1(D, r);
-  int n = store->lastreg - r;  /* number of assignments away from the last */
-  if (n == 0 && r >= getlastpersistentvar1(D, store->lastreg))
-    /* last value pushed, first value stored; var starts on the first store */
-    return (var->startpc == expectedstartpc);
-  else {
-    LocVar *nextvar = check_exp(r+1 < fs->nactvar, getlocvar1(D, r+1));
-    int nextvarinit = getlocvarinit1(D, nextvar);
-    /* var starts immediately on the next source value evaluation or the 2
-       variables have the same startpc */
-    return (var->startpc == nextvar->startpc || var->startpc == nextvarinit);
-  }
-}
-
-
-static int
-check_conflict_var(DecompState *D, int r, int RHSstart, int *nconflicts)
-{
-  DFuncState *fs = D->fs;
-  LocVar *safecopyvar = check_exp(isregvalid(fs, r), getlocvar1(D, r));
-  if (safecopyvar->startpc == RHSstart - *nconflicts) {
-    int initpc = getlocvarinit1(D, safecopyvar);
-    Instruction insn = fs->f->code[initpc];
-    int a = GETARG_A(insn), b = GETARG_B(insn);
-    /* initialization should only be 1 OP_MOVE code, than the variable starts
-       directly after */
-    if (initpc+1 == safecopyvar->startpc && GET_OPCODE(insn) == OP_MOVE) {
-      /* it is always a lower reg moved to the first free reg */
-      if (a == r && a > b) {
-        (*nconflicts)++;
-        setvardischarged1(D, a, fs->pc);
-        makepersistent1(D, b);
-        return 1;
-      }
-    }
-  }
-  return 0;
-}
-
-
-/*
-** corresponds to `check_conflict' in `lparser.c'; check if some variables can
-** be discharged by detecting an OP_MOVE generated to resolve assignment
-** conflicts during parsing
-*/
-static void check_conflict(DecompState *D, struct PendingStoreState *store)
-{
-  DFuncState *fs = D->fs;
-  const int savedpc = fs->pc;
-  const int startpc = store->startpc;  /* first store code */
-  /* get the first code that pushes the stored values to compare with variable
-     startpcs */
-  const int prepstart = getevalstart(fs, startpc-1, store->firstreg);
-  int nconflicts = 0;  /* number of conflicts detected so far */
-  for (fs->pc = startpc; fs->pc <= store->pc; fs->pc++) {
-    updateinsn1(D, fs);
-    if (D->a.insn.o == OP_DATA)
-      continue;
-    /* assignment conflicts are caused by VINDEXED or VSLOT expressions */
-    if (IS_OP_SETTABLE(D->a.insn.o)) {
-      /* VINDEXED - check table and index operands */
-      int table = D->a.insn.a;
-      int index = D->a.insn.b;
-      if (table < fs->nactvar)
-        check_conflict_var(D, table, prepstart, &nconflicts);
-      if (!ISK(index) && index != table && index < fs->nactvar)
-        check_conflict_var(D, index, prepstart, &nconflicts);
-    }
-    else if (IS_OP_SETSLOT(D->a.insn.o)) {
-      /* VSLOT - check struct operand */
-      int hstruct = D->a.insn.a;
-      if (hstruct < fs->nactvar)
-        check_conflict_var(D, hstruct, prepstart, &nconflicts);
-    }
-  }
-  fs->pc = savedpc;
-  updateinsn1(D, fs);
-}
-
-
-static int storehasclobbercode1(DecompState *D, PendingStoreState *store)
-{
-  DFuncState *fs = D->fs;
-  int prevpc = getprevpc1(fs, store->startpc);
-  if (prevpc >= 0 && store->laststat == prevpc) {
-    OpCode op = GET_OPCODE(fs->f->code[prevpc]);
-    int a = GETARG_A(fs->f->code[prevpc]);
-    if (a < store->firstreg && beginseval(op, 0, 0, 0, 0)) {
-      if (GET_OPCODE(fs->f->code[store->pc]) == OP_MOVE) {
-        int src = GETARG_B(fs->f->code[store->pc]);
-        expkind k = getslotexpkind1(fs, src);
-        if (k != VNONRELOC)
-          return 2;  /* yes */
-      }
-
-      return 1;  /* optional */
-    }
-  }
-  return 0;
-}
-
-
-static void commitvarsonstack1(DecompState *D);
-static void updatevarsbeforestore1(DecompState *D, int pc,
-                                   PendingStoreState *store);
-
-
-static void dischargestores1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  struct PendingStoreState *store = D->a.store;
-  int hasclobbercode = storehasclobbercode1(D, store);
-  int ischainable;
-  lua_assert(store->pc != -1);
-  lua_assert(store->startpc != -1);
-  lua_assert(store->lastreg != -1);
-  lua_assert(store->firstreg != -1);
-  ischainable = storeischainable1(D, store);
-  if (ischainable == STORE_CHAIN_NECESSARY) {
-    /* this is where DISCHARGELIMIT is needed; it tells you whether variables
-       need to be closed in order to allow the assignment to use temporary stack
-       values */
-    if (store->dischargelimit >= store->firstreg) {
-      /* need to end some vars to make the store chainable */
-      /* end of RHS preparation will be the last time LASTREG was clobbered */
-      int endofprep = getslotclobber1(fs, store->lastreg);
-      /* using ENDOFPREP, find start of preparation code, which is used to know
-         where to end the do-block which will close the variables early */
-      int prepstart = getevalstart(fs, endofprep, store->firstreg);
-      if (prepstart > 0) {
-        updatevarsbeforestore1(D, prepstart, store);
-      }
-    }
-  }
-  /* see if the assignment ends with a local that is set by a non-store code,
-     due to the final expression not being VNONRELOC and the final variable
-     being a local, and include that code in the store if so */
-  if (store->startpc > 0 && store->laststat == store->startpc-1) {
-    if (hasclobbercode) {
-      int initpc = getprevpc1(fs, store->startpc);
-      OpCode op = GET_OPCODE(fs->f->code[initpc]);
-      if (op == OP_CONCAT) {  /* handle special case */
-        const OpenExpr *concat = getlastopenexpr1(D);
-        initpc = concat->startpc;
-      }
-      /* find the start of the relocatable expression that was assigned directly
-         to the local variable */
-      else if (store->lastreg+1 < fs->nactvar) {
-        /* get the last variable that is not discharged, it must not be greater
-           then LASTREG, since variables above LASTREG should be temporary
-           values used to evluate the last RHS expression */
-        int r = getlastpersistentvar1(D, store->lastreg+1);
-        /* since the laststat was the clobber code, get the actual laststat */
-        int laststat = store->secondlaststat;
-        if (r <= store->lastreg) {
-          /* for all discharged variables, find the first evluation pc and use
-             the lowest of all of them */
-          for (r = store->lastreg+1; r < fs->nactvar; r++) {
-            LocVar *var = getlocvar1(D, r);
-            int dischargepc = getvarnotepc1(D,var);
-            int varinit = getlocvarinit1(D, var);
-            lua_assert(getvarnote1(D, var) == GENVAR_DISCHARGED);
-            /* make sure this varibale was not discharged by a previous
-               statement before possibly using its result */
-            if (dischargepc > laststat) {
-              if (varinit < initpc)
-                initpc = varinit;
-            }
-          }
-        }
-      }
-      store->startpc = initpc;
-      if (store->laststat >= initpc)
-        store->laststat = store->secondlaststat;
-    }
-  }
-  /* if this is a single store and there are no out-of-order constant
-     references, check if the source variable needs to be kept (not pruned) */
-  if (store->pc == store->startpc && ischainable < STORE_CHAIN_NECESSARY) {
-    LocVar *var = getlocvar1(D, store->lastreg);
-    int initcode = getlocvarinit1(D, var);
-    OpCode o = GET_OPCODE(fs->f->code[initcode]);
-    if (o == OP_LOADK && store->newconstants > 0)
-      /* this handles `local _ = 1; a = _' which is different from `a = 1' */
-      goto nochain;
-    else if (o == OP_GETUPVAL && store->upval && store->lastup < D->a.lastup)
-      /* consider the code
-            local a, b
-            local function c()
-                a = b -- a is upval[0], b is upval[1]
-            end
-         compared to
-            local a, b
-            local function c()
-                local _ = b;  -- b is upval[0]
-                a = _ -- a is upval[1]
-            end
-         the way to catch this is by comparing store->lastup to D->a.lastup; if
-         D->lastup is greater than store->lastup, than a new highest upvalue
-         index has been encountered during the store chain, meaning the upvalues
-         are referenced in order (the second case)  */
-      goto nochain;
-    /* else it can be handled normally */
-  }
-  /* if the store chain lasts more than 1 pc and it is not chainable, make sure
-     any registers used as RHS values are kept local variables */
-  if (store->startpc != store->pc && !ischainable) {
-    nochain:
-    if (fs->nactvar) {
-      makepersistent1(D, fs->nactvar-1);
-      commitvarsonstack1(D);
-    }
-  }
-  /* if the store is chainable, make sure the registers used to evaluate RHS are
-     temporary */
-  else {
-    const int startpc = store->startpc;
-    const int numonstack = getlastpersistentvar1(D, store->lastreg)+1;
-    int r, expectedstartpc = startpc;
-    /* handle extra values not used in the RHS expression list */
-    /* R starts at the highest non-discharged variable */
-    for (r = numonstack-1; r > store->lastreg; r--) {
-      LocVar *var = getlocvar1(D, r);
-      if (var->startpc != expectedstartpc)
-        break;
-      expectedstartpc = getlocvarinit1(D, var);
-    }
-    /* note that if there are no extra values, store->lastreg may be discharged
-       if it was pushed and then immediately stored, and in that case R will not
-       equal LASTREG, so also check if LASTREG is the last variable, i.e. there
-       were no extra values */
-    if (r == store->lastreg || store->lastreg == fs->nactvar-1) {
-      const int laststat = store->laststat;
-      /* discharge extra values on stack */
-      while (++r < numonstack)
-        setvardischarged1(D, r, store->pc);
-      for (r = store->lastreg; r >= store->firstreg; r--) {
-        LocVar *var = getlocvar1(D, r);
-        enum GENVARNOTE note = getvarnote1(D, var);
-        int initstart = getlocvarinit1(D, var);
-        if (initstart < startpc && initstart <= laststat)
-          break;
-        else if (ispersistent(note) &&
-                 !isvarprimedforstore(D, r, store, expectedstartpc))
-          break;
-        setvardischarged1(D, r, store->pc);
-      }
-      /* if all RHS values are discharged, check for save copies of table or
-         struct variables generated with OP_MOVE to fix conflicts */
-      if (store->startpc != store->pc && r < store->firstreg)
-        check_conflict(D, store);
-    }
-  }
-  /* clear pending data */
-  *store = pending_store_init;
-}
-
-
-typedef struct OperandDesc {
-  int r;  /* register */
-  enum OpArgMask mode;
-} OperandDesc;
-
-
-/*
-** returns the number of register operands in a store instruction, and populates
-** the array OPERANDS with the operand slot numbers
-*/
-static int
-getstoreoperands(OpCode o, int a, int b, int c, OperandDesc operands[3])
-{
-  int n = 1;  /* number of register operands, between 1 and 3 */
-  operands[0].r = a;
-  operands[0].mode = OpArgR;
-  if (IS_OP_SETTABLE(o)) {
-    if (o != OP_SETFIELD && o != OP_SETFIELD_R1 && !ISK(b)) {
-      operands[n].r = b;
-      operands[n].mode = getBMode(o);
-      n++;
-    }
-    if (!ISK(c)) {
-      operands[n].r = c;
-      operands[n].mode = getCMode(o);
-      n++;
-    }
-  }
-  else if (o == OP_SETSLOTI || o == OP_SETSLOT || o == OP_SETSLOTS ||
-           o == OP_SETSLOTMT) {
-    if (!ISK(c)) {
-      operands[n].r = c;
-      operands[n].mode = getCMode(o);
-      n++;
-    }
-  }
-  return n;
-}
-
-
-/*
-** return the first stack slot that is eligible for discharging if any
-*/
-static int gettemppos(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  int r, temppos = 0;
-  for (r = fs->nactvar-1; r > 0; r--) {
-    LocVar *var = getlocvar1(D, r);
-    enum GENVARNOTE note = getvarnote1(D, var);
-    if (note == GENVAR_DISCHARGED)
-      continue;
-    else if (isonstack(note)) {
-      temppos = r;
-      break;
-    }
-    else {
-      temppos = fs->nactvar;
-      break;
-    }
-  }
-  return temppos;
-}
-
-
-static int onoperandreferenced1(DecompState *D, OperandDesc o, int temppos)
-{
-  DFuncState *fs = D->fs;
-  LocVar *var = NULL;
-  enum GENVARNOTE note;
-  int r = o.r;
-  if (r >= fs->nactvar) {
-    var = revivesavedlocvar1(D, r);
-    if (var == NULL)
-      var = revivesavedrepeatvar1(D, r);
-    lua_assert(var);
-    if (var == NULL)
-      return 0;  /* if this happens, something is wrong */
-  }
-  else
-    var = getlocvar1(D, r);
-  note = getvarnote1(D, var);
-  if (note <= GENVAR_ONSTACK && var->startpc >= D->a.bl->node->startpc &&
-      r == temppos &&
-      (!test_ins_property(fs, getlocvarinit1(D, var), INS_KLOCVAR) ||
-       (o.mode != OpArgK && o.mode != OpArgRK))) {
-    setvardischarged1(D, r, D->fs->pc);
-    D->a.lastdischarged.pc = D->fs->pc;
-    D->a.lastdischarged.reg = r;
-    return 0;
-  }
-  else {
-    makepersistent1(D, r);
-    return 1;
-  }
-}
-
-
-/*
-** apply updates to variables depending on which registers are referenced in a
-** store instruction given by O, A, B, and C
-*/
-static void checkstoreoperands(DecompState *D, OpCode o, int a, int b, int c)
-{
-  int temppos = gettemppos(D);
-  int i;
-  OperandDesc operands[3];
-  int noperands = getstoreoperands(o, a, b, c, operands);
-  for (i = 0; i < noperands; i++) {
-    onoperandreferenced1(D, operands[i], temppos - (noperands - 1 - i));
-  }
-}
-
-
-/*
-** call this when encountering a statement which does not reference one of the
-** pending slots on the stack, which can be more than one in the case of a
-** comparison or a table assignment; it could also be an opcode that doesn't
-** reference any registers such as returning 0 values or a jump
-*/
-static void commitvarsonstack1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  int i;
-  for (i = cast_int(fs->nactvar)-1; i >= 0; i--) {
-    LocVar *var = getlocvar1(D, i);
-    enum GENVARNOTE note = getvarnote1(D, var);
-    if (note != GENVAR_DISCHARGED) {
-      makepersistent1(D, i);
-      if (D->a.bl->seenstat == 0 && i >= D->a.bl->nactvar) {
-        D->a.bl->seenstat = 1;
-        D->a.bl->seenhardstat = 1;
-      }
-    }
-  }
-}
-
-
-/*
-** TEMPPOS is the slot which R would equal if it were eligible to be a temporary
-** value
-*/
-static int onvarreferenced1(DecompState *D, int r, int temppos, int istested)
-{
-  OperandDesc o;
-  o.r = r;
-  o.mode = OpArgR;
-  /* if the variable is referenced by a test instruction, pass in mode RK to
-     detect lack of optimization of testing a constant value, in the case of
-     a variable initialized with LOADK and than tested:
-        local a = 12;
-        if a then ... end
-     the code must not be optimized to match, so ensure the variable is not
-     marked as DISCHARGED to avoid pruning */
-  if (istested)
-    o.mode = OpArgRK;
-  if (onoperandreferenced1(D, o, temppos)) {
-    commitvarsonstack1(D);
-    return 1;
-  }
-  return 0;
-}
-
-
-/*
-** check the current block's children and see if any blocks can be folded into
-** their parent block; this should be called after a variable's startpc is
-** updated or after variables have been pruned when leaving the current block
-*/
-static void recheckfoldableblocks1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  BlockNode *node = D->a.bl->node;
-  BlockNode *nextchild = node->firstchild;
-  while (nextchild != NULL) {
-    if (nextchild->kind == BL_IF && nextchild->firstchild != NULL &&
-        nextchild->firstchild->kind == BL_IF &&
-        nextchild->firstchild->endpc == nextchild->endpc &&
-        nextchild->firstchild->nextsibling == NULL &&
-        nextchild->hardstatbeforechild == 0) {
-      BlockNode *child = nextchild->firstchild;
-      int i, nactvar;
-      const int startpc = nextchild->startpc-1;
-      const int limitpc = child->startpc-1;
-      /* check if there are variables starting between the 2 endpoints */
-      for (i = nactvar = 0; i < fs->nlocvars; i++) {
-        const struct LocVar *var = &fs->locvars[i];
-        /* does variable exist at the start of the outer if-block */
-        int var_exists_1 = (var->startpc <= startpc && startpc <= var->endpc);
-        /* does variable exist at the start of the inner if-block */
-        int var_exists_2 = (var->startpc <= limitpc && limitpc <= var->endpc);
-        if (var_exists_1 != var_exists_2)
-          break;  /* variable starts between the outer and inner block start */
-        if (var_exists_1)
-          nactvar++;
-      }
-      if (i == fs->nlocvars) {
-        int prevpc = fs->pc;
-        /* no new variables; check if existing locals are clobbered between the
-           2 endpoints */
-        for (fs->pc = nextchild->startpc; fs->pc < limitpc; fs->pc++) {
-          updateinsn1(D, fs);
-          if (beginseval(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c, 0))
-            if (D->a.insn.a < nactvar)
-              break;
-        }
-        if (fs->pc == limitpc) {
-          /* no new locals were clobbered (the break didn't happen), so the
-             child if-block of this if-block can be melded into it */
-          nextchild->startpc = child->startpc;
-          nextchild->firstchild = child->firstchild;
-          recalcemptiness(nextchild);
-          freeblnode(fs, child);
-        }
-        /* restore pc */
-        fs->pc = prevpc;
-        updateinsn1(D, fs);
-      }
-    }
-    nextchild = nextchild->nextsibling;
-  }
-}
-
-
-/*
-** updates the startpc and start of initialization of VAR, returning the old
-** start of initialization
-*/
-static int updatevarinit1(DecompState *D, DFuncState *fs, LocVar *var, int pc)
-{
-  int oldinitpc = getlocvarinit1(D, var);
-  unset_ins_property(fs, oldinitpc, INS_LOCVAREXPR);
-  /* set new initpc */
-  set_ins_property(fs, pc, INS_LOCVAREXPR);
-  makevarstartnextpc1(fs, var, pc);
-  return oldinitpc;
-}
-
-
-static void savevarstartpc1(DecompState *D, DFuncState *fs, LocVar *var, int pc,
-                            int slot)
-{
-  int oldinitpc;
-  index2pc_t *s;
-  int index = var - fs->locvars;
-  lua_assert(D->usedebuginfo == 0);
-  lua_assert(index >= 0 && index < fs->nlocvars);
-  VEC_GROW(D->H, D->savedstartpc, index2pc_t);
-  s = &D->savedstartpc.s[D->savedstartpc.used++];
-  s->index = index;
-  s->pc = var->startpc;
-  s->state = slot + 1;
-  oldinitpc = updatevarinit1(D, fs, var, pc);
-  set_ins_property(fs, oldinitpc, INS_SAVEDLOCVAREXPR);
-  var->endpc = getnaturalvarendpc(D->a.bl->node);
-  D->a.bl->nactvar--;
-}
-
-
-static void savenestedrepeatvars1(DecompState *D, DFuncState *fs,BlockState *bl)
-{
-  int prevused = D->savedrepeatvars.used;
-  int nvars = fs->nactvar - bl->nactvar;
-  lua_assert(nvars >= 0);
-  nvars += prevused;
-  if (nvars > D->savedrepeatvars.alloc) {
-    luaM_reallocvector(D->H, D->savedrepeatvars.s, D->savedrepeatvars.alloc,
-                       nvars, index2pc_t);
-    D->savedrepeatvars.alloc = nvars;
-  }
-  D->savedrepeatvars.used = nvars;
-  while (nvars-- > prevused) {
-    LocVar *var = getlocvar1(D, bl->nactvar + nvars);
-    enum GENVARNOTE note = getvarnote1(D, var);
-    index2pc_t *s = &D->savedrepeatvars.s[nvars];
-    s->pc = var->startpc;
-    s->index = var - fs->locvars;
-    s->state = ispersistent(note);
-  }
-}
-
-
-/*
-** this is called when leaving a lexical scope; if you have trouble
-** understanding the difference between this and `revivesavedlocvar1', note that
-** this only restores a variable startpc and initpc if the variable is not
-** necessary within the scope that is being exited, i.e. GENVAR_DISCHARGED;
-** meanwhile, `revivesavedlocvar1' exists the restore the rest of the variables
-** that were not restored here as is needed during analysis
-*/
-static void restorevars1(DecompState *D, DFuncState *fs, BlockState *bl)
-{
-  int seenpersvar = 0;
-  int i;
-  int base = bl->savedstartpcbase;
-  int varendpc = getnaturalvarendpc((bl-1)->node);
-  lua_assert(D->usedebuginfo == 0);
-  for (i = D->savedstartpc.used-1; i >= base; i--) {
-    index2pc_t *s = &D->savedstartpc.s[i];
-    if (s->state > 0) {
-      LocVar *var = fs->locvars + s->index;
-      enum GENVARNOTE note = getvarnote1(D, var);
-      if (!seenpersvar && note == GENVAR_DISCHARGED) {
-        restorevarinit1(D, fs, var, s->pc);
-        /* change the startpc back to the saved one, which is before the child
-           block */
-        var->startpc = s->pc;
-        var->endpc = varendpc;
-        D->savedstartpc.used--;
-        bl->nactvar++;
-      }
-      else {  /* variable in child block is necessary */
-        /* change the state of this entry, and keep it; the variable may be
-           restored later if needed */
-        int slot = s->state-1;
-        s->state = -slot;  /* negative indicates state change */
-        seenpersvar = 1;
-      }
-    }
-  }
-}
-
-
-
-static int onvarclobber1(DecompState *D, int r, int pc)
-{
-  DFuncState *fs = D->fs;
-  LocVar *var = getlocvar1(D, r);
-  enum GENVARNOTE note = getvarnote1(D, var);
-  if (note <= GENVAR_ONSTACK)
-    makepersistent1(D, r);
-  else if (note == GENVAR_DISCHARGED) {
-    int i;
-    for (i = D->fs->nactvar-1; i > r; i--)
-      if (getvarnote1(D, getlocvar1(D, i)) != GENVAR_DISCHARGED)
-        break;
-    if (i != r) {
-      makepersistent1(D, r);
-      return 1;
-    }
-    setvarnote1(D, r, GENVAR_ONSTACK);
-    if (getlocvarinit1(D, var) >= D->a.bl->node->startpc) {
-      updatevarinit1(D, fs, var, pc);
-      /* I want to rescan if-block pairs that can potentially be melded together
-         as early as possible so the freed block nodes have a better chance of
-         being reused */
-      recheckfoldableblocks1(D);
-    }
-    else {
-      savevarstartpc1(D, fs, var, pc, r);
-    }
-    return 0;
-  }
-  return 1;
-}
-
-
-/*
-** update variable references for opcodes which may not reference any registers
-*/
-static void updatevarreference1(DecompState *D, OpCode o, int a, int b, int c)
-{
-  DFuncState *fs = D->fs;
-  switch (o) {
-    case OP_RETURN: {
-      int nret = b-1;
-      if (nret != 0) {
-        int temppos = gettemppos(D);
-        /* multiple returns are handled elsewhere as an open expression  */
-        lua_assert(nret == 1);
-        onvarreferenced1(D, a, temppos, 0);
-        break;
-      }
-      /* else this is an empty return, go through */
-    }
-    /* fallthrough */
-    case OP_CLOSE:
-      commitvarsonstack1(D);
-      break;
-    case OP_JMP:
-      if (!test_ins_property(fs, fs->pc, INS_SKIPBOOLLABEL) &&
-          !test_ins_property(fs, getjump(fs, fs->pc), INS_BOOLLABEL) &&
-          D->a.testsetendlabel == -1)
-        commitvarsonstack1(D);
-      break;
-    default: break;
-  }
-  (void)c;
-}
-
-
-static void ontestset1(DecompState *D, int testedreg);
-
-
-/*
-** checks for a lack of optimization of unary opcodes when the bytecode allows
-** for optimization, meaning the unary opcode is from a different statement than
-** the preceding instruction
-** Note how the compiler optimizes unary expressions:
-**  OP_UNM : folded if the object is a number constant
-**  OP_NOT : folded if the object is any constant
-**  OP_LEN : never folded
-*/
-static void checkunaryvaroptimization1(DFuncState *fs, OpCode o, int pc, int r)
-{
-  DecompState *D = fs->D;
-  Instruction prev;
-  OpCode prevop;
-  if (pc == 0)
-    return;
-  prev = fs->f->code[pc-1];
-  prevop = GET_OPCODE(prev);
-  if (o == OP_UNM) {
-    /* if previous is LOADK and the constant is a number, this instruction is
-       part of a new statement */
-    if (prevop == OP_LOADK) {
-      const TValue *o = &fs->f->k[GETARG_Bx(prev)];
-      if (ttisnumber(o))
-        makepersistent1(D, r);
-    }
-  }
-  else if (o == OP_NOT || o == OP_NOT_R1) {
-    /* not [constant] is always optimized, so they must be from 2 different
-       statements */
-    if (opLoadsK(prevop))
-      makepersistent1(D, r);
-  }
-}
-
-
-static void updatevars1(DecompState *D, DFuncState *fs)
-{
-  expkind k = VRELOCABLE;  /* from lparser.h expkind */
-  OpCode o = D->a.insn.o;
-  int a = D->a.insn.a;
-  int b = D->a.insn.b;
-  int c = D->a.insn.c;
-  struct PendingStoreState *store = D->a.store;
-  int pc = fs->pc;
-  int intestset = D->a.testsetendlabel != -1;
-  lua_assert(o != OP_SETLIST);
-  /* if there is a pending store and this code is not a store or it is not
-     OP_MOVE or OP_MOVE is moving a lower register to a higher register, this is
-     not a store */
-  if (store->pc != -1 && o != OP_DATA && !isstorecode(o) &&
-      (o != OP_MOVE || b < a)) {
-    dischargestores1(D);
-  }
-  if (!intestset && beginseval(o, a, b, c, 0) && o != OP_TESTSET) {
-    int r = a;
-    int lastreg = r;
-    int varstartpc = pc;
-    if (test_ins_property(fs, pc, INS_BOOLLABEL)) {
-      /* only need to handle 1 of the bool labels */
-      if (c) {
-        LocVar *var = a < fs->nactvar ? getlocvar1(D, a) : NULL;
-        if (var != NULL) {
-          /*set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);*/
-          /* if it was on the stack, it is still on the stack; this would be the
-             case in a conditional expression with a non-boolean sub-expression,
-             for example `local x = a == b and 1', the constant `1' generates
-             LOADK, which renders the variable as ONSTACK, which should not
-             change after the 2 bool labels that follow; but in the case of a
-             single comparison expression, such as `local x = a == b', then
-             the variable created for A has been discharged, so `onvarclobber'
-             will handle it as if this LOADBOOL was any ordinary clobber code */
-          if (!isonstack(getvarnote1(D, var)))
-            /* pass in the second bool label pc to ensure correct startpc */
-            onvarclobber1(D, a, pc+1);
-        }
-        else {
-          /* a variable may not yet exist for the bool labels, for example, in
-             the statement `local x = "a" == 1' */
-          varstartpc = pc+1;
-          k = VJMP;
-          goto l_addvar;
-        }
-      }
-      return;
-    }
-    /* determine the expression kind based on the opcode */
-    /*switch (o) {
-      case OP_LOADNIL: lastreg = b; k = VNIL; break;
-      case OP_VARARG: lastreg = r + b - 2; k = VVARARG; break;
-      case OP_LOADBOOL: k = b ? VTRUE : VFALSE; break;
-      case OP_LOADK: k = ttisnumber(&fs->f->k[D->a.insn.bx]) ? VKNUM : VK;
-        break;
-      case OP_GETUPVAL: k = VUPVAL; break;
-      case OP_GETGLOBAL: case OP_GETGLOBAL_MEM: k = VGLOBAL; break;
-      CASE_OP_GETTABLE: k = VINDEXED; break;
-      case OP_GETSLOT: case OP_GETSLOTMT: k = VSLOT; break;
-      default: k = VRELOCABLE; break;
-    }*/
-    if (o == OP_LOADNIL || o == OP_VARARG)
-      lastreg = (o == OP_LOADNIL) ? b : r + b - 2;
-    if (r >= fs->nactvar) {  /* clobbering a free register */
-      if (opLoadsK(o)) {
-        int isklocvar = 1;
-        if (o == OP_LOADK && D->a.insn.bx > MAXINDEXRK)
-          /* index too big to fit in RK operand, so this is as optimal as it can
-             be, meaning it can possibly be discharged in the next operation */
-          isklocvar = 0;
-        else if (D->a.lastk >= MAXINDEXRK) {
-          /* if MAXINDEXRK constants have already been encountered so far, check
-             if the loaded bool or nil value exists in the constants array
-             within the range MAXINDEXRK; if not, it cannot be encoded as an RK
-             operand */
-          if (o == OP_LOADBOOL) {
-            if (b && !D->a.istruerk)
-              isklocvar = 0;
-            else if (!D->a.isfalserk)
-              isklocvar = 0;
-          }
-          else if (o == OP_LOADNIL && !D->a.isnilrk)
-            isklocvar = 0;
-        }
-        if (isklocvar)
-          set_ins_property(fs, pc, INS_KLOCVAR);
-      }
-      l_addvar:
-      /* if OP_VARARG does not specify an upper stack limit, it is not part of a
-         local variable statement */
-      if (o != OP_VARARG || lastreg >= r) {
-        /* see if register A can possibly be a local variable in this block */
-        newlocalvar1(D, r, varstartpc);
-        if (o == OP_MOVE)
-          makepersistent1(D, r);
-        if (o == OP_LOADNIL || o == OP_VARARG) {
-          int i;
-          for (i = r+1; i <= lastreg; i++)
-            newlocalvar1(D, i, varstartpc);
-        }
-      }
-    }
-    else {  /* r < fs->nactvar */
-      int isstat = 0;
-      int laststored = lastreg;
-      if (laststored >= fs->nactvar)
-        laststored = fs->nactvar-1;
-      if (beginseval(o, a, b, c, 1)) {
-        int i;
-        for (i = r; i <= laststored; i++)
-          isstat |= onvarclobber1(D, i, pc);
-        if (o == OP_LOADNIL && b >= fs->nactvar) {
-          for (i = fs->nactvar; i <= b; i++)
-            newlocalvar1(D, i, pc);
-        }
-        /*else if (o == OP_MOVE && b < a && b < fs->nactvar)
-          makepersistent1(D, b);*/
-        {
-          /* update variable notes for referenced register operands */
-          int slots[3];
-          int nslots = referencesslot(o, a, b, c, slots);
-          int expectedstartpc = pc;
-          while (nslots--) {
-            int r = slots[nslots];
-            if (r < fs->nactvar) {
-              LocVar *var = getlocvar1(D, r);
-              enum GENVARNOTE note = getvarnote1(D, var);
-              if (r < D->a.bl->nactvar)
-                makepersistent1(D, r);
-              /* if the value is on the stack and was evaluated immediately
-                 before the next operand or the final operation */
-              else if (isonstack(note) && var->startpc == expectedstartpc) {
-                expectedstartpc = getlocvarinit1(D, var);
-                setvardischarged1(D, r, pc);
-              }
-            }
-          }
-        }
-      }
-      else { /* R is both operand and destination (r == b || r == c) */
-        LocVar *var = getlocvar1(D, r);
-        /* check for unary opcodes that were not optimized when the bytecode
-           shows that they could be, indicating the end of variable
-           initialization */
-        checkunaryvaroptimization1(fs, o, pc, r);
-        /* check if R is referecnes in a way where it must be a variable */
-        if (getvarnote1(D, var) == GENVAR_DISCHARGED || (r == b && r == c))
-          makepersistent1(D, r);
-        else {
-          int other;  /* the register operand that is not R */
-          int otherkmode;  /* starts as OpArgMask, and then it uses its own
-                              value to render a bool which says whether OTHER
-                              can have an encoded constant in its instruction */
-          int haveC = getCMode(o) != OpArgN;
-          int top = fs->nactvar-1;
-          LocVar *topvar = getlocvar1(D, top);
-          if (r != b && !ISK(b)) {
-            other = b;
-            otherkmode = getBMode(o);
-          }
-          else if (haveC && !ISK(c) && r != c) {
-            other = c;
-            otherkmode = getCMode(o);
-          }
-          else {
-            other = -1;
-            otherkmode = OpArgN;
-          }
-          /* convert OTHERKMODE to boolean, 1 = it can be an encoded constant */
-          switch (otherkmode) {
-            case OpArgRK: case OpArgK: otherkmode = 1; break;
-            default: otherkmode = 0; break;
-          }
-          /*int realtop = top;*/
-          lua_assert(top >= 0); /* fs->nactvar must be greater than 0 */
-          while (top && getvarnote1(D, getlocvar1(D, top)) == GENVAR_DISCHARGED)
-            top--;
-          /* something like OP_ADD 0 0 1 where top == 1 */
-          if (r == top-1 && (other == top || other == -1)) {
-            /* if there is an operand that could have been encoded as a constant
-               in this instruction, but it is in a register, that register will
-               be kept as a local variable; the register is not necessarily a
-               vairable, for example if the program had too many preceding
-               constants to be able to encode in a ABC instruction, it will be
-               put in a register first; but otherwise the variable must exist.
-               Lua example:
-                    local a = a;
-                    local b = nil;
-                    a = a + b;
-                  generates the code:
-                    GETGLOBAL   0 -1
-                    LOADNIL     1 1
-                    ADD         0 0 1
-                  and if the Lua was instead this:
-                    local a = a + nil;
-                  the generated cde would be this:
-                    GETGLOBAL   0 -1
-                    ADD         0 0 -2
-                  note the encoded nil constant in the ADD instruction.
-                  This rule applies to LOADK and LOADBOOL (non-label) as well
-                  for the same reasons. */
-            if (!otherkmode ||
-                !test_ins_property(fs, getlocvarinit1(D, topvar), INS_KLOCVAR)){
-              int rkmode = (r == c && haveC) ? getCMode(o) : getBMode(o);
-              promotedischarged1(D, top, pc);
-              D->a.lastdischarged.pc = pc;
-              D->a.lastdischarged.reg = r;
-              /* promotebelowdischarged is used to indicate that the startpc of
-                 variable R may be updated later if TOP is pruned, i.e. it is
-                 still discharged by the end of the lexical block; you only want
-                 to do this if R was not initialized with a constant that could
-                 have been encoded into an RK operand (INS_KLOCVAR)
-                 example:
-                    local a = nil; -- OP_LOADNIL
-                    a = a + g; -- OP_GETGLOBAL, OP_ADD
-                 if the startpc of `a' was updated to start after the OP_ADD,
-                 which would happen if promotebelowdischarged(D, r) was called,
-                 than the `nil' would be encoded into OP_ADD, and different
-                 bytecode would be generated */
-              /* also, r == b is required; otherwise, the instruction does not
-                 follow the expected bytecode pattern of pushing values and
-                 discharging them to evluate an expression; therefore, TOP is
-                 still discharged, but the variable startpc should still be kept
-                 as it was even if TOP is pruned later */
-              if (r == b &&
-                  ((rkmode != OpArgRK && rkmode != OpArgK) ||
-                   !test_ins_property(fs, getlocvarinit1(D, var), INS_KLOCVAR)))
-                promotebelowdischarged(D, r);
-            }
-          }
-          /* something like OP_ADD 1 1 x  or OP_ADD 1 x 1 where top == 1 */
-          else if (r == top && (b == top-1 || (haveC && c == top-1))) {
-            if (getvarnote1(D, getlocvar1(D, r)) <= GENVAR_DISCHARGED) {
-              setvarnote1(D, r, GENVAR_ONSTACK);
-              makevarstartnextpc1(fs, var, pc);
-            }
-          }
-          else if (r != top || (other != -1 && !ISK(other)))
-            /* todo: shpuld this be realtop instead of top? */
-            makepersistent1(D, top);
-        }
-      }
-      /* Note this path is for A-mode clobberring codes, so only OP_MOVE can be
-         a store in this case; if there is a pending store and this code is not
-         OP_MOVE or OP_MOVE is moving a lower register to a higher register,
-         this is not a store */
-      if ((o != OP_MOVE || b < a) && store->pc != -1) {
-        dischargestores1(D);
-        if (r >= fs->nactvar)
-          goto l_addvar;
-      }
-      else {  /* OP_MOVE is a store */
-        if (o == OP_MOVE && b > a) {
-          if (store->lastreg == -1) {
-            store->lastreg = store->firstreg = b;
-            store->pc = pc;
-          }
-          else if (b+1 == store->firstreg) {
-            store->firstreg = b;
-            store->pc = pc;
-          }
-          else if (b > store->firstreg && store->lastreg == store->firstreg) {
-            store->lastreg = store->firstreg = b;
-            store->startpc = -1;
-            store->pc = pc;
-          }
-          if (store->pc == pc && store->startpc == -1) {
-            store->startpc = pc;
-            store->laststat = D->a.laststat;
-            store->secondlaststat = D->a.secondlaststat;
-            store->lastup = D->a.lastup;
-            store->lastk = D->a.lastk;
-          }
-          isstat = 1;
-        }
-      }
-      /* update highest clobbered if needed */
-      if (D->rescan == 0) {
-        /* update highest clobbered if needed */
-        if (D->rescan == 0 && D->a.bl->highestclobbered < lastreg)
-          D->a.bl->highestclobbered = lastreg;
-        /* update last statement pc */
-        if (isstat) setlaststat1(D, pc, 0);
-      }
-      if (isstat && store->pc == -1) {
-        int r = fs->nactvar;
-        while (--r >= 0) {
-          enum GENVARNOTE note = getvarnote1(D, getlocvar1(D, r));
-          if (ispersistent(note) && !isonstack(note))
-            break;
-        }
-        store->dischargelimit = r;
-        commitvarsonstack1(D);
-      }
-    }
-    if (o == OP_CLOSURE) {
-      Instruction next;
-      while (next = fs->f->code[++pc], GET_OPCODE(next) == OP_DATA) {
-        /* mark local variables used as upvalues */
-        if (GETARG_A(next) == 1) {
-          int reg = GETARG_Bx(next);
-          promotevar1(D, reg, GENVAR_UPVALUE);
-        }
-      }
-      pc = fs->pc;
-    }
-    for (; r <= lastreg; r++)
-      setslotclobber1(fs, r, pc, k);
-  }
-  else if (o == OP_TESTSET) {
-    /* A = B if (bool)B equals C */
-    /* TESTSET is generated when either A or B or both are local variables */
-    /* on the first TESTSET code, testsetendlabel will be -1, while the rest of
-       the TESTSET codes within the expression, testsetendlabel will be a valid
-       pc */
-    if (!intestset) {
-      int top = fs->nactvar-1;
-      LocVar *testedvar = (b <= top) ? getlocvar1(D, b) : NULL;
-      LocVar *clobberedvar = (a <= top) ? getlocvar1(D, a) : NULL;
-      if (clobberedvar != NULL) {
-        onvarclobber1(D, a, pc);
-        D->a.testsetlocvar = a;
-      }
-      if (clobberedvar == NULL || clobberedvar->startpc == pc) {
-        if (clobberedvar == NULL) {
-          newlocalvar1(D, a, pc);
-          D->a.testsetnewlocvar = a;
-        }
-        /* since A was not a local, B must be a local */
-        if (testedvar != NULL)
-          makepersistent1(D, b);
-      }
-      else {  /* clobberedvar != NULL */
-        setslotclobber1(fs, a, pc, VRELOCABLE);
-        if (testedvar != NULL)
-          onvarreferenced1(D, b, top, 1);
-      }
-      D->a.testsetstart = pc;
-    }
-    else {
-      setslotclobber1(fs, a, pc, VRELOCABLE);
-      ontestset1(D, b);
-    }
-  }
-  else if (isstorecode(o)) {
-    int srcreg = IS_OP_SETTABLE(o) ? c : a;
-    checkstoreoperands(D, o, a, b, c);
-    if (store->lastreg == -1) {
-      int n = 0;
-      if (store->startpc != -1)
-        n = pc - store->startpc;
-      store->lastreg = store->firstreg = srcreg + n;
-      store->pc = pc;
-    }
-    else if (srcreg+1 == store->firstreg || store->firstreg == -1) {
-      store->firstreg = srcreg;
-      store->pc = pc;
-    }
-    else {
-      dischargestores1(D);
-    }
-    if (store->pc == pc && store->startpc == -1) {
-      store->startpc = pc;
-      store->laststat = D->a.laststat;
-      store->secondlaststat = D->a.secondlaststat;
-      store->lastup = D->a.lastup;
-      store->lastk = D->a.lastk;
-    }
-    setlaststat1(D, pc, 1);
-  }
-  else if (testTMode(o)) {
-    int temppos;
-    int r1, r2;
-    int committed = 0;
-    if (store->pc != -1 && store->pc != pc) {
-      ;
-    }
-    if (testAMode(o))
-      r1 = a, r2 = -1;
-    else
-      r1 = ISK(b) ? -1 : b, r2 = ISK(c) ? -1 : c;
-    /* sort r1 and r2, r1 must be less */
-    if (r1 > r2 && r2 != -1) {
-      int temp = r1; r1 = r2; r2 = temp;
-    }
-    temppos = gettemppos(D);
-    if (r1 != -1)
-      committed |= onvarreferenced1(D, r1, temppos - (r2 != -1), 1);
-    if (r2 != -1)
-      committed |= onvarreferenced1(D, r2, temppos, 1);
-    if (test_ins_property(fs, pc+1, INS_TESTSETJUMP)) {
-      if (!intestset) {
-        int r = r1 != -1 ? r1 : r2;
-        int testsetreg = GETARG_A(fs->f->code[getjump(fs, pc+1)]);
-        if (!committed && r == testsetreg) {
-          setvarnote1(D, r, GENVAR_ONSTACK);
-          D->a.testsetnewlocvar = r;
-        }
-        else if (testsetreg >= fs->nactvar) {
-          newlocalvar1(D, testsetreg, pc);
-          D->a.testsetnewlocvar = testsetreg;
-        }
-        D->a.testsetstart = pc;
-      }
-      else {
-        ontestset1(D, a);
-      }
-    }
-  }
-  else if (o != OP_DATA) {
-    updatevarreference1(D, o, a, b, c);
-  }
-  if (o != OP_DATA) {
-    if (store->pc != -1 && store->pc != pc) {
-      lua_assert(store->pc < pc);
-      dischargestores1(D);
-    }
-  }
-}
-
-
-static int checkexpclobber(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  const OpenExpr *expr = D->a.openexpr;
-  if (expr->kind == CONCATPREP) {
-    int reg = GETARG_A(fs->f->code[expr->endpc]);
-    lua_assert(GET_OPCODE(fs->f->code[expr->endpc]) == OP_CONCAT);
-    if (reg < fs->nactvar) {
-      setlaststat1(D, expr->endpc, 1);
-      return 1;
-    }
-  }
-  return 0;
-}
-
-
-/*
-** if needed, create a new local variable for the result of an open expression,
-** the expression must not be a statement such as a return or call statement
-*/
-static void createexpresult(DecompState *D, int hasendcode, int iscall)
-{
-  DFuncState *fs = D->fs;
-  /* if there is an end-code for this expression, that instruction encodes the
-     result register, otherwise the startpc does (in the case of a table
-     consttructor without array items) */
-  int startpc = D->a.openexpr->startpc;
-  int resultpc = hasendcode ? D->a.openexpr->endpc : startpc;
-  int kind = D->a.openexpr->kind;
-  int resultslot = GETARG_A(fs->f->code[resultpc]);
-  int nslots;
-  OpCode nextop;
-  int nextA;
-  int nextB;
-  {
-    Instruction next = fs->f->code[D->a.openexpr->endpc+1];
-    nextop = GET_OPCODE(next);
-    nextA = GETARG_A(next);
-    nextB = GETARG_B(next);
-  }
-  /* see if the open expression discharges the resulting value to an existing
-     local variable; if it doesn't, create a local variable for the result to
-     be implicitly stored (i.e. the first free slot)  */
-  if ((!exprpushesresult(kind) || nextop != OP_MOVE || nextA > nextB ||
-       nextB != resultslot)) {
-    if (resultslot >= fs->nactvar) {
-      if (iscall) {
-        OpCode op = GET_OPCODE(fs->f->code[resultpc]);
-        lua_assert(IS_OP_CALL(op));
-        if (!IS_OP_TAILCALL(op)) {
-          int nret = GETARG_C(fs->f->code[resultpc]) - 1;
-          int i;
-          for (i = 0; i < nret; i++)
-            newlocalvar1(D, resultslot+i, D->a.openexpr->endpc);
-          if (nret > 1)
-            makepersistent1(D, resultslot+nret-1);
-        }
-      }
-      else  /* not a function call */
-        newlocalvar1(D, resultslot, D->a.openexpr->endpc);
-    }
-  }
-  if (iscall)
-    nslots = GETARG_C(fs->f->code[resultpc]) - 1;
-  else
-    nslots = 1;
-  while (nslots-- > 0)
-    setslotclobber1(fs, resultslot+nslots, D->a.openexpr->endpc, VNONRELOC);
-}
-
-
-static int getnumforloopvars(DFuncState *fs, BlockNode *node)
-{
-  lua_assert(isforloop(node));
-  if (node->kind == BL_FORNUM)
-    return 1;
-  else
-    return GETARG_C(fs->f->code[node->endpc-1]);
-}
-
-
-static void addforloopaugmentedvars(DecompState *D, BlockNode *node)
-{
-  int note = node->kind == BL_FORNUM ? GENVAR_FORNUM : GENVAR_FORLIST;
-  /* reserve space for augmented vars */
-  genvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
-  genvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
-  genvar1(D, node->startpc-1, note)->endpc = node->endpc+1;
-}
-
-
-static void addforloopvars(DecompState *D, BlockNode *node, int nvars)
-{
-  int i;
-  /* todo: how do you handle the for-loop parser bug */
-  for (i = 0; i < nvars; i++)
-    genvar1(D, node->startpc, GENVAR_FORLOOPVAR);
-}
-
-
-static void createparams1(DecompState *D)
-{
-  int i;
-  for (i = 0; i < D->fs->f->numparams; i++)
-    genvar1(D, 0, GENVAR_PARAM);
-}
-
-
-static void createinitiallocals1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  if (fs->firstclobnonparam != -1) {
-    int reg = GETARG_A(fs->f->code[fs->firstclobnonparam]);
-    int i = fs->f->numparams;
-    int pc;
-    for (pc = fs->firstclob; pc < fs->firstclobnonparam; pc++) {
-      if (GET_OPCODE(fs->f->code[pc]) == OP_LOADNIL) {
-        int a = GETARG_A(fs->f->code[pc]);
-        int b = GETARG_B(fs->f->code[pc]);
-        if (a < fs->f->numparams && b >= fs->f->numparams) {
-          for (; i <= b; i++)
-            genvar1(D, pc, GENVAR_PERSISTENT);
-        }
-      }
-    }
-    for (; i < reg; i++)
-      genvar1(D, 0, GENVAR_INITIAL);
-  }
-}
-
-
-/*
-** return true if a constant index higher than K has already been referenced
-*/
-static int waskskipped1(DecompState *D, int k)
-{
-  while (++k < D->fs->f->sizek)
-    if (iskreferenced(D, k)) return 1;
-  return 0;
-}
-
-
-/*
-** return true if a constant index lower than K has not yet been referenced
-*/
-static int doeskskip1(DecompState *D, int k)
-{
-  while (--k >= 0)
-    if (iskreferenced(D, k) == 0) return 1;
-  return 0;
-}
-
-
-/*
-** return true if an upvalue index higher than UP has already been referenced
-*/
-static int wasupvalskipped1(DecompState *D, int up)
-{
-  while (++up < D->fs->f->sizeupvalues)
-    if (isupvalreferenced(D, up)) return 1;
-  return 0;
-}
-
-
-/*
-** return true if an upvalue index lower than UP has not yet been referenced
-*/
-static int doesupvalskip1(DecompState *D, int up)
-{
-  while (--up >= 0)
-    if (isupvalreferenced(D, up) == 0) return 1;
-  return 0;
-}
-
-
-static void updatelastup1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  OpCode o = D->a.insn.o;
-  int b = D->a.insn.b;
-  /* update the highest upvalue referenced */
-  if (o == OP_GETUPVAL || o == OP_SETUPVAL || o == OP_SETUPVAL_R1) {
-    int up = b;
-    if (D->a.store->pc != -1)
-       D->a.store->upval = 1;
-    /* same as with constant references, upvalue references are used to check if
-       a store chain is necessary */
-    if (setupvalreferenced(D, up)) {
-      if (D->a.store->pc != -1) {
-        if (wasupvalskipped1(D, up) || doesupvalskip1(D, up)) {
-          D->a.skippedstorerefpc = fs->pc;
-          set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-        }
-        if (D->a.store->lowestnewupval == -1 || D->a.store->lowestnewupval > up)
-          D->a.store->lowestnewupval = up;
-        if (D->a.store->newupvals < 2)
-          D->a.store->newupvals++;
-      }
-      else {  /* OP_GETUPVAL */
-        if (doesupvalskip1(D, up)) {
-          D->a.store->RHS_skipped_ref = 1;
-          set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-        }
-      }
-    }
-    if (up > D->a.lastup)
-      D->a.lastup = up;
-  }
-}
-
-
-static int updatekreference1(DecompState *D, int k, int *newconstantref)
-{
-  if (k > D->a.lastk)
-    D->a.lastk = k;
-  if (setkreferenced(D, k)) {
-    *newconstantref = k;
-    return 1;
-  }
-  return 0;
-}
-
-
-static void updatereferences1(DecompState *D)
-{
-  int newconstants = 0;
-  int newconstantref = -1;
-  DFuncState *fs = D->fs;
-  OpCode o = D->a.insn.o;
-  int b = D->a.insn.b;
-  int c = D->a.insn.c;
-  int bx = D->a.insn.bx;
-  /* mark any constants referenced by the current instruction */
-  int res = referencesk(o, b, c, bx);
-  int isref = 0;
-  if (res & KREF_B) {
-    newconstants += updatekreference1(D, INDEXK(b), &newconstantref);
-    isref = 1;
-  }
-  if (res & KREF_C) {
-    newconstants += updatekreference1(D, INDEXK(c), &newconstantref);
-    isref = 1;
-  }
-  else if (res & KREF_BX) {
-    newconstants += updatekreference1(D, INDEXK(bx), &newconstantref);
-    isref = 1;
-  }
-  if (isstorecode(o) && newconstants) {
-    int k = newconstantref;
-    /* detect the necessity of a store-chain by checking order of constant
-       references in the code; in store chains, the variables are stored in
-       reverse order to how they are written in the code, so any new constant
-       references in the store chain will be in descending order, and any
-       constants referenced in the code that pushes the RHS expressions will
-       skip over eany new constants referenced in the store codes */
-    if (waskskipped1(D, k) || doeskskip1(D, k)) {
-      D->a.skippedstorerefpc = fs->pc;
-      set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-    }
-  }
-  else if (D->a.store->pc == -1 && newconstants) {
-    if (doeskskip1(D, newconstantref)) {
-      set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-      D->a.store->RHS_skipped_ref = 1;
-    }
-  }
-  if (newconstants < 0)
-    newconstants = -newconstants;
-  if (D->a.store->startpc != -1)
-    D->a.store->newconstants += newconstants;
-  /* check for skipped constant reference in comparison codes */
-  if (isref && (o == OP_LT || o == OP_LT_BK || o == OP_LE || o == OP_LE_BK)) {
-    /* Consider the difference between the following 2 statements:
-          (1) if a + 1 > 0 then return; end
-          (2) if 0 < a + 1 then return; end
-       Assume `a' is a local variable for simplicity.
-       In the first statement, `1' is encountered, and a constant is generated,
-       and then an opcode is generated, OP_ADD, referencing the constant. Then,
-       `0' is encountered and another constant is generated, and then OP_LT is
-       generated, referencing the constant.
-       In the second statement, `0' is encountered and a constant is generated,
-       and then `1' is encountered and a constant is generated for it, then
-       OP_ADD is generated, referencing `1', the second constant, then OP_LT is
-       generated, referencing `0', the first constant. Thus, the constants are
-       referenced in a different order than they were generated. So order
-       matters in this case. See `addcompare2' for the handling of this case. */
-    int k = -1;
-    if (res & KREF_B)
-      k = INDEXK(b);
-    if ((res & KREF_C) && INDEXK(c) > k)
-      k = INDEXK(c);
-    while (++k < fs->f->sizek) {
-      if (iskreferenced(D, k)) {
-        set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-        break;
-      }
-    }
-  }
-  updatelastup1(D);
-}
-
-
-static void checkslotreferences1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  int i,n;
-  int slots[3];
-  n = referencesslot(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c, slots);
-  for (i = 0; i < n; i++) {
-    if (slots[i] < fs->nactvar) {
-      LocVar *var = getlocvar1(D, slots[i]);
-      if (getlocvarinit1(D, var) < fs->pc &&
-          getvarnote1(D, var) < GENVAR_PERSISTENT)
-        makepersistent1(D, slots[i]);
-    }
-  }
-}
-
-
-static TString *genvarname1(DFuncState *fs, int index, int ispar)
-{
-#define MAX_EXTRA_CHARS 30
-  int i = 0;
-  TString *name;
-  char buff[sizeof("f_local") + (2 *INT_CHAR_MAX_DEC) + MAX_EXTRA_CHARS];
-  const char *fmt = ispar ? "f%d_param%d" : "f%d_local%d";
-  size_t len;
-  sprintf(buff, fmt, fs->idx, index);
-  len = strlen(buff);
-  name = luaS_newlstr(fs->H, buff, len);
-  while (name->tsv.reserved == MARKED_GLOBAL && i < MAX_EXTRA_CHARS) {
-    buff[len++] = '_';
-    buff[len] = '\0';
-    i++;
-    name = luaS_newlstr(fs->H, buff, len);
-  }
-  if (i == MAX_EXTRA_CHARS) {
-    name->tsv.reserved = CONFLICTING_GLOBAL;
-  }
-  return name;
-#undef MAX_EXTRA_CHARS
-}
-
-
-#ifdef LUA_DEBUG
-static void printvar(LocVar *var, int i, int note)
-{
-  lprintf("  (%d)  %s  (%i-%i)  %s\n", i+1, getstr(var->varname),
-          var->startpc, var->endpc, varnotenames[note]);
-}
-#endif /* LUA_DEBUG */
-
-
-static void finalizevars1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  Analyzer *a = fs->a;
-  static const char *const forloop_names[] = {
-    "(for index)", "(for limit)", "(for step)",
-    "(for generator)", "(for state)", "(for control)"
-  };
-  int i, v, p;
-  int nvars = fs->nlocvars;
-  LocVar *vars;
-  luaM_reallocvector(fs->H, a->locvars, a->sizelocvars, fs->nlocvars, LocVar);
-  a->sizelocvars = fs->nlocvars;
-  fs->sizelocvars = a->sizelocvars;
-  fs->locvars = a->locvars;
-  vars = fs->locvars;
-  D(printf("Local variables\n--------------------------\n"));
-  for (i = v = p = 0; i < nvars; i++) {
-    struct LocVar *var = &vars[i];
-    int note = getvarnote1(D, var);
-    if (note == GENVAR_FORNUM || note == GENVAR_FORLIST) {
-      int j = (note == GENVAR_FORNUM) ? 0 : 3;
-      int k = j+ 3;
-      for (; j < k; i++, j++) {
-        vars[i].varname = luaS_new(fs->H, forloop_names[j]);
-        lua_assert(ispcvalid(fs, vars[i].startpc));
-        lua_assert(ispcvalid(fs, vars[i].endpc));
-        D(printvar(&vars[i], i, note));
-      }
-      i--;
-    }
-    else {
-      int ispar = (note == GENVAR_PARAM);
-      vars[i].varname = genvarname1(fs, ispar ? p : v, ispar);
-      if (ispar) p++;
-      else v++;
-      D(printvar(var, i, note));
-    }
-  }
-  D(printf("--------------------------\n"));
-}
-
-
-#define REPEAT_UNTIL_TRUE_JUMP  (-2)
-
-static int blockhaselse(const BlockState *block)
-{
-  lua_assert(block->isbranch);
-  return block->t_exitlabel != block->f_exitlabel;
-}
-
-
-static int jump2(DFuncState *fs, int pc, int offs)
-{
-  int real_target;
-  DecompState *D = fs->D;
-  const LoopState *currloop = getcurrloop1(fs);
-  const BlockState *currblock = D->a.bl;
-  int currblockendpc;
-  int target = pc + 1 + offs; /* the jump target pc */
-  /*const Instruction *jc = getjumpcontrol(fs, pc);*/
-  if (test_ins_property(fs, pc, INS_BREAKSTAT))
-    setloophasbreak(fs, currloop, pc);
-  if (test_ins_property(fs, pc, INS_LOOPEND) ||
-      test_ins_property(fs, pc, INS_BREAKSTAT) ||
-      test_ins_property(fs, target, INS_BOOLLABEL) ||
-      test_ins_property(fs, pc, INS_SKIPBOOLLABEL))
-    return -1;
-  if (offs > 0 && GET_OPCODE(fs->f->code[target-1]) == OP_JMP &&
-      test_ins_property(fs, getjump(fs, target-1), INS_BOOLLABEL))
-    return -1;
-  if (target == currloop->exitlabel || target == currloop->breaklabel) {
-    if (target == currloop->exitlabel &&
-        currblock->isloop && currblock->seenstat == 0) {
-      /* this can be a loop condition fail */
-      set_ins_property(fs, pc, INS_LOOPFAIL);
-      if (fs->D->usedebuginfo == 0)
-        rollbackvars1(D, currblock->nactvar);
-      D->savedstartpc.used = currblock->savedstartpcbase;
-      return -1;
-    }
-    if (target == currloop->breaklabel) {
-      int pc;
-      for (pc = target-1; pc > fs->pc; pc--) {
-        if (test_ins_property(fs, pc, INS_BREAKSTAT)) {
-          /* if there is an untested non-break jump before the break */
-          if (GET_OPCODE(fs->f->code[pc-1]) == OP_JMP &&
-              getjumpcontrol(fs, pc-1) == NULL &&
-              !test_ins_property(fs, pc-1, INS_BREAKSTAT) &&
-              !test_ins_property(fs, pc-1, INS_LOOPEND) &&
-              !test_ins_property(fs, pc-1, INS_BOOLLABEL) &&
-              !test_ins_property(fs, pc-1, INS_SKIPBOOLLABEL)) {
-            unset_ins_property(fs, pc-1, INS_FAILJUMP);
-            return pc;
-          }
-        }
-      }
-    }
-  }
-  currblockendpc = currblock->node->endpc;
-  /* INS_FAILJUMP, INS_PASSJUMP
-     else-branch points are not marked */
-  if (target == currblock->f_exitlabel)
-    real_target = currblockendpc+1;
-  /* detect an optimized true-exit from an if-else statement */
-  else if (target == currblock->t_exitlabel /*&& pc == currblockendpc*/) {
-    /* note: t_exitlabel != f_exitlabel given */
-    const BlockState *prevbl = currblock-1;
-    /* the current block is a branch, but the parent may not be */
-    lua_assert(currblock->isbranch);
-    if (prevbl->t_exitlabel == currblock->t_exitlabel) {
-      if (!blockhaselse(currblock))
-        real_target = target;
-      else
-        /* the parent is a branch, unoptimize the jump and set the target to be
-           the end of the parent block */
-        real_target = prevbl->node->endpc + !blockhaselse(prevbl);
-    }
-    else if (pc != currblockendpc)
-      /* if jumping before the end of the if-block, the target is the end of the
-         if-block */
-      real_target = currblock->node->endpc + !blockhaselse(currblock);
-    else if (target == currloop->startlabel)
-      /* if jumping at the end of the if-block, it is an else-jump */
-      real_target = currloop->endlabel-1;
-    else
-      real_target = target;
-  }
-  else if (target == currloop->startlabel)
-    real_target = currloop->endlabel-1;
-  else
-    real_target = target;
-  return real_target;
-}
-
-
-static void rescancode1(DecompState *D, int startpc, int endpc, BlockState *bl);
-static void rescanvars1(DecompState *D, BlockState *bl);
-
-
-/*
-** return the highest necessary variable slot between lower LIMIT and the top
-*/
-static int getlastpersistentvar1(DecompState *D, int limit)
-{
-  DFuncState *fs = D->fs;
-  int i;
-  lua_assert(D->usedebuginfo == 0);
-  for (i = cast_int(fs->nactvar)-1; i >= limit; i--) {
-    enum GENVARNOTE note = getvarnote1(D, getlocvar1(D, i));
-    if (ispersistent(note))
-      break;
-  }
-  return i;
-}
-
-
-/*
-** prune variables that are not necessary down to LIMIT, which is a lower active
-** variable limit, the value of which is included in the pruning, i.e. if LIMIT
-** is 1, than variable 1 may be pruned, but not variable 0
-*/
-static int prunevars1(DecompState *D, int limit)
-{
-  int newnactvar = getlastpersistentvar1(D, limit)+1;
-  return rollbackvars1(D, newnactvar);
-}
-
-
-static void addnodetostate1(BlockState *blockstate, BlockNode *newblock)
-{
-  BlockNode *parent = blockstate->node;
-  BlockNode *child = (lua_assert(parent), parent->firstchild);
-  if (child == NULL)
-    parent->firstchild = newblock;
-  else {
-    BlockNode *prevchild = NULL;
-    BlockNode *nextchild = NULL;
-    while (child != NULL && blstartpc(child) < newblock->startpc) {
-      prevchild = child;
-      child = child->nextsibling;
-    }
-    nextchild = child;
-    while (nextchild != NULL && blstartpc(nextchild) < newblock->endpc)
-      nextchild = nextchild->nextsibling;
-    if (nextchild != child) {
-      newblock->firstchild = child;
-      if (child != NULL) {
-        while (child->nextsibling != nextchild)
-          child = child->nextsibling;
-        child->nextsibling = NULL;
-      }
-    }
-    newblock->nextsibling = nextchild;
-    if (prevchild != NULL) prevchild->nextsibling = newblock;
-    else parent->firstchild = newblock;
-  }
-}
-
-
-static int getifprepstart(DFuncState *fs, int endpc, int firsttempreg)
-{
-  Instruction lastinsn = fs->f->code[endpc];
-  OpCode lastop = GET_OPCODE(lastinsn);
-  /* either LASTOP is a test instruction or it is OP_JMP */
-  if (testTMode(lastop)) {
-    int firstreg = -1;
-    int r1, r2;
-    int n = getregstested(lastinsn, &r1, &r2);
-    lua_assert(n > 0);
-    if (n == 2 && r1 > r2) {
-      /* swap so R2 >= R1 */
-      int temp = r1; r1 = r2; r2 = temp;
-    }
-    if (n == 2 && r2 >= firsttempreg)
-      firstreg = r2;
-    if (r1 >= firsttempreg)
-      firstreg = r1;
-    if (firstreg != -1)
-      endpc = getevalstart(fs, endpc, firstreg);
-  }
-  return endpc;
-}
-
-
-static int getlocvarinit1(DecompState *D, LocVar *var)
-{
-  DFuncState *fs = D->fs;
-  int pc;
-  lua_assert(D->usedebuginfo == 0);
-  lua_assert(var != NULL);
-  if (isstartpcfinal(getvarnote1(D, var)))
-    return var->startpc;
-  for (pc = var->startpc-1; pc >= 0; pc--) {
-    if (test_ins_property(fs, pc, INS_LOCVAREXPR))
-      return pc;
-  }
-  return 0;
-}
-
-
-static void unmarklocvars1(DecompState *D, DFuncState *fs, int n, int nactvar)
-{
-  LocVar *var = NULL;
-  lua_assert(n >= 0);
-  for (; n; n--) {
-    int initpc;
-    var = &fs->locvars[fs->nlocvars + n - 1];
-    initpc = getlocvarinit1(D, var);
-    unset_ins_property(fs, initpc, INS_LOCVAREXPR);
-  }
-  if (nactvar && var) {
-    LocVar *topvar = getlocvar1(D, nactvar-1);
-    if (getvarnote1(D, topvar) == GENVAR_BELOW_DISCHARGED) {
-      int dischargepc = getvarnotepc1(D, var);
-      makevarstartnextpc1(fs, topvar, dischargepc);
-    }
-  }
-}
-
-
-
-/*
-** if needed, end existing variables that will be used as temporary slots in the
-** pending open expression
-*/
-static BlockNode *closelocalvars1(DecompState *D, int varlimit, int pc,
-                                  int skipcurrblock)
-{
-  DFuncState *fs = D->fs;
-  BlockNode *ret = NULL;
-  if (varlimit < fs->nactvar) {
-    int lastnecessaryvar = getlastpersistentvar1(D, varlimit);
-    int newnactvar = lastnecessaryvar+1;
-    /* see if are there variables that need to be killed before entering the
-       open expression */
-    if (lastnecessaryvar < varlimit) {
-      BlockState *bl;
-      LocVar *firstvar = getlocvar1(D, varlimit);
-      int firstvarinit = getlocvarinit1(D, firstvar);
-      for (bl = D->a.bl; firstvarinit < bl->node->startpc; bl--)
-        bl->nactvar = cast_byte(varlimit);
-      clearsavedvars1(D, varlimit);
-      /* no variables need to end early, just roll back the extra variables as
-         if they never existed */
-      if (!skipcurrblock) {
-        int numtodelete = (fs->nactvar - varlimit);
-        fs->nlocvars -= numtodelete;
-        /* unmark INS_LOCVAREXPR on each deleted variable */
-        if (D->usedebuginfo == 0)
-          unmarklocvars1(D, fs, numtodelete, varlimit);
-      }
-    }
-    else {
-      BlockState *earliestbl;
-      BlockState *bl;
-      /* the first variable that needs to be ended */
-      LocVar *firstvar = getlocvar1(D, varlimit);
-      int firstvarinit = getlocvarinit1(D, firstvar);
-      clearsavedvars1(D, varlimit);
-      /* find the earliest parent block containing the first variable */
-      for (bl = D->a.bl; firstvarinit < bl->node->startpc; bl--)
-        ;
-      earliestbl = bl;
-      /* for each block containing a variable that needs to end, end it and see
-         if duplicates need to be created in child blocks */
-      for (;;) {
-        int i;
-        int iscurrblock = bl == D->a.bl;
-        BlockState * nextbl = iscurrblock ? NULL : bl+1;
-        int blockendpc = iscurrblock ? pc-1 : nextbl->node->startpc-1;
-        /* BLOCKVARLIMIT is an additional constraint when processing a parent
-           block, because NACTVAR is up-to-date for the current block */
-        int blockvarlimit = iscurrblock ? newnactvar : nextbl->nactvar;
-        /* a new lexical block for the variables */
-        BlockNode *newblock;
-        if (iscurrblock && skipcurrblock)
-          return NULL;
-        if (bl == earliestbl) {
-          /* remove unneeded variables before ending the necessary ones */
-          fs->nlocvars -= (fs->nactvar - newnactvar);
-          fs->nactvar = newnactvar;
-        }
-        /* update variable endings for this block state */
-        firstvar = NULL;
-        if (!iscurrblock && bl->lastnecessaryvar < varlimit) {
-          int numtodelete = (fs->nactvar - varlimit);
-          fs->nlocvars -= numtodelete;
-          fs->nactvar = nextbl->nactvar = varlimit;
-          /* unmark INS_LOCVAREXPR on each deleted variable */
-          if (D->usedebuginfo == 0)
-            unmarklocvars1(D, fs, numtodelete, varlimit);
-        }
-        else {
-          LocVar *lastvar = NULL;
-          int isclose, closereg;
-          if (!iscurrblock) {
-            int kind = nextbl->node->kind;
-            /* for-loops and if-blocks actually start earlier than their startpc
-            */
-            if (kind == BL_FORNUM || kind == BL_FORLIST)
-              blockendpc = nextbl->prepstart-1;
-            /* for if-blocks, PREPSTART is not necessarily the actual start, it
-               is just the latest possible start that can be calculated without
-               stack analysis, which isn't done until now since only now is the
-               variable information up-to-date for the given block */
-            else if (kind == BL_IF)
-              blockendpc = getifprepstart(fs, nextbl->prepstart, varlimit)-1;
-            /* OP_CLOSE is not important in parent blocks, since it was already
-               handled earlier */
-            isclose = 0;
-          }
-          else {  /* updating current block */
-            /* in the current block, if the current code is OP_CLOSE, that is
-               the pc where both the block and its variables will end */
-            isclose = GET_OPCODE(fs->f->code[blockendpc]) == OP_CLOSE;
-            closereg = GETARG_A(fs->f->code[blockendpc]);
-          }
-          for (i = varlimit; i < fs->nactvar && i < blockvarlimit; i++)
-            if (getlocvarinit1(D, getlocvar1(D, i)) > blockendpc) break;
-          for (i--; i >= varlimit; i--) {
-            LocVar *var = getlocvar1(D, i);
-            if (lastvar == NULL) lastvar = var;
-            /* if OP_CLOSE ends the variable, the endpc is the same as OP_CLOSE,
-               or if this is in a parent block, use BLOCKENDPC+1*/
-            if (!iscurrblock)
-              var->endpc = blockendpc+1;
-            else if (isclose && i >= closereg)
-              var->endpc = blockendpc;
-            else  /* otherwise it ends `here' */
-              var->endpc = pc;
-            firstvar = var;
-          }
-          if (lastvar)
-            fs->nlocvars = lastvar + 1 - fs->locvars;
-        }
-        if (nextbl != NULL) {
-          fs->nactvar = nextbl->nactvar = varlimit;
-          /* if the next block clobbers one of the slots that had a deleted
-             variable, rescan the block to generate duplicate variables for
-             those clobber operations */
-          if (nextbl->highestclobbered >= varlimit) {
-            volatile int firstvarindex = firstvar - fs->locvars;
-            rescanvars1(D, nextbl);
-            firstvar = fs->locvars + firstvarindex;
-          }
-        }
-        if (firstvar != NULL) {
-          /* some variables were ended; a do-block needs to be created */
-          newblock = createdoblock(fs, getlocvarinit1(D, firstvar), blockendpc);
-          /* insert the new block into the sibling chain */
-          addnodetostate1(bl, newblock);
-          ret = newblock;
-        }
-        if (iscurrblock)
-          break;
-        bl = nextbl;
-      }
-    }
-    if (!skipcurrblock) {
-      fs->nactvar = cast_byte(varlimit);
-    }
-  }
-  if (D->savedrepeatvars.used) {
-    int base = D->a.bl->nactvar;
-    int newused = varlimit - base;
-    /* ensure D->savedrepeatvars.used + base == varlimit */
-    if (newused < D->savedrepeatvars.used)
-      D->savedrepeatvars.used = newused;
-  }
-  return ret;
-}
-
-
-static void
-updatevarsbeforestore1(DecompState *D, int pc, PendingStoreState *store)
-{
-  BlockNode *block;
-  PendingStoreState savedstore = *store;
-  int firstreg = store->firstreg;
-  *store = pending_store_init;  /* don't discharge the current store yet */
-  block = closelocalvars1(D, firstreg, pc, 0);
-  D->a.prevnode = block;
-  D->a.laststat = block->endpc;
-  D->a.secondlaststat = -1;
-  rescancode1(D, pc, savedstore.startpc, NULL);
-  *store = savedstore;
-  store->laststat = D->a.laststat;
-  store->secondlaststat = D->a.secondlaststat;
-  /*if (firstreg > 0 && fs->nactvar >= firstreg) {
-    int r = firstreg-1;
-    for (; r >= 0; r--) {
-      LocVar *var = getlocvar1(D, r);
-      enum GENVARNOTE getvarnote1(D, var);
-    }
-  }*/
-}
-
-
-static void updatevarsbeforeopenexpr1(DecompState *D)
-{
-  DFuncState *fs = D->fs;
-  const OpenExpr *expr = D->a.openexpr;  /* the pending open expression */
-  closelocalvars1(D, expr->firstreg, expr->startpc, 0);
-  if (expr->firstreg > 0 && fs->nactvar >= expr->firstreg) {
-    int r = expr->firstreg-1;
-    for (; r >= 0; r--) {
-      LocVar *var = getlocvar1(D, r);
-      enum GENVARNOTE note = getvarnote1(D, var);
-      /* ONSTACK variables may be discharged later; otherwise, the variable
-         must exist because this open expression is using a higher slot */
-      if (!isonstack(note)) {
-        makepersistent1(D, r);
-        break;
-      }
-    }
-  }
-  else if (expr->firstreg > 0) {
-    int r = expr->firstreg-1;
-    if (fs->nactvar <= r) {
-      LocVar *var = revivesavedlocvar1(D, fs->nactvar);
-      if (var == NULL)
-        revivesavedrepeatvar1(D, fs->nactvar);
-    }
-  }
-}
-
-
-/*
-** returns true if the current OP_CLOSE code will be generated implicitly by the
-** current lexical block without needing to have an inner do-block
-*/
-static int
-checkimplicitclose1(DecompState *D, int closedreg, int pc)
-{
-  BlockState *bl = D->a.bl;
-  int basereg = bl->nactvar + bl->nforloopvars;
-  int closepc;
-  if (closedreg != basereg)
-    return 0;  /* OP_CLOSE does not close all variables in the block */
-  if (bl->node->kind == BL_FUNCTION)
-    return 0;  /* function blocks do not generate OP_CLOSE implcitly */
-  /* now check if the pc of OP_CLOSE is where an implicit one would be */
-  closepc = getnaturalclosepc(bl->node);
-  /* at this point, an if-block which has en else-part will not have an
-     else-block sibling, so getnaturalclosepc will be inaccurate if there is an
-     else-part. The BlockState needs to be checked instead to see if it has an
-     else-part, which affects where the natural OP_CLOSE pc is */
-  if (bl->node->kind == BL_IF && blockhaselse(bl))
-    closepc--;  /* close pc is before the true-exit jump */
-  return pc == closepc;
-}
-
-
-/*
-** OP_CLOSE handler
-*/
-static void onclose1(DecompState *D, int withdebug)
-{
-  DFuncState *fs = D->fs;
-  BlockState *currblock = D->a.bl;
-  BlockNode *node;
-  int reg = D->a.insn.a;
-  int pc = fs->pc;
-  lua_assert(D->a.insn.o == OP_CLOSE);
-  /* OP_CLOSE before a break does not need handling */
-  if (test_ins_property(fs, pc+1, INS_BREAKSTAT))
-    return;
-  /* adjust local variables in parent blocks before checking if a do-block is
-     really needed in the current block */
-  closelocalvars1(D, reg, pc+1, 1);
-  if (checkimplicitclose1(D, reg, pc)) {
-    /* the current loop or if-statement will generate this OP_CLOSE code, no
-       need to add a do-block */
-    currblock->node->upval = 1;
-    /* update variable endings in this block */
-    if (!withdebug) {
-      for (; reg < fs->nactvar; reg++)
-        getlocvar1(D, reg)->endpc = pc;
-    }
-    return;
-  }
-  if (withdebug) {
-    const LocVar *firstvar = getlocvar1(D, reg);
-    /* find the startpc of the do-block */
-    int startpc;
-    for (startpc = firstvar->startpc-1; startpc >= 0; --startpc)
-      if (test_ins_property(fs, startpc, INS_ASSIGNSTART)) break;
-    node = createdoblock(fs, startpc, pc);
-    node->upval = 1;
-    addnodetostate1(D->a.bl, node);
-    D->a.prevnode = node;
-  }
-  else {
-    node = closelocalvars1(D, reg, pc+1, 0);
-    if (node) {  /* should never be NULL, but just to be safe */
-      node->upval = 1;
-      D->a.prevnode = node;
-    }
-  }
-}
-
-
-/*
-** OP_TESTSET handler for testset expressions (does not handle the first
-** OP_TESTSET code in the expression; that is handled in updatevars1)
-*/
-static void ontestset1(DecompState *D, int testedreg)
-{
-  DFuncState *fs = D->fs;
-  lua_assert(D->a.testsetendlabel != -1);
-  lua_assert(D->usedebuginfo == 0);
-  if (D->a.testsetlocvar != -1) {
-    lua_assert(D->a.testsetlocvar == D->a.insn.a);
-    if (!test_ins_property(fs, fs->pc, INS_LEADER)) {
-      closelocalvars1(D, testedreg, D->a.testsetstart, 0);
-    }
-  }
-}
-
-
-/*
-** scans the instructions from a pass-jump up to its target, returns the next pc
-** to process
-*/
-static int
-scanpassjump(DecompState *D, DFuncState *fs, int target, int needvars)
-{
-  int jumppc = fs->pc;
-  int pc = jumppc;
-  int lowestclobberedreg = -1;
-  /* scan the codes leading up to the next fail-jump */
-  lua_assert(target > pc);
-  do {
-    pc = ++fs->pc;
-    updateinsn1(D, fs);
-    updatereferences1(D);
-    /* update lowestclobberedreg */
-    if (beginseval(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c, 0)
-        && lowestclobberedreg < D->a.insn.a) {
-      lowestclobberedreg = D->a.insn.a;
-    }
-  } while (pc < target-1);
-  /* see if any variables need to be erased or ended before here */
-  if (lowestclobberedreg != -1 && lowestclobberedreg < fs->nactvar) {
-    if (needvars) {
-      int lastnecessaryvar = getlastpersistentvar1(D, lowestclobberedreg);
-      /* if there are variables that must be kept, but need to be dead by this
-         point, append a do-block which ends before this branch so the registers
-         will be free */
-      if (lastnecessaryvar != -1) {
-        int endpc = jumppc - (getjumpcontrol(fs, jumppc) != NULL);
-        endpc = getifprepstart(fs, endpc, lastnecessaryvar+1);
-        closelocalvars1(D, lowestclobberedreg, endpc, 0);
-      }
-    }
-  }
-  /* fast-forward open expressions to current pc */
-  while (D->a.openexpr->startpc != -1 && D->a.openexpr->startpc < pc)
-    updatenextopenexpr1(D);
-  return pc;
-}
-
-
-static void checktestsetstart1(DecompState *D, int pc)
-{
-  DFuncState *fs = D->fs;
-  int label;
-  if (D->a.insn.o == OP_TESTSET) {
-    label = getjump(fs, pc+1);
-    settestsetlabel:
-    if (label > D->a.testsetendlabel) {
-      D->a.testsetendlabel = label;
-      if (D->a.testsetnewlocvar != -1) {
-        int r = D->a.testsetnewlocvar;
-        LocVar *var = check_exp(r < fs->nactvar, getlocvar1(D, r));
-        var->startpc = label;
-      }
-    }
-  }
-  else if (test_ins_property(fs, pc, INS_TESTSETJUMP)) {
-    lua_assert(D->a.insn.o == OP_JMP);
-    label = getjump(fs, getjump(fs, pc)-1);
-    goto settestsetlabel;
-  }
-}
-
-
-static void checktestsetend1(DecompState *D, int pc)
-{
-  if (pc == D->a.testsetendlabel) {
-    D->a.testsetendlabel = -1;
-    D->a.testsetlocvar = -1;
-    D->a.testsetnewlocvar = -1;
-    D->a.testsetstart = -1;
-    setlaststat1(D, pc, 1);
-  }
-}
-
-
-static void rescancode1(DecompState *D, int startpc, int endpc, BlockState *bl)
-{
-  DFuncState *fs = D->fs;
-  const int savedlastup = D->a.lastup;
-  const int savedlastk = D->a.lastk;
-  const int startnactvar = fs->nactvar;
-  const int savedpc = fs->pc;
-  int nextchildstartpc;
-  BlockNode *nextchild = NULL;
-  if (bl != NULL) {
-    nextchild = bl->node->firstchild;
-    /* find the next node that comes after STARTPC */
-    while (nextchild != NULL && blstartpc(nextchild) < startpc)
-      nextchild = nextchild->nextsibling;
-    nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  }
-  else
-    nextchildstartpc = -1;
-  for (fs->pc = startpc; fs->pc < endpc; ++fs->pc) {
-    int pc = fs->pc;
-    if (pc == nextchildstartpc) {
-      fs->pc = nextchild->endpc;
-      nextchild = nextchild->nextsibling;
-      nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      continue;
-    }
-    updateinsn1(D, fs);
-    checktestsetend1(D, pc);
-    if (test_ins_property(fs, pc, INS_SKIPPEDREF)) {
-      if (isstorecode(D->a.insn.o))
-        D->a.skippedstorerefpc = pc;
-      else
-        D->a.store->RHS_skipped_ref = 1;
-    }
-    updatevars1(D, fs);
-    updatereferences1(D);
-    /* check for TESTSET start AFTER updating generated variables */
-    checktestsetstart1(D, pc);
-  }
-  if (bl != NULL)
-    prunevars1(D, startnactvar);
-  D->rescan = 0;
-  D->a.lastup = savedlastup;
-  D->a.lastk = savedlastk;
-  fs->pc = savedpc;
-  updateinsn1(D, fs);
-}
-
-
-static void rescanvars1(DecompState *D, BlockState *bl)
-{
-  int startpc = bl->highestclobberedresetpc;
-  int endpc = bl == D->a.bl ? D->fs->pc : (bl+1)->node->startpc;
-  rescancode1(D, startpc, endpc, bl);
-}
-
-
-/*
-** map the N newest local variables from their corresponding registers to their
-** positions in the LocVar vector
-*/
-static void addlocalvars1(DFuncState *fs, int n)
-{
-  int i;
-  lua_assert(fs->nactvar >= 0 && fs->nactvar <= fs->sizelocvars);
-  lua_assert(fs->nlocvars >= 0 && fs->nlocvars <= fs->sizelocvars);
-  lua_assert(fs->nlocvars >= n);
-  lua_assert(fs->nactvar >= n);
-  lua_assert(fs->nactvar-1 <= fs->a->sizeactvar);
-  for (i = 0; i < n; i++)
-    fs->a->actvar[fs->nactvar-n+i] = fs->nlocvars-n+i;
-}
-
-
-static void
-chainnode1(BlockNode *parent, BlockNode *next, BlockNode *prev, BlockNode *node)
-{
-  lua_assert(node != NULL);
-  lua_assert(parent != NULL);
-  if (next != NULL) {
-    if (blstartpc(next) > node->endpc)
-      node->nextsibling = next;  /* make it a sibling */
-    else {
-      BlockNode *lastchild = next;
-      node->firstchild = next;
-      /* find the last child for NODE */
-      while (next != NULL && blstartpc(next) < node->endpc) {
-        lastchild = next;
-        next = next->nextsibling;
-      }
-      if (lastchild != NULL) {
-        node->nextsibling = lastchild->nextsibling;
-        lastchild->nextsibling = NULL;
-      }
-    }
-  }
-  if (prev != NULL)
-    prev->nextsibling = node;
-  else
-    parent->firstchild = node;
-}
-
-
-static void attachnode1(BlockNode *parent, BlockNode *next, BlockNode *node)
-{
-  BlockNode *prev = NULL;
-  lua_assert(node != NULL);
-  lua_assert(parent != NULL);
-  if (next != NULL) {
-    prev = parent->firstchild;
-    lua_assert(prev != NULL);
-    if (prev == next)
-      prev = NULL;
-    else while (prev->nextsibling != next && prev->endpc < node->startpc)
-      prev = prev->nextsibling;
-  }
-  chainnode1(parent, next, prev, node);
-}
-
-
-static void appendifbranch1(DecompState *D, int startpc, int endpc)
-{
-  DFuncState *fs = D->fs;
-  BlockNode *node = addblnode(fs, startpc, endpc, BL_IF);
-  BlockNode *parent = D->a.bl->node;
-  lua_assert(parent->endpc >= endpc);
-  chainnode1(parent, D->a.nextnode, D->a.prevnode, node);
-  D->a.nextnode = node;
-}
-
-
-static void appendelsebranch1(DecompState *D, int startpc, int endpc)
-{
-  DFuncState *fs = D->fs;
-  BlockNode *node = addblnode(fs, startpc, endpc, BL_ELSE);
-  BlockNode *ifpart = D->a.bl->node;
-  BlockNode *parent = (D->a.bl-1)->node;
-  lua_assert(ifpart->kind == BL_IF);
-  chainnode1(parent, ifpart->nextsibling, D->a.bl->node, node);
-}
-
-
-/*
-** make any necessary variable adjustments before pushing a new block state
-*/
-static void adjustvarsbeforechildblock1(DecompState *D, BlockNode *node)
-{
-  DFuncState *fs = D->fs;
-  int i, base = 0;
-  if (isforloop(node)) {
-    base = getforloopbase(fs->f->code, node);
-    for (i = fs->nactvar; i < base; i++)
-      genvar1(D, fs->pc, GENVAR_FILL);
-    /* augmented vars start before entering the block */
-    addforloopaugmentedvars(D, node);
-    return;
-  }
-}
-
-
-static int enterblock1(DecompState *D, DFuncState *fs, int needvars)
-{
-  BlockNode *nextnode = D->a.nextnode;
-  if (nextnode->isempty) {
-    D->a.prevnode = nextnode;
-    D->a.nextnode = nextnode->nextsibling;
-    return NODE_STARTPC(D->a.nextnode);
-  }
-  if (needvars)
-    adjustvarsbeforechildblock1(D, nextnode);
-  D->a.bl = pushblockstate1(fs, nextnode);
-  /* add the rest of the for-loop variables after entering the block */
-  if (isforloop(nextnode)) {
-    applyprepstart(D);
-    D->a.bl->nforloopvars = getnumforloopvars(fs, nextnode);
-    if (needvars)
-      addforloopvars(D, nextnode, D->a.bl->nforloopvars);
-  }
-  else if (nextnode->kind == BL_IF)
-    applyprepstart(D);
-  D->a.prevnode = NULL;
-  D->a.nextnode = D->a.nextnode->firstchild;
-  return NODE_STARTPC(D->a.nextnode);
-}
-
-
-static int leaveblock1(DecompState *D, DFuncState *fs)
-{
-  /* true if this block is a child repeat-loop with the same start label as its
-     parent block and its parent block is also a repeat-loop */
-  int isnestedrepeat = 0;
-  BlockState *bl = D->a.bl;
-  BlockNode *node = bl->node;
-  BlockNode *const prevnode = D->a.prevnode;
-  int nvars = fs->nactvar - bl->nactvar;
-  int laststat = D->a.laststat;
-  switch (node->kind) {
-    case BL_REPEAT: {
-      /* combine repeat-loops if possible */
-      if (!node->repuntiltrue)
-        check_ins_property(fs, node->endpc, INS_LOOPFAIL);
-      if (prevnode != NULL && !node->repuntiltrue &&
-          prevnode->kind == BL_REPEAT && prevnode->startpc == node->startpc &&
-          laststat <= prevnode->endpc) {
-        int i;
-        int havepersvar = 0;
-        for (i = 0; i < D->savedrepeatvars.used; i++) {
-          index2pc_t *s = &D->savedrepeatvars.s[i];
-          if (s->state) {
-            havepersvar = 1;
-            break;
-          }
-        }
-        if (!havepersvar) {
-          BlockNode *prevnode1 = prevnode;
-          /* combine the repeat-loops */
-          meldrepeatloops1(D, node, &prevnode1);
-        }
-      }
-      if ((bl-1)->node->kind == BL_REPEAT && !(bl-1)->node->repuntiltrue &&
-          (bl-1)->node->startpc == node->startpc)
-        isnestedrepeat = 1;
-      break;
-    }
-    case BL_IF: {
-      const LoopState *currloop = getcurrloop1(fs);
-      BlockNode *const parentnode = (bl-1)->node;
-      Instruction nextinsn = fs->f->code[node->endpc+1];
-      OpCode nextop = GET_OPCODE(nextinsn);
-      int nextA = GETARG_A(nextinsn);
-      int nextB = GETARG_B(nextinsn);
-      int nextC = GETARG_C(nextinsn);
-      /* check if there was an undetetced optimized jump from a branch that
-         targeted a break statement, but it couldn't be detected at the time due
-         to uncertainty about what came afterward; in jump2, the jump target
-         would have been unoptimized, but here it must be checked to see if it
-         makes sense as a jump target; if the optimized jump was undetected, the
-         target will be thought to be the end label of the loop */
-      if (node->endpc == currloop->endlabel-1 && currloop->hasbreak) {
-        BlockNode *lastchild;
-        BlockNode *prevchild = NULL;
-        BlockNode *nextchild = node->firstchild;
-        int pc;
-        int lastbreak = -1;
-        int limitpc = node->nextsibling ? blstartpc(node->nextsibling) :
-        currloop->endlabel-1;
-        for (pc = node->startpc+1; pc < limitpc; pc++) {
-          if (nextchild && pc == nextchild->startpc) {
-            pc = nextchild->endpc+1;
-            prevchild = nextchild;
-            nextchild = nextchild->nextsibling;
-          }
-          if (test_ins_property(fs, pc, INS_BREAKSTAT))
-            lastbreak = pc;
-        }
-        if (lastbreak != -1) {
-          if (prevchild)
-            prevchild->nextsibling = NULL;
-          else
-            node->firstchild = NULL;
-          lastchild = nextchild;
-          while (lastchild != NULL && lastchild->nextsibling != NULL)
-            lastchild = lastchild->nextsibling;
-          if (lastchild != NULL)
-            lastchild->nextsibling = node->nextsibling;
-          node->nextsibling = nextchild;
-          node->endpc = lastbreak-1;
-          recalcemptiness(node);
-        }
-      }
-      /* check if this if-block is part of the full-semantics emitted by the
-         compiled in a repeat-loop that closes upvalues, and remove the
-         if-block, as it will generate extra semantics and therefore different
-         code */
-      if (((parentnode->kind == BL_REPEAT && !parentnode->repuntiltrue) ||
-           (parentnode->kind == BL_WHILE && D->usedebuginfo == 0)) &&
-          node->kind == BL_IF && !node->isempty &&
-        /* the if-block is 2 instructions in length, and 2 instructions before
-           the end of the loop, contains a CLOSE and then a JMP */
-          node->endpc - node->startpc == 1 &&
-          GET_OPCODE(fs->f->code[node->startpc]) == OP_CLOSE &&
-          test_ins_property(fs, node->endpc, INS_BREAKSTAT) &&
-          parentnode->endpc - node->endpc == 2 &&
-          GET_OPCODE(fs->f->code[parentnode->endpc-1]) == OP_CLOSE) {
-        int start = bl->prepstart;
-        int pc = node->startpc-1;
-        parentnode->kind = BL_REPEAT;
-        set_ins_property(fs, parentnode->startpc, INS_REPEATSTAT);
-        set_ins_property(fs, parentnode->endpc, INS_LOOPFAIL);
-        unset_ins_property(fs, node->endpc, INS_BREAKSTAT);
-        set_ins_property(fs, node->endpc, INS_AUGBREAK);
-        for (; pc >= start; pc--) {
-          if (test_ins_property(fs, pc, INS_BRANCHFAIL)) {
-            unset_ins_property(fs, pc, INS_BRANCHFAIL);
-            set_ins_property(fs, pc, INS_LOOPFAIL);
-          }
-          else if (test_ins_property(fs, pc, INS_BRANCHPASS)) {
-            unset_ins_property(fs, pc, INS_BRANCHPASS);
-            set_ins_property(fs, pc, INS_LOOPPASS);
-          }
-        }
-        goto removenode;
-      }
-      if (isstorecode(nextop) || nextop == OP_MOVE) {
-        int i, noperands;
-        OperandDesc operands[3];
-        if (nextop == OP_MOVE) {
-          noperands = 1;
-          operands[0].r = nextB;
-          operands[0].mode = OpArgR;
-        }
-        else
-          noperands = getstoreoperands(nextop, nextA, nextB, nextC, operands);
-        /* see if any register operand is a local variable in this block, if so,
-           then this block must be destroyed so the variable can live outside of
-           it and be used in the next store operation */
-        for (i = 0; i < noperands; i++)
-          if (operands[i].r >= bl->nactvar) break;
-        if (i < noperands) {
-          removenode:
-          /* destroy the block */
-          /* PREVNODE is the last child of NODE */
-          if (prevnode != NULL)
-            prevnode->nextsibling = node->nextsibling;
-          /* find the previous sibling of NODE and disconnect it */
-          if (parentnode->firstchild == node)
-            parentnode->firstchild = NULL;
-          else {
-            BlockNode *prevsibling = parentnode->firstchild;
-            lua_assert(prevsibling != NULL);
-            while (prevsibling->nextsibling != NULL &&
-                   prevsibling->nextsibling != node)
-              prevsibling = prevsibling->nextsibling;
-            /* the first child of NODE will be the new next sibling */
-            prevsibling->nextsibling = node->firstchild;
-          }
-          freeblnode(fs, node);
-          /* D->a.prevnode should not change in this case */
-          node = prevnode;
-        }
-      }
-      break;
-    }
-    default: break;
-  }
-  if (D->usedebuginfo == 0) {
-    if (isnestedrepeat)
-      savenestedrepeatvars1(D, fs, bl);
-    else {
-      D->savedrepeatvars.used = 0;
-      if (bl->node->kind != BL_FUNCTION)
-        restorevars1(D, fs, bl);
-    }
-    /*if (!isnestedrepeat)*/
-      prunevars1(D, bl->nactvar);
-    recheckfoldableblocks1(D);
-  }
-  D->a.prevnode = node;
-  /* NODE can be NULL if it was removed and PREVNODE was also NULL */
-  D->a.nextnode = node ? node->nextsibling : NULL;
-  popblockstate1(fs);
-  D->a.bl = getcurrblock1(fs);
-  (void)nvars;
-  return NODE_STARTPC(D->a.nextnode);
-}
-
-
-static void endvarshere1(DFuncState *fs, int pc)
-{
-  int stat = 0;
-  int i;
-  for (i = 0; i < fs->sizelocvars; i++)
-    if (fs->locvars[i].endpc == pc) {
-      stat = 1;
-      fs->nactvar--;
-    }
-  if (stat)
-    setlaststat1(fs->D, pc, 1);
-}
-
-
-static void simblock1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  struct PendingStoreState store = pending_store_init;
-  const int needvars = (D->usedebuginfo == 0);
-  int nextnodestart;
-  int inassignment = 0;
-  fs->nactvar =0;
-  fs->nlocvars = 0;
-  D->a.genprepstart = -1;
-  D->a.bl = pushblockstate1(fs,fs->root);
-  D->a.store = &store;
-  D->a.skippedstorerefpc = -1;
-  D->a.lastup = 0;
-  D->a.lastk = 0;
-  D->a.laststat = -1;
-  D->a.secondlaststat = -1;
-  D->a.testsetendlabel = -1;
-  D->a.testsetlocvar = -1;
-  D->a.testsetnewlocvar = -1;
-  D->a.testsetstart = -1;
-  D->a.prevnode = NULL;
-  D->a.lastdischarged.pc = -1;
-  D->a.lastdischarged.reg = -1;
-  D->a.lastdischarged.savedstartpc = -1;
-  /* set the next node to enter */
-  D->a.nextnode = fs->root->firstchild;
-  nextnodestart = NODE_STARTPC(D->a.nextnode);
-  /* intiailize referenced-constants bitmap */
-  allockmap(D, fs->f->sizek);
-  memset(D->upvalmap, 0, sizeof(D->upvalmap));
-  /* set starting position of open expressions, which is the last one, as they
-     are created in reverse order */
-  updatenextopenexpr1(D);
-  /* generate initial local variables if needed */
-  if (needvars) {
-    createparams1(D);
-    createinitiallocals1(D);
-  }
-  /* main loop */
-  for (fs->pc = 0; fs->pc < fs->f->sizecode; fs->pc++ ) {
-    int nvars = 0;  /* number of new variables that start here */
-    int isstat = 0;
-    int pc = fs->pc;
-    updateinsn1(D, fs);
-    updateactvar1(fs, pc, &nvars);
-    if (nvars) {  /* new vars are detected if using debug info */
-      fs->nlocvars += nvars;
-      addlocalvars1(fs, nvars);
-      if (pc > 0)
-        setlaststat1(D, pc-1, 1);  /* a local statement here */
-    }
-    if (!needvars)  /* using debug info */
-      /* before continuing, remove any variables that end on this pc from the
-         active variable count */
-      endvarshere1(fs, pc);
-    /* push a new block state if entering the next node */
-    while (pc == nextnodestart)
-      nextnodestart = enterblock1(D, fs, needvars);
-    /* do not process jumps inside a local statement or store statement - these
-       kinds of statements are only previously detected when using debug info */
-    if (inassignment) {
-      if (test_ins_property(fs, pc, INS_ASSIGNEND)) {
-        setlaststat1(D, pc, 1);
-        inassignment = 0;
-      }
-      else if (pc != D->a.openexpr->startpc)
-        continue;
-    }
-    else if (test_ins_property(fs, pc, INS_ASSIGNSTART)) {
-      setlaststat1(D, pc, 1);
-      if (!test_ins_property(fs, pc, INS_ASSIGNEND)) {
-        inassignment = 1;
-        if (pc != D->a.openexpr->startpc)
-          continue;
-      }
-    }
-    /* check if exiting the current TESTSET expression */
-    checktestsetend1(D, pc);
-    /* check if entering an open expression */
-    if (pc == D->a.openexpr->startpc) {
-      int startnactvar = 0;
-      int kind = D->a.openexpr->kind;
-      int iscall = (kind == CALLPREP);
-      if (kind == FORNUMPREP || kind == FORLISTPREP)
-        /* set the start of preparation code for the upcoming for-loop */
-        D->a.genprepstart = pc;
-      if (needvars) {
-        /* first handle any pending stores, than see if variables need to be
-           ended before the open expression starts */
-        if (D->a.store->pc != -1)
-          dischargestores1(D);
-        updatevarsbeforeopenexpr1(D);
-        startnactvar = fs->nactvar;
-      }
-      if (iscall)
-        isstat = iscallstat(fs, D->a.openexpr->endpc);
-      else
-        isstat = (kind == RETPREP || kind == FORNUMPREP || kind == FORLISTPREP);
-      if (isstat) {
-        setlaststat1(D, D->a.openexpr->endpc, 1);
-      }
-      if (!isstat) {
-        if (checkexpclobber(D))
-          inassignment = 0;
-        if (needvars && D->a.testsetendlabel == -1)
-        createexpresult(D, kind != HASHTABLEPREP && kind != EMPTYTABLE, iscall);
-      }
-      /* advance to the end of the expression */
-      while (pc != D->a.openexpr->endpc) {
-        updatereferences1(D);
-        if (test_ins_property(fs, pc, INS_ASSIGNEND))
-          inassignment = 0;
-        if (needvars) {
-          /* note variables used as source in OP_MOVE */
-          if (D->a.insn.o == OP_MOVE && D->a.insn.b < D->a.insn.a) {
-            if (D->a.insn.b < startnactvar)
-              makepersistent1(D, D->a.insn.b);
-          }
-        }
-        pc = ++fs->pc;
-        updateinsn1(D, fs);
-      }
-      /* update constant/upvalue references for the last expression code */
-      updatereferences1(D);
-      if (test_ins_property(fs, pc, INS_ASSIGNEND))
-        inassignment = 0;
-      /* update next open expression */
-      updatenextopenexpr1(D);
-      /* reset highest clobbered */
-      resethighestclob1(D, fs->pc+1);
-      goto continueloop;
-    }
-    if (needvars) {
-      if (pc < fs->f->sizecode-1)
-        updatevars1(D, fs);
-      else if (D->a.store->pc != -1)
-        dischargestores1(D);
-    }
-    else {  /* have debug info */
-      /* if a new variable starts here or an active variable is clobbered, mark
-         a new statement (either local statement or local assignment) */
-      if (D->a.insn.o != OP_TESTSET)
-      if (clobberslocal(fs, D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c))
-        setlaststat1(D, pc, 1);
-    }
-    /* check TESTSET start AFTER updating generated variables */
-    checktestsetstart1(D, pc);
-    /* mark a return statement that is not an open expression */
-    if (D->a.insn.o == OP_RETURN && pc < fs->f->sizecode-1) {
-      /* must return 0 or 1 value */
-      lua_assert(D->a.insn.b == 1 || D->a.insn.b == 2);
-      setlaststat1(D, pc, 1);
-    }
-    updatereferences1(D);
-    /*if (needvars)
-      checkslotreferences1(D);*/ (void)checkslotreferences1;
-    if (D->a.insn.o == OP_CLOSE)
-      onclose1(D, !needvars);
-    /* process jumps */
-    if (D->a.insn.o == OP_JMP && D->a.testsetendlabel == -1) {
-      const Instruction *jc = getjumpcontrol(fs, pc);
-      /*int target = pc+1+D->a.insn.sbx;*/
-      if (jc != NULL && GET_OPCODE(*jc) == OP_TESTSET) {
-        ;
-      }
-      else {
-        int real_target;
-        int passjump = -1;
-        int target = pc + 1 + D->a.insn.sbx;
-        if (needvars && D->a.openexpr->startpc == pc+1 &&
-            D->a.openexpr->endpc <= target &&
-            D->a.lastdischarged.pc == pc-1 &&
-            D->a.lastdischarged.reg >= D->a.openexpr->firstreg &&
-            getvarnote1(D, getlocvar1(D, D->a.openexpr->firstreg)) ==
-            GENVAR_DISCHARGED &&
-            !exprisstat(fs, D->a.openexpr) &&
-            test_ins_property(fs, pc+1, INS_BBSUBEXPR) &&
-            target <= D->a.bl->node->endpc) {
-          LocVar *var = getlocvar1(D, D->a.openexpr->firstreg);
-          (void)var;
-          /* an incorrect pc will be marked as the start of the statement
-             when correcting the startpc of variables later, (this is
-             because this variable is about to be deleted before scanning
-             the next open expression, where a new variable will be
-             generated for the result of the expression, with the wrong
-             startpc) so mark it now that the real startpc is still known;
-             an extra pc will also be marked as LOCVAREXPR, but that doesn't
-             cause any problems */
-          /*set_ins_property(fs, var->startpc, INS_LOCVAREXPR);*/
-          /*set_ins_property(fs, getlocvarinit1(D, var), INS_BBLOCVAR);*/
-          if (test_ins_property(fs, target, INS_BOOLLABEL))
-            target += (GETARG_C(fs->f->code[target]) != 0);
-          else if (test_ins_property(fs, pc, INS_PASSJUMP))
-            target = getjump(fs, target-1);
-          D->a.testsetendlabel = target;
-          goto continueloop;
-        }
-        real_target = jump2(fs, pc, D->a.insn.sbx);
-        if (test_ins_property(fs, pc, INS_PASSJUMP)) {
-          passjump = pc;
-          pc = scanpassjump(D, fs, real_target, needvars);
-          real_target = jump2(fs, pc, D->a.insn.sbx);
-          if (test_ins_property(fs, pc, INS_LOOPFAIL))
-            set_ins_property(fs, passjump, INS_LOOPPASS);
-        }
-        if (ispcvalid(fs, real_target)) {
-          if (test_ins_property(fs, pc, INS_FAILJUMP)) {
-            BlockState *bl = D->a.bl;
-            if (jc == NULL && bl->isbranch &&
-                /* if the jump is to the true-exit label or greater, and there
-                   is an else-part, it's a break, but if there is no else-part,
-                   the jump can target the true-exit and it does not need to be
-                   a break and no repeat-loop needs to be created */
-                (real_target > bl->node->endpc+1 ||
-                 (real_target == bl->node->endpc+1 && blockhaselse(bl))) &&
-                /* if the jump happens at the end of the block,  it does not
-                   target the true-exit label, it is a break */
-                (pc != bl->node->endpc || real_target != bl->t_exitlabel)) {
-              int loopstartpc, loopendpc;
-              BlockNode *repeatloop;
-              addrepuntiltrue:
-              loopendpc = real_target-1;
-              unset_ins_property(fs, pc, INS_FAILJUMP);
-              set_ins_property(fs, pc, INS_BREAKSTAT);
-              for (bl--; bl->isbranch; bl--)
-                if (loopendpc < bl->node->endpc) break;
-              loopstartpc = (bl+1)->prepstart;
-              repeatloop = addblnode(fs, loopstartpc, loopendpc, BL_REPEAT);
-              repeatloop->repuntiltrue = 1;
-              attachnode1(bl->node, (bl+1)->node, repeatloop);
-              /* INS_REPEATSTAT is marked later when the startpc is verified */
-              set_ins_property(fs, loopendpc, INS_LOOPEND);
-              insertloopstate1(fs, repeatloop);
-              goto continueloop;
-            }
-            if (passjump != -1) {
-              set_ins_property(fs, passjump, INS_BRANCHPASS);
-              D->a.genprepstart = passjump;
-            }
-            else
-              D->a.genprepstart = pc;
-            D->a.genprepstart -= getjumpcontrol(fs, D->a.genprepstart) != NULL;
-            set_ins_property(fs, pc, INS_BRANCHFAIL);
-            /* this check avoids creating 2 blocks for a single if-statement
-               that uses the `and' operator, but if not using debug info, and
-               variables have been craeted between the 2 blocks, the check has
-               to be done later, when the existence if the variables is
-               confirmed; the member `hardstatbeforechild' is a flag for the
-               later check which says that the 2 blocks can definitely not be
-               combined, because there is a definite statement between the 2
-               blocks */
-            if (bl->node->kind == BL_IF && target == bl->f_exitlabel) {
-              if (bl->seenstat) {
-                bl->statbeforechild = 1;
-                if (bl->seenhardstat)
-                  /* the block state will be popped, so apply the flag to the
-                     block node */
-                  bl->node->hardstatbeforechild = 1;
-                goto l_appendifbranch;
-              }
-              bl->node->startpc = pc+1;
-              recalcemptiness(bl->node);
-            }
-            else {
-              l_appendifbranch:
-              /* add a block node for the branch and update NEXTNODESTART */
-              appendifbranch1(D, pc+1, real_target-1);
-              nextnodestart = NODE_STARTPC(D->a.nextnode);
-            }
-          }
-          else if (!test_ins_property(fs, pc, INS_LOOPFAIL) &&
-                   D->a.bl->isbranch && pc == D->a.bl->node->endpc) {
-            int i,n;
-            lua_assert(D->a.bl->node->kind == BL_IF);
-            for (n = 0; ; n++) {
-              BlockState *prevbl = D->a.bl-1-n;
-              BlockNode *currnode = D->a.bl->node;
-              BlockNode *prevnode = prevbl->node;
-              if (prevnode->firstchild != currnode || prevnode->kind != BL_IF)
-                break;
-              if (currnode->endpc < prevnode->endpc)
-                break;
-              if (prevnode->hardstatbeforechild) {
-                goto addrepuntiltrue;
-                /* todo: this is actually a break out of repeat-until-true */
-              }
-            }
-            /* now that it's confirmed that this jump is a valid else-block,
-               pop the block states */
-            for (i = 0; i < n; i++) {
-              BlockState *prevbl = D->a.bl-1;
-              BlockNode *currnode = D->a.bl->node;
-              BlockNode *prevnode = prevbl->node;
-              lua_assert(currnode->nextsibling == NULL);
-              prevnode->firstchild = currnode->firstchild;
-              prevnode->startpc = currnode->startpc;
-              prevnode->upval |= currnode->upval;
-              recalcemptiness(prevnode);
-              freeblnode(fs, currnode);
-              D->savedstartpc.used = D->a.bl->savedstartpcbase;
-              popblockstate1(fs);
-              D->a.bl = getcurrblock1(fs);
-            }
-            appendelsebranch1(D, pc+1, real_target-1);
-          }
-        }
-      }
-    }
-    continueloop:
-    /* pop the current block state for each block that ends at PC */
-    while (pc == D->a.bl->node->endpc) {
-      nextnodestart = leaveblock1(D, fs);
-      if (D->a.bl == NULL) {
-        lua_assert(pc == fs->f->sizecode-1);
-        break;
-      }
-    }
-  }
-  if (needvars) {
-    finalizevars1(fs);
-  }
-  memset(fs->a->actvar, 0, fs->a->sizeactvar * sizeof(unsigned short));
-  fs->nopencalls = fs->a->sizeopencalls;
-}
-
-
-static int getconditionstart(DFuncState *fs, int pc, int startlimit);
-
-
-static void correctrutstart(DFuncState *fs, BlockNode *node, int minstartpc)
-{
-  if (testTMode(GET_OPCODE(fs->f->code[node->startpc])))
-    node->startpc = getconditionstart(fs, node->startpc+1, minstartpc);
-  set_ins_property(fs, node->startpc, INS_REPEATSTAT);
-}
-
-
-/*
-** create extra blocks to account for LOADNIL labels which do not already exist
-** on a basic block boundary
-** remove if-blocks that will not be able to generate matching code due to
-** compiler optimizations and turn them into expressions
-*/
-static void finalizelexicalblocks1(DFuncState *fs, BlockNode *node)
-{
-  BlockNode *prevchild = NULL;
-  BlockNode *nextchild = node->firstchild;
-  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  int pc;
-  int naturaldebuginfo = fs->D->usedebuginfo;
-  if (nextchild != NULL && nextchild->repuntiltrue)
-    correctrutstart(fs, nextchild, node->startpc);
-  for (pc = node->startpc; pc <= node->endpc; pc++) {
-    if (pc == nextchildstartpc) {
-      finalizelexicalblocks1(fs, nextchild);
-      /* note that if NEXTCHILD is empty, pc will end up being decremented by 1,
-         then incremented by 1 when continuing, so that this pc is processed
-         again under the current node, because it wouldn't be processed by the
-         empty child block */
-      pc = nextchild->endpc;
-      prevchild = nextchild;
-      nextchild = nextchild->nextsibling;
-      if (nextchild != NULL && nextchild->repuntiltrue)
-        correctrutstart(fs, nextchild, prevchild->endpc+1);
-      nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      continue;
-    }
-    /* check for nil-label and augment a basic block if needed */
-    if (test_ins_property(fs, pc, INS_NILLABEL)) {
-      int isblockend = (test_ins_property(fs, pc-1, INS_BLOCKEND) ||
-                        test_ins_property(fs, pc-1, INS_LOOPEND));
-      int isblockstart = (test_ins_property(fs, pc, INS_REPEATSTAT) ||
-                          test_ins_property(fs, pc, INS_WHILESTAT));
-      if (!isblockend && !isblockstart) {
-        int endpc = getnaturalclosepc(node);
-        /* a block node needs to be created so that a basic block boundary can
-           exist between the 2 LOADNIL codes */
-        BlockNode *new_node = addblnode(fs, pc, endpc, BL_IF);  /* if-true */
-        new_node->firstchild = nextchild;
-        if (prevchild != NULL)
-          prevchild->nextsibling = new_node;
-        else
-          node->firstchild = new_node;
-        prevchild = NULL;
-        node = new_node;
-      }
-    }
-    /* OP_LOADK is optimized differently depending on if it is part of an
-       if-statement condition or a conditional expression; if part of an
-       if-statement, the branch is optimized to always go through, i.e. no jump
-       is emitted, but if part of a conditional expression such as the
-       following:
-          local a = 1 or 5;
-       the conditional jump is not optimized to go through; because of this
-       distinction, the analyzer needs to check OP_LOADK codes that are followed
-       by branches, and see if the source code that it would generate will
-       compile to the same code; if the LOADK uses a temporary register, then
-       the generated source code will be of the form `if <constant> then' and it
-       will compile to different code, so the branch is removed from the chain
-       so that the code can be interpreted as an expression in pass 2 */
-    if (naturaldebuginfo && GET_OPCODE(fs->f->code[pc]) == OP_LOADK &&
-        (GET_OPCODE(fs->f->code[pc+1]) == OP_TEST ||
-         GET_OPCODE(fs->f->code[pc+1]) == OP_TEST_R1)) {
-      if (nextchild != NULL && nextchild->kind == BL_IF &&
-          nextchild->startpc == pc+3) {
-        int reg = GETARG_A(fs->f->code[pc]);
-        lu_byte nactvar;
-        getactvar(fs, pc+1, NULL, &nactvar);
-        if (reg >= nactvar) {
-          BlockNode *sibling = nextchild->nextsibling;
-          BlockNode *child = nextchild->firstchild;
-          if (child == NULL)
-            child = sibling;
-          if (prevchild)
-            prevchild->nextsibling = child;
-          else
-            node->firstchild = child;
-          freeblnode(fs, nextchild);
-          nextchild = child;
-          nextchildstartpc = nextchild ? nextchild->startpc : -1;
-        }
-      }
-    }
-  }
-}
-
-
-
-/*
-** get the next local variable that starts at PC, with a persistent iteration
-** state saved in fs->nlocvars
-*/
-static struct LocVar *getnextlocvaratpc1(DFuncState *fs, int pc)
-{
-  lua_assert(ispcvalid(fs, pc));
-  if (fs->nlocvars < fs->sizelocvars) {
-    struct LocVar *var = &fs->locvars[fs->nlocvars];
-    if (var->startpc == pc) {
-      fs->nlocvars++;
-      return var;
-    }
-  }
-  return NULL;
-}
-
-
 /*
 ** returns the first pc that would be in the indented part of a block in the
 ** source code
 */
-static int getfirstindentedpc(DFuncState *fs, const BlockNode *node)
-{
+static int getfirstindentedpc (const FuncState *fs, const BlockNode *node) {
   int firstchildstart;
   int pc = node->startpc;
   int lastpossiblestart;
@@ -7095,437 +673,3145 @@ static int getblockfollowpc(const BlockNode *node)
 }
 
 
+#ifdef HKSC_DECOMP_HAVE_PASS2
 /*
-** restructures the lexical scope hierarchy to preserve local variable info
+** true if CHILD is a tail-block of PARENT, i.e. CHILD is the last statement in
+** PARENT
 */
-static void fixblockendings1(DFuncState *fs, BlockNode *node)
-{
-  /* variables for the most recently processed child block and the next child
-     block to process for the current NODE */
-  BlockNode *nextchild = node->firstchild;
-  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  /* the last pc marked LOCVAREXPR (start of local variable initialization) */
-  int lastlocvarexpr = -1;
-  /* save this value so it can be restored when this call needs to be redone */
-  short nlocvars = fs->nlocvars;
-  /* the pc where locals in this block would naturally end */
-  int varendpc = getnaturalvarendpc(node);
-  /* function blocks end on the final return; only process instructions up to
-     the final return (so that I can safely use (pc+1) when getting the next
-     local variable) */
-  int endpc = (node->kind == BL_FUNCTION) ? node->endpc-1 : node->endpc;
-  int pc;
-  for (pc = node->startpc; pc <= endpc; pc++) {
-    struct LocVar *var;
-    short nvarshere = 0;
-    if (pc == nextchildstartpc) {
-      fixblockendings1(fs, nextchild);
-      pc = nextchild->endpc;
-      nextchild = nextchild->nextsibling;
-      nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      continue;
-    }
-    if (test_ins_property(fs, pc, INS_LOCVAREXPR))
-      lastlocvarexpr = pc;
-    if (pc+1 == nextchildstartpc && isforloop(nextchild)) {
-      /* for-loop control variables start on the startpc of the for-loop, and
-         no other varibale can start there; because of the 1-pc lookahead, those
-         control variables will be seen here before recursing with NEXTCHILD */
-      continue;
-    }
-    while ((var = getnextlocvaratpc1(fs, pc+1)) != NULL) {
-      if (varisaugmented(var))
-        continue;
-      /* check if the variable does not end on the natural endpc */
-      if (var->endpc != varendpc) {
-        if (var->endpc > varendpc) {
-          /* the variable can end after the block ends because the code analyzer
-             may have detected an optimization that was not there; the lexical
-             blocks were already ordered `optimally' in the source code */
-          BlockNode *nextsibling = node->nextsibling;
-          if (node->kind == BL_IF) {
-            if (nextsibling != NULL && nextsibling->kind == BL_IF) {
-              /* now NEXTSIBLING will become a child of the current block */
-              BlockNode *newchild = nextsibling;
-              BlockNode *child;  /* for iterating through the child chain */
-              node->endpc = newchild->endpc;
-              recalcemptiness(node);
-              /* find the last child; get a headstart with NEXTCHILD */
-              child = nextchild;
-              while (child != NULL && child->nextsibling != NULL)
-                child = child->nextsibling;
-              /* add NEWCHILD to the chain */
-              if (child != NULL)
-                child->nextsibling = newchild;
-              else {
-                node->firstchild = newchild;
-                nextchild = newchild;
-                nextchildstartpc = nextchild->startpc;
-              }
-              /* transfer the next sibling from NEXTSIBLING to NODE */
-              node->nextsibling = newchild->nextsibling;
-              newchild->nextsibling = NULL;
-            }
-            else continue;
-          }
-          /* I'm not aware of any other case where the variable ending after the
-             block makes sense; but the decompiler is not responsible for
-             matching malformed code */
-          else continue;
-        }
-        else {  /* var->endpc < varendpc */
-          /* a variable ends earlier than the block ends; insert a new do-block
-             into the current block */
-          BlockNode *new_node;
-          int new_node_startpc;
-          /* in the opposite case to above, the analyzer may have created a
-             sequence of blocks in a hierarchy while they were actually
-             adjacent in the source, causing the variables within the parent
-             blocks in the hierarchy to end earlier, and requiring a do-block to
-             be added. Instead, I will just flatten the hierarchy so the
-             variables end naturally */
-          if (fs->D->usedebuginfo && node->kind == BL_IF && !haselsepart(node)){
-            /* get the last child */
-            BlockNode *secondlast = NULL;
-            BlockNode *last = node->firstchild;
-            if (last)
-              while (last->nextsibling != NULL) {
-                secondlast = last;
-                last = last->nextsibling;
-              }
-            if (last &&
-                (last->kind == BL_IF || last->kind == BL_REPEAT ||
-                 last->kind == BL_WHILE)) {
-              /* see if the jump from this if-block may have been optimized */
-              /* if-blocks start one after the jump, while a while-loop or
-                 repeat-loop will start on a jump in order for optimization to
-                 be possible */
-              int jumppc = last->startpc - (last->kind == BL_IF);
-              int realvarendpc = jumppc;
-              int i;
-              if (GET_OPCODE(fs->f->code[jumppc]) != OP_JMP ||
-                  getjumpcontrol(fs, jumppc) != NULL)
-                goto augmentdoblock;
-              /* check if the block endpc can be decreased without messing up
-                 variable info */
-              for (i = 0; i < fs->sizelocvars; i ++) {
-                LocVar *var = &fs->locvars[i];
-                if (var->startpc > realvarendpc)
-                  break;
-                if (var->startpc >= node->startpc && var->endpc > realvarendpc)
-                  goto augmentdoblock;
-              }
-              /* no do-block is needed */
-              if (secondlast)
-                /* secondlast is now the last child */
-                secondlast->nextsibling = NULL;
-              else
-                node->firstchild = NULL;
-              /* the last child is now the next sibling */
-              last->nextsibling = node->nextsibling;
-              node->nextsibling = last;
-              /* update the endpc accordinly */
-              endpc = node->endpc = realvarendpc-1;
-              recalcemptiness(node);
-              varendpc = getnaturalvarendpc(node);
-              if (nextchild == last) {
-                nextchild = NULL;
-                nextchildstartpc = -1;
-              }
-              goto continueloop;
-            }
-          }
-          augmentdoblock:
-          if (lastlocvarexpr != -1)
-            new_node_startpc = lastlocvarexpr;
-          else
-            new_node_startpc = getfirstindentedpc(fs, node);
-          new_node = createdoblock(fs, new_node_startpc, var->endpc-1);
-          {  /* make NEW_NODE a child of NODE */
-            /* find the surrounding child nodes for NEW_NODE */
-            BlockNode *prevchild = NULL;
-            BlockNode *child = node->firstchild;
-            while (child != NULL && child->endpc < blstartpc(new_node)) {
-              prevchild = child;
-              child = child->nextsibling;
-            }
-            /* insert NEW_NODE into the chain */
-            if (prevchild != NULL)
-              prevchild->nextsibling = new_node;
-            else
-              node->firstchild = new_node;
-            new_node->firstchild = child;
-            prevchild = NULL;
-            while (child != NULL && child->endpc <= new_node->endpc) {
-              prevchild = child;
-              child = child->nextsibling;
-            }
-            if (prevchild != NULL) {
-              new_node->nextsibling = prevchild->nextsibling;
-              prevchild->nextsibling = NULL;
-            }
-            else {
-              new_node->nextsibling = new_node->firstchild;
-              new_node->firstchild = NULL;
-            }
-          }
-          new_node->parentnilvars = nvarshere;
-        }
-        /* now redo this call; reset fs->nlocvars and do a tailcall with the
-           same arguments */
-        fs->nlocvars = nlocvars;
-        fixblockendings1(fs, node);
-        return;
-      }
-      continueloop:
-      nvarshere++;
-    }
+static int istailblock (const BlockNode *parent, const BlockNode *child) {
+  int hasendcode;
+  if (child->nextsibling != NULL)
+    return 0;
+  switch (parent->kind) {
+    case BL_REPEAT: return 0;
+    case BL_DO: case BL_ELSE: hasendcode = 0; break;
+    case BL_IF: hasendcode = haselsepart(parent); break;
+    case BL_FORLIST: hasendcode = 2; break;
+    default: hasendcode = 1; break;
   }
+  return (child->endpc + hasendcode == parent->endpc);
+}
+
+static int issinglelinefunc (const FuncState *fs, const BlockNode *func) {
+  const Proto *f = fs->f;
+  lua_assert(func->kind == BL_FUNCTION);
+  if (fs->D->usedebuginfo == 0)
+    return 0;
+  return (getline(f, func->startpc) == getline(f, func->endpc));
+}
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+/* endpc of list loops is the final JMP, meaning subtract 1 to get the end-for
+   code */
+#define getendfor(node) ((node)->endpc - ((node)->kind != BL_FORNUM))
+
+static int getforloopbase (const Instruction *code, const BlockNode *node) {
+  int endfor = check_exp(isforloop(node), getendfor(node));
+  return GETARG_A(code[endfor]);
 }
 
 
-/*
-** check if NODE needs a non-zero PARENTNILVARS field
-*/
-static void checkparentnilvars1(DFuncState *fs, BlockNode *node)
-{
-  BlockNode *child = check_exp(node != NULL, node->firstchild);
-  /* check for variables that start inside a do-block but are part of the parent
-     lexical scope, due to LOADNIL optimization, for example:
-        local a = nil;
-        do
-            local b = nil;
-            local function c() return b; end
-        end */
-  if (node->kind == BL_DO && node->parentnilvars == 0 &&
-      GET_OPCODE(fs->f->code[node->startpc]) == OP_LOADNIL) {
-    const int varendpc = getnaturalvarendpc(node);
-    LocVar *var;
-    for (; (var = getnextlocvaratpc1(fs, node->startpc+1)) != NULL &&
-         var->endpc > varendpc; node->parentnilvars++)
-      ;
-  }
-  while (child != NULL) {
-    checkparentnilvars1(fs, child);
-    child = child->nextsibling;
-  }
+static int getnumforloopvars (const Instruction *code, const BlockNode *node) {
+  lua_assert(isforloop(node));
+  return node->kind == BL_FORNUM ? 1 : GETARG_C(code[getendfor(node)]);
 }
 
 
-static int getconditionstart(DFuncState *fs, int pc, int startlimit)
-{
-  int i;
-  lu_byte nactvar = 0;
-  const Instruction *jc;
-  lua_assert(ispcvalid(fs, pc));
-  lua_assert(ispcvalid(fs, startlimit));
-  lua_assert(GET_OPCODE(fs->f->code[pc]) == OP_JMP);
-  /* update number of active locals */
-  for (i = 0; i < fs->sizelocvars; i++) {
-    struct LocVar *var = &fs->locvars[i];
-    if (var->startpc <= pc && pc <= var->endpc)
-      nactvar++;
-  }
-  lua_assert(GET_OPCODE(fs->f->code[pc]) == OP_JMP);
-  jc = getjumpcontrol(fs,pc);
-  if (jc == NULL)  /* unconditional jump */ {
-    return pc;  /* the last pc is the follow-block pc */
-  }
-  else {  /* conditional jump */
-    int r, r2;
-    int numregs = getregstested(*jc, &r, &r2);
-    if (numregs == 1)
-      r2 = r;
-    if (numregs == 0 || (r < nactvar && r2 < nactvar)) {
-      return pc-1;  /* pc before TEST and JMP */
-    }
-    /* find the lowest temporary register of the 2 that are tested */
-    if (r < nactvar)
-      r = r2;
-    else if (r2 >= nactvar)
-      r = (r < r2) ? r : r2;
-    /* now walk back down the code to the start of the evluation of R */
-    for (pc -= 2; pc > startlimit; pc--) {
-      OpCode o = GET_OPCODE(fs->f->code[pc]);
-      int a = GETARG_A(fs->f->code[pc]);
-      int b = GETARG_B(fs->f->code[pc]);
-      int c = GETARG_C(fs->f->code[pc]);
-      if (!beginseval(o, a, b, c, 0) || a < nactvar)
-        return pc+1;  /* found a code that is not part of the condition */
-    }
-    return pc;
-  }
+static SlotDesc *getslotdesc (const FuncState *fs, int reg) {
+  SlotDesc *slot;
+  Analyzer *a = fs->a;
+  lua_assert(isregvalid(fs, reg));
+  slot = &a->regproperties[reg];
+  return slot;
 }
 
 
-/*
-** returns the `follow block' pc of a repeat-loop, or -1 if the repaet-loop does
-** not have any return statements that could possibly be on a follow block pc
-*/
-static int findrepeatfollowblock1(DFuncState *fs, const BlockNode *node)
-{
-  BlockNode *nextchild = node->firstchild;
-  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  int pc;
-  int followblockpc = -1;
-  int lastreturn;
-  lu_byte state = 0;  /* state-machine variable */
-  lua_assert(node->kind == BL_REPEAT);
-  lua_assert(node->repuntiltrue == 0);
-  for (pc = node->startpc; pc < node->endpc; pc++) {
-    if (pc == nextchildstartpc) {
-      /* skip over child blocks */
-      pc = nextchild->endpc;
-      nextchild = nextchild->nextsibling;
-      nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      state = 0;
-      continue;
-    }
-    if (GET_OPCODE(fs->f->code[pc]) == OP_RETURN ||
-        test_ins_property(fs, pc, INS_BREAKSTAT)) {
-      /* found a return code; check if it exists on a follow-block pc */
-      state = 1;
-      lastreturn = pc;
-    }
-    if (state) {
-      /* see if the `until' part has been reached */
-      if (test_ins_property(fs, pc, INS_LOOPFAIL) ||
-          test_ins_property(fs, pc, INS_LOOPPASS)) {
-        followblockpc = getconditionstart(fs, pc, lastreturn) - 1;
-        break;
-      }
-      else if (pc+1 == node->endpc && lastreturn == pc) {
-        followblockpc = lastreturn;
-        break;
-      }
-    }
-  }
-  return followblockpc == -1 ? -1 : followblockpc - node->upval;
-}
+#ifdef HKSC_DECOMP_HAVE_PASS2
 
 
-/*
-** mark the `follow block' pc for a node and each of its children
-*/
-static void markfollowblock1(DFuncState *fs, BlockNode *node)
-{
-  BlockNode *child = node->firstchild;
-  int followblockpc = getblockfollowpc(node);
-  if (!ispcvalid(fs, followblockpc) && node->kind == BL_REPEAT)
-    followblockpc = findrepeatfollowblock1(fs, node);
-  if (ispcvalid(fs, followblockpc) && followblockpc >= node->startpc)
-    set_ins_property(fs, followblockpc, INS_BLOCKFOLLOW);
-  while (child != NULL) {
-    markfollowblock1(fs, child);
-    child = child->nextsibling;
-  }
-}
+/******************************************************************************/
+/* ExpNode functions */
+/******************************************************************************/
 
-
-/*
-** mark all PC which have a fixed start line, meaning it corresponds to an
-** earlier line than it is mapped to in debug info
-*/
-static void calcfixedstartlinesnode1(DFuncState *fs, BlockNode *node)
-{
-  DecompState *D = fs->D;
-  BlockNode *nextchild = node->firstchild;
-  int nextchildstartpc = nextchild ? nextchild->startpc : -1;
-  int prepstart = -1;
-  int pc;
-  for (pc = node->startpc; pc <= node->endpc; pc++) {
-    if (pc == nextchildstartpc) {
-      /* record entries in the fixed start line map for loops which have fixed
-         start lines, namely for-loops, and in Havok Script, while-loops */
-      if (isforloop(nextchild)) {
-        int forlooppc = nextchild->endpc - (nextchild->kind == BL_FORLIST);
-        int forloopline = getline(fs->f, forlooppc);
-        lua_assert(prepstart != -1);
-        if (forloopline < getline(fs->f, prepstart)) {
-          addfixedstartline(fs, prepstart, forloopline);
-          nextchild->fixedstartline = 1;
-        }
-        prepstart = -1;
-      }
-      else if (nextchild->kind == BL_WHILE) {
-        int jumppc = nextchild->endpc;
-        int jumpline = getline(fs->f, jumppc);
-        if (jumpline < getline(fs->f, nextchild->startpc)) {
-          addfixedstartline(fs, nextchild->startpc, jumpline);
-          nextchild->fixedstartline = 1;
-        }
-      }
-      /* process child block */
-      calcfixedstartlinesnode1(fs, nextchild);
-      pc = nextchild->endpc;
-      nextchild = nextchild->nextsibling;
-      nextchildstartpc = nextchild ? nextchild->startpc : -1;
-      continue;
-    }
-    /* use for-loop prep expressions to get the actual start of the for-loop, so
-       it can be used when recording the fixed start line of the for-loop */
-    if (D->a.openexpr->startpc == pc) {
-      const OpenExpr *expr = D->a.openexpr;
-      if (expr->kind == FORLISTPREP || expr->kind == FORNUMPREP)
-        prepstart = pc;
-      pc = expr->endpc;
-      updatenextopenexpr1(D);
-      continue;
-    }
-  }
-}
-
-
-/*
-** call if matching line info; records fixed start line entries which are used
-** to yield correct results when calling `getstartline' in pass2
-*/
-static void recordfixedstartlines1(DFuncState *fs)
-{
-  DecompState *D = fs->D;
-  lua_assert(D->matchlineinfo);
-  lua_assert(fs->nopencalls == fs->a->sizeopencalls);
-  updatenextopenexpr1(D);
-  calcfixedstartlinesnode1(fs, fs->root);
-  fs->nopencalls = fs->a->sizeopencalls;
-}
-
-
-/*
-** free memory for first pass
-*/
-static void finalizevectors1(DFuncState *fs)
-{
+static ExpNode *newexp (FuncState *fs) {
   hksc_State *H = fs->H;
   Analyzer *a = fs->a;
-  int newsize = fs->nopencalls;
-  /* resize the open expression array */
-  luaM_reallocvector(H, a->opencalls, a->sizeopencalls, newsize, OpenExpr);
-  a->sizeopencalls = newsize;
+  lua_assert(a->pendingstk.used >= 0 &&
+             a->pendingstk.used <= a->pendingstk.total);
+  luaM_growvector(H, a->pendingstk.u.s2, a->pendingstk.used, a->pendingstk.total,
+                  ExpNode, MAX_INT, "too many expression nodes");
+  return &a->pendingstk.u.s2[a->pendingstk.used++];
+}
+
+
+#define prevexp(fs,exp) index2exp(fs, exp->previndex)
+
+static int exp2index (const FuncState *fs, const ExpNode *exp) {
+  if (exp == NULL)
+    return 0;
+  else {
+    lua_assert(exp >= fs->a->pendingstk.u.s2 &&
+               exp < fs->a->pendingstk.u.s2+fs->a->pendingstk.used);
+    return exp-fs->a->pendingstk.u.s2+1;
+  }
+}
+
+
+static ExpNode *index2exp (const FuncState *fs, int index) {
+  if (index == 0)
+    return NULL;
+  else
+    return fs->a->pendingstk.u.s2+(index-1);
+}
+
+
+#define checkfirstexp(fs) check_exp(getfirstexp(fs) != NULL, getfirstexp(fs))
+#define checktopexp(fs) check_exp(gettopexp(fs) != NULL, gettopexp(fs))
+
+static ExpNode *getfirstexp (const FuncState *fs) {
+  int used = fs->a->pendingstk.used;
+  if (used == 0)
+    return NULL;
+  else {
+    lua_assert(used > 0);
+    return &fs->a->pendingstk.u.s2[0];
+  }
+}
+
+
+static ExpNode *gettopexp (const FuncState *fs) {
+  int used = fs->a->pendingstk.used;
+  if (used == 0)
+    return NULL;
+  else {
+    lua_assert(used > 0);
+    return &fs->a->pendingstk.u.s2[used-1];
+  }
+}
+
+
+static int hasmultret (const ExpNode *exp) {
+  return (exp->kind == ECALL || exp->kind == EVARARG);
+}
+
+
+static int ishashtable (const ExpNode *exp) {
+  lua_assert(exp->kind == ECONSTRUCTOR);
+  return (exp->u.cons.narray == 0 &&  exp->u.cons.nhash != 0);
+}
+
+
+static int getexpline (const ExpNode *exp) {
+  int line = exp->line;
+  if (exp->kind == ECONSTRUCTOR && exp->aux > 0)
+    line = exp->aux;  /* use line-mapping of OP_SETLIST or final hash item */
+  return line;
+}
+
+
+static int gethighestexpreg (const ExpNode *exp) {
+  int numextraregs = 0;
+  if (hasmultret(exp))
+    numextraregs = exp->kind == ECALL ? exp->u.call.nret-1 : exp->aux-2;
+  return exp->info + numextraregs;
 }
 
 
 /*
-** The code analyzer works in the first pass and detects the beginnings and ends
-** of loops (and determines the type of each loop), the ends of blocks, branch
-** jumps, break jumps, and the beginnings of for-loop control variable
-** evaluations. It walks through the code backwards, which makes differentiating
-** branch tests from loop tests a simpler task.
+** check if an expression returns multiple values REG is the last one clobbered
 */
-static void pass1(DFuncState *fs)
-{
+static int hasmultretuptoreg (const ExpNode *exp, int reg) {
+  if (hasmultret(exp))
+    return gethighestexpreg(exp) == reg;
+  return 0;
+}
+
+
+/*
+** returns true if EXP is a multret expression but only uses a single value
+*/
+static int hasmultretsinglereg (const ExpNode *exp) {
+  lua_assert(exp != NULL);
+  if (hasmultret(exp)) {
+    if (exp->kind == ECALL)
+      return exp->u.call.nret == 1;
+    else if (exp->kind == EVARARG)
+      return exp->aux == 2;
+  }
+  return 0;
+}
+
+
+#ifdef LUA_DEBUG
+static const char *getunoprstring (UnOpr op);
+static const char *getbinoprstring (BinOpr op);
+static const char *TValueToString (const TValue *o, DecompState *D);
+
+static void debugexp (const FuncState *fs, const ExpNode *exp, int indent) {
+  if (exp == NULL) {
+    printf("(ExpNode *)0\n");
+    return;
+  }
+  printf("exp: %d", exp->info);
+  if ((exp->kind == ENIL || exp->kind == EVARARG) && exp->aux != exp->info)
+    printf("-%d", exp->aux);
+  printf(" <- ");
+  switch (exp->kind) {
+    case EVOID:    printf("(void)"); break;
+    case ENIL:     printf("'nil'"); break;
+    case ETRUE:    printf("'true'"); break;
+    case EFALSE:   printf("'false'"); break;
+    case EVARARG:  printf("'...'"); break;
+    case ELITERAL: printf("'%s'", TValueToString(exp->u.k, fs->D)); break;
+    case ECALL:
+      printf("[CALL %d,  %d ret, %d arg]", exp->info, exp->u.call.nret,
+              exp->u.call.narg);
+      break;
+    case ECONCAT:
+      /*printf("[CONCAT %d..%d]", index2exp(fs, exp->u.concat.firstindex)->info,
+              index2exp(fs, exp->u.concat.lastindex)->info);*/
+      break;
+    case EGLOBAL: printf("_G.%s", getstr(exp->u.name)); break;
+    case EUPVAL: printf("upval=%s", getstr(exp->u.name)); break;
+    case EBINOP:
+      printf("[BINOP %s  %d, %d]", getbinoprstring(exp->u.binop.op),
+              exp->u.binop.b, exp->u.binop.c);
+      break;
+    case EUNOP:
+      printf("[UNOP %s  %d]", getunoprstring(exp->u.unop.op),
+              exp->u.unop.b);
+      break;
+    case ECONSTRUCTOR:
+      printf("'{}' %d, %d", exp->u.cons.arrsize, exp->u.cons.hashsize);
+      break;
+    case ESTORE:
+      printf("STORE (from %d)", exp->u.store.srcreg);
+      break;
+    case ECONDITIONAL: {
+      int i;
+      printf("[CONDITIONAL '%s']\n", getbinoprstring(exp->u.cond.goiftrue ?
+                                                      OPR_AND : OPR_OR));
+      for (i=0;i<=indent;i++)
+        printf("  ");
+      printf("- ");
+      debugexp(fs, index2exp(fs, exp->u.cond.e1), indent+1);
+      for (i=0;i<=indent;i++)
+        printf("  ");
+      printf("- ");
+      debugexp(fs, index2exp(fs, exp->u.cond.e2), indent+1);
+      return;
+    }
+    default: break;
+  }
+  printf("\n");
+  if (prevexp(fs,exp) == NULL)
+    return;
+  indent++;
+  {
+    int i;
+    for (i = 0; i < indent; i++)
+      printf("  ");
+  }
+  printf("- ");
+  debugexp(fs, prevexp(fs,exp), indent);
+}
+#else /* LUA_DEBUG */
+#define debugexp(fs,exp,indent) ((void)0)
+#endif /* LUA_DEBUG */
+
+
+/*
+** get the pc of the last encountered closure in the function FS
+*/
+static int getlastclosurepc (const DecompState *D, const FuncState *fs) {
+  int lastclpc = D->lastcl.pc;
+  lua_assert(ispcvalid(fs, lastclpc));
+  lua_assert(GET_OPCODE(fs->f->code[lastclpc]) == OP_CLOSURE);
+  return lastclpc;
+}
+
+enum {
+  UPVAL_FROM_STACK,  /* from the current stack frame */
+  UPVAL_FROM_UPVAL  /* from the upvalue array */
+};
+
+/*
+** stores the upval index in UPVAL, which is to be interpreted based on whether
+** TYPE is set to UPVAL_FROM_STACK or UPVAL_FROM_UPVAL
+*/
+static int isloadupval (const FuncState *fs, int pc, int *upval, int *type) {
+  Instruction i = fs->f->code[pc];
+  OpCode o = GET_OPCODE(i);
+#ifdef HKSC_VERSION
+  if (o == OP_DATA) {
+    *upval = GETARG_Bx(i);
+    *type = (GETARG_A(i) < 2 ? UPVAL_FROM_STACK : UPVAL_FROM_UPVAL);
+    return 1;
+  }
+#else  /* regular Lua */
+  if (o == OP_MOVE) {
+    *upval = GETARG_B(i), *type = UPVAL_FROM_STACK;
+    return 1;
+  }
+  if (o == OP_GETUPVAL) {
+    *upval = GETARG_Bx(i), *type = UPVAL_FROM_UPVAL;
+    return 1;
+  }
+#endif /* HKSC_VERSION */
+  return 0;
+}
+
+
+/*
+** populates the `upvalues' array with the names of the upvalues from PARENT
+** that FS uses (only call when not using debug info)
+*/
+static void initupvalues (FuncState *fs, const FuncState *parent) {
+  DecompState *D = fs->D;
+  int upval, type, nupn = fs->sizeupvalues;
+  const int pc = getlastclosurepc(D, parent)+1;
+  lua_assert(D->usedebuginfo == 0);
+  while (--nupn >= 0 && isloadupval(parent, pc+nupn, &upval, &type)) {
+    /* check which kind of upvalue is encoded */
+    if (type == UPVAL_FROM_STACK) {
+      /* argBx is a register */
+      lua_assert(isregvalid(parent, upval));
+      lua_assert(test_reg_property(parent, upval, REG_LOCAL));
+      fs->upvalues[nupn] = getslotdesc(parent, upval)->u.locvar->varname;
+    }
+    else {
+      /* argBx is an upvalue index in PARENT */
+      lua_assert(upval < parent->sizeupvalues);
+      fs->upvalues[nupn] = parent->upvalues[upval];
+    }
+  }
+  CHECK(fs, nupn < 0, "not enough OP_DATA codes after OP_CLOSURE");
+}
+
+
+#define IS_RESERVED(ts) \
+  ((ts)->tsv.reserved > 0 && (ts)->tsv.reserved < MARKED_GLOBAL)
+
+
+/*
+** returns true if NAME can be written as a field
+*/
+static int isfieldname (const TString *name) {
+  const char *str = check_exp(name != NULL, getstr(name));
+  size_t i;
+  if (IS_RESERVED(name))
+    return 0;
+  if (!isalpha(*str) && *str != '_')
+    return 0;
+  for (i = 1; i < name->tsv.len; i++)
+    if (!isalnum(str[i]) && str[i] != '_') return 0;
+  return 1;
+}
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+
+static int varisaugmented (const struct LocVar *var) {
+  TString *name = var->varname;
+  lua_assert(name != NULL);
+  return (*getstr(name) == '(');
+}
+
+
+/*
+** add a new entry for a fixed start-line LINE at PC
+*/
+static void addfixedstartline (FuncState *fs, int pc, int line) {
+  DecompState *D = fs->D;
+  linemap *map;
+  if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
+    return;  /* already have an entry for PC */
+  set_ins_property(fs, pc, INS_FIXEDSTARTLINE);
+  VEC_GROW(fs->H, D->fixedstartlines);
+  map = &D->fixedstartlines.s[D->fixedstartlines.used++];
+  map->pc = pc;
+  map->line = line;
+}
+
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
+/*
+** call this version to get the mapped line from debug info; okay to call if not
+** using debug info or matching line info
+*/
+static int getline2 (const FuncState *fs, int pc) {
+  lua_assert(ispcvalid(fs, pc));
+  if (fs->D->matchlineinfo)
+    return fs->f->lineinfo[pc];
+  else
+    return fs->D->nextlinenumber;
+}
+
+
+/*
+** get the fixed start-line entry at PC; entry must exist (before calling, check
+** if test_ins_property(fs, pc, INS_FIXEDSTARTLINE) is true)
+*/
+static int getfixedstartline (const FuncState *fs, int pc) {
+  DecompState *D = fs->D;
+  int n = D->fixedstartlines.used - fs->startlinemapbase;
+  linemap *map = D->fixedstartlines.s + fs->startlinemapbase;
+  lua_assert(n >= 0);
+  lua_assert(test_ins_property(fs, pc, INS_FIXEDSTARTLINE));
+  for (; n > 0; map++, n--) {
+    if (map->pc == pc)
+      return map->line;
+  }
+  lua_assert(0);
+  return 0;
+}
+
+
+/*
+** call this if you need the actual source code line that begins the expression
+** at pc; this accounts for OP_CLOSURE line mapping to the end of the function
+** rather than the beginning; only call if matching line info
+*/
+static int getstartline (const FuncState *fs, int pc) {
+  lua_assert(fs->D->matchlineinfo);
+  /* if PC is the start of a while-loop/for-loop, it has a fixed start-line */
+  if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
+    return getfixedstartline(fs, pc);
+  /* if the next code is CLOSURE, the mapped line will be the end of the
+     function, but you want the start line, so return LINEDEFINED */
+  if (GET_OPCODE(fs->f->code[pc]) == OP_CLOSURE) {
+    int bx = GETARG_Bx(fs->f->code[pc]);
+    const Proto *f = fs->f->p[bx];
+    return f->linedefined;
+  }
+  return fs->f->lineinfo[pc];
+}
+
+
+/*
+** return the fixed start-line of a for-loop given its NODE, or zero if its
+** start line is not fixed (it should always be fixed in both Lua and Havok
+** Script)
+*/
+static int getforloopstartline (const FuncState *fs, BlockNode *node) {
+  int pc, startline;
+  lua_assert(isforloop(node));
+  lua_assert(fs->D->matchlineinfo);
+  pc = node->endpc - (node->kind == BL_FORLIST);
+  startline = getline(fs->f, pc);
+  return node->fixedstartline ? startline : 0;
+}
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+
+static void open_func (FuncState *fs, DecompState *D, const Proto *f) {
+  hksc_State *H = D->H;
+  Analyzer *a = luaA_newanalyzer(H);
+  D->loopstk.used = D->blockstk.used = 0;
+  fs->a = a;
+  fs->prev = D->fs;  /* linked list of funcstates */
+  fs->D = D;
+  fs->H = H;
+  D->fs = fs;
+  fs->f = f;
+  fs->root = NULL;
+  fs->idx = D->funcidx++;
+  fs->nlocvars = 0;
+  fs->nactvar = 0;
+  fs->pc = 0;
+  fs->inopenexpr = 0;
+  fs->freereg = 0;
+  fs->startlinemapbase = D->fixedstartlines.used;
+  if (f->name)
+    D(printf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
+             getstr(f->name)));
+  else
+    D(printf("-- Decompiling anonymous function (%d)\n", D->funcidx));
+  if (D->usedebuginfo) { /* have debug info */
+    D(printf("using debug info for function '%s'\n", f->name ? getstr(f->name):
+             "(anonymous)"));
+    fs->sizelocvars = f->sizelocvars;
+    fs->locvars = f->locvars;
+    fs->sizeupvalues = f->sizeupvalues;
+    fs->upvalues = f->upvalues;
+  }
+  else {
+    fs->sizelocvars = 0;
+    a->sizelocvars = fs->sizelocvars;
+    a->locvars = NULL;
+    fs->locvars = a->locvars;
+    fs->sizeupvalues = f->nups;
+    a->sizeupvalues = fs->sizeupvalues;
+    a->upvalues = luaM_newvector(H, a->sizeupvalues, TString *);
+    memset(a->upvalues, 0, a->sizeupvalues * sizeof(TString *));
+    fs->upvalues = a->upvalues;
+    fs->sizeupvalues = a->sizeupvalues;
+  }
+  a->sizeactvar = f->maxstacksize;
+  a->actvar = luaM_newvector(H, a->sizeactvar, unsigned short);
+  memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
+  fs->nopencalls = 0;
+  fs->firstclob = -1;
+  fs->firstclobnonparam = -1;
+  fs->firstfree = 0;
+  fs->lastcallexp = 0;
+  fs->curr_constructor = 0;
+  /* allocate vectors for instruction and register properties */
+  a->sizeinsproperties = f->sizecode; /* flags for each instruction */
+  a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
+  memset(a->insproperties, 0, f->sizecode * sizeof(InstructionFlags));
+  a->sizeregproperties = f->maxstacksize; /* flags for each register */
+  a->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
+  memset(a->regproperties, 0, a->sizeregproperties * sizeof(SlotDesc));
+#ifdef HKSC_DECOMP_HAVE_PASS2
+  if (D->usedebuginfo == 0 && fs->prev != NULL)
+    initupvalues(fs, fs->prev);
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+}
+
+
+static void close_func (DecompState *D) {
+  FuncState *fs = D->fs;
+  D->funcidx--;
+  UNUSED(fs->locvars);
+  UNUSED(fs->sizelocvars);
+  D->fs = fs->prev;
+  D->fixedstartlines.used = fs->startlinemapbase;
+  killtemp(obj2gco(fs->a)); /* make analyzer collectable */
+  UNUSED(fs->a);
+}
+
+
+static BlockNode *addblnode (FuncState *fs, int startpc, int endpc, int kind) {
+  DecompState *D = fs->D;
+  BlockNode *new_node;
+  if (D->freeblocknodes.used > 0)
+    new_node = D->freeblocknodes.s[--D->freeblocknodes.used];
+  else {
+    Analyzer *a = fs->a;
+    BlockNode *curr = a->bllist.first;
+    new_node = luaM_new(fs->H, BlockNode);
+    new_node->next = curr;
+    a->bllist.first = new_node;
+    if (curr == NULL)
+      a->bllist.last = new_node;
+  }
+  initblnode(new_node, startpc, endpc, kind);
+  return new_node;
+}
+
+
+static void freeblnode (FuncState *fs, BlockNode *node) {
+  hksc_State *H = fs->H;
+  DecompState *D = fs->D;
+  VEC_GROW(H, D->freeblocknodes);
+  D->freeblocknodes.s[D->freeblocknodes.used++] = node;
+}
+
+
+/******************************************************************************/
+/* Dump functions used by the final pass */
+/******************************************************************************/
+
+#define DumpLiteral(s,D) DumpBlock("" s, sizeof(s)-1, D)
+#define DumpString(s,D) DumpBlock(s, strlen(s), D)
+
+static void DumpBlock (const void *b, size_t size, DecompState *D) {
+#if defined LUA_DEBUG && defined HKSC_DECOMP_HAVE_PASS2
+  /* newline is acceptable when only dumping the newline and no other characters
+  */
+  if (*cast(char *, b) != '\n')
+    lua_assert(memchr(b, '\n', size) == NULL);
+  else {
+    size_t i;
+    for (i = 0; i < size; i ++)
+      lua_assert(cast(char *, b)[i] == '\n');
+  }
+#endif /* LUA_DEBUG */
+  if (D->status==0)
+  {
+    lua_unlock(D->H);
+    D->status=(*D->writer)(D->H,b,size,D->data);
+    D->lastline = D->linenumber;
+    lua_lock(D->H);
+  }
+}
+
+
+/*
+** declarations for dump functions used by both passes
+*/
+static void DumpIndentation (DecompState *D);
+
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
+
+/*
+** dumps a TString data to output
+*/
+static void DumpTString (const TString *ts, DecompState *D) {
+  lua_assert(ts != NULL);
+  DumpBlock(getstr(ts), ts->tsv.len, D);
+}
+
+
+static const char *TValueToString (const TValue *o, DecompState *D) {
+  TString *res;
+  switch (ttype(o))
+  {
+    case LUA_TNIL:
+      return "nil";
+    case LUA_TBOOLEAN:
+      return bvalue(o) ? "true" : "false";
+    case LUA_TLIGHTUSERDATA: {
+      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
+      sprintf(s, "0x%lxhi", cast(unsigned long, hlvalue(o)));
+      res = luaS_new(D->H, s);
+      break;
+    }
+    case LUA_TNUMBER: {
+      char s[LUAI_MAXNUMBER2STR];
+      lua_number2str(s, nvalue(o));
+      res = luaS_new(D->H, s);
+      break;
+    }
+    case LUA_TSTRING:
+      res = luaO_kstring2print(D->H, rawtsvalue(o));
+      break;
+    case LUA_TUI64: {
+      char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
+      lua_ui642str(s+2, ui64value(o));
+      s[0] = '0'; s[1] = 'x';
+      strcat(s, "hl");
+      res = luaS_new(D->H, s);
+      break;
+    }
+    default:
+      return "";
+  }
+  return getstr(res);
+}
+
+
+/*
+** prints a Lua object as it would appear in source code to output
+*/
+static void DumpTValue (const TValue *o, DecompState *D) {
+  /* resulting string will not have embedded null bytes, strlen is ok */
+  const char *str = TValueToString(o, D);
+  DumpString(str, D);
+}
+
+
+/*
+** dumps a constant indexed by INDEX from the constant table
+*/
+static void DumpConstant (FuncState *fs, int index, DecompState *D) {
+  const Proto *f = fs->f;
+  const TValue *o = &f->k[index];
+  DumpTValue(o,D);
+}
+
+static void updateline2 (FuncState *fs, int line, DecompState *D);
+
+/*
+** dumps a semicolon to output
+*/
+static void DumpSemi (DecompState *D) {
+  if (D->delaysemi > 0) {
+    FuncState *fs = D->fs;
+    if (fs->prev == NULL) {
+      updateline2(fs, D->delaysemi, D);
+      D->delaysemi = -1;
+    }
+  }
+  DumpLiteral(";",D);
+  D->needspace = 1;
+}
+
+
+/*
+** dumps a comma to output
+*/
+static void DumpComma (DecompState *D) {
+  DumpLiteral(",",D);
+  D->needspace = 1;
+}
+
+/*
+** dumps a space to output
+*/
+static void DumpSpace (DecompState *D) {
+  DumpLiteral(" ",D);
+  D->needspace = 0;
+}
+
+
+/*
+** checks if a pending space is needed and discharges it
+*/
+static void CheckSpaceNeeded (DecompState *D) {
+  if (D->needspace)
+    DumpSpace(D);
+}
+
+
+/*
+** dumps N linefeeds to output and updates the current line counter
+*/
+static void beginline2 (FuncState *fs, int n, DecompState *D) {
+  static const char lf[] = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+  "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+  const int buffsize = cast_int(sizeof(lf)-1);
+  /* save the lastline as you don't want to update it in this case */
+  const int lastline = D->linenumber;
+  D->linenumber += n;
+  D(printf("adding %d line%s, updating D->linenumber to (%d)\n",
+            n, n == 1 ? "" : "s", D->linenumber));
+  lua_assert(n > 0);
+  while (n > buffsize) {
+    DumpBlock(lf, buffsize, D);
+    n -= buffsize;
+  }
+  lua_assert(n >= 0 && n <= buffsize);
+  if (n != 0)
+    DumpBlock(lf, n, D);
+  if (D->noindent == 0)
+    DumpIndentation(D);
+  D->lastline = lastline;  /* restore last line */
+  D->needspace = 0;
+  UNUSED(fs);
+}
+
+
+/*
+** updates the line counter, dumping new lines to output if needed
+*/
+static void updateline2 (FuncState *fs, int line, DecompState *D) {
+  if (line > D->linenumber) {
+    int lines_needed = line - D->linenumber;
+    beginline2(fs, lines_needed, D);
+    lua_assert(D->linenumber == line);
+  }
+}
+
+
+#if !defined(LUA_COMPAT_LSTR) || LUA_COMPAT_LSTR != 2
+static size_t getlstrlevel (const TString *ts) {
+  int inbracket = 0;
+  size_t count = 0;
+  size_t level = 0;
+  const char *str = check_exp(ts, getstr(ts));
+  size_t len = ts->tsv.len;
+  for (; len; str++, len--) {
+    if (inbracket) {
+      if (*str == '=')
+        count++;
+      else {
+        if (*str == ']') {
+          /* end of end bracket */
+          if (count+1 > level)
+            level = count+1;
+        }
+        inbracket = 0;
+        count = 0;
+      }
+    }
+    else if (*str == ']')
+      inbracket = 1;
+  }
+  return level;
+}
+
+
+static void dumplstrquote (DecompState *D, size_t level, const char *s) {
+  lua_assert(*s == '[' || *s == ']');
+  DumpBlock(s, 1, D);
+  while (level--)
+    DumpLiteral("=",D);
+  DumpBlock(s, 1, D);
+}
+#else /* LUA_COMPAT_LSTR */
+#define getlstrlevel(ts) 0  /* level 0 is always ok */
+#define dumplstrquote(D,l,s) DumpLiteral(s, D)
+#endif /* LUA_COMPAT_LSTR */
+
+
+
+/*
+** dumps a string constant as a long string `[[...]]'
+*/
+static void emitlongstring2 (ExpNode *exp, DecompState *D) {
+  int endline = exp->line;  /* last line of the string */
+  const TString *ts = rawtsvalue(exp->u.k);
+  const size_t requiredlevel = getlstrlevel(ts);
+  const char *str;
+  size_t len;
+  int numlinefeeds = 0;  /* number LF characters in the string */
+  int numleadinglines;  /* number of lines the string starts with in source
+                           (skipped by lexer) */
+  (void)requiredlevel;  /* avoid warnings when `requiredlevel' is not used */
+  lua_assert(D->matchlineinfo);
+  lua_assert(ts != NULL);
+  /* count number of new lines in the string */
+  for (str = getstr(ts), len = ts->tsv.len; ; numlinefeeds++) {
+    const char *s = memchr(str, '\n', len);
+    if (s == NULL) break;
+    len -= cast(size_t, s+1-str);
+    str = s+1;
+  }
+  /* calculate number of leading lines that were skipped by lexer */
+  lua_assert(endline >= D->linenumber);
+  numleadinglines = (endline - D->linenumber) - numlinefeeds;
+  /* NUMLEADINGLINES will only be negative if you have bad input */
+  if (numleadinglines < 0)
+    numleadinglines = 0;
+  /* start emitting the string */
+  dumplstrquote(D,requiredlevel,"[[");
+  D->noindent = 1;
+  if (numleadinglines)
+    beginline2(D->fs, numleadinglines, D);
+  str = getstr(ts);
+  len = ts->tsv.len;
+  for (;;) {
+    /* use memchr instead of strchr in case there are embedded null bytes */
+    const char *s = memchr(str, '\n', len);
+    if (s != NULL) {
+      int numlines;
+      size_t blocksize = cast(size_t, s-str);
+      DumpBlock(str, blocksize, D);
+      str = s;
+      len -= blocksize;
+      /* advance over new lines */
+      while (*++s == '\n')
+        ;
+      numlines = s-str;
+      beginline2(D->fs, numlines, D);
+      len -= cast(size_t, numlines);
+      str = s;
+    }
+    else {
+      DumpBlock(str, len, D);
+      break;
+    }
+  }
+  dumplstrquote(D,requiredlevel,"]]");
+  D->noindent = 0;
+}
+
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
+
+/*
+** dumps indentation of to the current indentation level using tabs
+*/
+static void DumpIndentation (DecompState *D) {
+  static const char tabs[] = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 16 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 32 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t" /* 48 */
+  "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t"; /* 64 */
+  const int buffsize = cast_int(sizeof(tabs)-1);
+  int indentlevel = D->indentlevel;
+  lua_assert(indentlevel >= 0);
+  while (indentlevel > buffsize) {
+    DumpBlock(tabs, buffsize, D);
+    indentlevel -= buffsize;
+  }
+  lua_assert(indentlevel >= 0 && indentlevel <= buffsize);
+  if (indentlevel != 0)
+    DumpBlock(tabs, indentlevel, D);
+}
+
+
+#ifdef LUA_DEBUG
+
+static void debugblnode1 (BlockNode *node, int indent) {
+  BlockNode *child, *nextsibling;
+  int i;
+  lua_assert(node != NULL);
+  child = node->firstchild;
+  nextsibling = node->nextsibling;
+  for (i = 0; i < indent; i++)
+    printf("  ");
+  if (indent) printf("- ");
+  printf("(%d-%d) %s ",node->startpc+1,node->endpc+1,blocktypename(node->kind));
+  if (nextsibling != NULL)
+    printf("(sibling (%d-%d) %s)\n",nextsibling->startpc+1,nextsibling->endpc+1,
+            blocktypename(nextsibling->kind));
+  else
+    printf("(NO sibling)\n");
+  lua_assert(node->visited == 0);
+  node->visited = 1;
+  while (child != NULL) {
+    debugblnode1(child, indent+1);
+    child = child->nextsibling;
+  }
+}
+
+
+static void unvisittree (BlockNode *node) {
+  BlockNode *child;
+  node->visited = 0;
+  child = node->firstchild;
+  while (child != NULL) {
+    unvisittree(child);
+    child = child->nextsibling;
+  }
+}
+
+
+static void debugblnode (BlockNode *node) {
+  debugblnode1(node, 0);
+  unvisittree(node);
+}
+
+
+static void debugblocksummary (const FuncState *fs) {
+  BlockNode *node = fs->root;
+  printf("BLOCK SUMMARY\n"
+         "-------------------\n");
+  lua_assert(node != NULL);
+  lua_assert(node->kind == BL_FUNCTION);
+  lua_assert(node->nextsibling == NULL);
+  debugblnode(node);
+  printf("-------------------\n");
+}
+
+
+static void debugstackexpr (const StackExpr *e) {
+  printf("%d-%d, reg %d-%d\n", e->startpc+1,e->endpc+1,e->firstreg,e->lastreg);
+}
+
+
+static void debugstackexprsummary (const FuncState *fs) {
+  DecompState *D = fs->D;
+  int i;
+  printf("STACK EXPRESSION SUMMARY\n"
+          "-------------------\n");
+  for (i = 0; i < D->stackexpr.used; i++)
+    debugstackexpr(&D->stackexpr.s[i]);
+  printf("-------------------\n");
+}
+
+
+static void debugpass1summary (const FuncState *fs) {
+  debugblocksummary(fs); printf("\n");
+  debugstackexprsummary(fs); printf("\n");
+  {
+    int pc;
+    for (pc = 0; pc < fs->f->sizecode; pc++)
+      printinsflags(fs, pc);
+  }
+}
+
+
+static void checktreevisited (const BlockNode *node) {
+  const BlockNode *child;
+  lua_assert(node != NULL);
+  child = node->firstchild;
+  lua_assert(node->visited);
+  while (child != NULL) {
+    checktreevisited(child);
+    child = child->nextsibling;
+  }
+}
+
+
+#else /* !LUA_DEBUG */
+
+#define debugpass1summary(fs)  ((void)(fs))
+#define checktreevisited(node)  ((void)(node))
+
+#endif /* LUA_DEBUG */
+
+/******************************************************************************/
+/* Common functions */
+/******************************************************************************/
+
+
+/* fetch the current instruction */
+static void updateinsn (DecompState *D, FuncState *fs) {
+  Instruction i = check_exp(ispcvalid(fs, fs->pc), fs->f->code[fs->pc]);
+  D->a.insn.o = GET_OPCODE(i);
+  D->a.insn.a = GETARG_A(i);
+  D->a.insn.b = GETARG_B(i);
+  D->a.insn.c = GETARG_C(i);
+  D->a.insn.bx = GETARG_Bx(i);
+  D->a.insn.sbx = GETARG_sBx(i);
+}
+
+
+/* get the next pc that is not OP_DATA */
+static int getnextpc (const FuncState *fs, int pc) {
+#ifdef HKSC_VERSION
+  /* in Havok Script, skip OP_DATA */
+  while (++pc < fs->f->sizecode && GET_OPCODE(fs->f->code[pc]) == OP_DATA)
+    ;
+#else
+  /* in regular Lua, skip argC data after OP_NEWTABLE */
+  if (GET_OPCODE(fs->f->code[pc]) == OP_NEWTABLE && !GETARG_C(fs->f->code[pc]))
+    pc++;
+  pc++;
+#endif /* HKSC_VERSION */
+  return pc;
+}
+
+/* get the previous pc that is not OP_DATA */
+static int getprevpc (const FuncState *fs, int pc) {
+#ifdef HKSC_VERSION
+  /* in Havok Script, skip OP_DATA */
+  while (--pc > 0 && GET_OPCODE(fs->f->code[pc]) == OP_DATA)
+    ;
+#else
+  --pc;
+  /* in regular Lua, skip argC data after OP_NEWTABLE */
+  if (pc > 0 && GET_OPCODE(fs->f->code[pc-1]) == OP_NEWTABLE &&
+      !GETARG_C(fs->f->code[pc-1]))
+    --pc;
+#endif /* HKSC_VERSION */
+  return pc;
+}
+
+
+#ifdef HKSC_VERSION
+static int getinsndata (FuncState *fs, int pc) {
+  Instruction data = check_exp(ispcvalid(fs, pc), fs->f->code[pc]);
+  CHECK(fs, GET_OPCODE(data) == OP_DATA, "expected OP_DATA");
+  return GETARG_Bx(data);
+}
+#endif /* HKSC_VERSION */
+
+
+/*
+** Check whether an op loads a constant into register A. Helps determine if a
+** tested expression starts evaluating at an instruction. Ops that load
+** constants warrant their own statements, as otherwise the constant would be
+** encoded as an RK operand directly in the instruction that uses it, unless
+** there are more than MAXINDEXRK constants before this one
+*/
+#define opLoadsK(o) ((o) == OP_LOADK || (o) == OP_LOADBOOL || (o) == OP_LOADNIL)
+
+/*
+** check if an OpArgMode value can encode constants
+*/
+#define iskmode(o)  ((o) == OpArgRK || (o) == OpArgK)
+
+
+static int isunarycode (OpCode o) {
+  return (o == OP_UNM || o == OP_NOT || o == OP_NOT_R1 || o == OP_LEN);
+}
+
+
+static int isconstructorcode (OpCode o) {
+  return o == OP_NEWTABLE
+#if HKSC_STRUCTURE_EXTENSION_ON
+  || o == OP_NEWSTRUCT
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  ;
+}
+
+
+static int ischecktypecode (OpCode o) {
+  return
+#if HKSC_STRUCTURE_EXTENSION_ON
+  o == OP_CHECKTYPE || o == OP_CHECKTYPES || o == OP_CHECKTYPE_D ||
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  0; (void)o;
+}
+
+
+static int isstorecode (OpCode o) {
+  switch (o) {
+    CASE_OP_SETTABLE: case OP_SETGLOBAL: case OP_SETUPVAL:
+#ifdef HKSC_VERSION
+    case OP_SETUPVAL_R1: case OP_SETSLOTN: case OP_SETSLOTI: case OP_SETSLOT:
+    case OP_SETSLOTS: case OP_SETSLOTMT:
+#endif /* HKSC_VERSION */
+      return 1;
+    default: return 0;
+  }
+}
+
+
+/*
+** return the source operand in a store instruction
+*/
+static int getstoresource (OpCode o, int a, int b, int c) {
+  switch (o) {
+    CASE_OP_SETTABLE:
+#ifdef HKSC_VERSION
+    case OP_SETSLOTI: case OP_SETSLOT: case OP_SETSLOTS: case OP_SETSLOTMT:
+#endif /* HKSC_VERSION */
+      return c;  /* a[b] := c */
+#ifdef HKSC_VERSION
+    case OP_SETSLOTN:
+      return -1;  /* source is hardcoded as nil in the opcode */
+#endif /* HKSC_VERSION */
+    case OP_MOVE:
+      return b;  /* a := b */
+    default:
+      return a;  /* Gbl/Upval := a */
+  }
+}
+
+
+/*
+** get the table and index registers of a table or struct assignment code,
+** return 1 if only the table is a register, 2 if index is also a register
+*/
+static int getstoreindexregs (Instruction i, int *table, int *key) {
+  OpCode o = GET_OPCODE(i);
+  int a = GETARG_A(i), b = GETARG_B(i);
+  if (IS_OP_SETTABLE(o)) {
+    *table = a;
+    if ((getBMode(o) == OpArgR || getBMode(o) == OpArgRK) && !ISK(b)) {
+      *key = b;
+      return 2;
+    }
+    return 1;
+  }
+  else if (IS_OP_SETSLOT(o)) {
+    *table = a;
+    return 1;
+  }
+  return 0;
+}
+
+
+/* check if an opcode is a load operation */
+static int isload (OpCode o) {
+  switch (o) {
+    case OP_GETGLOBAL: case OP_LOADBOOL: case OP_LOADK: case OP_LOADNIL:
+    case OP_GETUPVAL: case OP_NEWTABLE: case OP_CLOSURE: case OP_VARARG:
+    case OP_MOVE: case OP_UNM: case OP_NOT: case OP_LEN: case OP_TESTSET:
+    case OP_SELF: case OP_GETTABLE: case OP_CONCAT: case OP_ADD: case OP_SUB:
+    case OP_MUL: case OP_DIV: case OP_MOD: case OP_POW:
+#ifdef HKSC_VERSION
+    /* havok script codes */
+    case OP_GETGLOBAL_MEM: case OP_NEWSTRUCT: case OP_GETFIELD:
+    case OP_GETFIELD_R1: case OP_NOT_R1: case OP_GETSLOT: case OP_GETSLOTMT:
+    case OP_SELFSLOT: case OP_SELFSLOTMT: case OP_GETFIELD_MM:
+    case OP_GETTABLE_S: case OP_GETTABLE_N: case OP_ADD_BK: case OP_SUB_BK:
+    case OP_MUL_BK: case OP_DIV_BK: case OP_MOD_BK: case OP_POW_BK:
+#endif /* HKSC_VERSION */
+#ifdef LUA_CODT7
+    case OP_LEFT_SHIFT: case OP_LEFT_SHIFT_BK:
+    case OP_RIGHT_SHIFT: case OP_RIGHT_SHIFT_BK:
+    case OP_BIT_AND: case OP_BIT_AND_BK:
+    case OP_BIT_OR: case OP_BIT_OR_BK:
+#endif /* LUA_CODT7 */
+      return 1;
+    default: return 0;
+  }
+}
+
+
+/*
+** get the operand constants for an instruction, returns the number of operands
+*/
+static int getkoperands (OpCode o, int b, int c, int bx, int operands[2]) {
+  int n = 0;
+  enum OpMode mode = getOpMode(o);
+  if (mode == iABx) b = bx;
+  else if (mode != iABC) return 0;
+  /* see if B is a K index */
+  switch (getBMode(o)) {
+    case OpArgRK: if (!ISK(b)) break;
+    /* fallthrough */
+    case OpArgK:
+      operands[n++] = INDEXK(b);
+      break;
+    default: break;
+  }
+  /* see if C is a K index */
+  if (mode == iABC) switch (getCMode(o)) {
+    case OpArgRK: if (!ISK(c)) break;
+    /* fallthrough */
+    case OpArgK:
+      operands[n++] = INDEXK(c);
+      break;
+    default: break;
+  }
+  return n;
+}
+
+typedef struct OperandDesc {
+  int r;  /* register */
+  enum OpArgMask mode;
+} OperandDesc;
+
+
+/*
+** get the operand registers for an instruction, returns the number of operands
+*/
+static int getregoperands (OpCode o, int a, int b, int c, OperandDesc slots[3]){
+  int n = 0;
+  enum OpArgMask bmode, cmode;
+  if (isstorecode(o))
+    slots[0].r = a, slots[0].mode = OpArgR, n = 1;
+  switch (o) {
+#ifdef HKSC_VERSION
+#ifdef LUA_CODIW6
+    case OP_DELETE: case OP_DELETE_BK:
+      switch (c) {
+        case DELETE_UPVAL: case DELETE_GLOBAL: return 0;
+        case DELETE_LOCAL: slots[0].r = a; slots[0].mode = OpArgR; return 1;
+        case DELETE_INDEXED:
+          slots[0].r = a;
+          slots[0].mode = OpArgR;
+          if (!ISK(b)) {
+            slots[n].r = b;
+            slots[n++].mode = OpArgR;
+          }
+      }
+      return n;
+#endif /* LUA_CODIW6 */
+    case OP_CHECKTYPE: case OP_CHECKTYPES: case OP_CHECKTYPE_D:
+    case OP_TEST_R1:
+#endif /* HKSC_VERSION */
+    case OP_TEST:
+      slots[0].r = a;
+      slots[0].mode = OpArgR;
+      return 1;
+    case OP_RETURN:
+      if (b == 1)
+        return 0;
+      else if (b == 2) {
+        slots[0].r = a;
+        slots[0].mode = OpArgR;
+        return 1;
+      }
+      b--; /* fallthrough */
+    CASE_OP_CALL:
+      slots[0].r = a;
+      slots[1].r = b > 0 ? a + b - 1 : -1;
+      slots[0].mode = slots[1].mode = OpArgU;
+      return -1;
+    case OP_CONCAT:
+      slots[0].r = b;
+      slots[1].r = c;
+      slots[0].mode = slots[1].mode = OpArgU;
+      return -1;
+    case OP_SETLIST:
+      slots[0].r = a;
+      slots[1].r = b > 0 ? a + b : -1;
+      slots[0].mode = slots[1].mode = OpArgU;
+      return -1;
+    case OP_VARARG:
+    case OP_LOADNIL:
+      return 0;
+    default: break;
+  }
+  switch (bmode = getBMode(o)) {
+    case OpArgRK:
+      if (ISK(b)) break;
+      /* fallthrough */
+    case OpArgR:
+      slots[n].r = b;
+      slots[n++].mode = bmode;
+      break;
+    default: break;
+  }
+  switch (cmode = getCMode(o)) {
+    case OpArgRK:
+      if (ISK(c)) break;
+      /* fallthrough */
+    case OpArgR:
+      slots[n].r = c;
+      slots[n++].mode = cmode;
+      break;
+    default: break;
+  }
+  return n;
+}
+
+
+static int getjump (const FuncState *fs, int pc) {
+  int offset = GETARG_sBx(fs->f->code[pc]);
+  return (pc+1)+offset;  /* turn offset into absolute position */
+}
+
+
+static const Instruction *getjumpcontrol (const FuncState *fs, int pc) {
+  Instruction *pi = &fs->f->code[pc];
+  if (pc >= 1 && testTMode(GET_OPCODE(*(pi-1))))
+    return pi-1;
+  else
+    return NULL;
+}
+
+
+/******************************************************************************/
+/* Loop Detection phase - marks basic instruction flags and loop boundaries */
+/******************************************************************************/
+
+
+/*
+** return whether the line at PC was fixed to the start-line of a loop starting
+** at TARGET
+*/
+static int isjumplinefixed (FuncState *fs, int pc, int target) {
+  const Proto *f = fs->f;
+  int i, pcline, targetline;
+  lua_assert(ispcvalid(fs, pc));
+  lua_assert(ispcvalid(fs, target));
+  lua_assert(pc >= target);
+  lua_assert(fs->D->usedebuginfo);
+  pcline = getline(f, pc);
+  targetline = getline(f, target);
+  if (pcline > targetline)
+    return 0;  /* line was not fixed */
+  else if (pcline < targetline)
+    return 1;  /* line was fixed */
+  else for (i = target+1; i < pc; i++)
+    if (getline(f, i) > targetline)
+      return 1;  /* line was fixed */
+  return 0;  /* line may have been fixed but it does not manifest */
+}
+
+
+typedef struct LoopState {
+  /* the start and end label of the loop */
+  int startlabel, endlabel;
+  /* BREAKLABEL and EXITLABEL may vary between each other.
+     This happens when there is a conditional expression after the loop whose
+     first operand is a literal boolean value. For example:
+        while a do
+            break;
+        end
+        local a = false and 1;
+     The break will target one of the bool labels generated by the expression,
+     while the loop condition will exit to the instruction after the bool
+     labels. This has to do with a bug in Lua that was fixed in 5.1.5. The bug
+     was caused by Lua optimizing conditional expressions which tested a
+     constant. In 5.1.5, testing boolean literals was no longer optimized */
+  /* the label that break statements will target */
+  int breaklabel;
+  /* the exit label for the loop condition */
+  int exitlabel;
+  unsigned kind : 4;
+  unsigned unsure : 1;
+  unsigned hasbreak : 2;  /* value of 1 means maybe, 2 means yes */
+} LoopState;
+
+
+static const LoopState dummyloop = {-1, -1, -1, -1, BL_FUNCTION, 0, 0};
+
+
+static void setlooplabels (FuncState *fs, LoopState *loop) {
+  int endlabel = loop->endlabel;
+  lua_assert(ispcvalid(fs, endlabel));
+  loop->breaklabel = loop->exitlabel = endlabel;
+  if (GET_OPCODE(fs->f->code[endlabel]) == OP_JMP) {
+    /* breaks will jump to the label targeted by the jump at ENDLABEL */
+    int breaklabel = getjump(fs, endlabel);
+    loop->breaklabel = breaklabel;
+    loop->exitlabel = breaklabel;
+    /* if the break label is a bool label, and the bool labels have a jump
+       before them to skip the labels, exits from the loop condition will
+       target the end of the bool labels, that is, 1 pc after the second bool
+       label, not the jump target of the jump which skips them */
+    if (test_ins_property(fs, breaklabel, INS_BOOLLABEL)) {
+      int prevpc = breaklabel - 1 - !GETARG_C(fs->f->code[breaklabel]);
+      if (test_ins_property(fs, prevpc, INS_SKIPBOOLLABEL))
+        loop->exitlabel = prevpc + 3;
+    }
+  }
+}
+
+
+static void setloophasbreak (FuncState *fs, const LoopState *loop, int pc) {
+  LoopState *loop1;
+  if (loop == &dummyloop)
+    return;
+  loop1 = ((LoopState *)loop);
+  if (loop1->unsure == 0)
+    loop1->hasbreak = 2;
+  else if (loop1->hasbreak == 0)
+    loop1->hasbreak = 1;
+  if (loop1->hasbreak == 2)
+    set_ins_property(fs, pc, INS_BREAKSTAT);
+}
+
+
+static LoopState *pushloopstate (FuncState *fs, int kind, int start, int end) {
+  hksc_State *H = fs->H;
+  DecompState *D = fs->D;
+  LoopState *loop;
+  VEC_GROW(H, D->loopstk);
+  loop = &D->loopstk.s[D->loopstk.used++];
+  loop->kind = kind;
+  loop->startlabel = start;
+  loop->endlabel = end;
+  loop->unsure = 0;
+  loop->hasbreak = 0;
+  setlooplabels(fs, loop);
+  return loop;
+}
+
+#define poploopstate(fs)  popnloopstate(fs, 1)
+static LoopState *popnloopstate (FuncState *fs, int n) {
+  DecompState *D = fs->D;
+  lua_assert(D->loopstk.used >= n);
+  return &D->loopstk.s[(D->loopstk.used -= n)];
+}
+
+
+#define getcurrloop(fs)  getloopstate(fs, 1)
+static const LoopState *getloopstate (FuncState *fs, int n) {
+  DecompState *D = fs->D;
+  lua_assert(n > 0);
+  if (D->loopstk.used < n)
+    return &dummyloop;
+  return &D->loopstk.s[D->loopstk.used-n];
+}
+
+
+static BlockNode *finalizeloopstate (FuncState *fs, BlockNode *nextnode) {
+  const LoopState *loop = getcurrloop(fs);
+  int kind = loop->kind;
+  int startpc = loop->startlabel;
+  int endpc = loop->endlabel-1;
+  int skip = (loop->unsure && loop->hasbreak < 2);
+  BlockNode *new_node;
+  poploopstate(fs);
+  if (skip)
+    return nextnode;
+  new_node = addblnode(fs, startpc, endpc, kind);
+  if (nextnode != NULL && nextnode->endpc <= endpc) {
+    BlockNode *temp;
+    new_node->firstchild = nextnode;
+    /* find the first child that is outside of this new node and make it the
+       next sibling */
+    while (nextnode->nextsibling && nextnode->nextsibling->endpc <= endpc)
+      nextnode = nextnode->nextsibling;
+    temp = nextnode->nextsibling;
+    nextnode->nextsibling = NULL;
+    nextnode = temp;
+  }
+  new_node->nextsibling = nextnode;
+  set_ins_property(fs, endpc, INS_ENDSCOPE);
+  set_ins_property(fs, startpc, INS_SEQPT);
+  set_ins_property(fs, endpc+1, INS_SEQPT);
+  if (kind == BL_FORLIST)
+    set_ins_property(fs, endpc-1, INS_ENDSCOPE);
+  if (kind == BL_REPEAT) {
+    set_ins_property(fs, endpc, INS_FAILJUMP);
+    set_ins_property(fs, endpc, INS_LOOPFAIL);
+  }
+  return new_node;
+}
+
+
+/*
+** returns non-NULL if TARGET is any of the exit-labels of LOOP, returning the
+** pointer to the first label that matches TARGET
+*/
+static const int *isloopexit (const LoopState *loop, int target) {
+  if (target == loop->exitlabel)
+    return &loop->exitlabel;
+  else if (target == loop->breaklabel)
+    return &loop->breaklabel;
+  else if (target == loop->endlabel)
+    return &loop->endlabel;
+  return NULL;
+}
+
+
+static int isloopbreak (const LoopState *loop, int target) {
+  const int *label = isloopexit(loop, target);
+  return (label && *label == loop->breaklabel);
+}
+
+
+static void
+calcloopunsure (FuncState *fs, LoopState *loop, const LoopState *outerloop) {
+  int target = getjump(fs, loop->endlabel-1);
+  if (target == outerloop->startlabel) {
+    if (outerloop->kind == BL_WHILE) {
+      if (fs->D->usedebuginfo)
+        loop->unsure = !isjumplinefixed(fs, loop->endlabel-1, target);
+      else
+        loop->unsure = 1;
+    }
+    else if (outerloop->kind == BL_REPEAT &&
+             getjumpcontrol(fs, outerloop->endlabel-1) == NULL)
+      loop->unsure = 1;
+  }
+}
+
+
+/* first-time handler for OP_JMP */
+static void markjump (FuncState *fs, int pc, int offs) {
+  int label = pc+1+offs;
+  const Instruction *jc = getjumpcontrol(fs, pc);
+  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
+  /* check if this jump skips over a pair of bool labels */
+  if (jc == NULL && offs >= 2 && test_ins_property(fs, pc+1, INS_BOOLLABEL))
+    set_ins_property(fs, pc, INS_SKIPBOOLLABEL);
+  /* if the jump is tested, the jump instruction is a leader */
+  if (jc != NULL)
+    set_ins_property(fs, pc, INS_LEADER);
+  set_ins_property(fs, pc+1, INS_LEADER);
+  set_ins_property(fs, label, INS_LEADER);
+}
+
+
+/* first-time handler for OP_LOADBOOL */
+static void markloadbool (FuncState *fs, int pc, int c) {
+  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
+  if (c) {
+    set_ins_property(fs, pc, INS_BOOLLABEL);
+    set_ins_property(fs, pc, INS_LEADER);
+    set_ins_property(fs, pc+1, INS_BOOLLABEL);
+    set_ins_property(fs, pc+1, INS_LEADER);
+  }
+}
+
+
+/* first-time handler for OP_LOADNIL */
+static void markloadnil (FuncState *fs, int pc, int a, int b) {
+  Instruction nextcode = fs->f->code[pc+1];
+  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
+  if (GET_OPCODE(nextcode) == OP_LOADNIL) {
+    int nextA = GETARG_A(nextcode);
+    /* if these 2 nil codes could have been optimized, the next pc must have
+       been a possible leader when the code was generated; but it may not
+       actually have been rendered a leader if the basic block boundary was
+       optimized away, for example, in an if-true block:
+          local a = nil;
+          if true then -- falls through with no jump emitted in bytecode
+              local b = nil;
+          end */
+    if (nextA >= a && nextA <= b+1)
+      set_ins_property(fs, pc+1, INS_NILLABEL);
+  }
+}
+
+
+/* first-time handler for OP_CLOSURE */
+static void markloadclosure (FuncState *fs, int pc, int a, int bx) {
+  int nup, nupn;
+  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
+  nup = fs->f->p[bx]->nups;
+  /* check if any of the upvalues are the closure itself */
+  for (nupn = nup; nupn > 0; nupn--) {
+    Instruction i = fs->f->code[pc+nupn];
+    if (GETARG_A(i) == 1 && GETARG_Bx(i) == a) {
+      /* using its own register as an upvalue */
+      set_ins_property(fs, pc, INS_SELFUPVAL);
+      break;
+    }
+  }
+}
+
+
+/* first-time handler for OP_NEWTABLE and OP_NEWSTRUCT */
+static void marknewtable (FuncState *fs, int pc, int b, int c) {
+  DecompState *D = fs->D;
+  assertphase(D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
+  /* if the table has hash items, it will be scanned in the parse-constructor
+     phase */
+  if (c) {
+    VEC_GROW(D->H, D->cons_pc);
+    D->cons_pc.s[D->cons_pc.used++] = pc;
+  }
+  (void)b;
+}
+
+
+static int isbooljump (FuncState *fs, int pc, int label) {
+  return (test_ins_property(fs, label, INS_BOOLLABEL) ||
+          test_ins_property(fs, pc, INS_SKIPBOOLLABEL));
+}
+
+
+static void detectloops_onjump (DecompState *D, FuncState *fs) {
+  int pc = fs->pc;
+  int offs = D->a.insn.sbx;
+  int target = pc+1+offs;
+  const LoopState *currloop = getcurrloop(fs);
+  int loopkind = -1;
+  const Instruction *jc = getjumpcontrol(fs, pc);
+  /* check for jumps that cannot be used to detect loops */
+  /* if this jump interacts with bool labels */
+  if (isbooljump(fs, pc, target))
+    return;
+  /* if this jump is controlled by TESTSET */
+  if (jc != NULL && GET_OPCODE(*jc) == OP_TESTSET)
+    return;
+  /* if this jump is the first jump into a list forloop */
+  if (offs >= 0 && GET_OPCODE(fs->f->code[target]) == OP_TFORLOOP)
+    return;
+  if (offs < 0 && jc != NULL) {
+    if (GET_OPCODE(*jc) == OP_TFORLOOP)
+      loopkind = BL_FORLIST;
+    else {  /* possibly a repeat-loop */
+      const int *label = isloopexit(currloop, target);
+      if (label == NULL || *label != currloop->exitlabel)
+        loopkind = BL_REPEAT;
+    }
+  }
+  else {
+    /* check if it is a break statement */
+    if (jc == NULL && isloopbreak(currloop, target)) {
+      setloophasbreak(fs, currloop, pc);
+      return;
+    }
+    if (offs < 0) {
+      /* the final jump in a while-loop will have its line fixed to the start
+         line of the loop; if the line for this jump is greater than the start
+         line, this cannot be a while-loop */
+      if (D->usedebuginfo && getline(fs->f, pc) > getline(fs->f, target))
+        loopkind = BL_REPEAT;
+      else
+        loopkind = BL_WHILE;
+    }
+    else if (currloop->unsure && !isloopexit(currloop, target)) {
+      const LoopState *loop;
+      int i;
+      /* check if this jump breaks from an outer loop and not the current one */
+      for (i = 2; (loop = getloopstate(fs, i))->kind != BL_FUNCTION; i++) {
+        if (isloopexit(loop, target)) {
+          popnloopstate(fs, i-1);
+          /* try again */
+          detectloops_onjump(D, fs);
+          return;
+        }
+      }
+    }
+    /* check if there is a break out of an outer repeat-loop; in that case, the
+       outer loop and current loop are one loop */
+    else if (jc == NULL &&
+             currloop->kind == BL_REPEAT && !isloopbreak(currloop, target)) {
+      const LoopState *loop;
+      int i;
+      for (i = 2; (loop = getloopstate(fs, i))->kind == BL_REPEAT; i++) {
+        if (loop->startlabel != currloop->startlabel)
+          break;
+        if (isloopbreak(loop, target)) {
+          popnloopstate(fs, i-1);
+          /* try again */
+          detectloops_onjump(D, fs);
+          return;
+        }
+      }
+    }
+  }
+  if (loopkind != -1) {
+    pushloopstate(fs, loopkind, target, pc+1);
+    calcloopunsure(fs, cast(LoopState *, getcurrloop(fs)), getloopstate(fs, 2));
+  }
+}
+
+
+/*
+** detect loops in the bytecode
+*/
+static void detectloops (DecompState *D, FuncState *fs) {
+  BlockNode *nextnode = NULL;
+  int pendingbreak = -1;
+  assertphase(D, DECOMP_PHASE_DETECT_LOOPS);
+  /* traverse code backwards, skip final return */
+  fs->pc = fs->f->sizecode-1;
+  for (; fs->pc >= 0; fs->pc = getprevpc(fs, fs->pc)) {
+    /* fetch */
+    updateinsn(D, fs);
+    /* dispatch */
+    switch (D->a.insn.o) {
+      case OP_JMP:
+        markjump(fs, fs->pc, D->a.insn.sbx);
+        detectloops_onjump(D, fs);
+        break;
+      case OP_FORLOOP:
+      case OP_FORPREP: {
+        int target = fs->pc+1+D->a.insn.sbx;
+        /* if enetering the forloop push a loop state */
+        if (D->a.insn.o == OP_FORLOOP)
+          pushloopstate(fs, BL_FORNUM, target, fs->pc+1);
+        /* mark leader instructions */
+        set_ins_property(fs, fs->pc+1, INS_LEADER);
+        set_ins_property(fs, target, INS_LEADER);
+        break;
+      }
+      case OP_LOADBOOL:
+        markloadbool(fs, fs->pc, D->a.insn.c);
+        break;
+      case OP_LOADNIL:
+        markloadnil(fs, fs->pc, D->a.insn.a, D->a.insn.b);
+        break;
+      case OP_CLOSURE:
+        markloadclosure(fs, fs->pc, D->a.insn.a, D->a.insn.bx);
+        break;
+      case OP_NEWTABLE:
+#ifdef HKSC_VERSION
+      case OP_NEWSTRUCT:
+#endif /* HKSC_VERSION */
+        marknewtable(fs, fs->pc, D->a.insn.b, D->a.insn.c);
+        break;
+      case OP_CLOSE:
+        set_ins_property(fs, fs->pc, INS_ENDSCOPE);
+        break;
+      default: break;
+    }
+    /* pump `hasbreak' every instruction; I use 2 bits for its value, a value of
+       1 means there was a jump detected that may or may not be a break */
+    if (getcurrloop(fs)->hasbreak == 1) {
+      if (pendingbreak == -1)
+        pendingbreak = fs->pc;
+      if (D->a.insn.o != OP_JMP && !testTMode(D->a.insn.o)) {
+        cast(LoopState *, getcurrloop(fs))->hasbreak = 2;
+        set_ins_property(fs, pendingbreak, INS_BREAKSTAT);
+        pendingbreak = -1;
+      }
+    }
+    while (fs->pc == getcurrloop(fs)->startlabel)
+      nextnode = finalizeloopstate(fs, nextnode);
+  }
+  set_ins_property(fs, 0, INS_LEADER);  /* first instruction is a leader */
+  fs->root = addblnode(fs, 0, fs->f->sizecode-1, BL_FUNCTION);
+  fs->root->firstchild = nextnode;
+  D->loopstk.used = 0;
+}
+
+
+/******************************************************************************/
+/* Check optiimzation phase - checks the function constants to get information
+   about code optimization, and then marks sequence points where bytecode could
+   have been optimized but is not */
+/******************************************************************************/
+
+
+/*
+** update the fields `isnilrk', `istruerk' and `isfalserk' accordingly
+*/
+static void updateisrk (DecompState *D, FuncState *fs) {
+  int n, k[2];
+  assertphase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
+  n = getkoperands(D->a.insn.o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, k);
+  /* check if true, false, or nil exist within MAXINDEXRK; for each of these
+     values, if it does not exist within MAXINDEXRK, than the corresponding
+     non-label opcode (OP_LOADNIL or OP_LOADBOOL) that loads the value could not
+     have been optimized as an RK operand in the next instruction; if it could,
+     the lack of optimization indicates a statement boundary */
+  while (n--) {
+    const TValue *o = &fs->f->k[k[n]];
+    int isrk = (k[n] <= MAXINDEXRK);
+    if (ttisnil(o))
+      D->a.isnilrk = isrk;
+    else if (ttisboolean(o)) {
+      if (bvalue(o)) D->a.istruerk = isrk;
+      else D->a.isfalserk = isrk;
+    }
+  }
+}
+
+
+static int isloadkfullexpr (DecompState *D, FuncState *fs) {
+  OpCode o = D->a.insn.o;
+  if (o == OP_LOADK)
+    /* if the index is small enough to encode as RK, it cannot be a
+       subexpression */
+    return D->a.insn.bx <= MAXINDEXRK;
+  if (o == OP_LOADBOOL && !test_ins_property(fs, fs->pc, INS_BOOLLABEL))
+    return (D->a.insn.b && D->a.istruerk) || (!D->a.insn.b && D->a.isfalserk);
+  if (o == OP_LOADNIL)
+    return D->a.isnilrk;
+  return 0;
+}
+
+
+static int isunaryfullexpr (DecompState *D, FuncState *fs) {
+  OpCode prevOp, o = D->a.insn.o;
+  int prevpc = getprevpc(fs, fs->pc);
+  Instruction prev;
+  if (prevpc < 0)
+    return 1;
+  prev = fs->f->code[prevpc];
+  prevOp = GET_OPCODE(prev);
+  if (!isload(prevOp) || GETARG_A(prev) != D->a.insn.b)
+    return 0;
+  if (o == OP_UNM)
+    /* if previous is LOADK and the constant is a number, it cannot be a
+       subexpression */
+    return (prevOp == OP_LOADK && ttisnumber(&fs->f->k[GETARG_Bx(prev)]));
+  else if (o == OP_NOT || o == OP_NOT_R1)
+    /* if the previous is a constant, is cannot be a subexpression */
+    return opLoadsK(prevOp) && !test_ins_property(fs, prevpc, INS_BOOLLABEL);
+  return 0;
+}
+
+
+/*
+** called by pass1 for marking non-obvious sequence points
+*/
+static void checkloadoptimization (DecompState *D, FuncState *fs) {
+  assertphase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
+  /* initially, use values that make `isloadfullexpr' correct, until the nil and
+     boolean constants are encountered, where the actual value will be set */
+  D->a.isnilrk = D->a.istruerk = D->a.isfalserk = 1;
+  for (fs->pc = 0; fs->pc < fs->f->sizecode; fs->pc = getnextpc(fs, fs->pc)) {
+    updateinsn(D, fs);
+    updateisrk(D, fs);
+    if (opLoadsK(D->a.insn.o) && isloadkfullexpr(D, fs))
+      set_ins_property(fs, fs->pc, INS_KLOCVAR);
+    else if (isunarycode(D->a.insn.o) && isunaryfullexpr(D, fs))
+      set_ins_property(fs, fs->pc, INS_SEQPT);
+  }
+}
+
+
+/******************************************************************************/
+/* Expression parser - scans basic blocks for expression list sequences */
+/******************************************************************************/
+
+
+static void initbitmaps (DecompState *D, FuncState *fs) {
+  allockmap(D, fs->f->sizek);
+  memset(D->upvalmap, 0, sizeof(D->upvalmap));
+}
+
+static void updatebitmaps (DecompState *D, FuncState *fs) {
+  int ak[2];
+  OpCode o = D->a.insn.o;
+  /* mark any constants referenced by the current instruction */
+  int n = getkoperands(o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, ak);
+  D->a.newref = 0;
+  while (n--) {
+    int k = ak[n];
+    if (bitmapset(D->kmap, k)) {
+      if (!D->a.newref && !isbitconsecutive(D->kmap, fs->f->sizek, k))
+        set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
+      D->a.newref |= (cast(lu_int32, k) << (2 + (D->a.newref ? SIZE_A : 0)));
+      D->a.newref++;
+      lua_assert((D->a.newref & 3) < 3);
+    }
+  }
+  /* update the highest upvalue referenced */
+  if (o == OP_GETUPVAL || o == OP_SETUPVAL || o == OP_SETUPVAL_R1) {
+    int up = D->a.insn.b;
+    /* same as with constant references, upvalue references are used to check if
+       an assignment list is necessary */
+    if (bitmapset(D->upvalmap, up)) {
+      D->a.newref = (cast(lu_int32, up) << 2) | 3;
+      if (!isbitconsecutive(D->upvalmap, fs->f->nups, up))
+        set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
+    }
+  }
+}
+
+
+static int getslotactive (const FuncState *fs, int r) {
+  return getslotdesc(fs, r)->u.s.firstactive;
+}
+
+
+/* slot becomes active after PC, meaning it completely evluates the value it
+   will hold, and may be discharged at a later instruction */
+static void setslotactive (FuncState *fs, int r, int pc) {
+  getslotdesc(fs, r)->u.s.firstactive = getnextpc(fs, pc);
+}
+
+/* get the first instruction which evaluated the current value in slot R */
+static int getslotinit (const FuncState *fs, int r) {
+  int pc = getslotactive(fs, r);
+  while (--pc >= 0)
+    if (test_ins_property(fs, pc, INS_LOCVAREXPR)) return pc;
+  return pc;
+}
+
+
+enum SLOTFLAGS {
+  SLOT_CONSTRUCTOR_PENDING = 1,  /* holds an active constructor */
+  SLOT_DISCHARGED_RECORD  /* discharged as an operand in a constructor */
+};
+
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+static void setslottype (FuncState *fs, int r, int t) {
+  SlotDesc *slot = getslotdesc(fs, r);
+  lua_assert(t >= 0 && t != LUA_TSTRUCT);
+  slot->t.type = t;
+  slot->t.proto = NULL;
+}
+
+static void setslotproto (FuncState *fs, int r, const struct StructProto *p) {
+  SlotDesc *slot = getslotdesc(fs, r);
+  slot->t.type = LUA_TSTRUCT;
+  slot->t.proto = p;
+}
+
+
+static int getslottype (const FuncState *fs, int r) {
+  return getslotdesc(fs, r)->t.type;
+}
+
+
+static void clearslottype (FuncState *fs, int r) {
+  SlotDesc *slot = getslotdesc(fs, r);
+  slot->t.type = LUA_TNIL;
+  slot->t.proto = NULL;
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
+static void clearslotflags (FuncState *fs, int r) {
+  getslotdesc(fs, r)->flags = 0;
+}
+
+
+/* PC is the first evaluation point in the expression list R was in at the time
+   of discharge */
+static void setslotdischargerecord (FuncState *fs, int r, int pc) {
+  SlotDesc *slot = getslotdesc(fs, r);
+  slot->flags = SLOT_DISCHARGED_RECORD;
+  slot->u.s.aux = pc;
+}
+
+
+static int isslotdischaredrecord (const FuncState *fs, int r) {
+  return getslotdesc(fs, r)->flags == SLOT_DISCHARGED_RECORD;
+}
+
+static int getslotdischarged (const FuncState *fs, int r) {
+  lua_assert(isslotdischaredrecord(fs, r));
+  return getslotdesc(fs, r)->u.s.aux;
+}
+
+
+static void setslotconstructor (FuncState *fs, int r, int index) {
+  SlotDesc *slot = getslotdesc(fs, r);
+  slot->flags = SLOT_CONSTRUCTOR_PENDING;
+  slot->u.s.aux = index;
+}
+
+
+static int isslotconstructor (const FuncState *fs, int r) {
+  return getslotdesc(fs, r)->flags == SLOT_CONSTRUCTOR_PENDING;
+}
+
+
+static void clearslotconstructor (FuncState *fs, int r) {
+  if (isslotconstructor(fs, r))
+    clearslotflags(fs, r);
+}
+
+
+static struct ConsControl *getslotconstructor (const FuncState *fs, int r) {
+  SlotDesc *slot = getslotdesc(fs, r);
+  int index = slot->u.s.aux;
+  lua_assert(isslotconstructor(fs, r));
+  return fs->D->cons_state.s + index;
+}
+
+
+enum ParserStatus {
+  PARSER_STATUS_INITIAL,
+  PARSER_STATUS_ACTIVE,
+  PARSER_STATUS_ENDEXPR,
+  PARSER_STATUS_COUNT
+};
+
+enum ParserMode {
+  PARSER_MODE_DEFAULT,
+  PARSER_MODE_CONSTRUCTOR,  /* determine constructor lifetimes in code */
+  PARSER_MODE_ASSIGNMENTS,  /* keep track of constant/upval references */
+  PARSER_MODE_COUNT
+};
+
+enum ParserToken {
+  DEFAULT_TOKEN,
+  TOKEN_STORE = 1,  /* a store instruction */
+  TOKEN_RETCODE,  /* a return statement */
+  TOKEN_CALLSTAT,  /* a call statement */
+  TOKEN_BREAK,
+  TOKEN_JUMP_BACK,
+  TOKEN_FORPREP,  /* a for-loop preparation instruction */
+  TOKEN_ENDSCOPE,  /* a scope-ending instruction (JMP or CLOSE) */
+  TOKEN_ENDOFCODE,  /* end of code */
+  TOKEN_COUNT
+};
+
+
+typedef struct ExpressionParser {
+  StackExpr *expr;  /* the current basic block expression */
+  /* the state of the parser determines how to behave on each instruction */
+  enum ParserStatus status;
+  /* the mode of the parser determines what actions it takes for certain
+     expressions */
+  enum ParserMode mode;
+  /* the token indicates to the caller what kind of instruction the parser
+     stopped on */
+  enum ParserToken token;
+  /* startpc is the pc at the time the parser was initialized */
+  /* prevpc is the last pc dispatched by the parser */
+  int startpc, prevpc;
+  int lastopen;
+  /* these fields are stack positions
+     - base is the base of the current expression list being parsed
+     - top is the top of the pending stack space
+     - actualtop is the top of written stack space (pending or discharged)
+     - prevtop is what the top was before dispatch */
+  lu_byte base, top, actualtop, prevtop;
+} ExpressionParser;
+
+
+static void initstackexpr (StackExpr *e) {
+  e->startpc = e->endpc = -1;
+  e->firstreg = e->lastreg = 0;
+  e->jump = 0;
+}
+
+
+static void updatestackexpr (StackExpr *e, int pc, int reg) {
+  if (e->startpc == -1) {
+    e->startpc = pc;
+    e->firstreg = reg;
+  }
+  e->endpc = pc;
+  e->lastreg = reg;
+}
+
+
+static int parser_getendlabel (const DecompState *D) {
+  const StackExpr *e = D->parser->expr;
+  return (e->jump && e->startpc != -1) ? e->startpc + e->jump : -1;
+}
+
+
+static StackExpr *parser_getexpr (const DecompState *D, int n) {
+  int count = D->stackexpr.used;
+  lua_assert(n < 0);
+  if (count + n <= 0)
+    return NULL;
+  return D->parser->expr+n;
+}
+
+
+static int stackexprisunreachable (const FuncState *fs, const StackExpr *e) {
+  int jumppc = e->startpc-1;
+  const Instruction *code = fs->f->code;
+  /* unreachable block must be undonditionally jumped over */
+  if (jumppc >= 0 && GET_OPCODE(code[jumppc]) == OP_JMP &&
+      getjumpcontrol(fs, jumppc) == NULL) {
+    /* then check if the jump skips the whole expression */
+    int nextlabel = getjump(fs, jumppc);
+    if (GET_OPCODE(code[nextlabel-1]) == OP_JMP)
+      nextlabel -= 1 + (getjumpcontrol(fs, nextlabel-1) != NULL);
+    return (getprevpc(fs, nextlabel) == e->endpc);
+  }
+  return 0;
+}
+
+
+static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
+  int r;
+  memset(fs->a->regproperties, 0, fs->f->maxstacksize*sizeof(SlotDesc));
+  for (r = 0; r < fs->f->maxstacksize; r++)
+    getslotdesc(fs, r)->u.s.firstactive = 0;
+  D->parser->status = (base==NO_REG)?PARSER_STATUS_INITIAL:PARSER_STATUS_ACTIVE;
+  D->parser->mode = mode;
+  D->parser->token = DEFAULT_TOKEN;
+  D->parser->base = D->parser->top = D->parser->actualtop = base;
+  D->parser->startpc = check_exp(ispcvalid(fs, fs->pc), fs->pc);
+  D->parser->prevpc = -1;
+  D->parser->lastopen = -1;
+  D->stackexpr.used = 0;
+  VEC_GROW(D->H, D->stackexpr);
+  D->stackexpr.used = 1;
+  D->parser->expr = D->stackexpr.s;
+  initstackexpr(D->parser->expr);
+  if (mode == PARSER_MODE_ASSIGNMENTS)
+    initbitmaps(D, fs);
+}
+
+
+static void parser_advance (DecompState *D, FuncState *fs) {
+  fs->pc = getnextpc(fs, fs->pc);
+  D->parser->token = DEFAULT_TOKEN;
+  D->parser->base = D->parser->top = D->parser->actualtop = NO_REG;
+  D->parser->status = PARSER_STATUS_INITIAL;
+}
+
+
+static void parser_visit (DecompState *D, FuncState *fs) {
+  if (D->parser->mode == PARSER_MODE_ASSIGNMENTS)
+    updatebitmaps(D, fs);
+}
+
+
+static void endexpr (DecompState *D, int token) {
+  D->parser->status = PARSER_STATUS_ENDEXPR;
+  D->parser->token = token;
+}
+
+
+static StackExpr *parser_pushexpr (DecompState *D) {
+  StackExpr *prevexpr;
+  if (D->parser->expr->startpc == -1)
+    return NULL;
+  VEC_GROW(D->H, D->stackexpr);
+  prevexpr = &D->stackexpr.s[D->stackexpr.used++ - 1];
+  D->parser->expr = prevexpr+1;
+  initstackexpr(D->parser->expr);
+  return prevexpr;
+}
+
+
+static int parser_mergeexpr (DecompState *D, FuncState *fs) {
+  if (D->stackexpr.used > 1) {
+    StackExpr *e1 = parser_getexpr(D, -1);
+    StackExpr *e2 = D->parser->expr;
+    int pc = e2->startpc;
+    if (e1->jump || stackexprisunreachable(fs, e1)) {
+      lua_assert(GET_OPCODE(fs->f->code[e1->startpc-1]) == OP_JMP);
+      if (getjump(fs, e1->startpc-1) == e2->startpc) {
+        pc = e1->startpc;
+        if (e1->jump)
+          /* merge with the previous basic block subexpression */
+          e1--;
+        else
+          /* make the expression start on the jump */
+          set_ins_property(fs, --e1->startpc, INS_LOCVAREXPR);
+      }
+    }
+    e1->endpc = e2->endpc;
+    e1->lastreg = e2->lastreg;
+    /* unset extra LOCVAREXPR for the basic block expressions, the actual start
+       is in the previous basic block */
+    for (; pc <= e1->endpc; pc++)
+      unset_ins_property(fs, pc, INS_LOCVAREXPR);
+    D->parser->expr = e1;
+    D->stackexpr.used = (e1 - D->stackexpr.s) + 1;
+    return 1;
+  }
+  return 0;
+}
+
+
+static void restorelastreg (const FuncState *fs, StackExpr *e) {
+  Instruction jc = fs->f->code[getnextpc(fs, e->endpc)];
+  if (testTMode(GET_OPCODE(jc)) && !testAMode(GET_OPCODE(jc))) {
+    int b = GETARG_B(jc), c = GETARG_C(jc);
+    if (!ISK(c) && c > e->lastreg)
+      e->lastreg = c;
+    else if (!ISK(b) && b > e->lastreg)
+      e->lastreg = b;
+  }
+}
+
+
+static void parser_checklabel (DecompState *D, FuncState *fs) {
+  while (fs->pc == parser_getendlabel(D)) {
+    StackExpr *prevbb = parser_getexpr(D, -1);
+    StackExpr *currbb = D->parser->expr;
+    int prevpc = getprevpc(fs, fs->pc);
+    if (currbb->endpc == prevpc && prevbb->lastreg+1 == D->parser->top) {
+      if (!parser_mergeexpr(D, fs))
+        break;
+    }
+    else {
+      restorelastreg(fs, prevbb);
+      endexpr(D, DEFAULT_TOKEN);
+      break;
+    }
+  }
+}
+
+/* L and R are equal if it is a unary operation */
+static int isloadsubexpr (const DecompState *D, const FuncState *fs,
+                          const OperandDesc *l, const OperandDesc *r) {
+  int reg = D->a.insn.a, lastonstack = D->parser->top-1;
+  int l_init, r_init, l_active, r_active;
+  if (D->parser->status != PARSER_STATUS_ACTIVE)
+    return 0;
+  if (test_ins_property(fs, fs->pc, INS_SEQPT))
+    return 0;
+  /* must be like ADD 0 0 1 where top == 1 or UNM 0 0 where top == 0 */
+  if (reg != l->r || lastonstack != r->r)
+    return 0;
+  l_init = getslotinit(fs, l->r);
+  r_init = getslotinit(fs, r->r);
+  /* make sure the operands were just recently evaluated */
+  l_active = getslotactive(fs, l->r);
+  r_active = getslotactive(fs, r->r);
+  if (r_active != fs->pc || (l_active != r_active && l_active != r_init))
+    return 0;
+  if (iskmode(l->mode) && test_ins_property(fs, l_init, INS_KLOCVAR))
+    return 0;
+  if (iskmode(r->mode) && test_ins_property(fs, r_init, INS_KLOCVAR))
+    return 0;
+  return 1;
+}
+
+
+static void markdischargedexp (FuncState *fs, int from, int to) {
+  int pc;
+  for (pc = from; pc < to; pc++) {
+    if (test_ins_property(fs, pc, INS_LOCVAREXPR)) {
+      unset_ins_property(fs, pc, INS_LOCVAREXPR);
+      set_ins_property(fs, pc, INS_DISCHARGEDLOCVAREXPR);
+    }
+  }
+}
+
+
+static void parser_dischargeload (DecompState *D, FuncState *fs,
+                                  const OperandDesc *l, const OperandDesc *r) {
+  D->parser->top = l->r+1;
+  if (l != r)
+    markdischargedexp(fs, getslotinit(fs, l->r)+1, fs->pc);
+  setslotactive(fs, l->r, fs->pc);
+  updatestackexpr(D->parser->expr, fs->pc, l->r);
+}
+
+
+static void parser_dischargeread (DecompState *D, FuncState *fs, OperandDesc o){
+  while (D->parser->top > o.r)
+    clearslotconstructor(fs, --D->parser->top);
+  (void)fs;
+}
+
+
+static void parser_fullexpr (DecompState *D, FuncState *fs,
+                             const OperandDesc operands[2], int noperands) {
+  int reg = D->a.insn.a, lastreg = reg;
+  lua_assert(noperands >= 0 && noperands <= 2);
+  if (reg != D->parser->top) {
+    endexpr(D, DEFAULT_TOKEN);
+    return;
+  }
+  while (noperands--) {
+    int r = operands[noperands].r;
+    if (r >= D->parser->base) {
+      endexpr(D, DEFAULT_TOKEN);
+      return;
+    }
+  }
+  if (D->a.insn.o == OP_LOADNIL)
+    lastreg = D->a.insn.b;
+  else if (D->a.insn.o == OP_VARARG && D->a.insn.b > 2)
+    lastreg = reg + D->a.insn.b - 2;
+  set_ins_property(fs, fs->pc, INS_LOCVAREXPR);
+  for (; reg <= lastreg; reg++)
+    setslotactive(fs, reg, fs->pc);
+  D->parser->top = D->parser->actualtop = reg;
+  updatestackexpr(D->parser->expr, fs->pc, reg-1);
+}
+
+
+static void parser_onload (DecompState *D, FuncState *fs) {
+  OperandDesc operands[3];
+  int oldtop, i, noperands;
+  if (D->parser->status == PARSER_STATUS_INITIAL) {
+    D->parser->base = D->parser->top = D->parser->actualtop = D->a.insn.a;
+    D->parser->status = PARSER_STATUS_ACTIVE;
+  }
+  if (test_ins_property(fs, fs->pc, INS_BOOLLABEL) && !D->a.insn.c) {
+    /* only need to handle 1 of the bool labels */
+    D->parser->expr->endpc = fs->pc;
+    return;
+  }
+  noperands = getregoperands(D->a.insn.o, D->a.insn.a, D->a.insn.b,
+                             D->a.insn.c, operands);
+  lua_assert(noperands >= 0 && noperands <= 2);
+  oldtop = D->parser->top;
+  /* end any pending constructors that are operands */
+  for (i = noperands-1; i >= 0; i--)
+    clearslotconstructor(fs, operands[i].r);
+  if (noperands && isloadsubexpr(D, fs, &operands[0], &operands[noperands-1]))
+    parser_dischargeload(D, fs, &operands[0], &operands[noperands-1]);
+  else
+    parser_fullexpr(D, fs, operands, noperands);
+  /* reset flags for clobbered slots */
+  for (i = D->parser->top-1; i >= oldtop; i--) {
+    clearslotflags(fs, i);
+#if HKSC_STRUCTURE_EXTENSION_ON
+    clearslottype(fs, i);
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  }
+}
+
+
+static void parser_onforprep (DecompState *D, FuncState *fs, int firstreg);
+
+
+static void parser_onjump (DecompState *D, FuncState *fs) {
+  int label = fs->pc+1+D->a.insn.sbx;
+  const Instruction *jc = getjumpcontrol(fs, fs->pc);
+  StackExpr *lastbb;
+  if (D->parser->expr->startpc == -1 && jc && !testAMode(GET_OPCODE(*jc))) {
+    D->parser->expr->startpc = fs->pc - 1;
+    return;
+  }
+  if (D->a.insn.sbx <= 0 || test_ins_property(fs, fs->pc, INS_BREAKSTAT)) {
+    int token = test_ins_property(fs, fs->pc, INS_BREAKSTAT) ?
+    TOKEN_BREAK : TOKEN_JUMP_BACK;
+    endexpr(D, token);
+    return;
+  }
+  else if (GET_OPCODE(fs->f->code[label]) == OP_TFORLOOP) {
+    parser_onforprep(D, fs, GETARG_A(fs->f->code[label]));
+    return;
+  }
+  lastbb = parser_pushexpr(D);
+  /* adjust TOP as needed when values are not dicharged */
+  if (isbooljump(fs, fs->pc, label)) {
+    int bpc = test_ins_property(fs, label, INS_BOOLLABEL) ? label : fs->pc+1;
+    D->parser->top = GETARG_A(fs->f->code[bpc]);
+  }
+  else if (jc && GET_OPCODE(*jc) == OP_TESTSET)
+    D->parser->top--;
+  /* if a comparison uses pushed values, adjust LASTREG so it will match the
+     expected LASTREG of the next basic block; if the basic blocks are not of
+     the same expression, LASTREG will be reverted back */
+  if (lastbb != NULL && jc != NULL && !testAMode(GET_OPCODE(*jc))) {
+    int b = GETARG_B(*jc), c = GETARG_C(*jc);
+    if (D->parser->actualtop == D->parser->top+2 && !ISK(b) && !ISK(c))
+      lastbb->lastreg = D->parser->top;
+  }
+  D->parser->actualtop = D->parser->top;
+  /* jump is always positive */
+  D->parser->expr->jump = cast(unsigned int, D->a.insn.sbx);
+}
+
+
+static int parser_readoperand (DecompState *D, FuncState *fs, OperandDesc o) {
+  int r = o.r, r_init;
+  if (r < D->parser->top-1 || r >= D->parser->top)
+    return 0;
+  r_init = getslotinit(fs, r);
+  if (iskmode(o.mode) && test_ins_property(fs, r_init, INS_KLOCVAR))
+    return 0;
+  parser_dischargeread(D, fs, o);
+  return 1;
+}
+
+
+static int parser_readreg (DecompState *D, FuncState *fs, int r, int tested) {
+  OperandDesc o;
+  o.r = r;
+  /* if the variable is referenced by a test instruction, pass in mode RK to
+     detect lack of optimization of testing a constant value, in the case of
+     a variable initialized with LOADK and than tested:
+        local a = 12;
+        if a then ... end
+     the code must not be optimized to match, so ensure the variable is not
+     marked as DISCHARGED to avoid pruning */
+  o.mode = tested ? OpArgRK : OpArgR;
+  return parser_readoperand(D, fs, o);
+}
+
+
+static void parser_ontest (DecompState *D, FuncState *fs) {
+  OpCode o = D->a.insn.o;
+  int a = D->a.insn.a, b = D->a.insn.b, c = D->a.insn.c;
+  int r1, r2, discharged = 1;
+  if (testAMode(o))
+    r1 = a, r2 = -1;
+  else
+    r1 = ISK(b) ? -1 : b, r2 = ISK(c) ? -1 : c;
+  /* sort r1 and r2, r1 must be less */
+  if (r1 > r2 && r2 != -1) {
+    int temp = r1; r1 = r2; r2 = temp;
+  }
+  if ((r2 == -1 || (discharged = parser_readreg(D, fs, r2, 1))) && r1 != -1)
+    discharged = parser_readreg(D, fs, r1, 1);
+  if (!discharged)
+    endexpr(D, DEFAULT_TOKEN);
+}
+
+
+/*
+** only call to lower the top
+*/
+static void parser_trimtop (DecompState *D, FuncState *fs, int newtop) {
+  int r;
+  lua_assert(newtop <= D->parser->top);
+  for (r = newtop+1; r < D->parser->actualtop; r++)
+    clearslotconstructor(fs, r);
+  lua_assert(D->cons_state.used >= 0);
+  D->parser->actualtop = D->parser->top = newtop;
+}
+
+
+static void parser_onconstructor (DecompState *D, FuncState *fs) {
+  struct ConsControl *cc;
+  int index, reg = D->a.insn.a;
+  if (D->parser->mode == PARSER_MODE_CONSTRUCTOR &&
+      fs->pc > D->parser->startpc && reg <= D->parser->base) {
+    D->parser->actualtop = D->parser->top = reg;
+    endexpr(D, DEFAULT_TOKEN);
+    return;
+  }
+  parser_onload(D, fs);
+  if (D->a.insn.b == 0 && D->a.insn.c == 0)
+    return;
+  VEC_GROW(D->H, D->cons_state);
+  cc = &D->cons_state.s[index = D->cons_state.used++];
+  cc->startpc = cc->endpc = fs->pc;
+  cc->setlist = -1;
+  cc->nhash = 0;
+#if HKSC_STRUCTURE_EXTENSION_ON
+  cc->proto = NULL;
+  if (D->a.insn.o == OP_NEWSTRUCT)
+    cc->proto = luaR_getstructbyid(D->H, getinsndata(fs, fs->pc+1));
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  setslotconstructor(fs, reg, index);
+}
+
+#if HKSC_STRUCTURE_EXTENSION_ON
+/* return codes for resolvestructindex */
+enum {
+  /* the point is to determine the necessity of allcating hash-space for a
+     SETTABLE operation within a struct constructor by classifying it as one of
+     these codes */
+  INDEX_MAY_RESOLVE,  /* this code represents cases of ambiguity; the index may
+                         or may not resolve to a slot name, and therefore may or
+                         may not have hash-space allocated for it */
+  INDEX_CANNOT_RESOLVE,  /* known-type, non-string keys cannot resolve to a slot
+                            name, and therefore must have hash-space allocated
+                            inside a constructor */
+  INDEX_IS_SLOT_NAME  /* string constants which are slot names would never
+                         appear as keys in a SETTABLE code inside a struct
+                         constructor; it would be SETSLOT instead */
+};
+
+static int parser_resolvestructindex (const DecompState *D, const FuncState *fs,
+                                      const StructProto *p) {
+  const TValue *o;
+  lua_assert(IS_OP_SETTABLE(D->a.insn.o));
+  /* if B is a register, see if it was type-checked, if so you can determine if
+     it can resolve to a slot */
+  if (getBMode(D->a.insn.o) != OpArgK && !ISK(D->a.insn.b)) {
+    int type = getslottype(fs, D->a.insn.b);
+    if (type != LUA_TNIL && type != LUA_TSTRING)
+      return INDEX_CANNOT_RESOLVE;
+    else return INDEX_MAY_RESOLVE;
+  }
+  /* if B is a constant, see if it is a string and if the string is a slot name,
+     in which case this assignment must be outside the constructor (otherwise
+     SETSLOT would have been used) */
+  o = &fs->f->k[INDEXK(D->a.insn.b)];
+  if (ttisstring(o) && luaR_findslot(p, rawtsvalue(o)) != NULL)
+    return INDEX_IS_SLOT_NAME;
+  return ttisstring(o) ? INDEX_MAY_RESOLVE : INDEX_CANNOT_RESOLVE;
+}
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+
+
+static void parser_onstore (DecompState *D, FuncState *fs);
+
+static void parser_updateconstructor (DecompState *D, FuncState *fs) {
+  int maxhashsize, reg = D->a.insn.a;
+  int ishash = !IS_OP_SETSLOT(D->a.insn.o);
+  int endconstructor = 0;
+  struct ConsControl *cc = getslotconstructor(fs, reg);
+  maxhashsize = luaO_fb2int(GETARG_C(fs->f->code[cc->startpc]));
+#if HKSC_STRUCTURE_EXTENSION_ON
+  /* SETSLOTMT cannot exist in a constructor */
+  if (D->a.insn.o == OP_SETSLOTMT)
+    endconstructor = 1;
+  else if (cc->proto && ishash) {
+    if (!cc->proto->hasproxy)
+      /* structs cannot have a constructor hash item without a backing table */
+      endconstructor = 1;
+    else {
+      /* You cannot always be certain if the compiler would have allocated hash
+         table space for this index; because CHECKTYPE codes are ommitted if the
+         location to type-check will always have the matching type, you cannot
+         know if any register is statically typed, which you need to know to
+         determine if hash table space was allocated for it.
+         In these cases of ambiguity, I assume the compiler did not allocate
+         hashtable space, allowing for longest possible matches (this may
+         generate unmatching bytecode, but still equivalent to the source code)
+         Consider the following code:
+            local a:number = b; -- CHECKTYPE
+            local b = a; -- no type-check
+         compared to:
+            local a:number = b;
+            local b:number = a; -- no type-check because a is always a number
+         These 2 examples generate the same code, therefore it is impossible to
+         know at this point if register 'b' is statically typed, and if it is
+         used as in index in the constructor, it will allocate hash table space
+         in the second example but not the first */
+      int result = parser_resolvestructindex(D, fs, cc->proto);
+      /* if the index is a slot name, it cannot be inside the constructor;
+         otherwise SETSLOT would be used instead of SETTABLE */
+      endconstructor = (result == INDEX_IS_SLOT_NAME);
+      /* if the index cannot resolve to a slot at runtime, the compiler would
+         have allocated hashtable space for it */
+      ishash = (result == INDEX_CANNOT_RESOLVE);
+    }
+  }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  if (endconstructor || (ishash && cc->nhash >= maxhashsize)) {
+    clearslotconstructor(fs, reg);
+    parser_onstore(D, fs);
+    return;
+  }
+  /* if temporary registers were used, record them as discharged */
+  if (D->parser->top != D->parser->prevtop) {
+    const int pc = getslotinit(fs, D->parser->top);
+    markdischargedexp(fs, pc, fs->pc);
+    lua_assert(D->parser->prevtop != NO_REG);
+    for (reg = D->parser->top; reg < D->parser->prevtop; reg++)
+      setslotdischargerecord(fs, reg, pc);
+  }
+  /* update constructor state */
+  D->parser->expr->endpc = cc->endpc = fs->pc;
+  cc->nhash += ishash;
+  set_ins_property(fs, fs->pc, INS_CONSTRUCTOR_SETTABLE);
+  D->parser->lastopen = fs->pc;
+}
+
+static int parser_checkopenexpr (DecompState *D, FuncState *fs, int base) {
+  if (D->parser->mode == PARSER_MODE_CONSTRUCTOR && base < D->parser->base) {
+    D->parser->actualtop = D->parser->top = base;
+    endexpr(D, DEFAULT_TOKEN);
+    return 0;
+  }
+  (void)fs;
+  return 1;
+}
+
+
+static void parser_onsetlist (DecompState *D, FuncState *fs) {
+  struct ConsControl *cc;
+  int pc, reg = D->a.insn.a;
+  if (!parser_checkopenexpr(D, fs, reg))
+    return;
+  /* something bad is happening if REG is not a constructor anymore */
+  if (!isslotconstructor(fs, reg)) {
+    lua_assert(0);
+    return;
+  }
+  cc = getslotconstructor(fs, reg);
+  for (pc = cc->endpc+1; pc < fs->pc; pc++)
+    unset_ins_property(fs, pc, INS_LOCVAREXPR);
+  cc->endpc = cc->setlist = fs->pc;
+  setslotactive(fs, reg, fs->pc);
+  parser_trimtop(D, fs, reg+1);
+  updatestackexpr(D->parser->expr, fs->pc, reg);
+  D->parser->lastopen = fs->pc;
+}
+
+
+static int parser_onopenexpr (DecompState *D, FuncState *fs, int firstreg) {
+  const int startpc = check_exp(firstreg >= D->parser->base,
+                                getslotinit(fs, firstreg));
+  int pc = startpc;
+  Instruction insn = fs->f->code[pc];
+  /* if the open expression shared a LOADNIL code with a different statement,
+     do not unmark INS_LOCVAREXPR for the start pc */
+  if (GET_OPCODE(insn) == OP_LOADNIL && GETARG_A(insn) < firstreg)
+    pc++;
+  for (; pc < fs->pc; pc++)
+    unset_ins_property(fs, pc, INS_LOCVAREXPR);
+  parser_trimtop(D, fs, firstreg);
+  return startpc;
+}
+
+
+static void parser_onforprep (DecompState *D, FuncState *fs, int firstreg) {
+  parser_trimtop(D, fs, firstreg);
+  endexpr(D, TOKEN_FORPREP);
+  D->parser->lastopen = fs->pc;
+}
+
+
+static void parser_onreturn (DecompState *D, FuncState *fs) {
+  int nret = D->a.insn.b-1;
+  int firstreg = D->a.insn.a;
+  if (nret == 1)
+    parser_readreg(D, fs, firstreg, 0);
+  else if (nret != 0)
+    parser_trimtop(D, fs, firstreg);
+  endexpr(D, TOKEN_RETCODE);
+  D->parser->lastopen = fs->pc;
+}
+
+
+static void parser_oncall (DecompState *D, FuncState *fs) {
+  int startpc, firstreg = D->a.insn.a;
+  int nret = D->a.insn.c-1;
+  if (!parser_checkopenexpr(D, fs, firstreg))
+    return;
+  startpc = parser_onopenexpr(D, fs, firstreg);
+  if (nret == 0)
+    endexpr(D, TOKEN_CALLSTAT);
+  else {
+    /* if the call returns up to stack top, pretend it returns 1 value */
+    nret = nret > 1 ? nret : 1;
+    set_ins_property(fs, startpc, INS_LOCVAREXPR);
+    do {
+      setslotactive(fs, D->parser->top, fs->pc);
+      D->parser->top++, D->parser->actualtop++;
+    } while (--nret);
+    D->parser->expr->endpc = fs->pc;
+    D->parser->expr->lastreg = D->parser->top-1;
+  }
+  D->parser->lastopen = fs->pc;
+}
+
+
+static void parser_onconcat (DecompState *D, FuncState *fs) {
+  int firstreg = D->a.insn.b;
+  if (!parser_checkopenexpr(D, fs, firstreg))
+    return;
+  /*int startpc =*/ parser_onopenexpr(D, fs, firstreg);
+  D->parser->expr->lastreg = D->parser->top-1;
+  parser_onload(D, fs);
+  D->parser->lastopen = fs->pc;
+}
+
+
+static void parser_onstore (DecompState *D, FuncState *fs) {
+  OpCode o = D->a.insn.o;
+  int a = D->a.insn.a;
+  OperandDesc operands[3];
+  int discharged = 1;/*(noperands < 3 || operands[2].r == operands[1].r+1);*/
+  int istable = (IS_OP_SETTABLE(o) || IS_OP_SETSLOT(o));
+  int noperands = getregoperands(o, a, D->a.insn.b, D->a.insn.c, operands);
+  lua_assert(noperands > 0 && noperands <= 3);
+  while (discharged && noperands-- > istable)
+    discharged = parser_readoperand(D, fs, operands[noperands]);
+  if (D->parser->mode != PARSER_MODE_CONSTRUCTOR) {
+    if (test_ins_property(fs, fs->pc, INS_CONSTRUCTOR))
+      goto updateconstructor;
+    else
+      goto updatestore; 
+  }
+  if (istable && isslotconstructor(fs, a))
+    updateconstructor: parser_updateconstructor(D, fs);
+  else {
+    updatestore:
+    if (istable && discharged)
+      discharged = parser_readoperand(D, fs, operands[0]);
+    endexpr(D, TOKEN_STORE);
+  }
+}
+
+
+static void parser_onchecktype (DecompState *D, FuncState *fs) {
+#if HKSC_STRUCTURE_EXTENSION_ON
+  int reg = D->a.insn.a;
+  if (D->a.insn.o == OP_CHECKTYPE)
+    setslottype(fs, reg, D->a.insn.bx);
+  else
+    setslotproto(fs, reg, luaR_getstructbyid(D->H, D->a.insn.bx));
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  (void)D; (void)fs;
+}
+
+
+static void parser_dispatch (DecompState *D, FuncState *fs) {
+  OpCode o = D->a.insn.o;
+  unset_ins_property(fs, fs->pc, INS_LOCVAREXPR);
+  D->parser->prevtop = D->parser->top;
+  if (D->parser->startpc != fs->pc && test_ins_property(fs, fs->pc, INS_SEQPT)){
+    endexpr(D, DEFAULT_TOKEN);
+    return;
+  }
+  if (test_ins_property(fs, fs->pc, INS_ENDSCOPE))
+    endexpr(D, TOKEN_ENDSCOPE);
+  else if (o == OP_MOVE && D->a.insn.b > D->a.insn.a)
+    endexpr(D, TOKEN_STORE);
+  else if (isstorecode(o))
+    parser_onstore(D, fs);
+  else {
+    if (ischecktypecode(o))
+      parser_onchecktype(D, fs);
+    else if (IS_OP_CALL(o))
+      parser_oncall(D, fs);
+    else if (o == OP_CONCAT)
+      parser_onconcat(D, fs);
+    else if (isconstructorcode(o))
+      parser_onconstructor(D, fs);
+    else if (o == OP_SETLIST)
+      parser_onsetlist(D, fs);
+    else if (isload(o))
+      parser_onload(D, fs);
+    else if (o == OP_JMP)
+      parser_onjump(D, fs);
+    else if (testTMode(o))
+      parser_ontest(D, fs);
+    else if (o == OP_FORPREP)
+      parser_onforprep(D, fs, D->a.insn.a);
+    else if (o == OP_RETURN)
+      parser_onreturn(D, fs);
+    else
+      endexpr(D, DEFAULT_TOKEN);
+  }
+}
+
+
+static int parseexpression (DecompState *D, FuncState *fs) {
+  lua_assert(fs->pc >= 0);
+  initstackexpr(D->parser->expr);
+  D->parser->lastopen = -1;
+  D->parser->startpc = fs->pc;
+  for (; fs->pc < fs->f->sizecode; fs->pc = getnextpc(fs, fs->pc)) {
+    updateinsn(D, fs);  /* fetch */
+    parser_visit(D, fs);
+    parser_checklabel(D, fs);
+    parser_dispatch(D, fs);
+    D->parser->prevpc = fs->pc;
+    if (D->parser->status == PARSER_STATUS_ENDEXPR) {
+      D->parser->expr = D->stackexpr.s;
+      D->stackexpr.used = 1;
+      if (D->parser->expr->endpc != -1)
+        fs->pc = getnextpc(fs, D->parser->expr->endpc);
+      if (fs->pc == D->parser->startpc)
+        fs->pc = getnextpc(fs, fs->pc);
+      return D->parser->token;
+    }
+  }
+  return TOKEN_ENDOFCODE;
+}
+
+
+static void scanpostconstructor (DecompState *D, FuncState *fs, int startpc,
+                                 int ndischarged, int constructorbase) {
+  struct ConsControl *cc = &D->cons_state.s[D->cons_state.used-1];
+  OperandDesc operands[3];
+  int noperands, lowestdischargepc = fs->f->sizecode;
+  int prevtop = D->parser->actualtop;
+  for (fs->pc = getnextpc(fs, cc->endpc);
+       fs->pc < fs->f->sizecode;
+       fs->pc = getnextpc(fs, fs->pc), prevtop = D->parser->actualtop) {
+    int i, r;
+    OpCode o;
+    if (D->parser->actualtop <= constructorbase)
+      break;
+    /* if top was lowered, unmark discharged registers above the new top */
+    for (r = D->parser->actualtop; r < prevtop; r++)
+      if (isslotdischaredrecord(fs, r)) ndischarged--, clearslotflags(fs, r);
+    if (ndischarged <= 0)
+      break;
+    /* if this instruction is a settable operation from a lower active
+       constructor, ignore it because its already been verified */
+    if (test_ins_property(fs, fs->pc, INS_CONSTRUCTOR_SETTABLE))
+      continue;
+    /* fetch */
+    updateinsn(D, fs); r = D->a.insn.a; o = D->a.insn.o;
+    /* dispatch */
+    /* check if the lexical scope of this constructor has ended */
+    if (test_ins_property(fs, fs->pc, INS_ENDSCOPE)) {
+      if (o == OP_CLOSE) {
+        D->parser->actualtop = r;
+        continue;
+      }
+      else if (o == OP_JMP && getjump(fs, fs->pc) <= startpc)
+        break;
+    }
+    /* check for for-list loop jump (update top accordingly) */
+    if (o == OP_JMP) {
+      Instruction insn = fs->f->code[getjump(fs, fs->pc)];
+      if (GET_OPCODE(insn) == OP_TFORLOOP)
+        D->parser->actualtop = GETARG_A(insn);
+      continue;
+    }
+    if (o == OP_FORPREP || o == OP_FORLOOP) {
+      D->parser->actualtop = r;
+      continue;
+    }
+    /* get operand registers */
+    noperands = getregoperands(o, r, D->a.insn.b, D->a.insn.c, operands);
+    /* if noperands is -1, the operands are a continuous stack range, and it is
+       an open expression, therefore update top accordingly */
+    if (noperands < 0) {
+      D->parser->actualtop = operands[0].r;
+      continue;
+    }
+    /* for each register read, see if it was discharged within the constructor*/
+    for (i = 0; i < noperands; i++) {
+      int r = operands[i].r;
+      if (isslotdischaredrecord(fs, r)) {
+        const int pc = getslotdischarged(fs, r);
+        lua_assert(ispcvalid(fs, pc));
+        if (pc < lowestdischargepc) {
+          /* the discharged register may itself be a constructor, in which case
+             update the variable CC and fix the startpc of each constructor
+             state above it */
+          for (; cc->startpc >= pc && cc > D->cons_state.s; cc--)
+            cc->endpc = cc->startpc;
+          lowestdischargepc = pc;
+        }
+        clearslotflags(fs, r);
+        ndischarged--;
+      }
+    }
+    /* undischarge slots which are written to */
+    if (isload(o)) {
+      int lastreg = r;
+      if (o == OP_LOADNIL)
+        lastreg = D->a.insn.b;
+      else if (o == OP_VARARG && D->a.insn.b > 1)
+        lastreg = r + D->a.insn.b - 2;
+      for (; r <= lastreg; r++)
+        if (isslotdischaredrecord(fs, r)) ndischarged--, clearslotflags(fs, r);
+    }
+  }
+  /* check if any discharged registers were referenced after the constructor
+     without being clobbered */
+  if (lowestdischargepc <= cc->endpc) {
+    /* save original endpc of base constructor */
+    int pc = D->cons_state.s->endpc;
+    /* constructor must end before the clobber */
+    cc->endpc = getprevpc(fs, lowestdischargepc);
+    /* and update all constructors below it */
+    while (cc-- > D->cons_state.s)
+      cc->endpc = getprevpc(fs, (cc+1)->endpc);
+    /* unmark constructor discharges that are now outside the constructor */
+    for (; pc > D->cons_state.s->endpc; pc--)
+      unset_ins_property(fs, pc, INS_CONSTRUCTOR_SETTABLE);
+  }
+}
+
+
+
+static void parseconstructor (DecompState *D, FuncState *fs, int startpc) {
+  int i, ndischarged = 0, reg, base = GETARG_A(fs->f->code[startpc]);
+  fs->pc = startpc;
+  initparser(D, fs, base, PARSER_MODE_CONSTRUCTOR);
+  parseexpression(D, fs);
+  for (i = 0; i < D->cons_state.used; i++) {
+    struct ConsControl *cc = &D->cons_state.s[i];
+    if (cc->setlist != -1) {
+      int pc = cc->endpc;
+      /* if it has SETLIST, it must end on SETLIST */
+      cc->endpc = cc->setlist;
+      while (pc > cc->endpc)
+        unset_ins_property(fs, pc--, INS_CONSTRUCTOR_SETTABLE);
+    }
+  }
+  /* if top is at or below base, no discharged registers need to be checked */
+  if (D->parser->actualtop <= base+1)
+    return;
+  /* count how many registers between base and top are discharged */
+  for (reg = D->parser->actualtop-1; reg >= D->parser->top; reg--)
+    if (isslotdischaredrecord(fs, reg)) ndischarged++;
+  if (ndischarged == 0)
+    return;
+  /* ensure the endpc is correct by checking for later references to discharged
+     registers used by the constructor */
+  scanpostconstructor(D, fs, startpc, ndischarged, base+1);
+}
+
+
+static void finalizeconstructor (DecompState *D, FuncState *fs) {
+  const int count = D->cons_state.used;
+  const struct ConsControl *cc = check_exp(count > 0, D->cons_state.s);
+  int pc = check_exp(cc != NULL, cc->startpc);
+  do {
+    lua_assert(cc->startpc <= cc->endpc);
+    if (cc->startpc >= pc) {
+      const int limitpc = getnextpc(fs, cc->endpc);
+      for (pc = cc->startpc; pc < limitpc; pc++) {
+        set_ins_property(fs, pc, INS_CONSTRUCTOR);
+        unset_ins_property(fs, pc, INS_LOCVAREXPR);
+        unset_ins_property(fs, pc, INS_DISCHARGEDLOCVAREXPR);
+      }
+      set_ins_property(fs, cc->startpc, INS_LOCVAREXPR);
+      /* fix current pc for next parse session */
+      fs->pc = limitpc;
+    }
+  } while (++cc < D->cons_state.s+count);
+  D->cons_state.used = 0;  /* reset constructor stack */
+}
+
+
+static void parseconstructors (DecompState *D, FuncState *fs) {
+  ExpressionParser parser = {0};
+  assertphase(D, DECOMP_PHASE_PARSE_CONSTRUCTORS);
+  fs->pc = 0;
+  D->parser = &parser;
+  while (D->cons_pc.used > 0) {
+    int startpc = D->cons_pc.s[--D->cons_pc.used];
+    if (startpc < fs->pc)
+      continue;
+    parseconstructor(D, fs, startpc);
+    finalizeconstructor(D, fs);
+  }
+  VEC_FREE(D->H, D->cons_pc);
+  D->parser = NULL;
+}
+
+
+/******************************************************************************/
+/* Assignment parser - scan blocks of store codes to mark assignment lists */
+/******************************************************************************/
+
+
+typedef struct ExprBuffer {
+  StackExpr b[2];
+  lu_byte open[2];
+  lu_byte n;
+} ExprBuffer;
+
+typedef struct StoreList {
+  lu_int32 newref;
+  int startpc, endpc;
+  int skippedref, noskippedref;
+  lu_byte top;
+  lu_byte n;
+  lu_byte firstsourcek;
+  lu_byte clobber;
+  /* for the next 2 fields, interesting values are 0, 1, or greater than 1 */
+  lu_byte newconstants;
+  lu_byte newupvals;
+} StoreList;
+
+
+static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer) {
+  StoreList store = {0};
+  const StackExpr *RHS = NULL;
+  int src = getstoresource(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c);
+  const int lastsrc = src;
+  const OpCode lastop = D->a.insn.o;
+  if (buffer->n == 0)
+    goto nostorelist;
+  if (src == -1 || ISK(src))
+    store.firstsourcek = 1;
+  /* check for a relocated RHS expression, assigned directly to a local register
+     rather than moved with OP_MOVE; this cannot be the case if the source
+     expression is an open expression */
+  else if (buffer->n > 1 && !buffer->open[buffer->n-1]) {
+    const StackExpr *e2 = &buffer->b[1];  /* the final relocated expression */
+    const StackExpr *e1 = &buffer->b[0];  /* the rest of the RHS */
+    /* if relocated, the expression must be a single value and located in a
+       lower register than the space used to evluate the RHS */
+    if (e2->firstreg == e2->lastreg && e2->firstreg < src &&
+        getnextpc(fs, e1->endpc) == e2->startpc) {
+      store.clobber = 1;
+      RHS = e1;
+    }
+  }
+  if (RHS == NULL)
+    RHS = &buffer->b[buffer->n-1];
+  store.top = src;
+  store.startpc = fs->pc;
+  store.skippedref = store.noskippedref = -1;
+  if (store.firstsourcek) {
+    lu_int32 newref = D->a.newref;
+    store.n = 1;
+    /* lose the constant C, as it counts for the RHS, not LHS */
+    if ((newref & 3) <= 1)
+      store.newref = 0;
+    else
+      /* 2 constants; keep argB, lose argC */
+      /* mask out the argC constant because it will be included as the argB
+         constant as if it were Bx */
+      store.newref = (newref & ((1 << (2 + SIZE_A)) - 1)) - 1;
+    goto advance;
+  }
+  for (;;) {
+    int expectedsrc;
+    if (store.firstsourcek == 1) {
+      store.top = src;
+      store.firstsourcek = 2;
+    }
+    expectedsrc = store.top - store.n;
+    if (src != expectedsrc || src < RHS->firstreg || src > RHS->lastreg)
+      break;
+    else {
+      store.n++;
+      store.endpc = fs->pc;
+      if (test_ins_property(fs, fs->pc, INS_SKIPPEDREF))
+        store.skippedref = fs->pc;
+      else if (D->a.newref) {
+        if (store.noskippedref == -1)
+          store.noskippedref = fs->pc;
+      }
+      /* check if NEWREF is a new upvalue reference (indicated by 2 set bits) */
+      if ((store.newref & 3) == 3) {
+        if (store.newupvals < 2)
+          store.newupvals++;
+      }
+      else if (store.newref && store.newconstants < 2)
+        store.newconstants++;
+      store.newref = D->a.newref;
+    }
+    advance: parser_advance(D, fs);
+    updateinsn(D, fs);
+    /* end of the store list is marked by a non-store or a leader */
+    if (!isstorecode(D->a.insn.o) || test_ins_property(fs, fs->pc, INS_LEADER))
+      break;
+    src = getstoresource(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c);
+    if (src == -1 || ISK(src))
+      break;
+    parser_visit(D, fs);
+  }
+  if (store.n == 0)
+    goto nostorelist;
+  lua_assert(store.startpc <= store.endpc);
+  lua_assert(RHS->lastreg >= store.top);
+  /* check if there are extra RHS values not assigned to anything */
+  if (RHS->lastreg > store.top) {
+    /* these flags can only apply to a store list that does not have extra
+       values */
+    if (store.firstsourcek || store.clobber)
+      goto nostorelist;
+  }
+  /* if there are no extra values and no relocated source, check if the last
+     assignment in the list should have used a relocatable source, in which case
+     the store list cannot be verified;
+     example:
+      local a, b, c;
+      local d, e, f = 1, 2, 3;
+      c = f;
+      b = e;
+      a = d;
+      if it was an assignment list, `3' would be loaded direcly into `c':
+      local a, b, c;
+      a, b, c = 1, 2, 3; */
+  else if (!store.firstsourcek && !store.clobber) {
+    int initpc = check_exp(isregvalid(fs, lastsrc), getslotinit(fs, lastsrc));
+    /* if the last assignment is a local (OP_MOVE) and the corresponing RHS
+       expression is not VNONRELOC (i.e. not an open expression), than it is not
+       a list */
+    if (lastop == OP_MOVE && D->parser->lastopen < initpc)
+      goto nostorelist;
+  }
+  /* any new constant/upvalue references must allow for an assignment list */
+  if (store.skippedref == -1 && store.noskippedref != -1)
+    goto nostorelist;
+  /* if part of th assignment list has regularly ordered references, than
+     exclude that part from the list */
+  if (store.noskippedref != -1) {
+    int pc;
+    for (pc = store.noskippedref; pc <= store.endpc; pc = getnextpc(fs, pc))
+      store.n--;
+    store.endpc = store.noskippedref-1;
+  }
+  {
+    int firstreg = store.top - (store.n - 1);
+    /* find the startpc of the assignment */
+    int pc, assignstart;
+    /* find the lowest temporary register used in the store */
+    for (pc = store.startpc; pc <= store.endpc; pc = getnextpc(fs, pc)) {
+      int table, key;
+      int n = getstoreindexregs(fs->f->code[pc], &table, &key);
+      if (n) {
+        if (n == 2 && (n--, key == firstreg-1))
+          firstreg--;
+        if (n == 1 && table == firstreg-1)
+          firstreg--;
+      }
+    }
+    if (firstreg < RHS->firstreg)
+      firstreg = RHS->firstreg;
+    assignstart = getslotinit(fs, firstreg);
+    set_ins_property(fs, assignstart, INS_ASSIGNSTART);
+    set_ins_property(fs, store.endpc, INS_ASSIGNEND);
+  }
+  return store.endpc;
+  nostorelist:
+  parser_advance(D, fs);
+  return -1;
+}
+
+
+static void parseassignments (DecompState *D, FuncState *fs) {
+  ExpressionParser parser = {0};
+  ExprBuffer buffer;
+  assertphase(D, DECOMP_PHASE_PARSE_ASSIGNMENTS);
+  fs->pc = 0;
+  D->parser = &parser;
+  initparser(D, fs, NO_REG, PARSER_MODE_ASSIGNMENTS);
+  for (;;) {
+    buffer.n = 0;
+    /* parse until encountering an assignment */
+    for (;;) {
+      enum ParserToken token = parseexpression(D, fs);
+      if (token == TOKEN_ENDOFCODE)
+        goto done;
+      if (token != TOKEN_STORE && token != DEFAULT_TOKEN)
+        buffer.n = 0;
+      else if (D->parser->expr->startpc != -1) {
+        if (buffer.n >= 2) {
+          buffer.n = 1;
+          buffer.b[0] = buffer.b[1];
+          buffer.open[0] = buffer.open[1];
+        }
+        buffer.open[buffer.n] = D->parser->lastopen == D->parser->expr->endpc;
+        buffer.b[buffer.n++] = *D->parser->expr;
+      }
+      if (token == TOKEN_STORE)
+        break;
+      if (token != DEFAULT_TOKEN)
+        parser_advance(D, fs);
+    }
+    parseassignment(D, fs, &buffer);
+  } done:
+  D->parser = NULL;
+}
+
+
+/*
+** pass1 is the set of all passes before the final pass, grouped together, after
+** which the complete lexical block tree should exist, and complete local
+** variable information should exist
+*/
+static void pass1 (DecompState *D, FuncState *fs) {
   BlockNode *func;
-  scanconstants(fs->D, fs->f);
-  simloop1(fs);
-  finalizevectors1(fs);
-  rescanloops(fs);
-  if (fs->D->usedebuginfo == 0)
+  const int nodebug = (D->usedebuginfo == 0);
+  /* the primary step of analysis is to detect loops because their detection
+     does not rely on other information, whether using debug info or not */
+  changephase(D, DECOMP_PHASE_DETECT_LOOPS);
+  detectloops(D, fs);
+  /* without debug info, the decompiler needs to detect lack of optimization,
+     which depends on what is in the constants array; nil, true, and false may
+     be encoded as RK values in instructions if they exist in the constants
+     array within the range of MAXINDEXRK */
+  if (nodebug) {
+    changephase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
+    checkloadoptimization(D, fs);
+  }
+  /* first, constructors are parsed to determine their lifetimes in the code;
+     then, the constructors are treated atomically in subsequent parse sessions
+     */
+  if (nodebug) {
+    changephase(D, DECOMP_PHASE_PARSE_CONSTRUCTORS);
+    parseconstructors(D, fs);
+  }
+  /* second, assignment lists are parsed to determine which blocks of store
+     instructions may be grouped as a list in the generated source code */
+  if (nodebug) {
+    changephase(D, DECOMP_PHASE_PARSE_ASSIGNMENTS);
+    parseassignments(D, fs);
+  }
+  /* lexical analysis will provide information about how registers are used
+     within each lexical scope, which is only needed if not using debug info */
+  if (nodebug) {
+    changephase(D, DECOMP_PHASE_SCAN_LEXICAL);
+    /*scanlexical(D, fs);*/
+  }
+#if 1
+ /* goto end;*/
+  /* resize any vectors that will not grow past this point */
+  /*finalizeopenexprvector(fs);*/
+  /* mark fail- and pass-jumps */
+  /*analyzejumps(fs);
+  if (D->usedebuginfo == 0) {
     markbbexpr1(fs);
-  simblock1(fs);
+    analyzestack(fs);
+  }*/
+#endif
+  goto end;
+  /*analyzeblocks(fs);*/
+  goto end;
+  /*simblock1(fs);*/
   func = fs->root;
   lua_assert(func != NULL);
   lua_assert(func->nextsibling == NULL);
   lua_assert(func->kind == BL_FUNCTION);
+#if 0
   /* add post-processing functions here */
   finalizelexicalblocks1(fs, func);
   fs->nlocvars = 0;
@@ -7533,13 +3819,17 @@ static void pass1(DFuncState *fs)
   fs->nlocvars = 0;
   checkparentnilvars1(fs, func);
   markfollowblock1(fs, func);
-  if (fs->D->matchlineinfo)
-    recordfixedstartlines1(fs);
+  if (D->matchlineinfo)
+    recordfixedstartlines(fs);
+#endif
+  end:
   memset(fs->a->regproperties, 0, fs->a->sizeregproperties * sizeof(SlotDesc));
-  /* end of pass1 post-processing */
-  (void)badcode;
-  (void)updatefirstclob1;
 }
+
+
+/******************************************************************************/
+/* Source code generation phase */
+/******************************************************************************/
 
 
 typedef struct StackAnalyzer {
@@ -7589,7 +3879,7 @@ typedef struct StackAnalyzer {
 } StackAnalyzer;
 
 
-static void DecompileFunction(DecompState *D, const Proto *f);
+static void DecompileFunction (DecompState *D, const Proto *f);
 
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
@@ -7598,8 +3888,7 @@ static void DecompileFunction(DecompState *D, const Proto *f);
 /*
 ** returns true if RK indexes a non-local slot
 */
-static int istempreg(DFuncState *fs, int rk)
-{
+static int istempreg (const FuncState *fs, int rk) {
   return !ISK(rk) && !test_reg_property(fs, rk, REG_LOCAL);
 }
 
@@ -7607,8 +3896,7 @@ static int istempreg(DFuncState *fs, int rk)
 /*
 ** returns the LocVar currently corresponding to REG
 */
-static LocVar *getlocvar2(DFuncState *fs, int reg)
-{
+static LocVar *getlocvar2 (const FuncState *fs, int reg) {
   return &fs->locvars[fs->a->actvar[reg]];
 }
 
@@ -7617,8 +3905,7 @@ static LocVar *getlocvar2(DFuncState *fs, int reg)
 ** map the N newest local variables from their corresponding registers to their
 ** positions in the LocVar vector
 */
-static void addlocalvars2(DFuncState *fs, int n)
-{
+static void addlocalvars2 (FuncState *fs, int n) {
   int i;
   lua_assert(fs->nactvar >= 0 && fs->nactvar <= fs->sizelocvars);
   lua_assert(fs->nlocvars >= 0 && fs->nlocvars <= fs->sizelocvars);
@@ -7633,8 +3920,7 @@ static void addlocalvars2(DFuncState *fs, int n)
 ** `varstartsatpc2' returns how many variables start at the given PC (if debug
 ** info is not being used, the return value is always -1)
 */
-static int varstartsatpc2(DFuncState *fs, int pc)
-{
+static int varstartsatpc2 (FuncState *fs, int pc) {
   struct LocVar *var;
   int i = fs->nlocvars;
   int n = 0;
@@ -7642,14 +3928,13 @@ static int varstartsatpc2(DFuncState *fs, int pc)
   while (i < fs->sizelocvars && (var = &fs->locvars[i])->startpc == pc) {
     i = ++fs->nlocvars;
     n++;
-    D(lprintf("variable '%s' begins at (%i)\n", getstr(var->varname), pc));
+    D(printf("variable '%s' begins at (%d)\n", getstr(var->varname), pc+1));
   }
   return n;
 }
 
 
-static void updatenextopenexpr2(StackAnalyzer *sa, DFuncState *fs)
-{
+static void updatenextopenexpr2 (StackAnalyzer *sa, FuncState *fs) {
   OpenExpr *next;
   lua_assert(fs->nopencalls >= 0);
   if (fs->nopencalls == 0) {
@@ -7674,11 +3959,8 @@ static void updatenextopenexpr2(StackAnalyzer *sa, DFuncState *fs)
 
 
 #ifdef LUA_DEBUG
-static void debugenterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
-  D(lprintf("pass2: entered %sblock %b (%i-%i) at pc (%i)\n", 
-       node->isempty ? (sa->intailemptyblock ? "tail-empty " : "empty ") : "",
-       node, node->startpc, node->endpc, sa->pc));
+static void
+debugenterblock2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
 #ifdef HKSC_DECOMP_DEBUG_PASS1
   if (node->kind == BL_FUNCTION && fs->prev == NULL) { /* top-level function */
     lua_assert(fs->D->indentlevel == -1);
@@ -7686,17 +3968,14 @@ static void debugenterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
   }
   lua_assert(fs->D->indentlevel >= 0);
   DumpIndentation(fs->D);
-  DumpString(bltypename(node->kind),fs->D);
+  DumpString(blocktypename(node->kind),fs->D);
   DumpLiteral("\n",fs->D);
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
-  UNUSED(fs);
+  UNUSED(fs); UNUSED(sa); UNUSED(node);
 }
 
-static void debugleaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
-  D(lprintf("pass2: leaving %sblock %b (%i-%i) at pc (%i)\n", node->isempty ?
-            (sa->intailemptyblock ? "tail-empty " : "empty") : "", node,
-            node->startpc, node->endpc, sa->pc));
+static void
+debugleaveblock2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
 #ifdef HKSC_DECOMP_DEBUG_PASS1
   if (node->kind == BL_FUNCTION && fs->prev == NULL) { /* top-level function */
     lua_assert(fs->D->indentlevel == -1);
@@ -7709,7 +3988,7 @@ static void debugleaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     DumpLiteral("END\n",fs->D);
   }
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
-  UNUSED(fs);
+  UNUSED(fs); UNUSED(sa); UNUSED(node);
 }
 #else /* !LUA_DEBUG */
 #define debugenterblock2(sa,fs,node) ((void)0)
@@ -7718,8 +3997,7 @@ static void debugleaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 
 
 #ifdef LUA_DEBUG
-static void assertblvalid(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+static void assertblvalid (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   int startpc = node->startpc;
   int endpc = node->endpc;
   int type = node->kind;
@@ -7736,48 +4014,24 @@ static void assertblvalid(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     lua_assert(sa->pc == 0);
     lua_assert(endpc == sa->sizecode-1);
   }
-  if (type < BL_DO && type != BL_FUNCTION) {
-    check_ins_property(fs, endpc, INS_LOOPEND);
-    if (type == BL_WHILE)
-      check_ins_property(fs, startpc, INS_WHILESTAT);
-    else if (type == BL_REPEAT)
-      check_ins_property(fs, startpc, INS_REPEATSTAT);
-    else if (type == BL_FORNUM)
-      check_ins_property(fs, startpc, INS_FORNUM);
-    else if (type == BL_FORLIST)
-      check_ins_property(fs, startpc, INS_FORLIST);
-  }
   else if (type == BL_DO) {
-    check_ins_property(fs, startpc, INS_DOSTAT);
-    check_ins_property(fs, endpc, INS_BLOCKEND);
+    lua_assert(test_ins_property(fs, endpc, INS_BLOCKEND));
   }
   else if (type == BL_IF && nextsibling != NULL &&
            nextsibling->kind == BL_ELSE) {
     lua_assert(node->endpc+1 == nextsibling->startpc);
   }
 }
-
-static void printinsn2(DFuncState *fs, BlockNode *node, int pc, Instruction i)
-{
-  int type = node->kind;
-  lprintf("pc = (%i), %O    %s\n", pc, i, bltypename(type));
-  UNUSED(fs);
-}
 #else /* !LUA_DEBUG */
 #define assertblvalid(sa,fs,node) ((void)(sa),(void)(fs),(void)(node))
-#define printinsn2(fs,node,pc,i) ((void)(fs),(void)(node),(void)(pc),(void)(i))
 #endif /* LUA_DEBUG */
 
 
-static void visitinsn2(DFuncState *fs, BlockNode *node, int pc, Instruction i)
-{
+static void visitinsn2 (FuncState *fs, BlockNode *node, int pc, Instruction i) {
 #ifdef LUA_DEBUG
-  printinsn2(fs, node, pc, i);
-  printinsflags(fs, pc, "  flags for ");
   /* make sure this instruction hasn't already been visited */
   lua_assert(!test_ins_property(fs, pc, INS_VISITED));
-  /* set this directly to avoid printing debug message every time */
-  fs->a->insproperties[pc] |= (1 << INS_VISITED);
+  set_ins_property(fs, pc, INS_VISITED);
 #endif /* LUA_DEBUG */
   UNUSED(fs); UNUSED(node); UNUSED(pc); UNUSED(i);
 }
@@ -7789,9 +4043,8 @@ static void visitinsn2(DFuncState *fs, BlockNode *node, int pc, Instruction i)
 ** otherwise, set NEXTCHILDSTARTPC to (-1) and NEXTPCLIMIT to 1 before the endpc
 ** of PARENT
 */
-static void initnextchild2(StackAnalyzer *sa, BlockNode *parent,
-                           BlockNode *child, int *childstartpc)
-{
+static void initnextchild2 (StackAnalyzer *sa, BlockNode *parent,
+                            BlockNode *child, int *childstartpc) {
   lua_assert(parent != NULL);
   lua_assert(childstartpc != NULL);
   if (child != NULL) {
@@ -7811,9 +4064,8 @@ static void initnextchild2(StackAnalyzer *sa, BlockNode *parent,
 }
 
 
-static BlockNode *updatenextchild2(StackAnalyzer *sa, BlockNode *parent,
-                                    BlockNode *child, int *childstartpc)
-{
+static BlockNode *updatenextchild2 (StackAnalyzer *sa, BlockNode *parent,
+                                    BlockNode *child, int *childstartpc) {
   BlockNode *nextchild;
   lua_assert(child != NULL);
   nextchild = child->nextsibling;
@@ -7823,13 +4075,13 @@ static BlockNode *updatenextchild2(StackAnalyzer *sa, BlockNode *parent,
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
-static void dischargestores2(StackAnalyzer *sa, DFuncState *fs);
+static void dischargestores2(StackAnalyzer *sa, FuncState *fs);
 
 /*
 ** adds a new store node to the pending chain
 */
-static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
-{
+static ExpNode *
+updatelaststore2 (StackAnalyzer *sa,FuncState *fs,ExpNode *exp) {
   int prevlaststore = sa->laststore;
   int chainempty = prevlaststore == 0;
   lua_assert(exp != NULL);
@@ -7878,8 +4130,7 @@ static ExpNode *updatelaststore2(StackAnalyzer *sa,DFuncState *fs,ExpNode *exp)
 ** returns true if EXP is an expression which, in a constructor, would only
 ** generate code when being closed as a list field
 */
-static int issimplelistfield(ExpNode *exp)
-{
+static int issimplelistfield (ExpNode *exp) {
   switch (exp->kind) {
     /* the following expressions will only generate a single code after the
        parser has advanced to the close brace */
@@ -7898,8 +4149,7 @@ static int issimplelistfield(ExpNode *exp)
 }
 
 
-static const char *getunoprstring(UnOpr op)
-{
+static const char *getunoprstring (UnOpr op) {
   static const char *const unoprstrings[] = {
     "-", "not", "#"
   };
@@ -7908,8 +4158,7 @@ static const char *getunoprstring(UnOpr op)
 }
 
 
-static const char *getbinoprstring(BinOpr op)
-{
+static const char *getbinoprstring (BinOpr op) {
   static const char *const binoprstrings[] = { /* ORDER OPR */
     "+", "-", "*", "/", "%", "^", "..",
 #ifdef LUA_CODT7
@@ -7923,8 +4172,7 @@ static const char *getbinoprstring(BinOpr op)
 }
 
 
-static void DumpBinOpr(BinOpr op, DecompState *D)
-{
+static void DumpBinOpr (BinOpr op, DecompState *D) {
   DumpString(getbinoprstring(op),D);
 }
 
@@ -7948,8 +4196,7 @@ static const struct {
 #define SUBEXPR_PRIORITY  11  /* priority for called value */
 
 
-static void checklineneeded2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void checklineneeded2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   int line = exp->line;
   lua_assert(line >= D->linenumber);
   updateline2(fs, line, D);
@@ -7976,9 +4223,8 @@ struct HoldItem {
 /*
 ** `addholditem2' appends a hold item to the chain
 */
-static void addholditem2(DecompState *D, struct HoldItem *item,
-                         const char *str, size_t len, lu_byte addtrailingspace)
-{
+static void addholditem2 (DecompState *D, struct HoldItem *item,
+                          const char *str, size_t len,lu_byte addtrailingspace){
   item->str = str;
   if (len == 0)
     return;  /* don't add the string if it is empty */
@@ -7998,8 +4244,7 @@ static void addholditem2(DecompState *D, struct HoldItem *item,
 ** `dischargeholditems2' dumps all hold item strings and clears the list in the
 ** DecompState
 */
-static void dischargeholditems2(DecompState *D)
-{
+static void dischargeholditems2 (DecompState *D) {
   struct HoldItem *item = D->holdfirst;
   while (item != NULL) {
     CheckSpaceNeeded(D);
@@ -8025,8 +4270,7 @@ static int holdchainempty2(DecompState *D)
 /*
 ** `predumpexp2' - all expression dump functions call this before dumping
 */
-static void predumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void predumpexp2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   /* add new lines if needed */
   checklineneeded2(D,fs,exp);
   /* dump all strings that were held until the line was updated */
@@ -8038,15 +4282,13 @@ static void predumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp)
 /*
 ** `postdumpexp2' - all expression dump functions call this after dumping
 */
-static void postdumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void postdumpexp2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   D->needspace = 1;
   UNUSED(fs); UNUSED(exp);
 }
 
 
-static void dumpexpbool2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexpbool2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   predumpexp2(D,fs,exp);
   if (exp->kind == ETRUE)
     DumpLiteral("true",D);
@@ -8057,8 +4299,7 @@ static void dumpexpbool2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 
 /* dump a constant (literal) expression */
-static void dumpexpk2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexpk2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   predumpexp2(D,fs,exp);
   DumpTValue(exp->u.k,D);
   postdumpexp2(D,fs,exp);
@@ -8066,8 +4307,7 @@ static void dumpexpk2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 
 /* dump a global or upvalue name as an R-value */
-static void dumpexpvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexpvar2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   TString *name = exp->u.name;
   predumpexp2(D,fs,exp);
   if (exp->kind == EGLOBAL && name->tsv.reserved == CONFLICTING_GLOBAL)
@@ -8077,12 +4317,11 @@ static void dumpexpvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
 }
 
 
-static void dumplocvar2(DecompState *D, DFuncState *fs, int reg);
+static void dumplocvar2 (DecompState *D, FuncState *fs, int reg);
 
 
 /* dump a local variable name as an R-value */
-static void dumpexplocvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexplocvar2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   predumpexp2(D,fs,exp);
   dumplocvar2(D,fs,exp->aux); /* aux is the source register in OP_MOVE */
   postdumpexp2(D,fs,exp);
@@ -8090,8 +4329,7 @@ static void dumpexplocvar2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 
 /* dump `nil' */
-static void dumpexpnil2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexpnil2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   predumpexp2(D,fs,exp);
   DumpLiteral("nil",D);
   postdumpexp2(D,fs,exp);
@@ -8099,8 +4337,7 @@ static void dumpexpnil2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 
 /* dump `...' */
-static void dumpexpva2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexpva2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   predumpexp2(D,fs,exp);
   DumpLiteral("...",D);
   postdumpexp2(D,fs,exp);
@@ -8108,8 +4345,7 @@ static void dumpexpva2(DecompState *D, DFuncState *fs, ExpNode *exp)
 
 
 /* dump a child function */
-static void dumpexpfunc2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpexpfunc2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   D->lastcl.pc = exp->aux;
   D->lastcl.name = exp->u.cl.name;
   D->lastcl.line = exp->line;
@@ -8139,8 +4375,7 @@ static void dumpexpfunc2(DecompState *D, DFuncState *fs, ExpNode *exp)
 ** If REG contains an active local varible or REG is encoded as a K-index, NULL
 ** is returned
 */
-static ExpNode *getexpinreg2(DFuncState *fs, int reg)
-{
+static ExpNode *getexpinreg2 (FuncState *fs, int reg) {
   if (ISK(reg))
     return NULL;
   lua_assert(isregvalid(fs, reg));
@@ -8155,8 +4390,7 @@ static ExpNode *getexpinreg2(DFuncState *fs, int reg)
 /*
 ** append a new expression node to a slot descriptor chain
 */
-static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
-{
+static void pushexp2 (FuncState *fs, int reg, ExpNode *exp, int linkprev) {
   lua_assert(isregvalid(fs, reg));
   lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
   lua_assert(exp->previndex == 0);
@@ -8173,8 +4407,7 @@ static void pushexp2(DFuncState *fs, int reg, ExpNode *exp, int linkprev)
 ** clearing the slot flags; call this when expressions in these slots should no
 ** longer be reachable through the SlotDesc entry
 */
-static void clearslots2(DFuncState *fs, int reg, int n)
-{
+static void clearslots2 (FuncState *fs, int reg, int n) {
   int i;
   lua_assert(isregvalid(fs, reg));
   lua_assert(n > 0);
@@ -8187,8 +4420,7 @@ static void clearslots2(DFuncState *fs, int reg, int n)
 }
 
 
-static void setfirstfree(DFuncState *fs, int newfirstfree)
-{
+static void setfirstfree (FuncState *fs, int newfirstfree) {
   int numfree = fs->firstfree - newfirstfree;
   lua_assert(numfree >= 0);
   /* firstfree does not need to be an accessible slot as it can be equal to
@@ -8204,8 +4436,7 @@ static void setfirstfree(DFuncState *fs, int newfirstfree)
 }
 
 
-static void flushpendingexp2(DFuncState *fs)
-{
+static void flushpendingexp2 (FuncState *fs) {
 #ifdef LUA_DEBUG
   int i;
   for (i = 0; i < fs->a->pendingstk.used; i++) {
@@ -8214,7 +4445,7 @@ static void flushpendingexp2(DFuncState *fs)
   }
 #endif /* LUA_DEBUG */
   fs->a->pendingstk.used = 0;
-  D(lprintf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
+  D(printf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
             fs->nactvar));
   setfirstfree(fs, fs->nactvar);
   fs->lastcallexp = 0;
@@ -8224,8 +4455,7 @@ static void flushpendingexp2(DFuncState *fs)
 }
 
 
-static ExpNode *popexp2(DFuncState *fs, int reg)
-{
+static ExpNode *popexp2 (FuncState *fs, int reg) {
   ExpNode *exp;
   lua_assert(isregvalid(fs, reg));
   lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
@@ -8239,8 +4469,7 @@ static ExpNode *popexp2(DFuncState *fs, int reg)
 /*
 ** `dumplocvar2' dumps the name of the local variable in REG
 */
-static void dumplocvar2(DecompState *D, DFuncState *fs, int reg)
-{
+static void dumplocvar2 (DecompState *D, FuncState *fs, int reg) {
   lua_assert(holdchainempty2(D));
   lua_assert(isregvalid(fs, reg));
   lua_assert(test_reg_property(fs, reg, REG_LOCAL));
@@ -8255,8 +4484,7 @@ static void dumplocvar2(DecompState *D, DFuncState *fs, int reg)
 ** indexed by INDEXK(REG). Do not call this function before making sure REG
 ** does not hold a pending expression
 */
-static void dumpRK2(DecompState *D, DFuncState *fs, int reg, ExpNode *op)
-{
+static void dumpRK2 (DecompState *D, FuncState *fs, int reg, ExpNode *op) {
   if (op != NULL)
     predumpexp2(D,fs,op);
   else
@@ -8274,9 +4502,8 @@ static void dumpRK2(DecompState *D, DFuncState *fs, int reg, ExpNode *op)
 }
 
 
-static void holdRK2(DecompState *D, DFuncState *fs, int reg,
-                    struct HoldItem *hold, int addspace)
-{
+static void holdRK2 (DecompState *D, FuncState *fs, int reg,
+                     struct HoldItem *hold, int addspace) {
   const char *str;
   size_t len;
   if (ISK(reg)) {
@@ -8294,16 +4521,15 @@ static void holdRK2(DecompState *D, DFuncState *fs, int reg,
 }
 
 
-static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
-                     unsigned int limit);
+static void dumpexp2 (DecompState *D, FuncState *fs, ExpNode *exp,
+                      unsigned int limit);
 
 
 /*
 ** dumps an operand for a pending binary or unary operation
 */
-static void dumpexpoperand2(DecompState *D, DFuncState *fs, ExpNode *operand,
-                            ExpNode *op, unsigned int limit)
-{
+static void dumpexpoperand2 (DecompState *D, FuncState *fs, ExpNode *operand,
+                             ExpNode *op, unsigned int limit) {
   lua_assert(op != NULL);
   /* The operand can be NULL if the operation is the first code in the program,
      for example:
@@ -8321,8 +4547,7 @@ static void dumpexpoperand2(DecompState *D, DFuncState *fs, ExpNode *operand,
 }
 
 
-static void dumpcloseparen2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumpcloseparen2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   int saveline = exp->line;
   lua_assert(exp->line <= exp->closeparenline);
   exp->line = exp->closeparenline;
@@ -8333,8 +4558,7 @@ static void dumpcloseparen2(DecompState *D, DFuncState *fs, ExpNode *exp)
 }
 
 
-static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
-{
+static void dumphashitem2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   struct HoldItem hold1, hold2;
   int isfield;
   int rkkey;
@@ -8370,7 +4594,7 @@ static void dumphashitem2(DecompState *D, DFuncState *fs, ExpNode *exp)
 ** `ExpListIterator' helps properly iterate through a complete expression list
 */
 struct ExpListIterator {
-  DFuncState *fs;
+  FuncState *fs;
   ExpNode *lastexp;  /* the last ExpNode that was dumped */
   ExpNode *nextexp;  /* the next ExpNode in the list */
   int firstreg;  /* the start register of the expression list */
@@ -8380,9 +4604,8 @@ struct ExpListIterator {
 /*
 ** initializes an expression list iterator, starting at FIRSTREG with FIRSTEXP
 */
-static void initexplistiter2(struct ExpListIterator *iter, DFuncState *fs,
-                             int firstreg, ExpNode *firstexp)
-{
+static void initexplistiter2 (struct ExpListIterator *iter, FuncState *fs,
+                              int firstreg, ExpNode *firstexp) {
   lua_assert(firstexp != NULL);
   lua_assert(isregvalid(fs, firstreg));
   iter->fs = fs;
@@ -8395,8 +4618,7 @@ static void initexplistiter2(struct ExpListIterator *iter, DFuncState *fs,
 /*
 ** updates the iterator state to the next expression in the list and returns it
 */
-static ExpNode *getnextexpinlist2(struct ExpListIterator *iter, int i)
-{
+static ExpNode *getnextexpinlist2 (struct ExpListIterator *iter, int i) {
   int nextreg = iter->firstreg+i;
   ExpNode *nextexp;
   lua_assert(iter->nextexp != NULL);
@@ -8416,8 +4638,7 @@ static ExpNode *getnextexpinlist2(struct ExpListIterator *iter, int i)
 /*
 ** calculate the last line for a constructor argument in a function call
 */
-static void calcconsargauxline(DFuncState *fs, ExpNode *call, ExpNode *tab)
-{
+static void calcconsargauxline (FuncState *fs, ExpNode *call, ExpNode *tab) {
   DecompState *D = fs->D;
   lua_assert(call->kind == ECALL);
   lua_assert(tab->kind == ECONSTRUCTOR);
@@ -8435,9 +4656,8 @@ static void calcconsargauxline(DFuncState *fs, ExpNode *call, ExpNode *tab)
 /*
 ** dumps an expression node to the output
 */
-static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
-                     unsigned int limit)
-{
+static void dumpexp2 (DecompState *D, FuncState *fs, ExpNode *exp,
+                      unsigned int limit) {
   /* NEEDPARENFORLINEINFO is for using extra parens to preserve line info */
   int needparenforlineinfo = (exp->line != exp->closeparenline);
   struct HoldItem holdparen, holdleft;
@@ -8800,7 +5020,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
         initexplistiter2(&iter, fs, firstexp->info+1+(firstexp->kind == ESELF),
                          firstexp);
         if (firstexp->kind == ESELF) {
-          D(lprintf("firstexp->auxlistnext = %d\n", firstexp->auxlistnext));
+          D(printf("firstexp->auxlistnext = %d\n", firstexp->auxlistnext));
         }
         if (D->matchlineinfo && narg == 1) {
           ExpNode *firstarg = getnextexpinlist2(&iter, 0);
@@ -8884,7 +5104,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
          used in the concatenation */
       initexplistiter2(&iter, fs, firstexp->info, firstexp);
       dumpexp2(D, fs, firstexp, priority[OPR_CONCAT].left);
-      D(lprintf("nexps = %d (firstindex = %d, lastindex = %d)\n", nexps,
+      D(printf("nexps = %d (firstindex = %d, lastindex = %d)\n", nexps,
                 firstindex, exp->u.concat.lastindex));
       lua_assert(nexps >= 2);
       for (i = 1; i < nexps; i++) {
@@ -8948,8 +5168,7 @@ static void dumpexp2(DecompState *D, DFuncState *fs, ExpNode *exp,
 
 
 /* discharge whatever is in REG, writing its printable form to the output */
-static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
-{
+static void dischargefromreg2 (FuncState *fs, int reg, unsigned int priority) {
   DecompState *D = fs->D;
   lua_assert(isregvalid(fs, reg));
   if (test_reg_property(fs, reg, REG_LOCAL)) { /* dump local variable name */
@@ -8964,8 +5183,7 @@ static void dischargefromreg2(DFuncState *fs, int reg, unsigned int priority)
 /*
 ** marks a register REG as holding an active local variable, pointed to by VAR
 */
-static void setreglocal2(DFuncState *fs, int reg, struct LocVar *var)
-{
+static void setreglocal2 (FuncState *fs, int reg, struct LocVar *var) {
   lua_assert(isregvalid(fs, reg));
   lua_assert(!test_reg_property(fs, reg, REG_LOCAL));
   unset_reg_property(fs, reg, REG_PENDING);
@@ -8974,8 +5192,7 @@ static void setreglocal2(DFuncState *fs, int reg, struct LocVar *var)
 }
 
 
-static void commitlocalvars2(DFuncState *fs, int base, int n)
-{
+static void commitlocalvars2 (FuncState *fs, int base, int n) {
   int i;
   lua_assert(fs->nlocvars >= base+n);
   lua_assert(n > 0);
@@ -8993,8 +5210,7 @@ static void commitlocalvars2(DFuncState *fs, int base, int n)
 ** register N local variables in the active frame at REG, return the first
 ** varibale created
 */
-static void pushlocalvars2(DFuncState *fs, int base, int n)
-{
+static void pushlocalvars2 (FuncState *fs, int base, int n) {
   lua_assert(n > 0);
   addlocalvars2(fs, n);
   commitlocalvars2(fs, base, n);
@@ -9004,8 +5220,7 @@ static void pushlocalvars2(DFuncState *fs, int base, int n)
 /*
 ** register N for-loop control variables
 */
-static void commitcontrolvars2(DFuncState *fs, int base, int n)
-{
+static void commitcontrolvars2 (FuncState *fs, int base, int n) {
   int i;
   for (i = 0; i < n; i++) {
     LocVar *var = getlocvar2(fs, base+i);
@@ -9021,8 +5236,7 @@ static void commitcontrolvars2(DFuncState *fs, int base, int n)
 /*
 ** emits a function call as a statement
 */
-static void emitcallstat2(DFuncState *fs, ExpNode *call)
-{
+static void emitcallstat2 (FuncState *fs, ExpNode *call) {
   DecompState *D = fs->D;
   lua_assert(call != NULL);
   lua_assert(call->kind == ECALL);
@@ -9036,8 +5250,7 @@ static void emitcallstat2(DFuncState *fs, ExpNode *call)
 /*
 ** emits a break statement
 */
-static void emitbreakstat2(DFuncState *fs, int pc)
-{
+static void emitbreakstat2 (FuncState *fs, int pc) {
   DecompState *D = fs->D;
   int line = getline2(fs, pc);
   int needblock = (test_ins_property(fs, pc, INS_BLOCKFOLLOW) == 0);
@@ -9054,8 +5267,7 @@ static void emitbreakstat2(DFuncState *fs, int pc)
 ** emits a return statement if necessary (the return won't be emitted if it is
 ** the final augmented return)
 */
-static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
-{
+static void emitretstat2 (FuncState *fs, int pc, int reg, int nret) {
   DecompState *D = fs->D;
   int line = getline2(fs, pc);
   int needblock;
@@ -9133,8 +5345,7 @@ static void emitretstat2(DFuncState *fs, int pc, int reg, int nret)
 /*
 ** emits extra values in an assigned expression list
 */
-static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
-{
+static void emitresidualexp2 (FuncState *fs, int reg, ExpNode *lastexp) {
   ExpNode *firstexp = lastexp;
   DecompState *D = fs->D;
   int firstfree = fs->firstfree;
@@ -9193,8 +5404,8 @@ static void emitresidualexp2(DFuncState *fs, int reg, ExpNode *lastexp)
 #define addspace2buff(H,b,D)  \
   if ((D)->needspace && luaZ_bufflen(b)) addliteral2buff(H,b," ")
 
-static void addstr2buff(hksc_State *H, Mbuffer *b, const char *str, size_t len)
-{
+static void
+addstr2buff (hksc_State *H, Mbuffer *b, const char *str, size_t len) {
   size_t size = luaZ_sizebuffer(b);
   size_t pos = luaZ_bufflen(b);
 #ifdef LUA_DEBUG
@@ -9214,8 +5425,7 @@ static void addstr2buff(hksc_State *H, Mbuffer *b, const char *str, size_t len)
 }
 
 
-static void addkvalue2buff(hksc_State *H, Mbuffer *b, TValue *o)
-{
+static void addkvalue2buff (hksc_State *H, Mbuffer *b, TValue *o) {
   switch (ttype(o))
   {
     case LUA_TNIL:
@@ -9227,7 +5437,7 @@ static void addkvalue2buff(hksc_State *H, Mbuffer *b, TValue *o)
       break;
     case LUA_TLIGHTUSERDATA: {
       char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      luaO_ptr2str(s, pvalue(o));
+      sprintf(s, "0x%lxhi", cast(unsigned long, hlvalue(o)));
       addstr2buff(H,b,s,strlen(s));
       break;
     }
@@ -9264,7 +5474,7 @@ static void addkvalue2buff(hksc_State *H, Mbuffer *b, TValue *o)
 */
 struct LHSStringBuilder {
   hksc_State *H;
-  DFuncState *fs;
+  FuncState *fs;
   DecompState *D;
   Mbuffer *buff;
   int needspace;
@@ -9273,8 +5483,7 @@ struct LHSStringBuilder {
 };
 
 
-static void initstringbuilder2(struct LHSStringBuilder *sb, DecompState *D)
-{
+static void initstringbuilder2 (struct LHSStringBuilder *sb, DecompState *D) {
   sb->H = D->H;
   sb->fs = D->fs;
   sb->D = D;
@@ -9286,9 +5495,8 @@ static void initstringbuilder2(struct LHSStringBuilder *sb, DecompState *D)
 }
 
 
-static void addtolhsbuff2(struct LHSStringBuilder *sb, const char *str,
-                         size_t len)
-{
+static void addtolhsbuff2 (struct LHSStringBuilder *sb, const char *str,
+                          size_t len) {
   lua_assert(len != 0);
   if (sb->needspace)
     addliteral2buff(sb->H, sb->buff, " ");
@@ -9298,16 +5506,14 @@ static void addtolhsbuff2(struct LHSStringBuilder *sb, const char *str,
 }
 
 
-static void flushlhsbuff2(struct LHSStringBuilder *sb)
-{
+static void flushlhsbuff2 (struct LHSStringBuilder *sb) {
   luaZ_resetbuffer(sb->buff);
   sb->needspace = 0;
   sb->empty = 1;
 }
 
 
-static void addkvalue2lhs(struct LHSStringBuilder *sb, TValue *o)
-{
+static void addkvalue2lhs (struct LHSStringBuilder *sb, TValue *o) {
   if (sb->empty == 0 && sb->needspace)
     addliteral2buff(sb->H, sb->buff, " ");
   addkvalue2buff(sb->H, sb->buff, o);
@@ -9316,23 +5522,20 @@ static void addkvalue2lhs(struct LHSStringBuilder *sb, TValue *o)
 }
 
 
-static void addchartolhs2(struct LHSStringBuilder *sb, int c)
-{
+static void addchartolhs2 (struct LHSStringBuilder *sb, int c) {
   char x = (char)c;
   lua_assert(c != 0);
   addtolhsbuff2(sb, &x, 1);
 }
 
 #define addvarnametolhs2(sb,name) addtstolhs2(sb,name)
-static void addtstolhs2(struct LHSStringBuilder *sb, TString *ts)
-{
+static void addtstolhs2 (struct LHSStringBuilder *sb, TString *ts) {
   lua_assert(ts != NULL);
   addtolhsbuff2(sb, getstr(ts), ts->tsv.len);
 }
 
 
-static void addcommatolhs2(struct LHSStringBuilder *sb)
-{
+static void addcommatolhs2 (struct LHSStringBuilder *sb) {
   sb->needspace = 0;
   if (sb->empty) {
     /* no spaces before commas */
@@ -9345,8 +5548,7 @@ static void addcommatolhs2(struct LHSStringBuilder *sb)
 }
 
 
-static void completelhsbuilder2(struct LHSStringBuilder *sb)
-{
+static void completelhsbuilder2 (struct LHSStringBuilder *sb) {
   DecompState *D = sb->D;
   if (sb->empty) {
     CheckSpaceNeeded(D);
@@ -9360,8 +5562,7 @@ static void completelhsbuilder2(struct LHSStringBuilder *sb)
 }
 
 
-static void addregtolhs2(struct LHSStringBuilder *sb, int reg)
-{
+static void addregtolhs2 (struct LHSStringBuilder *sb, int reg) {
   lua_assert(isregvalid(sb->fs, reg));
   if (test_reg_property(sb->fs, reg, REG_LOCAL)) {
     struct LocVar *var = getslotdesc(sb->fs, reg)->u.locvar;
@@ -9379,15 +5580,13 @@ static void addregtolhs2(struct LHSStringBuilder *sb, int reg)
 }
 
 
-static void addktolhs2(struct LHSStringBuilder *sb, int k)
-{
+static void addktolhs2 (struct LHSStringBuilder *sb, int k) {
   lua_assert(ISK(k));
   addkvalue2lhs(sb,&sb->fs->f->k[INDEXK(k)]);
 }
 
 
-static void addindextolhs2(struct LHSStringBuilder *sb, int reg, int isfield)
-{
+static void addindextolhs2 (struct LHSStringBuilder *sb, int reg, int isfield) {
   DecompState *D = sb->D;
   int wasempty = sb->empty;
   int needspace = sb->needspace;
@@ -9427,9 +5626,8 @@ static void addindextolhs2(struct LHSStringBuilder *sb, int reg, int isfield)
 }
 
 
-static void addtab2funcname(struct LHSStringBuilder *sb, ExpNode *exp)
-{
-  DFuncState *fs = sb->fs;
+static void addtab2funcname (struct LHSStringBuilder *sb, ExpNode *exp) {
+  FuncState *fs = sb->fs;
   if (exp->kind == EGLOBAL || exp->kind == EUPVAL) {
     addtstolhs2(sb, exp->u.name);
     sb->needspace = 0;
@@ -9458,10 +5656,9 @@ static void addtab2funcname(struct LHSStringBuilder *sb, ExpNode *exp)
 }
 
 
-static TString *buildfuncname(struct LHSStringBuilder *sb, ExpNode *exp,
-                              int needself)
-{
-  DFuncState *fs = sb->fs;
+static TString *buildfuncname (struct LHSStringBuilder *sb, ExpNode *exp,
+                               int needself) {
+  FuncState *fs = sb->fs;
   if (exp->kind != ESTORE) {
     return getlocvar2(fs, exp->info)->varname;
   }
@@ -9515,8 +5712,7 @@ static TString *buildfuncname(struct LHSStringBuilder *sb, ExpNode *exp,
 ** dumps the pending assignment list (check if there are pending stores before
 ** calling)
 */
-static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
-{
+static void dischargestores2 (StackAnalyzer *sa, FuncState *fs) {
   ExpNode dummy;  /* dummy (nil) node to use when there is no pending source */
   DecompState *D = fs->D;
   TString *funcname = NULL;
@@ -9550,7 +5746,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
       rootop = exp->u.store.rootop;
       if (exp->kind != ESTORE || rootop == OP_MOVE) {
         /* assigning to local variable */
-        D(lprintf("OP_MOVE from reg %d\n", exp->info));
+        D(printf("OP_MOVE from reg %d\n", exp->info));
         addregtolhs2(&sb, exp->info);
       }
       else if (rootop == OP_SETFIELD || rootop == OP_SETTABLE) {
@@ -9606,7 +5802,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
   lastsrc->info = exp->info;
   lastsrc->line = 0;
   lastsrc->closeparenline = 0;
-  D(lprintf("lastsrcreg = %d\n", lastsrcreg));
+  D(printf("lastsrcreg = %d\n", lastsrcreg));
   for (;;) { /* tarverse the chain to dump RHS values */
     /* get expression to assigm */
     ExpNode *src = (exp->kind == ESTORE) ? index2exp(fs, exp->aux) : exp;
@@ -9679,8 +5875,7 @@ static void dischargestores2(StackAnalyzer *sa, DFuncState *fs)
 ** activates new local variables and emits a declaration/initialization
 ** statement for them
 */
-static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
-{
+static void emitlocalstat2 (FuncState *fs, int nvars, int pc) {
   ExpNode dummy;
   ExpNode *firstexp, *lastexp;
   hksc_State *H = fs->H;
@@ -9767,12 +5962,12 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
     D(printf("added hold item for decl: `%.*s'\n", cast_int(luaZ_bufflen(b)),
              luaZ_buffer(b)));
   }
-  D(lprintf("firstreg = %d, lastreg = %d\n", firstreg, lastreg));
+  D(printf("firstreg = %d, lastreg = %d\n", firstreg, lastreg));
   for (i = firstreg; i <= lastreg; i++) {
     ExpNode *exp = getexpinreg2(fs, i); /* the pending expression in REG */
     setreglocal2(fs, i, getlocvar2(fs, fs->nactvar++));
     if (haveRHS == 0) {
-      exp->pending = 0;
+      if (exp) exp->pending = 0;
       continue; /* don't write  */
     }
     else if (exp != NULL && exp != lastexp) {
@@ -9861,9 +6056,8 @@ static void emitlocalstat2(DFuncState *fs, int nvars, int pc)
 ** holds an active local variable or appending the new expression to the pending
 ** chain
 */
-static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
-                             ExpNode *exp, int *splitnil)
-{
+static ExpNode *addexptoreg2 (StackAnalyzer *sa, FuncState *fs, int reg,
+                              ExpNode *exp, int *splitnil) {
   lua_assert(isregvalid(fs, reg));
   lua_assert(exp->kind != ESTORE);
   if (exp->kind == ECONSTRUCTOR && exp2index(fs, exp) == fs->curr_constructor)
@@ -10013,8 +6207,7 @@ static ExpNode *addexptoreg2(StackAnalyzer *sa, DFuncState *fs, int reg,
 /*
 ** discharges the current nil debt by adding a new nil expression into REG
 */
-static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
-{
+static void dischargenildebt2 (StackAnalyzer *sa, FuncState *fs, int reg) {
   ExpNode *exp;
   lua_assert(sa->openexprnildebt > 0);
   exp = newexp(fs);
@@ -10041,8 +6234,7 @@ static void dischargenildebt2(StackAnalyzer *sa, DFuncState *fs, int reg)
 }
 
 
-static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
-{
+static void initexp2 (FuncState *fs, ExpNode *exp, int reg, int pc) {
   lua_assert(ispcvalid(fs, pc));
   exp->info = reg;
   exp->aux = 0;
@@ -10062,8 +6254,7 @@ static void initexp2(DFuncState *fs, ExpNode *exp, int reg, int pc)
 }
 
 
-static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
-{
+static void linkexp2 (StackAnalyzer *sa, FuncState *fs, ExpNode *exp) {
   ExpNode *prevreg = index2exp(fs, exp->auxlistprev);
   sa->lastexpindex = exp2index(fs, exp);
   if (prevreg) {
@@ -10074,9 +6265,8 @@ static void linkexp2(StackAnalyzer *sa, DFuncState *fs, ExpNode *exp)
 }
 
 
-static ExpNode *addboolexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc,
-                            int b)
-{
+static ExpNode *addboolexp2 (StackAnalyzer *sa, FuncState *fs, int reg, int pc,
+                             int b) {
   ExpNode *exp = newexp(fs);
   initexp2(fs, exp, reg, pc);
   exp->kind = b ? ETRUE : EFALSE;
@@ -10085,8 +6275,7 @@ static ExpNode *addboolexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc,
 }
 
 
-static ExpNode *addnilexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc)
-{
+static ExpNode *addnilexp2 (StackAnalyzer *sa, FuncState *fs, int reg, int pc) {
   ExpNode *exp = newexp(fs);
   initexp2(fs, exp, reg, pc);
   exp->kind = ENIL;
@@ -10095,9 +6284,8 @@ static ExpNode *addnilexp2(StackAnalyzer *sa, DFuncState *fs, int reg, int pc)
 }
 
 
-static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
-                        int a, int b, int c, int bx)
-{
+static ExpNode *addexp2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
+                         int a, int b, int c, int bx) {
   ExpNode node;
   ExpNode *exp = &node;
   const Proto *f = fs->f;
@@ -10438,9 +6626,8 @@ static ExpNode *addexp2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o,
 ** operation `a [and/or] b'
 */
 static ExpNode *
-reducecondition2(StackAnalyzer *sa, DFuncState *fs, int e1, int e2, int reg,
-                 int pc)
-{
+reducecondition2 (StackAnalyzer *sa, FuncState *fs, int e1, int e2, int reg,
+                  int pc) {
   ExpNode *exp;
   lu_byte goiftrue;
   {  /* compute the logical operator to use for this new conditional node */
@@ -10464,9 +6651,8 @@ reducecondition2(StackAnalyzer *sa, DFuncState *fs, int e1, int e2, int reg,
 /*
 ** create an expression node for a comparison operation
 */
-static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
-                            Instruction i, lu_byte inverted)
-{
+static ExpNode *addcompare2 (StackAnalyzer *sa, FuncState *fs, int pc, int reg,
+                             Instruction i, lu_byte inverted) {
   OpCode o = GET_OPCODE(i);
   int a, b, c;
   OpCode comp = o - (o % 2);  /* remove BK bit */
@@ -10482,6 +6668,7 @@ static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
   if (comp == OP_EQ)
     op = a ? OPR_EQ : OPR_NE;
   else {
+    int operands[2];
     if (istempreg(fs, b) && istempreg(fs, c)) {
       if (b > c) {
         int temp = b; b = c; c = temp;
@@ -10489,7 +6676,7 @@ static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
       }
     }
     else if (!test_ins_property(fs, pc, INS_SKIPPEDREF) &&
-             referencesk(o, b, c, b)) {
+             getkoperands(o, b, c, b, operands)) {
       int temp = b; b = c; c = temp;
       a = !a;
     }
@@ -10519,21 +6706,18 @@ static ExpNode *addcompare2(StackAnalyzer *sa, DFuncState *fs, int pc, int reg,
 }
 
 
-static int isfailjump(DFuncState *fs, int pc)
-{
+static int isfailjump (FuncState *fs, int pc) {
   return (test_ins_property(fs, pc, INS_BRANCHFAIL) ||
           test_ins_property(fs, pc, INS_LOOPFAIL));
 }
 
-static int ispassjump(DFuncState *fs, int pc)
-{
+static int ispassjump (FuncState *fs, int pc) {
   return (test_ins_property(fs, pc, INS_BRANCHPASS) ||
           test_ins_property(fs, pc, INS_LOOPPASS));
 }
 
 
-static int iscondreducible(ExpNode *e1, ExpNode *e2, int golabel)
-{
+static int iscondreducible (ExpNode *e1, ExpNode *e2, int golabel) {
   lua_assert(e2 != NULL);
   if (e1 == NULL)
     return 0;
@@ -10544,8 +6728,7 @@ static int iscondreducible(ExpNode *e1, ExpNode *e2, int golabel)
   return 0;
 }
 
-static void setpendingcondtarget(StackAnalyzer *sa, DFuncState *fs, int label)
-{
+static void setpendingcondtarget (StackAnalyzer *sa, FuncState *fs, int label) {
   /* if jumping past an augmented repeat-loop break, set the actual target to be
      the end of the loop, as this condition is the footer condition, and should
      not be finalized until then */
@@ -10560,9 +6743,8 @@ static void setpendingcondtarget(StackAnalyzer *sa, DFuncState *fs, int label)
 ** update the pending conditional expression after a new jump; only call when
 ** encountering a jump inside a conditional expression
 */
-static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
-                               int jumptarget)
-{
+static void addconditionalnode2 (StackAnalyzer *sa, FuncState *fs, int pc,
+                                 int jumptarget) {
   int targetbool = test_ins_property(fs, jumptarget, INS_BOOLLABEL);
   /* SKIPSBOOLLABEL is true for non-VJMP expressions, which skip over 2 bool
      labels with an uncinditional jump after */
@@ -10770,8 +6952,7 @@ static void addconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc,
 ** the expression has been reached
 */
 static ExpNode *
-finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
-{
+finalizeconditionalnode2 (StackAnalyzer *sa, FuncState *fs, int pc) {
   int prevtarget;
   int e = sa->pendingcond.e;
   ExpNode *exp1 = index2exp(fs, e);
@@ -10812,9 +6993,8 @@ finalizeconditionalnode2(StackAnalyzer *sa, DFuncState *fs, int pc)
 }
 
 
-static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
-                     int b, int c, int bx)
-{
+static int addstore2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o, int a,
+                      int b, int c, int bx) {
   ExpNode *exp;
   OpCode rootop;
   int srcreg;
@@ -10890,9 +7070,8 @@ static int addstore2(StackAnalyzer *sa, DFuncState *fs, int pc, OpCode o, int a,
 }
 
 
-static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
-                             int c)
-{
+static ExpNode *addhashitem2 (FuncState *fs, int pc, OpCode o, int a, int b,
+                              int c) {
   ExpNode *exp;
   OpCode rootop;
   int info, aux1, aux2, srcreg;
@@ -10945,8 +7124,7 @@ static ExpNode *addhashitem2(DFuncState *fs, int pc, OpCode o, int a, int b,
 }
 
 
-static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
-{
+static int openexpr2 (StackAnalyzer *sa, FuncState *fs) {
   ExpNode *result;
   const OpenExpr *e = sa->nextopenexpr;
   int limit;  /* pc limit */
@@ -10986,10 +7164,10 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
     if (testAMode(o)) { /* A is a register */
       ExpNode *exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
-        D(lprintf("created new expression node\n"));
-        D(lprintf("---------------------------\n"));
+        D(printf("created new expression node\n"));
+        D(printf("---------------------------\n"));
         debugexp(fs, exp,0);
-        D(lprintf("---------------------------\n"));
+        D(printf("---------------------------\n"));
         addexptoreg2(sa, fs, a, exp, NULL);
       }
       else if ((exp = addhashitem2(fs, pc, o, a, b, c))) {
@@ -11060,7 +7238,7 @@ static int openexpr2(StackAnalyzer *sa, DFuncState *fs)
 }
 
 
-static int clamptoreg(int base, int n, int limit) {
+static int clamptoreg (int base, int n, int limit) {
   int res = base+n;
   if (res > limit)
     return limit-base;
@@ -11068,7 +7246,7 @@ static int clamptoreg(int base, int n, int limit) {
 }
 
 
-static int getnvarstartatpc2(DFuncState *fs, int pc, int reglimit) {
+static int getnvarstartatpc2 (FuncState *fs, int pc, int reglimit) {
   if (ispcvalid(fs, pc)) {
     int nvars = varstartsatpc2(fs, pc);
     if (nvars == 0) return 0;
@@ -11078,9 +7256,8 @@ static int getnvarstartatpc2(DFuncState *fs, int pc, int reglimit) {
 }
 
 
-static ExpNode *getforloopbasenode2(StackAnalyzer *sa, DFuncState *fs,
-                                    BlockNode *node, int base, int bias)
-{
+static ExpNode *getforloopbasenode2 (StackAnalyzer *sa, FuncState *fs,
+                                     BlockNode *node, int base, int bias) {
   ExpNode *exp = getexpinreg2(fs, base);
   if (exp == NULL) {
     exp = addnilexp2(sa, fs, base, node->startpc - (node->startpc > 0));
@@ -11093,8 +7270,7 @@ static ExpNode *getforloopbasenode2(StackAnalyzer *sa, DFuncState *fs,
 
 
 static void
-dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+dumpfornumheader2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   DecompState *D = fs->D;
   struct ExpListIterator iter;
   struct HoldItem initvar, initeq;
@@ -11143,8 +7319,7 @@ dumpfornumheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 
 
 static void
-dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+dumpforlistheader2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   hksc_State *H = fs->H;
   DecompState *D = fs->D;
   struct ExpListIterator iter;
@@ -11204,8 +7379,7 @@ dumpforlistheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 
 
 static void
-updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+updateheaderline2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   DecompState *D = fs->D;
   int line = D->linenumber;
   int nextline;
@@ -11226,8 +7400,7 @@ updateheaderline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 
 
 static void
-dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+dumpbranchheader2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   DecompState *D = fs->D;
   int iselseif;
   lua_assert(sa->currparent != NULL);
@@ -11285,8 +7458,7 @@ dumpbranchheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 
 
 static void
-dumpwhilestatheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+dumpwhilestatheader2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   DecompState *D = fs->D;
   int pclimit = getfirstindentedpc(fs, node);
   int startline;
@@ -11320,10 +7492,10 @@ dumpwhilestatheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
     if (testAMode(o)) { /* A is a register */
       ExpNode *exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
-        D(lprintf("created new expression node\n"));
-        D(lprintf("---------------------------\n"));
+        D(printf("created new expression node\n"));
+        D(printf("---------------------------\n"));
         debugexp(fs, exp,0);
-        D(lprintf("---------------------------\n"));
+        D(printf("---------------------------\n"));
         addexptoreg2(sa, fs, a, exp, NULL);
       }
     }
@@ -11359,9 +7531,8 @@ dumpwhilestatheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static void dumpheaderstring2(StackAnalyzer *sa, DFuncState *fs,
-                              BlockNode *node, const char *str)
-{
+static void dumpheaderstring2 (StackAnalyzer *sa, FuncState *fs,
+                               BlockNode *node, const char *str) {
   DecompState *D = fs->D;
   updateheaderline2(sa, fs, node);
   CheckSpaceNeeded(D);
@@ -11371,8 +7542,8 @@ static void dumpheaderstring2(StackAnalyzer *sa, DFuncState *fs,
 }
 
 
-static void dumpfuncheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+static void
+dumpfuncheader2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   int i, haveself;
   struct HoldItem funcname;
   DecompState *D = fs->D;
@@ -11407,8 +7578,7 @@ static void dumpfuncheader2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static void calcnumblockstartatpc2(StackAnalyzer *sa, BlockNode *node)
-{
+static void calcnumblockstartatpc2 (StackAnalyzer *sa, BlockNode *node) {
   int pc = sa->pc;
   int n = 1;
   while((node = node->firstchild) != NULL && node->startpc == pc)
@@ -11417,9 +7587,8 @@ static void calcnumblockstartatpc2(StackAnalyzer *sa, BlockNode *node)
 }
 
 
-static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
-                        struct HoldItem *blockheader)
-{
+static void enterblock2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node,
+                         struct HoldItem *blockheader) {
   DecompState *D = fs->D;
   if (node->kind != BL_FUNCTION || fs->prev != NULL)
     lua_assert(D->indentlevel >= 0);
@@ -11483,8 +7652,7 @@ static void enterblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node,
 }
 
 
-static int getlastblockline(DFuncState *fs, const BlockNode *node)
-{
+static int getlastblockline (const FuncState *fs, const BlockNode *node) {
   lua_assert(fs->D->matchlineinfo);
   /* while-loops either have their final jump mapped to the start line, like
      for-loops, or mapped to the lastline at the time END was encountered, so
@@ -11501,8 +7669,7 @@ static int getlastblockline(DFuncState *fs, const BlockNode *node)
 }
 
 
-static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+static int calclastline2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   DecompState *D = fs->D;
   int line, nextline;
   lua_assert(ispcvalid(fs, node->endpc+1));
@@ -11527,8 +7694,8 @@ static int calclastline2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static int dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+static int
+dumprepeatfooter2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   DecompState *D = fs->D;
   if (sa->pendingcond.e) {
     struct HoldItem until;  /* `until' */
@@ -11547,8 +7714,7 @@ static int dumprepeatfooter2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+static void leaveblock2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   const char *str;
   DecompState *D = fs->D;
   int inmainfunc = (fs->prev == NULL);
@@ -11649,16 +7815,14 @@ static void leaveblock2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 }
 
 
-static void addparams(DFuncState *fs, const Proto *f)
-{
+static void addparams (FuncState *fs, const Proto *f) {
   fs->nlocvars = f->numparams;
   if (f->numparams)
     pushlocalvars2(fs, 0, f->numparams);
 }
 
 
-static void checkdelaysemi2(DFuncState *fs, int pc)
-{
+static void checkdelaysemi2 (FuncState *fs, int pc) {
   DecompState *D = fs->D;
   if (D->matchlineinfo == 0 || fs->prev != NULL || D->delaysemi < 0)
     return;
@@ -11681,8 +7845,7 @@ static void checkdelaysemi2(DFuncState *fs, int pc)
 ** analyzed and local variables are detected. With information about the local
 ** variables, any undetected do-end blocks can be detected in this pass.
 */
-static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
-{
+static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
 #ifdef HKSC_DECOMP_HAVE_PASS2
   struct HoldItem blockheader;
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
@@ -11835,10 +7998,10 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
       exp = addexp2(sa, fs, pc, o, a, b, c, bx);
       if (exp != NULL) {
         int splitnil;
-        D(lprintf("created new expression node\n"));
-        D(lprintf("---------------------------\n"));
+        D(printf("created new expression node\n"));
+        D(printf("---------------------------\n"));
         debugexp(fs, exp,0);
-        D(lprintf("---------------------------\n"));
+        D(printf("---------------------------\n"));
         lua_assert(isregvalid(fs, exp->info));
         if (exp->kind != ESTORE)
           exp = addexptoreg2(sa, fs, a, exp, &splitnil);
@@ -11871,7 +8034,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
         }
         if (numvars > 0) {
           checkdischargestores2(sa, fs);
-          D(lprintf("NEW LOCAL VARIABLE\n"));
+          D(printf("NEW LOCAL VARIABLE\n"));
           (void)getfirstexp;
           emitlocalstat2(fs, numvars, pc);
         }
@@ -11950,8 +8113,7 @@ static void blnode2(StackAnalyzer *sa, DFuncState *fs, BlockNode *node)
 /*
 ** initialize memory for second pass
 */
-static void initpass2(DFuncState *fs)
-{
+static void initpass2 (FuncState *fs) {
   Analyzer *a = fs->a;
   a->decomppass = 2;
   a->pendingstk.total = 4;
@@ -11963,8 +8125,7 @@ static void initpass2(DFuncState *fs)
 /*
 ** free memory for second pass
 */
-static void cleanuppass2(DFuncState *fs)
-{
+static void cleanuppass2 (FuncState *fs) {
   Analyzer *a = fs->a;
   lua_assert(a->decomppass == 2);
   luaM_freearray(fs->H, a->pendingstk.u.s2, a->pendingstk.total, ExpNode);
@@ -11973,8 +8134,7 @@ static void cleanuppass2(DFuncState *fs)
 }
 
 
-static void pass2(const Proto *f, DFuncState *fs)
-{
+static void pass2 (const Proto *f, FuncState *fs) {
   BlockNode *functionblock = fs->root;
   StackAnalyzer sa;
   sa.currparent = NULL;
@@ -12013,7 +8173,7 @@ static void pass2(const Proto *f, DFuncState *fs)
   { /* debug: make sure all instructions were visited */
     int pc;
     for (pc = 0; pc < f->sizecode; pc++)
-      check_ins_property(fs, pc, INS_VISITED);
+      lua_assert(test_ins_property(fs, pc, INS_VISITED));
     checktreevisited(functionblock);
   }
 #endif /* LUA_DEBUG */
@@ -12021,19 +8181,17 @@ static void pass2(const Proto *f, DFuncState *fs)
 }
 
 
-static void DecompileFunction(DecompState *D, const Proto *f)
-{
-  DFuncState new_fs;
+static void DecompileFunction (DecompState *D, const Proto *f) {
+  FuncState new_fs;
   open_func(&new_fs, D, f);
-  pass1(&new_fs);
+  pass1(D, &new_fs);
   debugpass1summary(&new_fs);
   pass2(f,&new_fs);
   close_func(D);
 }
 
 
-static void MarkGlobals(const Proto *f)
-{
+static void MarkGlobals (const Proto *f) {
   int i;
   for (i = 0; i < f->sizecode; i++) {
     Instruction insn = f->code[i];
@@ -12052,8 +8210,7 @@ static void MarkGlobals(const Proto *f)
 ** decompiler easier to port to regular Lua, but it will interfere the parser
 ** if the globals are not unmarked.
 */
-static void UnmarkGlobals(const Proto *f)
-{
+static void UnmarkGlobals (const Proto *f) {
   int i;
   for (i = 0; i < f->sizek; i++) {
     const TValue *o = &f->k[i];
@@ -12061,7 +8218,7 @@ static void UnmarkGlobals(const Proto *f)
       TString *ts = rawtsvalue(o);
       /* max value of a reserved word is NUM_RESERVED */
       if (ts->tsv.reserved > NUM_RESERVED) {
-        printf("unmarking global '%s'\n", getstr(ts));
+        D(printf("unmarking global '%s'\n", getstr(ts)));
         ts->tsv.reserved = 0;
       }
     }
@@ -12070,25 +8227,16 @@ static void UnmarkGlobals(const Proto *f)
     UnmarkGlobals(f->p[i]);
 }
 
+#define prescan_enterfunc(D) \
+  if (++(D)->funcidx > (D)->maxtreedepth) (D)->maxtreedepth = (D)->funcidx
 
-static void prescan_enterfunc(DecompState *D)
-{
-  D->funcidx++;
-  if (D->funcidx > D->maxtreedepth)
-    D->maxtreedepth = D->funcidx;
-}
-
-static void prescan_leavefunc(DecompState *D)
-{
-  D->funcidx--;
-}
+#define prescan_leavefunc(D) --(D)->funcidx
 
 
 /*
 ** when using debug info, just calculcate the maximum function tree depth
 */
-static void prescan_withdebug(DecompState *D, const Proto *f)
-{
+static void prescan_withdebug (DecompState *D, const Proto *f) {
   int i;
   prescan_enterfunc(D);
   for (i = 0; i < f->sizep; i++)
@@ -12101,8 +8249,7 @@ static void prescan_withdebug(DecompState *D, const Proto *f)
 ** when not using debug info, mark global variable names referenced in the code
 ** and calculate the maximum function tree depth
 */
-static void prescan_nodebug(DecompState *D, const Proto *f)
-{
+static void prescan_nodebug (DecompState *D, const Proto *f) {
   int i;
   prescan_enterfunc(D);
   MarkGlobals(f);
@@ -12115,19 +8262,10 @@ static void prescan_nodebug(DecompState *D, const Proto *f)
 /*
 ** Execute a protected decompiler.
 */
-struct SDecompiler {  /* data to `f_decompiler' */
-  DecompState *D;  /* decompiler state */
-  const Proto *f;  /* compiled chunk */
-};
-
 static void f_decompiler (hksc_State *H, void *ud) {
-  struct SDecompiler *sd = (struct SDecompiler *)ud;
-  DecompState *D = sd->D;
-  const Proto *f = sd->f;
-  if (D->usedebuginfo)
-    prescan_withdebug(D, f);
-  else
-    prescan_nodebug(D, f);
+  DecompState *D = ud;
+  const Proto *f = D->mainfunc;
+  (D->usedebuginfo ? prescan_withdebug : prescan_nodebug)(D, f);
   lua_assert(D->funcidx == 0);
   DecompileFunction(D, f);
   if (D->usedebuginfo == 0)
@@ -12139,57 +8277,26 @@ static void f_decompiler (hksc_State *H, void *ud) {
 /*
 ** dump Lua function as decompiled chunk
 */
-int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data)
-{
-  DecompState D;
+int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data) {
+  DecompState D = {0};
   int status;
-  struct SDecompiler sd;
-  lua_assert(MAX_INSFLAG <= 32);
+  lua_static_assert(MAX_INSFLAG <= 32);
   D.H=H;
-  D.fs=NULL;
+  D.mainfunc=f;
   D.writer=w;
   D.data=data;
   D.name = H->currinputname;
-  D.status=0;
-  D.rescan=0;
-  D.funcidx=0;
-  D.indentlevel=-1;
-  D.noindent=0;
-  D.linenumber=1;
-  D.lastline=1;
-  D.nextlinenumber=1;
-  D.delaysemi=0;
-  D.needspace=0;
-  D.maxtreedepth=1;  /* at least a main function */
-  VEC_INIT(D.loopstk);
-  VEC_INIT(D.blockstk);
-  VEC_INIT(D.freeblocknodes);
-  VEC_INIT(D.varnotes);
-  VEC_INIT(D.fixedstartlines);
-  VEC_INIT(D.savedstartpc);
-  VEC_INIT(D.savedrepeatvars);
-  D.kmap = NULL;
-  D.sizekmap = 0;
-  D.holdfirst = NULL;
-  D.holdlast = NULL;
-  D.lastcl.name = NULL;
-  D.lastcl.pc = -1;
-  D.lastcl.line = D.lastcl.haveself = 0;
+  D.indentlevel=-1;  /* incremented to 0 when entering the main function */
+  D.linenumber = D.lastline = D.nextlinenumber = 1;
   D.usedebuginfo = (!Settings(H).ignore_debug && f->sizelineinfo > 0);
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
   luaZ_initbuffer(H, &D.buff);
   luaZ_resetbuffer(&D.buff);
-  sd.D=&D;
-  sd.f=f;
-  status = luaD_pcall(H, f_decompiler, &sd);
+  status = luaD_pcall(H, f_decompiler, &D);
   luaZ_freebuffer(H, &D.buff);
-  VEC_FREE(H, D.loopstk, LoopState);
-  VEC_FREE(H, D.blockstk, BlockState);
-  VEC_FREE(H, D.freeblocknodes, BlockNode *);
-  VEC_FREE(H, D.varnotes, int);
-  VEC_FREE(H, D.fixedstartlines, linemap);
-  VEC_FREE(H, D.savedstartpc, index2pc_t);
-  VEC_FREE(H, D.savedrepeatvars, index2pc_t);
+#define DEF_VEC(t,n) VEC_FREE(H, D.n);
+  VEC_LIST
+#undef DEF_VEC
   freekmap(&D);
   if (status) D.status = status;
   return D.status;

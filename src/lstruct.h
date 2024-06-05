@@ -20,7 +20,8 @@ LUAI_FUNC StructSlot *luaR_addslot(hksc_State *H, StructProto *proto,
                                    TString *name, int type, short structid);
 LUAI_FUNC void luaR_addreservedslots(hksc_State *H, StructProto *proto);
 
-LUAI_FUNC StructSlot *luaR_findslot(StructProto *proto, TString *name);
+LUAI_FUNC StructSlot *luaR_findslot(const StructProto *proto,
+                                    const TString *name);
 
 LUAI_FUNC lu_byte luaR_pos2index(hksc_State *H, lu_byte pos);
 LUAI_FUNC lu_byte luaR_index2pos(hksc_State *H, lu_byte n);

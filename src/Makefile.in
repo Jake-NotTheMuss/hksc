@@ -17,7 +17,7 @@ LINK_LIBHKSC=$(LINK_LIBHKSC_@LINK_LIBHKSC_TYPE@)
 # CWARNS= -pedantic -Waggregate-return -Wcast-align \
 #         -Wmissing-prototypes -Wpointer-arith -Wshadow \
 #         -Wsign-compare -Wstrict-prototypes -Wundef -Wwrite-strings
-CWARNS= -ansi -pedantic -Wall -Wextra
+CWARNS= -ansi -pedantic -Wall -Wextra -Wno-unused-function
 # -Wcast-qual
 
 # -DEXTERNMEMCHECK -DHARDSTACKTESTS
