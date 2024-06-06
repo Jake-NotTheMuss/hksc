@@ -43,6 +43,8 @@ Havok Script Compatibility Options:
                            Supported values:
                              t6 (Also enables T6 extensions)
                              t7 (Same as t6 but also enables T7 extensions)
+                             sekiro, ds3 (Enables FromSoftware extensions)
+                             iw6, s1 (Enabled IW6 extensions)
                              none (disable all features)
   --with-structures        Enable structure extension
   --no-structures          Disable structure extension
