@@ -14,11 +14,5 @@ the internal interface dictates what data `pass1' is required to
 generate, and what data `pass2' shouold expect to exist by the time it
 runs.
 
-I've made a lot of progress on generating variable info when not using
-debug info, but I have yet to test hksc without debug info.
-
-With debug info, all unit tests are passing.
-
-With debug info, all test programs are passing.
-
-Without debug info, all pass1 unit tests are passing.
+The decompiler is currently incomplete and is not expected to pass any
+tests.
