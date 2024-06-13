@@ -3229,10 +3229,11 @@ static void parser_onreturn (DecompState *D, FuncState *fs) {
   int firstreg = D->a.insn.a;
   if (nret == 1)
     parser_readreg(D, fs, firstreg, 0);
-  else if (nret != 0)
+  else if (nret != 0) {
     parser_trimtop(D, fs, firstreg);
+    D->parser->lastopen = fs->pc;
+  }
   endexpr(D, TOKEN_RETCODE);
-  D->parser->lastopen = fs->pc;
 }
 
 
