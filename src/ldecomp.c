@@ -124,8 +124,6 @@ struct ConsControl {
 };
 
 
-struct StoreList;
-
 typedef struct linemap {
   int pc, line;
 } linemap;
@@ -237,7 +235,6 @@ typedef struct {
     /* the endpc of the OpenExpr within the current StackExpr if the OpenExpr
        starts at the same pc, or -1 */
     int currexpr_open;
-    struct StoreList *currstore;
     /* some bits to encode new upvalue and constant references in the current
        instruction while scanning, updated on each instruction */
     lu_int32 newref;
@@ -2729,12 +2726,16 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
     initbitmaps(D, fs);
 }
 
-
-static void parser_advance (DecompState *D, FuncState *fs) {
-  fs->pc = getnextpc(fs, fs->pc);
+static void parser_reset (DecompState *D) {
   D->parser->token = DEFAULT_TOKEN;
   D->parser->base = D->parser->top = D->parser->actualtop = NO_REG;
   D->parser->status = PARSER_STATUS_INITIAL;
+}
+
+
+static void parser_advance (DecompState *D, FuncState *fs) {
+  fs->pc = getnextpc(fs, fs->pc);
+  parser_reset(D);
 }
 
 
@@ -3640,6 +3641,7 @@ static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer) {
     }
     advance: parser_advance(D, fs);
     updateinsn(D, fs);
+    if (D->a.insn.o != OP_MOVE || D->a.insn.b < D->a.insn.a)
     /* end of the store list is marked by a non-store or a leader */
     if (!isstorecode(D->a.insn.o) || test_ins_property(fs, fs->pc, INS_LEADER))
       break;
@@ -3747,6 +3749,8 @@ static void parseassignments (DecompState *D, FuncState *fs) {
         break;
       if (token != DEFAULT_TOKEN)
         parser_advance(D, fs);
+      else
+        parser_reset(D);
     }
     parseassignment(D, fs, &buffer);
   } done:
