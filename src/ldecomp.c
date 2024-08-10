@@ -3641,9 +3641,12 @@ static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer) {
     }
     advance: parser_advance(D, fs);
     updateinsn(D, fs);
-    if (D->a.insn.o != OP_MOVE || D->a.insn.b < D->a.insn.a)
-    /* end of the store list is marked by a non-store or a leader */
-    if (!isstorecode(D->a.insn.o) || test_ins_property(fs, fs->pc, INS_LEADER))
+    /* end of the store list is marked by a non-store */
+    if ((D->a.insn.o != OP_MOVE || D->a.insn.b < D->a.insn.a) &&
+        !isstorecode(D->a.insn.o))
+      break;
+    /* a leader cannot be in the middle or end of a store list */
+    if (test_ins_property(fs, fs->pc, INS_LEADER))
       break;
     src = getstoresource(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c);
     if (src == -1 || ISK(src))
