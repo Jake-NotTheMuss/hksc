@@ -153,6 +153,13 @@ HKSC_FROMSOFT_TTABLES=0
 HKSC_TEST_WITH_STANDARD_LUA=0
 HKSC_NO_RK=0
 
+for opt; do
+	if test x$opt = x--reset; then
+		rm -rf "$config_file" > /dev/null 2>&1
+		break
+	fi
+done
+
 test -e "$config_file" && . ./"$config_file"
 
 old_debug=$debug
@@ -161,6 +168,7 @@ for opt; do
 	eval opt=\"$opt\"
 	case $opt in
 		-h|--help) show_help ;;
+		--reset) ;;
 		--prefix=*) prefix=${opt#*=} ;;
 		--exec-prefix=*|--eprefix=*) exec_prefix=${opt#*=} ;;
 		--bindir=*) bindir=${opt#*=} ;;
