@@ -444,10 +444,18 @@ static TValue *newkey (hksc_State *H, Table *t, const TValue *key) {
       gnext(mp) = NULL;  /* now `mp' is free */
       setnilvalue(gval(mp));
 #ifdef HKSC_FROMSOFT_TTABLES
+      /* update nextinserted and previnserted links to `n' instead of `mp' */
+      if (gkey(mp)->previnserted != NULL)
+        gkey(gkey(mp)->previnserted)->nextinserted = n;
+      if (gkey(mp)->nextinserted != NULL)
+        gkey(gkey(mp)->nextinserted)->previnserted = n;
       /* the colliding node has moved locations; update the last inserted if it
          points to the colliding node */
       if (t->lastinserted == mp) t->lastinserted = n;
-#endif
+      /* now `mp' is free */
+      gkey(mp)->previnserted = NULL;
+      gkey(mp)->nextinserted = NULL;
+#endif /* HKSC_FROMSOFT_TTABLES */
     }
     else {  /* colliding node is in its own main position */
       /* new node will go into free position */
