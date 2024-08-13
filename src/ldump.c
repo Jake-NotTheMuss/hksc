@@ -565,7 +565,7 @@ static void DumpStructures(DumpState *D)
     }
     killtemp(obj2gco(dumped_protos));
   }
-  DumpSize(0,D);
+  DumpString(NULL,D);
 }
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
