@@ -2648,6 +2648,7 @@ typedef struct ExpressionParser {
   /* prevpc is the last pc dispatched by the parser */
   int startpc, prevpc;
   int lastopen;
+  int pending_expr_start;
   /* these fields are stack positions
      - base is the base of the current expression list being parsed
      - top is the top of the pending stack space
@@ -2664,9 +2665,15 @@ static void initstackexpr (StackExpr *e) {
 }
 
 
-static void updatestackexpr (StackExpr *e, int pc, int reg) {
+static void updatestackexpr (DecompState *D, int pc, int reg) {
+  StackExpr *e = D->parser->expr;
   if (e->startpc == -1) {
     e->startpc = pc;
+    if (D->parser->pending_expr_start != -1) {
+      lua_assert(D->parser->pending_expr_start < pc);
+      e->startpc = D->parser->pending_expr_start;
+      D->parser->pending_expr_start = -1;
+    }
     e->firstreg = reg;
   }
   e->endpc = pc;
@@ -2717,6 +2724,7 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   D->parser->startpc = check_exp(ispcvalid(fs, fs->pc), fs->pc);
   D->parser->prevpc = -1;
   D->parser->lastopen = -1;
+  D->parser->pending_expr_start = -1;
   D->stackexpr.used = 0;
   VEC_GROW(D->H, D->stackexpr);
   D->stackexpr.used = 1;
@@ -2730,6 +2738,7 @@ static void parser_reset (DecompState *D) {
   D->parser->token = DEFAULT_TOKEN;
   D->parser->base = D->parser->top = D->parser->actualtop = NO_REG;
   D->parser->status = PARSER_STATUS_INITIAL;
+  D->parser->pending_expr_start = -1;
 }
 
 
@@ -2867,7 +2876,7 @@ static void parser_dischargeload (DecompState *D, FuncState *fs,
   if (l != r)
     markdischargedexp(fs, getslotinit(fs, l->r)+1, fs->pc);
   setslotactive(fs, l->r, fs->pc);
-  updatestackexpr(D->parser->expr, fs->pc, l->r);
+  updatestackexpr(D, fs->pc, l->r);
 }
 
 
@@ -2901,7 +2910,9 @@ static void parser_fullexpr (DecompState *D, FuncState *fs,
   for (; reg <= lastreg; reg++)
     setslotactive(fs, reg, fs->pc);
   D->parser->top = D->parser->actualtop = reg;
-  updatestackexpr(D->parser->expr, fs->pc, reg-1);
+  /* first set the first reg, than update the lastreg */
+  updatestackexpr(D, fs->pc, D->a.insn.a);
+  updatestackexpr(D, fs->pc, reg-1);
 }
 
 
@@ -2946,7 +2957,9 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
   const Instruction *jc = getjumpcontrol(fs, fs->pc);
   StackExpr *lastbb;
   if (D->parser->expr->startpc == -1 && jc && !testAMode(GET_OPCODE(*jc))) {
-    D->parser->expr->startpc = fs->pc - 1;
+    /* don't actually update the startpc until a register is clobbered, so that
+       `firstreg' is correctly set also */
+    D->parser->pending_expr_start = fs->pc - 1;
     return;
   }
   if (D->a.insn.sbx <= 0 || test_ins_property(fs, fs->pc, INS_BREAKSTAT)) {
@@ -2976,6 +2989,11 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
       lastbb->lastreg = D->parser->top;
   }
   D->parser->actualtop = D->parser->top;
+  if (lastbb == NULL) {
+    if (D->parser->expr->startpc == -1)
+      D->parser->pending_expr_start = fs->pc - (jc != NULL);
+    return;
+  }
   /* jump is always positive */
   D->parser->expr->jump = cast(unsigned int, D->a.insn.sbx);
 }
@@ -3197,7 +3215,7 @@ static void parser_onsetlist (DecompState *D, FuncState *fs) {
   cc->endpc = cc->setlist = fs->pc;
   setslotactive(fs, reg, fs->pc);
   parser_trimtop(D, fs, reg+1);
-  updatestackexpr(D->parser->expr, fs->pc, reg);
+  updatestackexpr(D, fs->pc, reg);
   D->parser->lastopen = fs->pc;
 }
 
