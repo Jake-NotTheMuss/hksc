@@ -43,6 +43,7 @@ enum BLTYPE {
   DEFINSFLAG(SEQPT)  /* a statement boundary */ \
   DEFINSFLAG(ENDSCOPE)  /* end of a lexical scope */ \
   DEFINSFLAG(KLOCVAR)  /* local initialization that pushes a constant */ \
+  DEFINSFLAG(MULTILOAD)  /* loads values into multiple registers */ \
   DEFINSFLAG(FIXEDSTARTLINE)  /* pc corresponds to an earlier source line than \
                              it is mapped to (referred to as `fixed' line) */ \
   DEFINSFLAG(CONSTRUCTOR)  /* inside a constructor */ \

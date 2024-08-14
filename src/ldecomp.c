@@ -2851,6 +2851,9 @@ static int isloadsubexpr (const DecompState *D, const FuncState *fs,
   r_active = getslotactive(fs, r->r);
   if (r_active != fs->pc || (l_active != r_active && l_active != r_init))
     return 0;
+  if (test_ins_property(fs, l_init, INS_MULTILOAD) ||
+      test_ins_property(fs, r_init, INS_MULTILOAD))
+    return 0;
   if (iskmode(l->mode) && test_ins_property(fs, l_init, INS_KLOCVAR))
     return 0;
   if (iskmode(r->mode) && test_ins_property(fs, r_init, INS_KLOCVAR))
@@ -2913,6 +2916,8 @@ static void parser_fullexpr (DecompState *D, FuncState *fs,
   /* first set the first reg, than update the lastreg */
   updatestackexpr(D, fs->pc, D->a.insn.a);
   updatestackexpr(D, fs->pc, reg-1);
+  if (D->a.insn.a != lastreg)
+    set_ins_property(fs, fs->pc, INS_MULTILOAD);
 }
 
 
@@ -3282,6 +3287,8 @@ static void parser_oncall (DecompState *D, FuncState *fs) {
     /* if the call returns up to stack top, pretend it returns 1 value */
     nret = nret > 1 ? nret : 1;
     set_ins_property(fs, startpc, INS_LOCVAREXPR);
+    if (nret != 1)
+      set_ins_property(fs, startpc, INS_MULTILOAD);
     do {
       setslotactive(fs, D->parser->top, fs->pc);
       D->parser->top++, D->parser->actualtop++;
