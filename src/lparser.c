@@ -115,7 +115,7 @@ static void check_match (LexState *ls, int what, int who, int where) {
 }
 
 
-static TString *str_getname (LexState *ls) {
+static TString *str_peekname (LexState *ls) {
   TString *ts;
   check(ls, TK_NAME);
   ts = ls->t.seminfo.ts;
@@ -2127,7 +2127,7 @@ static void forlist (LexState *ls, TString *indexname)
   while (testnext(ls, ',')) {
     /* I parse it in this order so that `near' token in the error message
        matches exactly with Havok Script when structures are disabled */
-    TString *varname = str_getname(ls);
+    TString *varname = str_peekname(ls);
     luaX_lookahead(ls);  /* lookahead for `:' */
     if (ls->lookahead.token == ':') {
 #if HKSC_STRUCTURE_EXTENSION_ON
@@ -2167,7 +2167,7 @@ static void forstat (LexState *ls, int line) {
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip `for' */
-  varname = str_getname(ls);
+  varname = str_peekname(ls);
   luaX_lookahead(ls);
   if (ls->lookahead.token == ':') {
 #if HKSC_STRUCTURE_EXTENSION_ON
@@ -2251,7 +2251,7 @@ static void localstat (LexState *ls) {
   lua_assert(ls->fs->nlocalslhs == 0);
   do {
     TypeInfo t;
-    TString *varname = str_getname(ls);
+    TString *varname = str_peekname(ls);
     luaX_lookahead(ls);
     if (ls->lookahead.token == ':') {  /* LOCAL NAME : TYPE */
 #if HKSC_STRUCTURE_EXTENSION_ON
@@ -2259,7 +2259,7 @@ static void localstat (LexState *ls) {
       luaX_next(ls);  /* skip `:' */
       /* the type name is advanced over adter parsing the type info to match
          the `near' token in error messages exactly with Havok Script */
-      parsetype(ls, &t, str_getname(ls));
+      parsetype(ls, &t, str_peekname(ls));
       luaX_next(ls);  /* advance over type name */
       new_typedlocalvar(ls, varname, nvars, t.type, t.proto);
 #else /* !HKSC_STRUCTURE_EXTENSION_ON */
@@ -2351,14 +2351,14 @@ static void structstat (LexState *ls) {
       if (seenregularslot)
         goto badslotorder;
       checknext(ls, ':');
-      slottype = str_getname(ls);
+      slottype = str_peekname(ls);
       addstructmeta(ls, slottype);
       luaX_next(ls);
     }
     else {
       seenregularslot = 1;
       checknext(ls, ':');
-      slottype = str_getname(ls);
+      slottype = str_peekname(ls);
       addstructslot(ls, slotname, slottype);
       luaX_next(ls);
     }
