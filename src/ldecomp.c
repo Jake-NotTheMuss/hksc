@@ -2776,25 +2776,25 @@ static int parser_mergeexpr (DecompState *D, FuncState *fs) {
   if (D->stackexpr.used > 1) {
     StackExpr *e1 = parser_getexpr(D, -1);
     StackExpr *e2 = D->parser->expr;
-    int pc = e2->startpc;
+    int pc;
     if (e1->jump || stackexprisunreachable(fs, e1)) {
       lua_assert(GET_OPCODE(fs->f->code[e1->startpc-1]) == OP_JMP);
       if (getjump(fs, e1->startpc-1) == e2->startpc) {
-        pc = e1->startpc;
         if (e1->jump)
           /* merge with the previous basic block subexpression */
           e1--;
         else
           /* make the expression start on the jump */
-          set_ins_property(fs, --e1->startpc, INS_LOCVAREXPR);
+          e1->startpc--;
       }
     }
     e1->endpc = e2->endpc;
     e1->lastreg = e2->lastreg;
     /* unset extra LOCVAREXPR for the basic block expressions, the actual start
        is in the previous basic block */
-    for (; pc <= e1->endpc; pc++)
+    for (pc = e1->startpc+1; pc <= e1->endpc; pc++)
       unset_ins_property(fs, pc, INS_LOCVAREXPR);
+    set_ins_property(fs, e1->startpc, INS_LOCVAREXPR);
     D->parser->expr = e1;
     D->stackexpr.used = (e1 - D->stackexpr.s) + 1;
     return 1;
