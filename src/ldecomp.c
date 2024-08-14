@@ -3001,11 +3001,23 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
 
 static int parser_readoperand (DecompState *D, FuncState *fs, OperandDesc o) {
   int r = o.r, r_init;
+  int checkloadk = cast_int(o.mode) == -1;
+  if (D->parser->status == PARSER_STATUS_INITIAL)
+    return 0;
   if (r < D->parser->top-1 || r >= D->parser->top)
     return 0;
   r_init = getslotinit(fs, r);
-  if (iskmode(o.mode) && test_ins_property(fs, r_init, INS_KLOCVAR))
-    return 0;
+  if (checkloadk)
+    o.mode = OpArgRK;
+  if (iskmode(o.mode) && test_ins_property(fs, r_init, INS_KLOCVAR)) {
+    /* OP_LOADK followed by a `goiffalse' jump is not optimized by Lua,
+       therefore this check is added to account for expressions like `1 or a',
+       where `1' is tested with OP_TEST instead of being optimized, because of
+       the use of `or' instead of `and'. See the difference between
+       `luaK_goiftrue' and `luaK_goiffalse' in `lcode.c' */
+    if (!checkloadk || GET_OPCODE(fs->f->code[r_init]) != OP_LOADK)
+      return 0;
+  }
   parser_dischargeread(D, fs, o);
   return 1;
 }
@@ -3021,7 +3033,7 @@ static int parser_readreg (DecompState *D, FuncState *fs, int r, int tested) {
         if a then ... end
      the code must not be optimized to match, so ensure the variable is not
      marked as DISCHARGED to avoid pruning */
-  o.mode = tested ? OpArgRK : OpArgR;
+  o.mode = tested == 1 ? OpArgRK : (tested > 1 ? -1 : OpArgR);
   return parser_readoperand(D, fs, o);
 }
 
@@ -3039,9 +3051,11 @@ static void parser_ontest (DecompState *D, FuncState *fs) {
     int temp = r1; r1 = r2; r2 = temp;
   }
   if ((r2 == -1 || (discharged = parser_readreg(D, fs, r2, 1))) && r1 != -1)
-    discharged = parser_readreg(D, fs, r1, 1);
-  if (!discharged)
-    endexpr(D, DEFAULT_TOKEN);
+    discharged = parser_readreg(D, fs, r1, 1 + testAMode(o));
+  if (!discharged) {
+    if (D->parser->status != PARSER_STATUS_INITIAL)
+      endexpr(D, DEFAULT_TOKEN);
+  }
 }
 
 
