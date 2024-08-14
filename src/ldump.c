@@ -432,15 +432,15 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 
 
 #if HKSC_STRUCTURE_EXTENSION_ON
-static void GetStructuresReferenced(const Proto *f, DumpState *D)
+static void ScanFunctionStructReferences(const Proto *f, DumpState *D)
 {
   hksc_State *H = D->H;
   Table *t = D->protos;
   TValue key, *val;
-  int i;
+  int pc;
   lua_assert(t != NULL);
-  for (i = 0; i < f->sizecode; i++) {
-    Instruction insn = f->code[i];
+  for (pc = 0; pc < f->sizecode; pc++) {
+    Instruction insn = f->code[pc];
     switch (GET_OPCODE(insn)) {
       case OP_SETSLOTMT:
         if (GET_SLOTMT_TYPE(insn) != LUA_TSTRUCT)
@@ -448,7 +448,7 @@ static void GetStructuresReferenced(const Proto *f, DumpState *D)
         /* fallthrough */
       case OP_NEWSTRUCT:
       case OP_SETSLOTS:
-        insn = f->code[++i];  /* the next code has the struct id */
+        insn = f->code[++pc];  /* the next code has the struct id */
         lua_assert(GET_OPCODE(insn) == OP_DATA);
         /* fallthrough */
       case OP_CHECKTYPES:
@@ -474,7 +474,7 @@ static void DumpFunction(const Proto *f, const TString *p, DumpState *D)
 {
   int i,n;
 #if HKSC_STRUCTURE_EXTENSION_ON
-  GetStructuresReferenced(f, D);
+  ScanFunctionStructReferences(f, D);
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   if (needfuncinfo(D)) {
     DumpInt(f->nups,D); /* number of upvalues */
