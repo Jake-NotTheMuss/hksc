@@ -3407,7 +3407,7 @@ static int parseexpression (DecompState *D, FuncState *fs) {
       D->stackexpr.used = 1;
       if (D->parser->expr->endpc != -1)
         fs->pc = getnextpc(fs, D->parser->expr->endpc);
-      if (fs->pc == D->parser->startpc)
+      if (fs->pc == D->parser->startpc && D->parser->token == DEFAULT_TOKEN)
         fs->pc = getnextpc(fs, fs->pc);
       return D->parser->token;
     }
@@ -3776,9 +3776,8 @@ static void parseassignments (DecompState *D, FuncState *fs) {
       enum ParserToken token = parseexpression(D, fs);
       if (token == TOKEN_ENDOFCODE)
         goto done;
-      if (token != TOKEN_STORE && token != DEFAULT_TOKEN)
-        buffer.n = 0;
-      else if (D->parser->expr->startpc != -1) {
+      if ((token == TOKEN_STORE || token == DEFAULT_TOKEN) &&
+          D->parser->expr->startpc != -1) {
         if (buffer.n >= 2) {
           buffer.n = 1;
           buffer.b[0] = buffer.b[1];
@@ -3787,6 +3786,8 @@ static void parseassignments (DecompState *D, FuncState *fs) {
         buffer.open[buffer.n] = D->parser->lastopen == D->parser->expr->endpc;
         buffer.b[buffer.n++] = *D->parser->expr;
       }
+      else
+        buffer.n = 0;
       if (token == TOKEN_STORE)
         break;
       if (token != DEFAULT_TOKEN)
