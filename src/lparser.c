@@ -320,7 +320,8 @@ static void finalizestruct (LexState *ls) {
   if (Settings(H).emit_struct) {
     StructProto *new_proto = &ls->current_proto;
     StructProto *vm_proto;
-    if (new_proto->nslots == NUM_SLOTS_RESERVED)
+    if (new_proto->nslots == NUM_SLOTS_RESERVED &&
+        !new_proto->hasmeta && !new_proto->hasproxy)
       luaX_semerror(ls, "Empty structure definitions are not allowed.");
     vm_proto = luaR_getstructbyname(H, new_proto->name);
     if (vm_proto != NULL) {
