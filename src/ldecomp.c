@@ -2648,7 +2648,6 @@ typedef struct ExpressionParser {
   /* prevpc is the last pc dispatched by the parser */
   int startpc, prevpc;
   int lastopen;
-  int pending_expr_start;
   /* these fields are stack positions
      - base is the base of the current expression list being parsed
      - top is the top of the pending stack space
@@ -2669,11 +2668,6 @@ static void updatestackexpr (DecompState *D, int pc, int reg) {
   StackExpr *e = D->parser->expr;
   if (e->startpc == -1) {
     e->startpc = pc;
-    if (D->parser->pending_expr_start != -1) {
-      lua_assert(D->parser->pending_expr_start < pc);
-      e->startpc = D->parser->pending_expr_start;
-      D->parser->pending_expr_start = -1;
-    }
     e->firstreg = reg;
   }
   e->endpc = pc;
@@ -2724,7 +2718,6 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   D->parser->startpc = check_exp(ispcvalid(fs, fs->pc), fs->pc);
   D->parser->prevpc = -1;
   D->parser->lastopen = -1;
-  D->parser->pending_expr_start = -1;
   D->stackexpr.used = 0;
   VEC_GROW(D->H, D->stackexpr);
   D->stackexpr.used = 1;
@@ -2738,7 +2731,6 @@ static void parser_reset (DecompState *D) {
   D->parser->token = DEFAULT_TOKEN;
   D->parser->base = D->parser->top = D->parser->actualtop = NO_REG;
   D->parser->status = PARSER_STATUS_INITIAL;
-  D->parser->pending_expr_start = -1;
 }
 
 
@@ -2788,6 +2780,10 @@ static int parser_mergeexpr (DecompState *D, FuncState *fs) {
           e1->startpc--;
       }
     }
+    if (e1->firstreg == NO_REG) {
+      e1->firstreg = e2->firstreg;
+      e1->lastreg = e2->lastreg;
+    }
     e1->endpc = e2->endpc;
     e1->lastreg = e2->lastreg;
     /* unset extra LOCVAREXPR for the basic block expressions, the actual start
@@ -2820,12 +2816,15 @@ static void parser_checklabel (DecompState *D, FuncState *fs) {
     StackExpr *prevbb = parser_getexpr(D, -1);
     StackExpr *currbb = D->parser->expr;
     int prevpc = getprevpc(fs, fs->pc);
-    if (currbb->endpc == prevpc && prevbb->lastreg+1 == D->parser->top) {
+    lua_assert(prevbb != NULL);
+    if (currbb->endpc == prevpc &&
+        (prevbb->lastreg == NO_REG || prevbb->lastreg+1 == D->parser->top)) {
       if (!parser_mergeexpr(D, fs))
         break;
     }
     else {
-      restorelastreg(fs, prevbb);
+      if (prevbb->lastreg != NO_REG)
+        restorelastreg(fs, prevbb);
       endexpr(D, DEFAULT_TOKEN);
       break;
     }
@@ -2961,12 +2960,8 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
   int label = fs->pc+1+D->a.insn.sbx;
   const Instruction *jc = getjumpcontrol(fs, fs->pc);
   StackExpr *lastbb;
-  if (D->parser->expr->startpc == -1 && jc && !testAMode(GET_OPCODE(*jc))) {
-    /* don't actually update the startpc until a register is clobbered, so that
-       `firstreg' is correctly set also */
-    D->parser->pending_expr_start = fs->pc - 1;
-    return;
-  }
+  if (D->parser->expr->startpc == -1 && jc && !testAMode(GET_OPCODE(*jc)))
+    goto pushfakeexpr;
   if (D->a.insn.sbx <= 0 || test_ins_property(fs, fs->pc, INS_BREAKSTAT)) {
     int token = test_ins_property(fs, fs->pc, INS_BREAKSTAT) ?
     TOKEN_BREAK : TOKEN_JUMP_BACK;
@@ -2995,9 +2990,19 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
   }
   D->parser->actualtop = D->parser->top;
   if (lastbb == NULL) {
-    if (D->parser->expr->startpc == -1)
-      D->parser->pending_expr_start = fs->pc - (jc != NULL);
-    return;
+    /* the last basic block does not yield a stack value, so create a fake
+       StackExpr entry to assist in merging basic blocks in case that is needed
+       once the label is reached; use the special value NO_REG to indiciate the
+       StackExpr is fake */
+    pushfakeexpr:
+    VEC_GROW(D->H, D->stackexpr);
+    D->parser->expr = &D->stackexpr.s[D->stackexpr.used++];
+    *D->parser->expr = *(D->parser->expr-1);
+    lastbb = D->parser->expr-1;
+    initstackexpr(lastbb);
+    lastbb->startpc = fs->pc - (jc != NULL);
+    lastbb->endpc = fs->pc;
+    lastbb->firstreg = lastbb->lastreg = NO_REG;
   }
   /* jump is always positive */
   D->parser->expr->jump = cast(unsigned int, D->a.insn.sbx);
@@ -3403,12 +3408,17 @@ static int parseexpression (DecompState *D, FuncState *fs) {
     parser_dispatch(D, fs);
     D->parser->prevpc = fs->pc;
     if (D->parser->status == PARSER_STATUS_ENDEXPR) {
+      const enum ParserToken token = D->parser->token;
       D->parser->expr = D->stackexpr.s;
       D->stackexpr.used = 1;
       if (D->parser->expr->endpc != -1)
         fs->pc = getnextpc(fs, D->parser->expr->endpc);
-      if (fs->pc == D->parser->startpc && D->parser->token == DEFAULT_TOKEN)
+      if (fs->pc == D->parser->startpc && token == DEFAULT_TOKEN)
         fs->pc = getnextpc(fs, fs->pc);
+      /* if the first expression is a fake one pushed to assist merging basic
+         blocks, reset it */
+      if (D->parser->expr->firstreg == NO_REG && token == DEFAULT_TOKEN)
+        initstackexpr(D->parser->expr);
       return D->parser->token;
     }
   }
