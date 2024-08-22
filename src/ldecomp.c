@@ -2532,26 +2532,26 @@ enum SLOTFLAGS {
 static void setslottype (FuncState *fs, int r, int t) {
   SlotDesc *slot = getslotdesc(fs, r);
   lua_assert(t >= 0 && t != LUA_TSTRUCT);
-  slot->t.type = t;
-  slot->t.proto = NULL;
+  slot->type = t;
+  slot->proto = NULL;
 }
 
 static void setslotproto (FuncState *fs, int r, const struct StructProto *p) {
   SlotDesc *slot = getslotdesc(fs, r);
-  slot->t.type = LUA_TSTRUCT;
-  slot->t.proto = p;
+  slot->type = LUA_TSTRUCT;
+  slot->proto = p;
 }
 
 
 static int getslottype (const FuncState *fs, int r) {
-  return getslotdesc(fs, r)->t.type;
+  return getslotdesc(fs, r)->type;
 }
 
 
 static void clearslottype (FuncState *fs, int r) {
   SlotDesc *slot = getslotdesc(fs, r);
-  slot->t.type = LUA_TNIL;
-  slot->t.proto = NULL;
+  slot->type = LUA_TNIL;
+  slot->proto = NULL;
 }
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 

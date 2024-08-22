@@ -284,10 +284,8 @@ typedef struct ExpNode {
 typedef struct SlotDesc {
   lu_byte flags;
 #if HKSC_STRUCTURE_EXTENSION_ON
-  struct {
-    lu_byte type;  /* type of value in this slot */
-    const struct StructProto *proto;
-  } t;
+  lu_byte type;  /* type of value in this slot */
+  const struct StructProto *proto;
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   union {
     /* fields used by source code generator */
