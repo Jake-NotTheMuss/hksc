@@ -307,13 +307,15 @@ LUAI_FUNC void luaA_freeanalyzer (hksc_State *H, Analyzer *a);
 #endif /* HKSC_DECOMPILER */
 
 #ifndef HKSC_VERSION
-#define CASE_OP_SETTABLE case OP_SETTABLE
-#define CASE_OP_CALL case OP_CALL: CASE_OP_TAILCALL
-#define CASE_OP_TAILCALL case OP_TAILCALL
-#define IS_OP_SETTABLE(o)  ((o) == OP_SETTABLE)
-#define IS_OP_SETSLOT(o)  0
+#define CASE_OP_CALL_LABEL OP_CALL: case CASE_OP_TAILCALL_LABEL
+#define CASE_OP_TAILCALL_LABEL OP_TAILCALL
+#define CASE_OP_GETTABLE_LABEL OP_GETTABLE
+#define CASE_OP_SETTABLE_LABEL OP_SETTABLE
 #define IS_OP_CALL(o)  ((o) == OP_CALL || IS_OP_TAILCALL(o))
 #define IS_OP_TAILCALL(o)  ((o) == OP_TAILCALL)
+#define IS_OP_GETTABLE(o)  ((o) == OP_GETTABLE)
+#define IS_OP_SETTABLE(o)  ((o) == OP_SETTABLE)
+#define IS_OP_SETSLOT(o)  0
 #endif /* HKSC_VERSION */
 
 #endif

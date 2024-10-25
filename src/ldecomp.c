@@ -371,8 +371,8 @@ static int bitmapfind (const lu_int32 *bitmap, int nbits, int offset, int set) {
     lu_int32 firstblock = bitmap[i];
     firstblock = set ? firstblock & ~excludedbits : firstblock | excludedbits;
     /* traverse blocks */
-    if (firstblock == comparebits) do ;
-    while (++i < numblocks && bitmap[i] == comparebits);
+    if (firstblock == comparebits) do { /* nothing */
+    } while (++i < numblocks && bitmap[i] == comparebits);
     /* check for block partially set */
     if (i < numblocks) {
       lu_int32 block = set ? bitmap[i] : ~bitmap[i];
@@ -1723,7 +1723,7 @@ static int ischecktypecode (OpCode o) {
 
 static int isstorecode (OpCode o) {
   switch (o) {
-    CASE_OP_SETTABLE: case OP_SETGLOBAL: case OP_SETUPVAL:
+    case CASE_OP_SETTABLE_LABEL: case OP_SETGLOBAL: case OP_SETUPVAL:
 #ifdef HKSC_VERSION
     case OP_SETUPVAL_R1: case OP_SETSLOTN: case OP_SETSLOTI: case OP_SETSLOT:
     case OP_SETSLOTS: case OP_SETSLOTMT:
@@ -1739,7 +1739,7 @@ static int isstorecode (OpCode o) {
 */
 static int getstoresource (OpCode o, int a, int b, int c) {
   switch (o) {
-    CASE_OP_SETTABLE:
+    case CASE_OP_SETTABLE_LABEL:
 #ifdef HKSC_VERSION
     case OP_SETSLOTI: case OP_SETSLOT: case OP_SETSLOTS: case OP_SETSLOTMT:
 #endif /* HKSC_VERSION */
@@ -1883,7 +1883,7 @@ static int getregoperands (OpCode o, int a, int b, int c, OperandDesc slots[3]){
         return 1;
       }
       b--; /* fallthrough */
-    CASE_OP_CALL:
+    case CASE_OP_CALL_LABEL:
       slots[0].r = a;
       slots[1].r = b > 0 ? a + b - 1 : -1;
       slots[0].mode = slots[1].mode = OpArgU;

@@ -221,13 +221,36 @@ LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
 /* number of list items to accumulate before a SETLIST instruction */
 #define LFIELDS_PER_FLUSH  50
 
-#define CASE_OP_CALL \
-  case OP_CALL: case OP_CALL_I: case OP_CALL_I_R1: case OP_CALL_C: \
-  case OP_CALL_M: CASE_OP_TAILCALL
+/*
+** use CASE_OP_*_LABEL macros in the form `case <macro>:'
+** `case' is not included in the macro because otherwise implicit fallthrough
+** warnings cannot be suppressed with a fallthrough comment in GCC
+*/
 
-#define CASE_OP_TAILCALL \
-  case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1: \
-  case OP_TAILCALL_C: case OP_TAILCALL_M
+/* use instead of `OP_CALL: case OP_TAILCALL' */
+#define CASE_OP_CALL_LABEL \
+  OP_CALL: case OP_CALL_I: case OP_CALL_I_R1: case OP_CALL_C: case OP_CALL_M: \
+  case CASE_OP_TAILCALL_LABEL
+
+/* use instead of `OP_TAILCALL' */
+#define CASE_OP_TAILCALL_LABEL \
+  OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1: case OP_TAILCALL_C: \
+  case OP_TAILCALL_M
+
+/* use instead of `OP_GETTABLE' */
+#define CASE_OP_GETTABLE_LABEL \
+  OP_GETFIELD: case OP_GETFIELD_R1: case OP_GETTABLE: case OP_GETTABLE_S: \
+  case OP_GETTABLE_N
+
+/* use instead of `OP_SETTABLE' */
+#define CASE_OP_SETTABLE_LABEL \
+  OP_SETFIELD: case OP_SETFIELD_R1: case OP_SETTABLE: case OP_SETTABLE_BK: \
+  case OP_SETTABLE_N: case OP_SETTABLE_N_BK: case OP_SETTABLE_S: \
+  case OP_SETTABLE_S_BK
+
+/*
+** IS_OP_* macros; use `IS_OP_<opcode>(o)' instead of `o == <opcode>'
+*/
 
 #define IS_OP_CALL(o) \
   ((o) == OP_CALL || (o) == OP_CALL_I || (o) == OP_CALL_I_R1 || \
@@ -237,6 +260,9 @@ LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
   ((o) == OP_TAILCALL || (o) == OP_TAILCALL_I || (o) == OP_TAILCALL_I_R1 || \
    (o) == OP_TAILCALL_C || (o) == OP_TAILCALL_M)
 
+#define IS_OP_GETTABLE(o) \
+  ((o) == OP_GETFIELD || (o) == OP_GETFIELD_R1 || (o) == OP_GETTABLE || \
+   (o) == OP_GETTABLE_S || (o) == OP_GETTABLE_N)
 
 #define IS_OP_SETTABLE(o) \
   ((o) == OP_SETFIELD || (o) == OP_SETFIELD_R1 || (o) == OP_SETTABLE || \
@@ -246,14 +272,5 @@ LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
 #define IS_OP_SETSLOT(o) \
   ((o) == OP_SETSLOTN || (o) == OP_SETSLOTI || (o) == OP_SETSLOT || \
    (o) == OP_SETSLOTS || (o) == OP_SETSLOTMT)
-
-#define CASE_OP_SETTABLE \
-  case OP_SETFIELD: case OP_SETFIELD_R1: case OP_SETTABLE: \
-  case OP_SETTABLE_BK: case OP_SETTABLE_N: case OP_SETTABLE_N_BK: \
-  case OP_SETTABLE_S: case OP_SETTABLE_S_BK
-
-#define CASE_OP_GETTABLE \
-  case OP_GETFIELD: case OP_GETFIELD_R1: case OP_GETTABLE: \
-  case OP_GETTABLE_S: case OP_GETTABLE_N
 
 #endif

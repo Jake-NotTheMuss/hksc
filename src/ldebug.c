@@ -196,7 +196,7 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
           pc += b;  /* do the jump */
         break;
       }
-      CASE_OP_CALL: {
+      case CASE_OP_CALL_LABEL: {
         if (b != 0) {
           checkreg(pt, a+b-1);
         }

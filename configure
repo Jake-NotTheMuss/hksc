@@ -328,6 +328,13 @@ esac
 # configure compatibility settings based on the build config type
 case $game in
 	t6|t7|none) HKSC_FROMSOFT_TTABLES=0 ;;
+	iw6|s1)
+		STRUCTURE_EXTENSION_ON=1
+		GETGLOBAL_MEMOIZATION=1
+		WITHDOUBLES=0
+		WITHNATIVEINT=0
+		SELF=0
+		HKSC_FROMSOFT_TTABLES=0 ;;
 	ds3|sekiro)
 		STRUCTURE_EXTENSION_ON=1
 		GETGLOBAL_MEMOIZATION=1
@@ -353,8 +360,8 @@ Configuration set for $game
 EOF
 
 # set a Makefile variable based on the value of a configure variable
-# set10 [confvarname] [makevarname] [valiftrue] [valiffalse]
-set10()
+# setifelse [conditionvar] [resultvar] [valiftrue] [valiffalse]
+setifelse()
 {
 	eval val=\$$1
 	if test "x$val" = x0; then
@@ -372,11 +379,11 @@ else
 	TEST_STATIC_RULE=test
 fi
 
-set10 lua_codt6 LUA_COD_YESNO yes no
+setifelse lua_codt6 LUA_COD_YESNO yes no
 # set build compiler flags for debug or release builds
-set10 debug BUILDCONFIGTYPE TESTS RELEASE
+setifelse debug BUILDCONFIGTYPE TESTS RELEASE
 # set which tests to include based on whether the decompiler is enabled
-# set10 with_decompiler TESTSUFFIX .dtest .ctest
+# setifelse with_decompiler TESTSUFFIX .dtest .ctest
 if test "x$with_decompiler" = x0; then
 	TESTSUFFIX=.ctest
 	TESTS_SRC_VAR=ALL_SRC
@@ -398,30 +405,30 @@ else
 	esac
 fi
 # set which error tests to do for compatibility features
-set10 STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
-set10 with_ui64 UI64_ERROR_CHECK yesui64 noui64
+setifelse STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
+setifelse with_ui64 UI64_ERROR_CHECK yesui64 noui64
 # flags for generating Lua profiling info
 # for the COD build, suppress bytecode output and only generate a callstackdb
 # for non-COD, use profile stripping mode
-set10 lua_codt6 HKSC_GEN_PROFILE \
+setifelse lua_codt6 HKSC_GEN_PROFILE \
 "--with-debug -o /dev/null --debugfile /dev/null --callstackdb" "-s=p -o"
 # flags for generating Lua debug info
 # for the COD build, suppress bytecode output and only generate a debug file
 # for non-COD, use debug stripping mode
-set10 lua_codt6 HKSC_GEN_DEBUG \
+setifelse lua_codt6 HKSC_GEN_DEBUG \
 "--with-debug -o /dev/null --callstackdb /dev/null --debugfile" "-s=n -o"
 HKSC_CMP_CODE="cmp -bl"
 if test x$test_with_debug != x0; then
 # command for comparing profiling info
 # use diff for COD profile info because it is printed as text
 # otherwise use cmp to compare binary files
-set10 lua_codt6 HKSC_CMP_PROFILE "diff -u --strip-trailing-cr" "cmp -bl"
+setifelse lua_codt6 HKSC_CMP_PROFILE "diff -u --strip-trailing-cr" "cmp -bl"
 else
 HKSC_CMP_PROFILE="true"
 fi
-set10 test_with_debug HKSC_CMP_DEBUG "cmp -bl" "true"
-set10 with_ui64 WITH_UI64_YESNO YES NO
-set10 STRUCTURE_EXTENSION_ON WITH_STRUCTURES_YESNO YES NO
+setifelse test_with_debug HKSC_CMP_DEBUG "cmp -bl" "true"
+setifelse with_ui64 WITH_UI64_YESNO YES NO
+setifelse STRUCTURE_EXTENSION_ON WITH_STRUCTURES_YESNO YES NO
 
 
 if test x$test_with_debug != x0; then

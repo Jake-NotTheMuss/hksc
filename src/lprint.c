@@ -286,8 +286,9 @@ static void PrintCode(hksc_State *H, const Proto *f)
           printf("\t; %s",svalue(&f->k[INDEXK(b)]));
         }
         else if (c == DELETE_INDEXED) {
-          if (ISK(b))
+          if (ISK(b)) {
             printf("\t; "); PrintConstant(f,INDEXK(b));
+          }
         }
         break;
 #endif /* LUA_CODIW6 */
