@@ -86,7 +86,7 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
   if (ISBK(oldop)) \
     newop |= oldop & 1; \
   (i) = (((i)&MASK0(SIZE_OP,POS_OP)) | \
-  (cast(Instruction, newop)<<POS_OP)&MASK1(SIZE_OP,POS_OP)); \
+  ((cast(Instruction, newop)<<POS_OP)&MASK1(SIZE_OP,POS_OP))); \
 } while (0)
 
 #define GETARG_A(i)  (cast(int, ((i)>>POS_A) & MASK1(SIZE_A,0)))
