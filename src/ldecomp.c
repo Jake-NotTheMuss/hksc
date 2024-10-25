@@ -368,7 +368,7 @@ static int bitmapfind (const lu_int32 *bitmap, int nbits, int offset, int set) {
     /* the first test excludes the bits before the offset */
     const lu_int32 excludedbits = (1u << (offset & 31)) - 1;
     const lu_int32 comparebits = set ? 0 : ~0u;
-    lu_int32 firstblock = bitmap[0];
+    lu_int32 firstblock = bitmap[i];
     firstblock = set ? firstblock & ~excludedbits : firstblock | excludedbits;
     /* traverse blocks */
     if (firstblock == comparebits) do ;
