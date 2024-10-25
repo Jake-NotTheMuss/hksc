@@ -236,29 +236,25 @@ static void freeexp (FuncState *fs, expdesc *e) {
 
 
 #if HKSC_GETGLOBAL_MEMOIZATION
-static int addmemoslot (FuncState *fs, int kslot)
-{
+static int addmemoslot (FuncState *fs, int kslot) {
   hksc_State *H = fs->H;
-  TValue *idx;
   Proto *f = fs->f;
-  int oldsize = f->sizek;
-  TValue key;
+  TValue key, *idx;
   sethlvalue(&key, cast(size_t, kslot));
   idx = luaH_set(H, fs->h, &key);
   if (ttislightuserdata(idx)) {
     return cast_int(hlvalue(idx));
   }
   else {
-    sethlvalue(idx, cast(size_t, fs->nk));
+    int memoslot = fs->nk, oldsize = f->sizek;
+    sethlvalue(idx, cast(size_t, memoslot));
     /* reserve 2 more slots */
-    luaM_growvector(H, f->k, fs->nk, f->sizek, TValue,
-                    MAXARG_Bx, "constant table overflow");
-    luaM_growvector(H, f->k, fs->nk+1, f->sizek, TValue,
-                    MAXARG_Bx, "constant table overflow");
+    if (fs->nk+2 > f->sizek)
+      f->k = luaM_growaux_(H, f->k, &f->sizek, sizeof(TValue), MAXARG_Bx,
+                           "constant table overflow");
     while (oldsize < f->sizek) setnilvalue(&f->k[oldsize++]);
-    setnilvalue(&f->k[fs->nk]);
-    setnilvalue(&f->k[fs->nk+1]);
-    { int nk = fs->nk; fs->nk+=2; return nk; }
+    fs->nk += 2;
+    return memoslot;
   }
 }
 #endif /* HKSC_GETGLOBAL_MEMOIZATION */
