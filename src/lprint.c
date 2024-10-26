@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <string.h>
 
 #define hksc_c
 #define LUA_CORE
@@ -14,119 +15,244 @@
 
 #include "lcode.h"
 #include "ldebug.h"
+#include "ldo.h"
 #include "llex.h"
+#include "llimits.h"
 #include "lobject.h"
 #include "lopcodes.h"
 #include "lstruct.h"
 #include "lundump.h"
+#include "lzio.h"
 
-#define PrintFunction luaU_print
+#define MAX_CHAR_DEC(T)  ((CHAR_BIT * sizeof(T) - 1) / 3 + 2)
 
-#define Sizeof(x)	((int)sizeof(x))
-#define VOID(p)		((const void*)(p))
+typedef struct {
+  hksc_State *H;
+  lua_Writer writer;
+  void *data;
+  const Proto *f;  /* main function */
+  int status;
+  int full;
+  Mbuffer buff;
+} PrintState;
 
-static void PrintString(const TString *ts)
-{
-  const char *s=getstr(ts);
-  size_t i,n=ts->tsv.len;
-  putchar('"');
-  for (i=0; i<n; i++)
-  {
-    int c=s[i];
-    switch (c)
-    {
-      case '"': printf("\\\""); break;
-      case '\\': printf("\\\\"); break;
-      case '\a': printf("\\a"); break;
-      case '\b': printf("\\b"); break;
-      case '\f': printf("\\f"); break;
-      case '\n': printf("\\n"); break;
-      case '\r': printf("\\r"); break;
-      case '\t': printf("\\t"); break;
-      case '\v': printf("\\v"); break;
-      default:
-        if (isprint((unsigned char)c))
-          putchar(c);
-        else
-          printf("\\%03u",(unsigned char)c);
-        break;
-    }
+
+#define PrintLiteral(P,s)  PrintBlock(P, "" s, sizeof(s)-1)
+#define PrintString (P,s)  PrintBlock(P, s, strlen(s))
+#define CM "\t; " /* comment in listing */
+
+static void PrintBlock (PrintState *P, const void *b, size_t size) {
+  if (P->status == 0) {
+    lua_unlock(P->H);
+    P->status = (*P->writer)(P->H, b, size, P->data);
+    lua_lock(P->H);
   }
-  putchar('"');
 }
 
-static void PrintUI64(const lu_int64 literal)
-{
+static void PrintChar (PrintState *P, int y) {
+  char x = y;
+  PrintBlock(P, &x, 1);
+}
+
+static void PrintTString (PrintState *P, const TString *ts) {
+  char buff[64], tmp[4];
+  int len = 0;
+  size_t i;
+  PrintChar(P, '"');
+  for (i = 0; i < ts->tsv.len; i++) {
+    int c = getstr(ts)[i];
+    int bs = 1, n = 1;
+    switch (c) {
+      case '"': tmp[0] = '"'; break;
+      case '\\': tmp[0] = '\\'; break;
+      case '\a': tmp[0] = 'a'; break;
+      case '\b': tmp[0] = 'b'; break;
+      case '\f': tmp[0] = 'f'; break;
+      case '\n': tmp[0] = 'n'; break;
+      case '\r': tmp[0] = 'r'; break;
+      case '\t': tmp[0] = 't'; break;
+      case '\v': tmp[0] = 'v'; break;
+      default:
+        if (isprint(c))
+          bs = 0, tmp[0] = c;
+        else
+          n = sprintf(tmp, "%03u",(unsigned char)c);
+    }
+    n += bs;
+    if (len + n >= cast_int(sizeof(buff))) {
+      PrintBlock(P, buff, len);
+      len = 0;
+    }
+    while (n--)
+      buff[len++] = tmp[n];
+  }
+  if (len)
+    PrintBlock(P, buff, len);
+  PrintChar(P, '"');
+}
+
+#define DEFCODE(name,m,t,a,b,c,mr1,ur1,vr1)  char name##_buff [sizeof(#name)];
+static const int max_opcode_len = (int)(sizeof(union {
+#include "lopcodes.def"
+}));
+#undef DEFCODE
+
+#define growbuff(H,b,n) luaZ_openspace(H, b, (b)->buffsize + n)
+
+static void Print (PrintState *P, const char *fmt, ...) {
+  va_list ap;
+  hksc_State *H = P->H;
+  Mbuffer *b = &P->buff;
+  size_t n;
+  luaZ_resetbuffer(b);
+  va_start(ap, fmt);
+  for (;;) {
+    const char *e = strchr(fmt, '%');
+    if (e == NULL) break;
+    n = e - fmt;
+    growbuff(H, b, n);
+    memcpy(b->buffer + b->n, fmt, n);
+    b->n += n;
+    switch (*(e+1)) {
+      int ival;
+      unsigned int uval;
+      case 'd':
+        ival = va_arg(ap, int);
+        printint: growbuff(H, b, MAX_CHAR_DEC(int));
+        b->n += sprintf(b->buffer + b->n, "%d", ival);
+        break;
+      case 'u':
+        uval = va_arg(ap, unsigned int);
+        growbuff(H, b, MAX_CHAR_DEC(int));
+        b->n += sprintf(b->buffer + b->n, "%u", uval);
+        break;
+      case 'c':
+        ival = va_arg(ap, int);
+        printch: growbuff(H, b, 1);
+        b->buffer[b->n++] = ival;
+        break;
+      case 's': {
+        const char *s = va_arg(ap, const char *);
+        size_t len;
+        if (s == NULL) s = "(null)";
+        len = strlen(s);
+        growbuff(H, b, len);
+        memcpy(b->buffer + b->n, s, len);
+        b->n += len;
+        break;
+      }
+      case 'p':
+        growbuff(H, b, 4*sizeof(void *) + 8);
+        b->n += sprintf(b->buffer + b->n, "%p", va_arg(ap, void *));
+        break;
+      case '%':
+        ival = '%';
+        goto printch;
+      case 'I': /* print pc */
+        ival = va_arg(ap, int) + 1;
+        goto printint;
+      case 'L':  /* print line */
+        ival = va_arg(ap, int);
+        if (ival > 0)
+          goto printint;
+        ival = '-';
+        goto printch;
+      case 'R':  /* RK value */
+        ival = va_arg(ap, int);
+        if (ISK(ival)) ival = -1 - INDEXK(ival);
+        goto printint;
+      case 'K':  /* K value */
+        ival = va_arg(ap, int);
+        ival = -1 - INDEXK(ival);
+        goto printint;
+      case 'O': {  /* print opcode name */
+        OpCode o = va_arg(ap, OpCode);
+        growbuff(H, b, max_opcode_len + 2);
+        b->n += sprintf(b->buffer + b->n, "%-*s", max_opcode_len,
+                        luaP_opnames[o]);
+        break;
+      }
+    }
+    fmt = e + 2;
+  }
+  n = strlen(fmt);
+  growbuff(H, b, n);
+  memcpy(b->buffer + b->n, fmt, n);
+  b->n += n;
+  va_end(ap);
+  PrintBlock(P, b->buffer, b->n);
+}
+
+static void PrintUI64 (PrintState *P, const lu_int64 literal) {
   char buff[LUAI_MAXUI642STR];
   lua_ui642str(buff, literal);
-  printf("0x%shl", buff);
+  Print(P, "0x%shl", buff);
 }
 
-static void PrintLUD(size_t s)
-{
-  unsigned long x = cast(unsigned long, s);
-  printf("0x%lxhi", x);
+static void PrintLUD (PrintState *P, size_t s) {
+  char buff[MAX_CHAR_DEC(long) + 4];
+  int n = sprintf(buff, "0x%lxhi", cast(unsigned long, s));
+  PrintBlock(P, buff, cast(size_t, n));
 }
 
-static void PrintConstant(const Proto *f, int i)
-{
+static void PrintNumber (PrintState *P, lua_Number num) {
+  char buff[LUAI_MAXNUMBER2STR];
+  int n = lua_number2str(buff, num);
+  PrintBlock(P, buff, cast(size_t, n));
+}
+
+static void PrintConstant (PrintState *P, const Proto *f, int i) {
   const TValue *o=&f->k[i];
-  switch (ttype(o))
-  {
+  switch (ttype(o)) {
     case LUA_TNIL:
-      printf("nil");
+      PrintLiteral(P, "nil");
       break;
     case LUA_TBOOLEAN:
-      printf(bvalue(o) ? "true" : "false");
+      (void)(bvalue(o) ? PrintLiteral(P, "true") : PrintLiteral(P, "false"));
       break;
     case LUA_TLIGHTUSERDATA:
-      PrintLUD(hlvalue(o));
+      PrintLUD(P, hlvalue(o));
       break;
     case LUA_TNUMBER:
-      printf(LUA_NUMBER_FMT,nvalue(o));
+      PrintNumber(P, nvalue(o));
       break;
     case LUA_TSTRING:
-      PrintString(rawtsvalue(o));
+      PrintTString(P, rawtsvalue(o));
       break;
     case LUA_TUI64:
-      PrintUI64(ui64value(o));
+      PrintUI64(P, ui64value(o));
       break;
-    default:				/* cannot happen */
-      printf("? type=%d",ttype(o));
+    default:        /* cannot happen */
+      Print(P, "? type=%d",ttype(o));
       break;
   }
 }
 
 #if HKSC_STRUCTURE_EXTENSION_ON
-static void PrintStructName(hksc_State *H, short id)
-{
-  StructProto *p = luaR_getstructbyid(H, id);
+static void PrintStructName (PrintState *P, short id) {
+  StructProto *p = luaR_getstructbyid(P->H, id);
   if (p == NULL)
-    printf("(unknown struct)");
+    PrintLiteral(P, "(unknown struct)");
   else
-    printf("%s", getstr(p->name));
+    PrintBlock(P, getstr(p->name), p->name->tsv.len);
 }
 
-static void PrintSlotIndex(hksc_State *H, int position)
-{
+static void PrintSlotIndex (PrintState *P, int position) {
   int slot;
   if (position == 0) return;
-  slot = cast_int(luaR_pos2index(H, cast_byte(position)));
-  printf("slot %d", slot+1);
+  slot = cast_int(luaR_pos2index(P->H, cast_byte(position)));
+  Print(P, "slot %d", slot+1);
 }
 
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
-static void PrintCode(hksc_State *H, const Proto *f)
-{
-  const Instruction *code=f->code;
-  int pc,n=f->sizecode;
+static void PrintCode (PrintState *P, const Proto *f) {
+  int pc;
 #if HKSC_STRUCTURE_EXTENSION_ON
   int tagchain = 0;
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
-  for (pc=0; pc<n; pc++)
-  {
-    Instruction i=code[pc];
+  for (pc = 0; pc < f->sizecode; pc++) {
+    Instruction i=f->code[pc];
     OpCode o=GET_OPCODE(i);
     int a=GETARG_A(i);
     int b=GETARG_B(i);
@@ -134,36 +260,32 @@ static void PrintCode(hksc_State *H, const Proto *f)
     int bx=GETARG_Bx(i);
     int sbx=GETARG_sBx(i);
     int line=getline(f,pc);
-    printf("\t%d\t",pc+1);
-    if (line>0) printf("[%d]\t",line); else printf("[-]\t");
-    printf("%-9s\t",luaP_opnames[o]);
-    switch (getOpMode(o))
-    {
+    Print(P, "\t%I\t[%L]\t%O\t", pc, line, o);
+    switch (getOpMode(o)) {
       case iABC:
-        printf("%d",a);
-        if (getBMode(o)!=OpArgN) printf(" %d",ISK(b) ? (-1-INDEXK(b)) : b);
-        if (getCMode(o)!=OpArgN) printf(" %d",ISK(c) ? (-1-INDEXK(c)) : c);
+        Print(P, "%d",a);
+        if (getBMode(o)!=OpArgN) Print(P, " %R", b);
+        if (getCMode(o)!=OpArgN) Print(P, " %R", c);
         break;
       case iABx:
-        if (getBMode(o)==OpArgK) printf("%d %d",a,-1-bx);
-        else printf("%d %d",a,bx);
+        if (getBMode(o)==OpArgK) Print(P, "%d %K", a, bx);
+        else Print(P, "%d %d", a, bx);
         break;
       case iAsBx:
-        if (o==OP_JMP) printf("%d",sbx); else printf("%d %d",a,sbx);
+        if (o==OP_JMP) Print(P, "%d",sbx); else Print(P, "%d %d",a,sbx);
         break;
     }
-    switch (o)
-    {
+    switch (o) {
       case OP_LOADK:
-        printf("\t; "); PrintConstant(f,bx);
+        PrintLiteral(P, CM); PrintConstant(P, f, bx);
         break;
       case OP_GETUPVAL:
       case OP_SETUPVAL:
-        printf("\t; %s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+        Print(P, CM "%s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
         break;
       case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
       case OP_SETGLOBAL:
-        printf("\t; %s",svalue(&f->k[bx]));
+        Print(P, CM "%s",svalue(&f->k[bx]));
         break;
       case OP_GETTABLE:
       case OP_GETTABLE_S:
@@ -171,7 +293,7 @@ static void PrintCode(hksc_State *H, const Proto *f)
       case OP_SELF:
         if (ISK(c))
       case OP_GETFIELD: case OP_GETFIELD_R1:
-          { printf("\t; "); PrintConstant(f,INDEXK(c)); }
+          { PrintLiteral(P, CM); PrintConstant(P, f,INDEXK(c)); }
         break;
       case OP_SETTABLE: case OP_SETTABLE_BK:
       case OP_SETTABLE_S: case OP_SETTABLE_S_BK:
@@ -190,104 +312,103 @@ static void PrintCode(hksc_State *H, const Proto *f)
       case OP_BIT_AND: case OP_BIT_AND_BK:
       case OP_BIT_OR: case OP_BIT_OR_BK:
 #endif /* LUA_CODT7 */
-        if (ISK(b) || ISK(c))
-        {
-          printf("\t; ");
-          if (ISK(b)) PrintConstant(f,INDEXK(b)); else printf("-");
-          printf(" ");
-          if (ISK(c)) PrintConstant(f,INDEXK(c)); else printf("-");
+        if (ISK(b) || ISK(c)) {
+          PrintLiteral(P, CM);
+          if (ISK(b)) PrintConstant(P, f,INDEXK(b)); else PrintLiteral(P, "-");
+          PrintLiteral(P, " ");
+          if (ISK(c)) PrintConstant(P, f,INDEXK(c)); else PrintLiteral(P, "-");
         }
         break;
       case OP_SETFIELD: case OP_SETFIELD_R1:
-        printf("\t; ");
-        PrintConstant(f,b);
-        printf(" ");
-        if (ISK(c)) PrintConstant(f,INDEXK(c)); else printf("-");
+        PrintLiteral(P, CM);
+        PrintConstant(P,f,b);
+        PrintLiteral(P, " ");
+        if (ISK(c)) PrintConstant(P,f,INDEXK(c)); else PrintLiteral(P, "-");
         break;
       case OP_JMP:
       case OP_FORLOOP:
       case OP_FORPREP:
-        printf("\t; to %d",sbx+pc+2);
+        Print(P, CM "to %d",sbx+pc+2);
         break;
       case OP_CLOSURE:
-        printf("\t; %p",VOID(f->p[bx]));
+        Print(P, CM "%p",cast(void *, f->p[bx]));
         break;
       case OP_SETLIST:
-        if (c==0) printf("\t; %d",(int)code[++pc]);
-        else printf("\t; %d",c);
+        if (c==0) Print(P, CM "%d", GETARG_Bx(f->code[pc+1]));
+        else Print(P, CM "%d",c);
         break;
 #if HKSC_STRUCTURE_EXTENSION_ON
       case OP_NEWSTRUCT:
-        printf("\t; ");
-        PrintStructName(H, cast(short, GETARG_Bx(f->code[pc+1])));
+        PrintLiteral(P, CM);
+        PrintStructName(P, cast(short, GETARG_Bx(f->code[pc+1])));
         break;
       case OP_SETSLOTN:
       case OP_SETSLOTI:
-        printf("\t; ");
-        PrintSlotIndex(H, (o == OP_SETSLOTN) ? c : b);
+        PrintLiteral(P, CM);
+        PrintSlotIndex(P, (o == OP_SETSLOTN) ? c : b);
         break;
       case OP_SETSLOT:
-        printf("\t; ");
-        PrintSlotIndex(H, b);
-        printf(" : ");
-        printf("%s", luaX_typename(GETARG_Bx(f->code[pc+1])));
+        PrintLiteral(P, CM);
+        PrintSlotIndex(P, b);
+        PrintLiteral(P, " : ");
+        Print(P, "%s", luaX_typename(GETARG_Bx(f->code[pc+1])));
         break;
       case OP_SETSLOTS:
-        printf("\t; ");
-        PrintSlotIndex(H, b);
-        printf(" : ");
-        PrintStructName(H, cast(short, GETARG_Bx(f->code[pc+1])));
+        PrintLiteral(P, CM);
+        PrintSlotIndex(P, b);
+        PrintLiteral(P, " : ");
+        PrintStructName(P, cast(short, GETARG_Bx(f->code[pc+1])));
         break;
       case OP_SETSLOTMT:
         tagchain = GET_SLOTMT_TAGCHAIN(i)+1;
-        printf("\t; chain %d : ", tagchain);
+        Print(P, CM "chain %d : ", tagchain);
         if (GET_SLOTMT_TYPE(i) == LUA_TSTRUCT)
-          PrintStructName(H, cast(short, GETARG_Bx(f->code[pc+1])));
+          PrintStructName(P, cast(short, GETARG_Bx(f->code[pc+1])));
         else
-          printf("%s", luaX_typename(GET_SLOTMT_TYPE(i)));
+          Print(P, "%s", luaX_typename(GET_SLOTMT_TYPE(i)));
         break;
       case OP_GETSLOT:
       case OP_GETSLOT_D:
       case OP_SELFSLOT:
-        printf("\t; ");
-        PrintSlotIndex(H, c);
+        PrintLiteral(P, CM);
+        PrintSlotIndex(P, c);
         break;
       case OP_GETSLOTMT:
       case OP_SELFSLOTMT:
         tagchain = c+1;
-        printf("\t; chain %d", tagchain);
+        Print(P, CM "chain %d", tagchain);
         break;
       case OP_DATA:
         if (tagchain) {
-          printf("\t; ");
-          PrintSlotIndex(H, a);
+          PrintLiteral(P, CM);
+          PrintSlotIndex(P, a);
           if (tagchain > 1) {
-            printf(" --> tm ");
-            PrintSlotIndex(H, bx);
+            PrintLiteral(P, " --> tm ");
+            PrintSlotIndex(P, bx);
           }
           tagchain--;
         }
         break;
       case OP_CHECKTYPE:
-        printf("\t; %s", luaX_typename(bx));
+        Print(P, CM "%s", luaX_typename(bx));
         break;
       case OP_CHECKTYPES:
       case OP_CHECKTYPE_D:
-        printf("\t; ");
-        PrintStructName(H, cast(short, bx));
+        PrintLiteral(P, CM);
+        PrintStructName(P, cast(short, bx));
         break;
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 #ifdef LUA_CODIW6
       case OP_DELETE: case OP_DELETE_BK:
         if (c == DELETE_UPVAL) {
-          printf("\t; %s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+          Print(P, CM "%s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
         }
         else if (c == DELETE_GLOBAL) {
-          printf("\t; %s",svalue(&f->k[INDEXK(b)]));
+          Print(P, CM "%s",svalue(&f->k[INDEXK(b)]));
         }
         else if (c == DELETE_INDEXED) {
           if (ISK(b)) {
-            printf("\t; "); PrintConstant(f,INDEXK(b));
+            PrintLiteral(P, CM); PrintConstant(P,f,INDEXK(b));
           }
         }
         break;
@@ -295,16 +416,14 @@ static void PrintCode(hksc_State *H, const Proto *f)
       default:
         break;
     }
-    printf("\n");
+    PrintLiteral(P, "\n");
   }
-  UNUSED(H);
 }
 
-#define SS(x)	(x==1)?"":"s"
-#define S(x)	x,SS(x)
+#define SS(x) (x==1)?"":"s"
+#define S(x)  x,SS(x)
 
-static void PrintHeader(const Proto *f)
-{
+static void PrintHeader (PrintState *P, const Proto *f) {
   const char *s=getstr(f->source);
   const char *n=f->name ? getstr(f->name) : "(anonymous)";
   if (*s=='@' || *s=='=')
@@ -313,69 +432,88 @@ static void PrintHeader(const Proto *f)
     s="(bstring)";
   else
     s="(string)";
-  printf("\n%s <%s:%s:"
+  Print(P, "\n%s <%s:%s:"
 #ifdef LUA_CODT6 /* print hash */
          "%" LUA_INT_FRMLEN "x:"
 #endif /* LUA_CODT6 */
          "%d,%d> (%d instruction%s, %d bytes at %p)\n",
-  	(f->linedefined==0)?"main":"function",s,n,
+    (f->linedefined==0)?"main":"function",s,n,
 #ifdef LUA_CODT6
     f->hash,
 #endif /* LUA_CODT6 */
     f->linedefined,f->lastlinedefined,
-    S(f->sizecode),f->sizecode*Sizeof(Instruction),VOID(f));
-  printf("%d%s param%s, %d slot%s, %d upvalue%s, ",
+    S(f->sizecode),f->sizecode*cast_int(sizeof(Instruction)),cast(void *, f));
+  Print(P, "%d%s param%s, %d slot%s, %d upvalue%s, ",
     f->numparams,f->is_vararg?"+":"",SS(f->numparams),
   S(f->maxstacksize),S(f->nups));
-    printf("%d local%s, %d constant%s, %d function%s\n",
+    Print(P, "%d local%s, %d constant%s, %d function%s\n",
   S(f->sizelocvars),S(f->sizek),S(f->sizep));
 }
 
-static void PrintConstants(const Proto *f)
-{
-  int i,n=f->sizek;
-  printf("constants (%d) for %p:\n",n,VOID(f));
-  for (i=0; i<n; i++)
-  {
-    printf("\t%d\t",i+1);
-    PrintConstant(f,i);
-    printf("\n");
+static void PrintConstants (PrintState *P, const Proto *f) {
+  int i, n = f->sizek;
+  Print(P, "constants (%d) for %p:\n",n,cast(void *, f));
+  for (i = 0; i < n; i++) {
+    Print(P, "\t%d\t",i+1);
+    PrintConstant(P, f, i);
+    PrintLiteral(P, "\n");
   }
 }
 
-static void PrintLocals(const Proto *f)
-{
-  int i,n=f->sizelocvars;
-  printf("locals (%d) for %p:\n",n,VOID(f));
-  for (i=0; i<n; i++)
-  {
-    printf("\t%d\t%s\t%d\t%d\n", i,
+static void PrintLocals (PrintState *P, const Proto *f) {
+  int i, n = f->sizelocvars;
+  printf("locals (%d) for %p:\n",n,cast(void *, f));
+  for (i = 0; i < n; i++) {
+    Print(P, "\t%d\t%s\t%d\t%d\n", i,
       getstr(f->locvars[i].varname),f->locvars[i].startpc+1,
              f->locvars[i].endpc+1);
   }
 }
 
-static void PrintUpvalues(const Proto *f)
-{
-  int i,n=f->sizeupvalues;
-  printf("upvalues (%d) for %p:\n",n,VOID(f));
+static void PrintUpvalues (PrintState *P, const Proto *f) {
+  int i, n = f->sizeupvalues;
+  Print(P, "upvalues (%d) for %p:\n",n,cast(void *, f));
   if (f->upvalues==NULL) return;
-  for (i=0; i<n; i++)
-  {
-    printf("\t%d\t%s\n",i,getstr(f->upvalues[i]));
+  for (i = 0; i < n; i++){
+    Print(P, "\t%d\t%s\n",i,getstr(f->upvalues[i]));
   }
 }
 
-void PrintFunction(hksc_State *H, const Proto *f, int full)
-{
-  int i,n=f->sizep;
-  PrintHeader(f);
-  PrintCode(H, f);
-  if (full)
-  {
-    PrintConstants(f);
-    PrintLocals(f);
-    PrintUpvalues(f);
+
+static void PrintFunction (PrintState *P, const Proto *f) {
+  int i;
+  PrintHeader(P, f);
+  PrintCode(P, f);
+  if (P->full) {
+    PrintConstants(P, f);
+    PrintLocals(P, f);
+    PrintUpvalues(P, f);
   }
-  for (i=0; i<n; i++) PrintFunction(H, f->p[i],full);
+  for (i = 0; i < f->sizep; i++)
+    PrintFunction(P, f->p[i]);
+}
+
+
+static void f_print (hksc_State *H, void *ud) {
+  PrintState *P = ud;
+  UNUSED(H);
+  PrintFunction(P, P->f);
+}
+
+
+int luaU_print (hksc_State *H, const Proto *f, lua_Writer w, void *data,
+                 int full) {
+  PrintState P;
+  int status;
+  P.H = H;
+  P.f = f;
+  P.writer = w;
+  P.data = data;
+  P.full = full;
+  P.status = 0;
+  luaZ_initbuffer(H, &P.buff);
+  status = luaD_pcall(H, f_print, &P);
+  luaZ_freebuffer(H, &P.buff);
+  if (status == 0) status = P.status;
+  return status;
 }

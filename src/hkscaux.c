@@ -198,6 +198,18 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
 #endif /* LUA_CODT6 */
 
 
+int hksc_list_bytecode(hksc_State *H, const char *filename, int full) {
+  int status;
+  FILE *f = filename ? fopen(filename, "w") : stdout;
+  if (f == NULL)
+    cannot("open", filename);
+  status = lua_print(H, writer_2file, f, full);
+  if (filename != NULL && fclose(f))
+    cannot("close", filename);
+  return status;
+}
+
+
 int hksc_dump_bytecode(hksc_State *H, const char *filename) {
   int status;
   FILE *out; /* output file */

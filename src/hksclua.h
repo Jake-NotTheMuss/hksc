@@ -283,7 +283,7 @@ LUA_API void (lua_setmatchlineinfo) (hksc_State *H, int match_line_info);
 */
 
 /* print a function to stdout */
-LUA_API void (lua_print) (hksc_State *H, int full);
+LUA_API int (lua_print) (hksc_State *H, lua_Writer w, void *data, int full);
 
 /* dump one chunk; from ldump.c */
 LUA_API int (lua_dump) (hksc_State *H, lua_Writer w, void *data);

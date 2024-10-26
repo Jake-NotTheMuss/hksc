@@ -83,7 +83,8 @@ LUAI_FUNC int luaU_decompile (hksc_State *H,
 #endif /* HKSC_DECOMPILER */
 
 /* print one chunk; from lprint.c */
-LUAI_FUNC void luaU_print (hksc_State *H, const Proto *f, int full);
+LUAI_FUNC int luaU_print (hksc_State *H, const Proto *f, lua_Writer w,
+                          void *data, int full);
 
 /* for header of binary files -- this is Lua 5.1 */
 #define LUAC_VERSION		0x51

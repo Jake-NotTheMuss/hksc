@@ -562,7 +562,9 @@ static int hksc_dump_f(hksc_State *H, void *ud) {
     return 0;
   }
   if (listing) {
-    lua_print(H, listing > 1);
+    int status = hksc_list_bytecode(H, NULL, listing > 1);
+    if (status)
+      return status;
     if (!dumping)
       return 0;
   }
