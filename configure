@@ -326,7 +326,13 @@ esac
 
 # configure compatibility settings based on the build config type
 case $game in
-	t6|t7|none) HKSC_FROMSOFT_TTABLES=0 ;;
+	t6|t7|none)
+		STRUCTURE_EXTENSION_ON=0
+		GETGLOBAL_MEMOIZATION=0
+		WITHDOUBLES=0
+		WITHNATIVEINT=0
+		SELF=0
+		HKSC_FROMSOFT_TTABLES=0 ;;
 	iw6|s1)
 		STRUCTURE_EXTENSION_ON=1
 		GETGLOBAL_MEMOIZATION=1
