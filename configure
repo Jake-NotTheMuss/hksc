@@ -234,7 +234,6 @@ case $uname in
 		prefix=${prefix-'C:/Program Files/hksc'}
 		AR=${AR-ar}
 		ARFLAGS=${ARFLAGS-rcs}
-		RANLIB=${RANLIB-'strip --strip-unneeded'}
 		CC=${CC-gcc}
 		LIBSUF='.a'
 		DLLSUF='.dll'
