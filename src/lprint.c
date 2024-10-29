@@ -33,6 +33,7 @@ typedef struct {
   const Proto *f;  /* main function */
   int status;
   int full;
+  int quote;
   Mbuffer buff;
 } PrintState;
 
@@ -54,42 +55,13 @@ static void PrintChar (PrintState *P, int y) {
   PrintBlock(P, &x, 1);
 }
 
-static void PrintTString (PrintState *P, const TString *ts) {
-  char buff[64], tmp[4];
-  int len = 0;
-  size_t i;
-  PrintChar(P, '"');
-  for (i = 0; i < ts->tsv.len; i++) {
-    int c = getstr(ts)[i];
-    int bs = 1, n = 1;
-    switch (c) {
-      case '"': tmp[0] = '"'; break;
-      case '\\': tmp[0] = '\\'; break;
-      case '\a': tmp[0] = 'a'; break;
-      case '\b': tmp[0] = 'b'; break;
-      case '\f': tmp[0] = 'f'; break;
-      case '\n': tmp[0] = 'n'; break;
-      case '\r': tmp[0] = 'r'; break;
-      case '\t': tmp[0] = 't'; break;
-      case '\v': tmp[0] = 'v'; break;
-      default:
-        if (isprint(c))
-          bs = 0, tmp[0] = c;
-        else
-          n = sprintf(tmp, "%03u",(unsigned char)c);
-    }
-    n += bs;
-    if (len + n >= cast_int(sizeof(buff))) {
-      PrintBlock(P, buff, len);
-      len = 0;
-    }
-    while (n--)
-      buff[len++] = tmp[n];
-  }
-  if (len)
-    PrintBlock(P, buff, len);
-  PrintChar(P, '"');
+
+static void f_pfn (const char *s, size_t l, void *ud) {
+  PrintBlock(ud, s, l);
 }
+
+
+#define PrintTString(P, ts)  luaO_printstring(ts, (P)->quote, f_pfn, P)
 
 #define DEFCODE(name,m,t,a,b,c,mr1,ur1,vr1)  char name##_buff [sizeof(#name)];
 static const int max_opcode_len = (int)(sizeof(union {
@@ -510,6 +482,7 @@ int luaU_print (hksc_State *H, const Proto *f, lua_Writer w, void *data,
   P.writer = w;
   P.data = data;
   P.full = full;
+  P.quote = '"';
   P.status = 0;
   luaZ_initbuffer(H, &P.buff);
   status = luaD_pcall(H, f_print, &P);
