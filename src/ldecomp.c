@@ -132,6 +132,7 @@ typedef struct linemap {
 /*
 ** macros to define and create vectors of element type T
 */
+#ifndef VEC_DECL
 #define VEC_DECL(T,name) struct { T *s; int used, alloc; } name
 
 #define VEC_GROW(H,v) do { \
@@ -143,6 +144,7 @@ typedef struct linemap {
   luaM_freemem(H, (v).s, (v).alloc * sizeof((v).s[0])); \
   (v).s = NULL; (v).used = (v).alloc = 0; \
 } while (0)
+#endif
 
 
 #define bitmapnumblocks(n) cast_int((cast(unsigned int, (n)) + 31) >> 5)

@@ -356,15 +356,13 @@ void luaO_chunkid (char *out, const char *source, size_t bufflen) {
 const char *luaO_generatechunkname (hksc_State *H, const char *filename) {
   global_State *g = G(H);
   int i;
-  for (i = 0; i < g->prefixmaps.nuse; i++) {
-    size_t from_len;
-    TString *from = g->prefixmaps.array[i].from;
-    TString *to = g->prefixmaps.array[i].to;
+  for (i = 0; i < g->prefixmaps.used; i++) {
+    TString *from = g->prefixmaps.s[i].from;
+    TString *to = g->prefixmaps.s[i].to;
     lua_assert(from != NULL && to != NULL);
-    from_len = from->tsv.len;
-    if (strncmp(filename, getstr(from), from_len) == 0) {
+    if (strncmp(filename, getstr(from), from->tsv.len) == 0) {
       /* remove the `from' part */
-      return luaO_pushfstring(H, "@%s%s", getstr(to), filename + from_len);
+      return luaO_pushfstring(H, "@%s%s", getstr(to), filename+from->tsv.len);
     }
   }
   return luaO_pushfstring(H, "@%s", filename);

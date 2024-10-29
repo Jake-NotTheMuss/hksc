@@ -88,7 +88,7 @@ static void close_state (hksc_State *H) {
   lua_assert(g->rootgc == obj2gco(H));
   lua_assert(g->strt.nuse == 0);
   luaM_freearray(H, G(H)->strt.hash, G(H)->strt.size, TString *);
-  luaM_freearray(H, g->prefixmaps.array, g->prefixmaps.size, fileprefixmap);
+  VEC_FREE(H, g->prefixmaps);
 #if HKSC_STRUCTURE_EXTENSION_ON
   luaM_freearray(H, g->protolist.list, g->protolist.size, StructProto *);
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
@@ -142,9 +142,7 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
 #endif /* LUA_DEBUG */
   g->rootgc = obj2gco(H);
   g->totalbytes = sizeof(LG);
-  g->prefixmaps.nuse = 0;
-  g->prefixmaps.size = 0;
-  g->prefixmaps.array = NULL;
+  VEC_INIT(g->prefixmaps);
   g->startcycle = g->endcycle = NULL;
 #if defined(LUA_CODT6)
   g->debugLoadStateOpen = NULL;

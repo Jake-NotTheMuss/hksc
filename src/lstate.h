@@ -11,6 +11,7 @@
 
 #include "lobject.h"
 #include "lundump.h"
+#include "lvec.h"
 #include "lzio.h"
 
 
@@ -26,15 +27,9 @@ typedef struct stringtable {
 } stringtable;
 
 
-typedef struct fileprefixmap {
+typedef struct FilePrefixMap {
   TString *from, *to;
-} fileprefixmap;
-
-typedef struct fileprefixmaparray {
-  int nuse;
-  int size;
-  fileprefixmap *array;
-} fileprefixmaparray;
+} FilePrefixMap;
 
 
 #define TM_INDEX  0
@@ -77,7 +72,7 @@ typedef struct global_State {
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem GCthreshold;
   lu_mem totalbytes;  /* number of bytes currently allocated */
-  fileprefixmaparray prefixmaps;
+  VEC_DECL(FilePrefixMap, prefixmaps);
   const char *prefix_map_from;  /* OLD value in file prefix map */
   const char *prefix_map_to;  /* NEW value in file prefix map */
   lua_CFunction panic;  /* to be called in unprotected errors */

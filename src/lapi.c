@@ -23,6 +23,7 @@
 #include "lstring.h"
 #include "ltable.h"
 #include "lundump.h"
+#include "lvec.h"
 
 
 
@@ -203,25 +204,17 @@ LUA_API void lua_addprefixmap (hksc_State *H, const char *arg)
   lua_lock(H);
   eq = strchr(arg, '=');
   if (eq != NULL) {
-    size_t l = cast(size_t, eq-arg);
-    int i, found=0;
-    fileprefixmap *map;
+    int i;
     TString *from, *to;
-    from = luaS_newlstr(H, arg, l);
+    from = luaS_newlstr(H, arg, cast(size_t, eq - arg));
     luaS_fix(from);
     to = luaS_new(H, eq+1);
     luaS_fix(to);
-    for (i = 0; i < G(H)->prefixmaps.nuse; i++) {
-      if (G(H)->prefixmaps.array[i].from == from &&
-          G(H)->prefixmaps.array[i].to == to) {
-        found = 1;
+    for (i = 0; i < G(H)->prefixmaps.used; i++)
+      if (G(H)->prefixmaps.s[i].from == from && G(H)->prefixmaps.s[i].to == to)
         break;
-      }
-    }
-    if (found == 0) {
-      luaM_growvector(H, G(H)->prefixmaps.array, G(H)->prefixmaps.nuse,
-                      G(H)->prefixmaps.size, fileprefixmap, MAX_INT, "");
-      map = &G(H)->prefixmaps.array[G(H)->prefixmaps.nuse++];
+    if (i >= G(H)->prefixmaps.used) {
+      FilePrefixMap *map = VEC_NEWELT(H, G(H)->prefixmaps);
       map->from = from;
       map->to = to;
     }
