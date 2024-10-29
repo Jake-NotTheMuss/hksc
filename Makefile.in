@@ -101,7 +101,7 @@ expectsum:
 
 distclean: clean
 	$(RM) $(CONFIG_H) libhksc.pc Makefile src/Makefile test/Makefile \
-	test/error/Makefile config
+	test/error/Makefile test/programs/Makefile config
 
 install:
 	$(MKDIR) -p "$(INSTALL_BIN)" "$(INSTALL_INC)" "$(INSTALL_LIB)" "$(INSTALL_MAN)"
