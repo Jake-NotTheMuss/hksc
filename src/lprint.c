@@ -79,6 +79,7 @@ static void Print (PrintState *P, const char *fmt, ...) {
   luaZ_resetbuffer(b);
   va_start(ap, fmt);
   for (;;) {
+    int advance = 2;  /* default is `%<spec>' */
     const char *e = strchr(fmt, '%');
     if (e == NULL) break;
     n = e - fmt;
@@ -144,8 +145,23 @@ static void Print (PrintState *P, const char *fmt, ...) {
                         luaP_opnames[o]);
         break;
       }
+      default: {
+        /* handle whatever the format specifier is for lu_int32 */
+#ifdef LUA_CODT6
+        const char hashfmt[] = "%" LUA_INT_FRMLEN "x";
+        advance = sizeof(hashfmt)-1;
+        if (strncmp(e, hashfmt, advance) == 0) {
+          growbuff(H, b, sizeof(hashfmt));
+          b->n += sprintf(b->buffer + b->n, "%" LUA_INT_FRMLEN "x",
+                          va_arg(ap, lu_int32));
+
+          break;
+        }
+#endif /* LUA_CODT6 */
+        lua_assert(0);
+      }
     }
-    fmt = e + 2;
+    fmt = e + advance;
   }
   n = strlen(fmt);
   growbuff(H, b, n);
