@@ -104,23 +104,27 @@ LUAI_FUNC int luaU_print (hksc_State *H, const Proto *f, lua_Writer w,
 /*#error "You need to define HKSC_FORMAT_VERSION"*/
 #endif
 
-/* size of header of binary files */
-#define LUAC_HEADERSIZE		sizeof(HkscHeader)
 
+/* define the byte offsets of Luac header fields */
+enum LUAC_HEADER_FIELD {
+  HDR_SIGNATURE = 0,  /* Lua binary signature */
+  HDR_VERSION = sizeof(LUA_SIGNATURE)-1,  /* Lua version */
+  HDR_FORMAT,  /* Lua format version */
+  HDR_ENDIAN,  /* 0 if need to swap endianness when loading/dumping */
+  HDR_SIZE_INT,  /* size of int */
+  HDR_SIZE_SIZE,  /* size of size_t */
+  HDR_SIZE_INST,  /* size of Instruction */
+  HDR_SIZE_NUM,  /* size of lua_Number */
+  HDR_INTEGRAL,  /* true if lua_Number is integral */
+  HDR_COMPAT,  /* compatibility bits */
+  HDR_SHARED,  /* true if compiled in a shared state */
+  LUAC_HEADERSIZE  /* size of header of binary files */
+};
 
-typedef struct HkscHeader {
-  char signature[sizeof(LUA_SIGNATURE)-1]; /* Lua binary signature */
-  char version;  /* Lua version */
-  char formatversion;  /* Lua format version */
-  char endianflag;  /* 0 if need to swap endianness when loading/dumping */
-  char sizeint;  /* size of int */
-  char sizesize;  /* size of size_t */
-  char sizeinstr;  /* size of Instruction */
-  char sizenumber;  /* size of lua_Number */
-  char numberisint;  /* true if lua_Number is integral */
-  char compatbits;  /* compatibility bits */
-  char shared;  /* true if compiled in a shared state */
-} HkscHeader;
+/* the latest version of the HavokScript binary header is 14 bytes
+   note: there are earlier format versions where the header size was smaller */
+lua_static_assert(LUAC_HEADERSIZE == 14);
+
 
 /* number of types in header of binary files */
 #define LUAC_NUMTYPES (LUA_NUM_TYPE_OBJECTS-1)

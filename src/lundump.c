@@ -460,17 +460,16 @@ static void LoadHeader(LoadState *S)
   struct target_info *target = &S->target;
   char typename[MAX_TYPE_LENGTH]; /* buffer for type names */
   int numtypes;
-  HkscHeader h, s;
-  lua_assert(sizeof(HkscHeader) == LUAC_HEADERSIZE);
+  char h[LUAC_HEADERSIZE], s[LUAC_HEADERSIZE];
   LoadBlock(S,&s,LUAC_HEADERSIZE);
-  S->swapendian = (s.endianflag == 0);
+  S->swapendian = (s[HDR_ENDIAN] == 0);
 #ifdef HKSC_MULTIPLAT
   if (G(S->H)->target_plat == HKSC_TARGET_PLAT_DEFAULT &&
       G(S->H)->target_ws == HKSC_TARGET_WS_DEFAULT) {
     /* one of the features of HKSC_MULTIPLAT - adapt to the word-size of the
        current bytecode stream if no platform is specified */
-    target->sizeint = s.sizeint;
-    target->sizesize = s.sizesize;
+    target->sizeint = s[HDR_SIZE_INT];
+    target->sizesize = s[HDR_SIZE_SIZE];
   }
   /* from this point, the target type sizes are in stone, so now the callbacks
      can be set */
@@ -492,8 +491,8 @@ static void LoadHeader(LoadState *S)
   /* don't let the swapendian flag cause a header mismatch */
   target->needendianswap = S->swapendian;
   luaU_header(target, (char *)&h);
-  if (s.compatbits != h.compatbits) /* build settings do not match */
-    pushCompatibilityErrorString(S->H, s.compatbits);
+  if (s[HDR_COMPAT] != h[HDR_COMPAT]) /* build settings do not match */
+    pushCompatibilityErrorString(S->H, s[HDR_COMPAT]);
   if (memcmp(&h,&s,LUAC_HEADERSIZE)!=0) goto badheader;
   numtypes = LoadInt(S); /* number of types */
   if (numtypes != LUAC_NUMTYPES) {
@@ -725,17 +724,17 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
 void luaU_header (struct target_info *target, char *h)
 {
   memcpy(h,LUA_SIGNATURE,sizeof(LUA_SIGNATURE)-1);
-  h+=sizeof(LUA_SIGNATURE)-1;
-  *h++=(char)LUAC_VERSION;
-  *h++=(char)LUAC_FORMAT;
-  *h++=(char)(target->needendianswap == 0);        /* endianness */
-  *h++=(char)(target->sizeint);
-  *h++=(char)(target->sizesize);
-  *h++=(char)(target->sizeinstr);
-  *h++=(char)sizeof(lua_Number);
-  *h++=(char)(((lua_Number)0.5)==0);    /* is lua_Number integral? */
-  *h++=(char)compatbits; /* build settings */
-  *h++=(char)0; /* true if in a shared state, false for an offline compiler */
+  h[HDR_VERSION]   = (char)LUAC_VERSION;
+  h[HDR_FORMAT]    = (char)LUAC_FORMAT;
+  h[HDR_ENDIAN]    = (char)(target->needendianswap == 0);  /* endianness */
+  h[HDR_SIZE_INT]  = (char)(target->sizeint);
+  h[HDR_SIZE_SIZE] = (char)(target->sizesize);
+  h[HDR_SIZE_INST] = (char)(target->sizeinstr);
+  h[HDR_SIZE_NUM]  = (char)sizeof(lua_Number);
+  h[HDR_INTEGRAL]  = (char)(((lua_Number)0.5)==0);/* is lua_Number integral? */
+  h[HDR_COMPAT]    = (char)compatbits; /* build settings */
+  h[HDR_SHARED]    = (char)0; /* true if in a shared state, false for an
+                                 offline compiler */
 }
 
 
