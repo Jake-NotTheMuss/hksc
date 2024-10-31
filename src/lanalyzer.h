@@ -76,6 +76,9 @@ enum INSFLAG {
 };
 #undef DEFINSFLAG
 
+/* ensure there are enough bits for all instruction properties */
+lua_static_assert(MAX_INSFLAG <= sizeof(InstructionFlags) * CHAR_BIT);
+
 
 /*
 ** register properties

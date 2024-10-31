@@ -40,8 +40,6 @@
 
 #ifdef HKSC_DECOMPILER
 
-#define lua_static_assert(x)  { int assertion[(x) * 2 - 1]; (void)assertion; }
-
 #ifdef HKSC_DECOMP_DEBUG_PASS1
 #undef HKSC_DECOMP_HAVE_PASS2
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
@@ -8340,7 +8338,6 @@ static void f_decompiler (hksc_State *H, void *ud) {
 int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data) {
   DecompState D = {0};
   int status;
-  lua_static_assert(MAX_INSFLAG <= 32);
   D.H=H;
   D.mainfunc=f;
   D.writer=w;

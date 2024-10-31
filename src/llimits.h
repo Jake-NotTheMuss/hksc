@@ -65,6 +65,9 @@ typedef LUAI_UACNUMBER l_uacNumber;
 
 #endif
 
+/* static assertions */
+#define lua_static_assert(c) extern const char (lua_static_assert) [2*!!(c)-1]
+
 
 #ifndef UNUSED
 #define UNUSED(x)	((void)(x))	/* to avoid warnings */
