@@ -1,0 +1,45 @@
+-*- outline -*-
+
+TODO for Hksc
+
+------------------------------------------------------------------------------
+
+* Maintainer Suggestions
+
+** API
+Shorten some of the function names. The API probably doesn't need to provide a
+function for formatting strings. As well, the fixed vs normal strings API
+complicates it; I would just go with one over the other.
+
+The user should be able to provide a custom debug info reader callback, not
+just a file name (Only applies for T6 extensions)
+
+** Decompiler sections
+ldecomp.c is massive even in its incomplete state. It may be easier to read
+and maintain if it were split up into different files.
+
+** Printing constants
+Both lprint.c and ldecomp.c need to print human-readable versions of constant
+values. That code should be centralized and called by each. I would put it in
+ldecomp.c, so that it is automatically present when porting the decompiler to
+standard Lua.
+
+** Analyzer tag
+Get rid of the tagged Analyzer structure. It doesn't need to be part of
+garbage collection. Its fields could be moved to ldecomp.c::FuncState, and the
+FuncStates could all be allocated at once as a stack, where the size is
+D->maxtreedepth. This way, if an exception is thrown, all the FuncStates can
+still be accessed and all the memory can be freed before returning from
+luaU_decompile.
+
+** Tests on msys2
+"make test" on msys2 is pretty slow due to the numerous invokations of hksc,
+diff, etc. per test, and the large amount of tests. It would be faster if each
+test was mostly done in one invokation, i.e. compiling, dumping, loading,
+re-dumping, etc. all in one invokation of hksc. You could as well add a
+function to libhksc for comparing 2 functions, which could also allow for more
+helpful error messages when there is a mismatch.
+
+------------------------------------------------------------------------------
+
+(end of TODO)
