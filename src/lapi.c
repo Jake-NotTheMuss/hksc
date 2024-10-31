@@ -361,8 +361,8 @@ LUA_API int lua_decompile (hksc_State *H, lua_Writer w, void *data) {
 
 /* print a function */
 LUA_API int lua_print (hksc_State *H, lua_Writer w, void *data, int full) {
-  const Proto *f;
   int status;
+  const Proto *f;
   lua_lock(H);
   api_check(H, H->last_result != NULL);
   luaC_checkGC(H);
