@@ -29,9 +29,7 @@
 #define VEC_NEWELT(H, v)  (VEC_GROW(H, v), &(v).s[(v).used++])
 
 /* free a vector */
-#define VEC_FREE(H, v) do { \
-  luaM_freemem(H, (v).s, (v).alloc * sizeof((v).s[0])); \
-  VEC_INIT(v); \
-} while (0)
+#define VEC_FREE(H, v) \
+  cast(void, luaM_freemem(H, (v).s, (v).alloc * sizeof((v).s[0])))
 
 #endif /* lvec_H */
