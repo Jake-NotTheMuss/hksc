@@ -2064,12 +2064,15 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
 }
 
 
+struct ParameterDecl {
+  TString *varname;
 #if HKSC_STRUCTURE_EXTENSION_ON
-static void fornum (LexState *ls, TString *varname, TString *typename,int line)
-#else /* !HKSC_STRUCTURE_EXTENSION_ON */
-static void fornum (LexState *ls, TString *varname, int line)
-#endif /* HKSC_STRUCTURE_EXTENSION_ON */
-{
+  TString *typename;  /* the type, or NULL if not typed */
+#endif
+};
+
+
+static void fornum (LexState *ls, struct ParameterDecl decl, int line) {
   /* fornum -> NAME = exp1,exp1[,exp1] forbody */
   FuncState *fs = ls->fs;
   int base = fs->freereg;
@@ -2077,20 +2080,20 @@ static void fornum (LexState *ls, TString *varname, int line)
   new_typedlocalvarliteral(ls, "(for limit)", 1, LUA_TNUMBER, NULL);
   new_typedlocalvarliteral(ls, "(for step)", 2, LUA_TNUMBER, NULL);
 #if HKSC_STRUCTURE_EXTENSION_ON
-  if (typename != NULL) {
+  if (decl.typename != NULL) {
     TypeInfo t;
     /* parse the type of the declaration; only "number" is allowed */
-    parsetype(ls, &t, typename);
+    parsetype(ls, &t, decl.typename);
     if (t.type != LUA_TNONE && t.type != LUA_TNUMBER) {
       const char *msg = luaO_pushfstring(ls->H, "Only 'number' is allowed as a"
-                " type for numeric FOR iterator. Got '%s'", getstr(typename));
+            " type for numeric FOR iterator. Got '%s'", getstr(decl.typename));
       luaX_syntaxerror(ls, msg);
     }
-    new_typedlocalvar(ls, varname, 3, t.type, NULL);
+    new_typedlocalvar(ls, decl.varname, 3, t.type, NULL);
   }
   else
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
-  new_localvar(ls, varname, 3);
+  new_localvar(ls, decl.varname, 3);
   checknext(ls, '=');
   exp1(ls);  /* initial value */
   checknext(ls, ',');
@@ -2105,13 +2108,9 @@ static void fornum (LexState *ls, TString *varname, int line)
 }
 
 
-#if HKSC_STRUCTURE_EXTENSION_ON
-static void forlist (LexState *ls, TString *indexname, TString *typename)
-#else /* !HKSC_STRUCTURE_EXTENSION_ON */
-static void forlist (LexState *ls, TString *indexname)
-#endif /* HKSC_STRUCTURE_EXTENSION_ON */
-{
+static void forlist (LexState *ls, struct ParameterDecl decl) {
   /* forlist -> NAME {,NAME} IN explist1 forbody */
+  TString *indexname = decl.varname;
   FuncState *fs = ls->fs;
   expdesc e;
   int nvars = 0;
@@ -2123,8 +2122,8 @@ static void forlist (LexState *ls, TString *indexname)
   new_localvarliteral(ls, "(for control)", nvars++);
   /* create declared variables */
 #if HKSC_STRUCTURE_EXTENSION_ON
-  if (typename != NULL)
-    typedlocvar(ls, indexname, typename, nvars++);
+  if (decl.typename != NULL)
+    typedlocvar(ls, indexname, decl.typename, nvars++);
   else
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   new_localvar(ls, indexname, nvars++);
@@ -2161,36 +2160,29 @@ static void forlist (LexState *ls, TString *indexname)
 static void forstat (LexState *ls, int line) {
   /* forstat -> FOR (fornum | forlist) END */
   FuncState *fs = ls->fs;
-  TString *varname;
+  struct ParameterDecl decl = {NULL};
   BlockCnt bl;
-#if HKSC_STRUCTURE_EXTENSION_ON
-#define varname_arg varname, typename
-  TString *typename = NULL;
-#else /* !HKSC_STRUCTURE_EXTENSION_ON */
-#define varname_arg varname
-#endif /* HKSC_STRUCTURE_EXTENSION_ON */
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip `for' */
-  varname = str_peekname(ls);
+  decl.varname = str_peekname(ls);
   luaX_lookahead(ls);
   if (ls->lookahead.token == ':') {
 #if HKSC_STRUCTURE_EXTENSION_ON
     luaX_next(ls);  /* skip name */
     luaX_next(ls);  /* skip `:' */
-    typename = str_checkname(ls);
+    decl.typename = str_checkname(ls);
 #else /* !HKSC_STRUCTURE_EXTENSION_ON */
     error_typedlocalvar(ls);
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   }
   else luaX_next(ls);  /* advance over first variable name */
   switch (ls->t.token) {
-    case '=': fornum(ls, varname_arg, line); break;
-    case ',': case TK_IN: forlist(ls, varname_arg); break;
+    case '=': fornum(ls, decl, line); break;
+    case ',': case TK_IN: forlist(ls, decl); break;
     default: luaX_syntaxerror(ls, LUA_QL("=") " or " LUA_QL("in") " expected");
   }
   check_match(ls, TK_END, TK_FOR, line);
   leaveblock(fs);  /* loop scope (`break' jumps to this point) */
-#undef varname_arg
 }
 
 
