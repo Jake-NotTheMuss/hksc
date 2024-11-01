@@ -97,8 +97,8 @@ typedef struct LexState {
 #ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
 /*
 ** this is for matching Havok Script error messages which have unbalanced
-** quotations, such as "error: '%s does not match any builtin type"; this result
-** can be created by writing "error: " LUA_QL_U("%s") " does not" ...
+** quotations, such as "error: '%s does not match any builtin type"; this
+** result can be created by writing "error: " LUA_QL_U("%s") " does not" ...
 */
 #define LUA_QL_U(s)  "'" s
 #define LUA_QS_U  "'%s"

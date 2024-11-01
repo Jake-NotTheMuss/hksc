@@ -139,7 +139,7 @@ typedef struct lua_TValue {
   { TValue *i_o=(obj); i_o->value.p=(x); i_o->tt=LUA_TLIGHTUSERDATA; } while(0)
 
 #define sethlvalue(obj,x) do \
-  { TValue *i_o=(obj); i_o->value.hl=(x); i_o->tt=LUA_TLIGHTUSERDATA; } while(0)
+  { TValue *i_o=(obj); i_o->value.hl=(x); i_o->tt=LUA_TLIGHTUSERDATA; }while(0)
 
 #define setbvalue(obj,x) do \
   { TValue *i_o=(obj); i_o->value.b=(x); i_o->tt=LUA_TBOOLEAN; } while(0)

@@ -73,7 +73,7 @@ LUA_API hksc_State *debug_newstate(hksc_StateSettings *settings)
 
 #ifndef EXTERNMEMCHECK
 /* full memory check */
-#define HEADER  (sizeof(L_Umaxalign)) /* ensures maximum alignment for HEADER */
+#define HEADER  (sizeof(L_Umaxalign))/* ensures maximum alignment for HEADER */
 #define MARKSIZE  16  /* size of marks after each block */
 #define blockhead(b)  (cast(char *, b) - HEADER)
 #define setsize(newblock, size) (*cast(size_t *, newblock) = size)
@@ -97,7 +97,8 @@ static void *checkblock (void *block, size_t size) {
   void *b = blockhead(block);
   int i;
   for (i=0;i<MARKSIZE;i++)
-    lua_assert(*(cast(char *, b)+HEADER+size+i) == MARK+i); /* corrupted block? */
+    /* corrupted block? */
+    lua_assert(*(cast(char *, b)+HEADER+size+i) == MARK+i);
   return b;
 }
 
@@ -309,10 +310,12 @@ static char *buildop (Proto *p, int pc, char *buff) {
               GETARG_A(i), GETARG_B(i), GETARG_C(i));
       break;
     case iABx:
-      sprintf(buff+strlen(buff), "%-12s%4d %4d", name, GETARG_A(i), GETARG_Bx(i));
+      sprintf(buff+strlen(buff), "%-12s%4d %4d", name, GETARG_A(i),
+              GETARG_Bx(i));
       break;
     case iAsBx:
-      sprintf(buff+strlen(buff), "%-12s%4d %4d", name, GETARG_A(i), GETARG_sBx(i));
+      sprintf(buff+strlen(buff), "%-12s%4d %4d", name, GETARG_A(i),
+              GETARG_sBx(i));
       break;
   }
   return buff;

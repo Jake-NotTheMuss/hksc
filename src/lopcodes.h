@@ -266,7 +266,7 @@ LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
 
 #define IS_OP_SETTABLE(o) \
   ((o) == OP_SETFIELD || (o) == OP_SETFIELD_R1 || (o) == OP_SETTABLE || \
-   (o) == OP_SETTABLE_BK || (o) == OP_SETTABLE_N || (o) == OP_SETTABLE_N_BK || \
+   (o) == OP_SETTABLE_BK || (o) == OP_SETTABLE_N || (o) == OP_SETTABLE_N_BK ||\
    (o) == OP_SETTABLE_S || (o) == OP_SETTABLE_S_BK)
 
 #define IS_OP_SETSLOT(o) \

@@ -49,7 +49,7 @@
 
 static int precheck (const Proto *pt) {
   check(pt->maxstacksize <= MAXSTACK);
-  lua_assert(pt->numparams+(pt->is_vararg & VARARG_HASARG) <= pt->maxstacksize);
+  lua_assert(pt->numparams+(pt->is_vararg & VARARG_HASARG) <=pt->maxstacksize);
   lua_assert(!(pt->is_vararg & VARARG_NEEDSARG) ||
               (pt->is_vararg & VARARG_HASARG));
   check(pt->sizeupvalues <= pt->nups);
@@ -63,9 +63,7 @@ static int precheck (const Proto *pt) {
 
 int luaG_checkopenop (Instruction i) {
   switch (GET_OPCODE(i)) {
-    case OP_CALL: case OP_CALL_I: case OP_CALL_I_R1: case OP_CALL_C:
-    case OP_CALL_M: case OP_TAILCALL: case OP_TAILCALL_I: case OP_TAILCALL_I_R1:
-    case OP_TAILCALL_C: case OP_TAILCALL_M:
+    case CASE_OP_CALL_LABEL:
     case OP_RETURN:
     case OP_SETLIST: {
       check(GETARG_B(i) == 0);
@@ -93,7 +91,7 @@ static int checkArgMode (const Proto *pt, int r, enum OpArgMask mode) {
 static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
   int pc;
   int last;  /* stores position of last instruction that changed `reg' */
-  last = pt->sizecode-1;  /* points to final return (a `neutral' instruction) */
+  last = pt->sizecode-1; /* points to final return (a `neutral' instruction) */
   check(precheck(pt));
   for (pc = 0; pc < lastpc; pc++) {
     Instruction i = pt->code[pc];

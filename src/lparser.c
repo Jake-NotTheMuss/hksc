@@ -204,7 +204,7 @@ static void error_typedparam (LexState *ls) {
   new_typedlocalvarliteral(ls,v,n,LUA_TNONE,NULL)
 
 #define new_typedlocalvarliteral(ls,v,n,t,p) \
-new_typedlocalvar(ls,luaX_newstring(ls, "" v, (sizeof(v)/sizeof(char))-1),n,t,p)
+new_typedlocalvar(ls,luaX_newstring(ls, "" v,(sizeof(v)/sizeof(char))-1),n,t,p)
 
 #define new_localvar(ls,name,n)  new_typedlocalvar(ls,name,n,LUA_TNONE,NULL)
 
@@ -227,7 +227,7 @@ static void new_typedlocalvar (LexState *ls, TString *name, int n, int type,
 static void pushlhstyping (LexState *ls, TypeInfo *t) {
   FuncState *fs = ls->fs;
   /* add to the LHS type map */
-  luaM_growvector(ls->H, fs->a->lhstyping, fs->nlocalslhs, fs->a->sizelhstyping,
+  luaM_growvector(ls->H, fs->a->lhstyping, fs->nlocalslhs,fs->a->sizelhstyping,
                   TypeInfo, SHRT_MAX, "");
   fs->a->lhstyping[fs->nlocalslhs++] = *t;
 }
@@ -390,7 +390,7 @@ static void addstructmeta (LexState *ls, TString *typename) {
 }
 
 
-static void addstructslot (LexState *ls, TString *slotname, TString *typename) {
+static void addstructslot (LexState *ls, TString *slotname, TString *typename){
   hksc_State *H = ls->H;
   if (Settings(H).emit_struct) {
     StructProto *p = &ls->current_proto;
@@ -534,7 +534,7 @@ static TString *singlevar (LexState *ls, expdesc *var) {
   TString *varname = str_checkname(ls);
   FuncState *fs = ls->fs;
   if (singlevaraux(fs, varname, var, 1) == VGLOBAL)
-    var->u.s.info = luaK_stringK(fs, varname);  /* info points to global name */
+    var->u.s.info = luaK_stringK(fs, varname); /* info points to global name */
   return varname;
 }
 
@@ -544,7 +544,7 @@ static TString *singlevar (LexState *ls, expdesc *var) {
 */
 static ExpListEntry *pushexplistentry (FuncState *fs) {
   ExpListEntry *l;
-  luaM_growvector(fs->H, fs->a->explists, fs->a->nexplists, fs->a->sizeexplists,
+  luaM_growvector(fs->H, fs->a->explists, fs->a->nexplists,fs->a->sizeexplists,
                   ExpListEntry, MAX_INT, "");
   l = &fs->a->explists[fs->a->nexplists++];
   l->types = NULL;
@@ -879,8 +879,8 @@ static TString *buildfuncname (LexState *ls) {
 #ifndef HKSC_PRESERVE_HAVOKSCRIPT_BUGS
   len = namelen;
 #else /* HKSC_PRESERVE_HAVOKSCRIPT_BUGS */
-  /* instead of setting len to namelen, which guarantees that the null byte will
-     not be included in the generated string, len is allowed to be exactly
+  /* instead of setting len to namelen, which guarantees that the null byte
+     will not be included in the generated string, len is allowed to be exactly
      MAX_FUNCNAME to match the bug in Havok Script where the null byte gets
      embedded in the function name if it is as long as or longer than the
      maximum allowed length */
@@ -1365,7 +1365,7 @@ static void makeconstructor (LexState *ls, expdesc *t) {
   if (Settings(ls->H).emit_struct) {
     StructProto *p = luaR_getstructbyname(ls->H, name);
     if (p == NULL)
-      type_error(ls, "Attempt to reference an undefined structure '%s'.", name);
+      type_error(ls, "Attempt to reference an undefined structure '%s'.",name);
     ls->cons_proto = p;
   }
   constructor(ls, t);
@@ -1492,7 +1492,8 @@ static void funcargs (LexState *ls, expdesc *f) {
   switch (ls->t.token) {
     case '(': {  /* funcargs -> `(' [ explist1 ] `)' */
       if (line != ls->lastline)
-        luaX_syntaxerror(ls,"ambiguous syntax (function call x new statement)");
+        luaX_syntaxerror(ls,
+                         "ambiguous syntax (function call x new statement)");
       luaX_next(ls);
       if (ls->t.token == ')')  /* arg list is empty? */
         args.k = VVOID;
@@ -1638,7 +1639,7 @@ static void simpleexp (LexState *ls, expdesc *v) {
     case TK_DOTS: {  /* vararg */
       FuncState *fs = ls->fs;
       check_condition(ls, fs->f->is_vararg,
-                      "cannot use " LUA_QL("...") " outside a vararg function");
+                    "cannot use " LUA_QL("...") " outside a vararg function");
       fs->f->is_vararg &= ~VARARG_NEEDSARG;  /* don't need 'arg' */
       init_exp(v, VVARARG, luaK_codeABC(fs, OP_VARARG, 0, 1, 0));
       break;
@@ -1771,7 +1772,8 @@ static BinOpr numconstsubexpr (LexState *ls, expdesc *v, unsigned int limit) {
   }
   else {
     if (uop != OPR_NOUNOPR)
-      luaX_syntaxerror(ls,"unexpected operator in constant numeric expression");
+      luaX_syntaxerror(ls,
+                       "unexpected operator in constant numeric expression");
     check(ls, TK_NUMBER);
     simpleexp(ls, v);
   }
@@ -1782,7 +1784,8 @@ static BinOpr numconstsubexpr (LexState *ls, expdesc *v, unsigned int limit) {
     expdesc v2;
     BinOpr nextop;
     if (op == OPR_CONCAT || op >= OPR_NE)
-      luaX_syntaxerror(ls,"unexpected operator in constant numeric expression");
+      luaX_syntaxerror(ls,
+                       "unexpected operator in constant numeric expression");
     luaX_next(ls);
     /* read sub-expression with higher priority */
     nextop = numconstsubexpr(ls, &v2, priority[op].right);
@@ -2062,7 +2065,7 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
 
 
 #if HKSC_STRUCTURE_EXTENSION_ON
-static void fornum (LexState *ls, TString *varname, TString *typename, int line)
+static void fornum (LexState *ls, TString *varname, TString *typename,int line)
 #else /* !HKSC_STRUCTURE_EXTENSION_ON */
 static void fornum (LexState *ls, TString *varname, int line)
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */

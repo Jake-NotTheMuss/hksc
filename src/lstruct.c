@@ -50,7 +50,7 @@ static void growlist(hksc_State *H) {
     newsize = LUAI_MAXSTRUCTS;
   else
     newsize = l->size * 2;
-  newblock = luaM_reallocv(H, l->list, l->size, newsize, sizeof(StructProto *));
+  newblock = luaM_reallocv(H, l->list, l->size, newsize,sizeof(StructProto *));
   l->list = cast(StructProto **, newblock);
   l->size = newsize;
 }
@@ -378,9 +378,9 @@ void luaR_mergeprototypes(hksc_State *H, Table *t) {
     loadedproto->id = vmproto->id;
   }
   setnilvalue(key);
-  /* now that all struct prototypes are in the VM, go through each prototype and
-     update any references to other structs with the new id of the referenced
-     struct */
+  /* now that all struct prototypes are in the VM, go through each prototype
+     and update any references to other structs with the new id of the
+     referenced struct */
   while (luaH_next(H, t, key)) {
     StructProto *loadedproto = getproto(rawuvalue(val));
     StructProto *vmproto = luaR_getstructbyid(H, loadedproto->id);

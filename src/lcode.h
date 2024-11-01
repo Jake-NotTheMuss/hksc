@@ -93,14 +93,14 @@ LUAI_FUNC void luaK_self (FuncState *fs, expdesc *e, expdesc *key);
 LUAI_FUNC void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k);
 LUAI_FUNC void luaK_goiftrue (FuncState *fs, expdesc *e);
 #if HKSC_STRUCTURE_EXTENSION_ON
-LUAI_FUNC void luaK_setslot (FuncState *fs, StructSlot *slot, const TypeInfo *t,
+LUAI_FUNC void luaK_setslot (FuncState *fs, StructSlot *slot,const TypeInfo *t,
                              int reg, int key, int val, int kind);
 LUAI_FUNC int luaK_checkslotassignment (FuncState *fs, TString *name,
                                         expdesc *e, const TypeInfo *t);
 LUAI_FUNC void luaK_getslottypeinfo (FuncState *fs, StructSlot *slot,
                                      TypeInfo *t);
 LUAI_FUNC void luaK_checktype (FuncState *fs, TypeInfo *t, int reg);
-LUAI_FUNC void luaK_applytypecontraint (FuncState *fs, TypeInfo *t, expdesc *e);
+LUAI_FUNC void luaK_applytypecontraint (FuncState *fs, TypeInfo *t,expdesc *e);
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 LUAI_FUNC void luaK_storevar (FuncState *fs, expdesc *var, expdesc *e);
 #ifdef LUA_CODIW6
@@ -116,7 +116,7 @@ LUAI_FUNC void luaK_concat (FuncState *fs, int *l1, int l2);
 LUAI_FUNC int luaK_getlabel (FuncState *fs);
 LUAI_FUNC void luaK_prefix (FuncState *fs, UnOpr op, expdesc *v);
 LUAI_FUNC void luaK_infix (FuncState *fs, BinOpr op, expdesc *v);
-LUAI_FUNC void luaK_posfix (FuncState *fs, BinOpr op, expdesc *v1, expdesc *v2);
+LUAI_FUNC void luaK_posfix (FuncState *fs, BinOpr op, expdesc *v1,expdesc *v2);
 LUAI_FUNC void luaK_setlist (FuncState *fs, int base, int nelems, int tostore);
 LUAI_FUNC void luaK_optimize_function (hksc_State *H, Proto *f);
 

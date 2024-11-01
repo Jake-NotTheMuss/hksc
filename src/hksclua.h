@@ -240,7 +240,8 @@ LUA_API const char *(lua_newfixedstring) (hksc_State *H, const char *str);
 LUA_API const char *(lua_newfixedlstring) (hksc_State *H, const char *str,
                                            size_t l);
 LUA_API const char *(lua_newstring) (hksc_State *H, const char *str);
-LUA_API const char *(lua_newlstring) (hksc_State *H, const char *str, size_t l);
+LUA_API const char *(lua_newlstring) (hksc_State *H, const char *str,
+                                      size_t l);
 LUA_API const char *(lua_newfstring) (hksc_State *H, const char *fmt, ...);
 LUA_API const char *(lua_newvfstring) (hksc_State *H, const char *fmt,
                                        va_list argp);

@@ -44,7 +44,8 @@ enum BLTYPE {
   DEFINSFLAG(ENDSCOPE)  /* end of a lexical scope */ \
   DEFINSFLAG(KLOCVAR)  /* local initialization that pushes a constant */ \
   DEFINSFLAG(MULTILOAD)  /* loads values into multiple registers */ \
-  DEFINSFLAG(FIXEDSTARTLINE)  /* pc corresponds to an earlier source line than \
+  DEFINSFLAG(FIXEDSTARTLINE)  \
+                             /* pc corresponds to an earlier source line than \
                              it is mapped to (referred to as `fixed' line) */ \
   DEFINSFLAG(CONSTRUCTOR)  /* inside a constructor */ \
   DEFINSFLAG(CONSTRUCTOR_SETTABLE)  /* a settable op in a constructor */ \
@@ -86,7 +87,7 @@ lua_static_assert(MAX_INSFLAG <= sizeof(InstructionFlags) * CHAR_BIT);
 #define REGFLAG_TABLE \
   DEFREGFLAG(PENDING)  /* a register being used in a temporary expression */ \
   DEFREGFLAG(CONTROL)   /* a register which holds a loop control variable */ \
-  DEFREGFLAG(LOCAL)     /* a register which holds an active local variable */ \
+  DEFREGFLAG(LOCAL)    /* a register which holds an active local variable */ \
   DEFREGFLAG(UPVAL)     /* a register used as an upvalue */
 
 #define DEFREGFLAG(e)  REG_##e,
@@ -117,8 +118,8 @@ typedef struct BlockNode {
   unsigned hardstatbeforechild : 1;  /* used by first pass */
   unsigned repuntiltrue : 1;  /* used by first pass */
   unsigned fixedstartline : 1;  /* true if start-line is fixed; in this case,
-                                   the actual start line is mapped to a specific
-                                   opcode at the end of the block */
+                                   the actual start line is mapped to a
+                                   specific opcode at the end of the block */
 #ifdef LUA_DEBUG
   unsigned visited : 1;  /* has this block been visited in pass2 */
 #endif
@@ -136,7 +137,7 @@ typedef struct BlockState2 {
   int startpc;
   int endpc;
   unsigned reg : 15;  /* closed register */
-  unsigned loop : 1;  /* true if the OP_CLOSE code was at the end of the loop */
+  unsigned loop : 1; /* true if the OP_CLOSE code was at the end of the loop */
 } BlockState2;
 
 
@@ -147,7 +148,7 @@ typedef enum {
   FORNUMPREP,  /* numeric for-loop preparation code */
   FORLISTPREP,  /* list for-loop preparation code */
   SETLISTPREP,  /* code evaluating a table constructor with array items */
-  HASHTABLEPREP,  /* code evaluating a table constructor with only hash items */
+  HASHTABLEPREP, /* code evaluating a table constructor with only hash items */
   EMPTYTABLE,  /* an empty table constructor */
   RETPREP,  /* return statement preparation code */
   VOIDPREP  /* use this kind when you need to traverse an instruction sequence
@@ -228,8 +229,8 @@ typedef struct ExpNode {
       int b, c;  /* B and C operands from the instruction */
       /* these 2 fields are needed if B and/or C reference a pending expression
          in a register, rather than an local variable or a constant */
-      int bindex, cindex;  /* saved handles to the pending expressions that were
-                              in these registers */
+      int bindex, cindex;  /* saved handles to the pending expressions that
+                              were in these registers */
       BinOpr op; 
     } binop;
     struct {
@@ -296,7 +297,7 @@ typedef struct SlotDesc {
     int expindex;  /* if pending, the ExpNode that is in this register */
     /* fields used by ExpressionParser */
     struct {
-      int firstactive;  /* the pc after the evaluation of a value in this slot*/
+      int firstactive; /* the pc after the evaluation of a value in this slot*/
       int aux;  /* extra value based on flags */
     } s;
   } u;

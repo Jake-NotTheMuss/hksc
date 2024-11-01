@@ -4,7 +4,7 @@
 ** See Copyright Notice in lua.h
 */
 
-#include <stddef.h> /* TODO: check inclusiong of stddef and stdarg (included in lua.h) */
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -264,7 +264,7 @@ static void LoadCode(LoadState *S, Proto *f)
   if (cast_int(sizeof(Instruction)) < S->target.sizeinstr) {
     luaD_setferror(S->H,"target instruction field is too wide to represent"
                    " (host size is (%d), target size is (%d)",
-                   cast_int(sizeof(Instruction)), cast_int(S->target.sizeinstr));
+                cast_int(sizeof(Instruction)), cast_int(S->target.sizeinstr));
     luaD_throw(S->H,LUA_ERRRUN);
   }
 #endif /* HKSC_MULTIPLAT */

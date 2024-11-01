@@ -4,7 +4,7 @@
 ** See Copyright Notice in lua.h
 */
 
-/*******************************************************************************
+/******************************************************************************
   The garbage collector was simplified for the needs of hksc. It functions more
   like the Lua 5.0 collector. There are 4 object types that are used by the
   library, strings, tables, prototypes, and analyzers.
@@ -21,7 +21,7 @@
   multiple Lua files may use the same strings (e.g. in using the same global
   variables), and so not collecting them every cycle avoids having to
   continuously deallocate and reallocate memory for the same string.
-*******************************************************************************/
+******************************************************************************/
 
 #ifndef lgc_h
 #define lgc_h

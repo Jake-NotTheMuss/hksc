@@ -61,7 +61,7 @@ typedef struct global_State {
   stringtable strt;  /* hash table for strings */
 #if HKSC_STRUCTURE_EXTENSION_ON
   StructProtoList protolist;  /* list of defined structure prototypes */
-  Table *prototable;  /* hashtable for searching structure prototypes by name */
+  Table *prototable; /* hashtable for searching structure prototypes by name */
 #endif
   lua_Alloc frealloc;  /* function to reallocate memory */
   void *ud;         /* auxiliary data to `frealloc' */

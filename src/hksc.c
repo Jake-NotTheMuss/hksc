@@ -141,8 +141,8 @@ static void print_usage(void)
    /* most of these platforms are the same where it matters to the compiler,
    i.e. when it comes to word-size and integer-size - providing options for
    all of these platforms is to avoid confusion for the user when, for example,
-   they want to target macos, where `-mwindows' would suffice, but they probably
-   want to do `-mdarwin' */
+   they want to target macos, where `-mwindows' would suffice, but they
+   probably want to do `-mdarwin' */
    "  wii\n"
    "  wiiu\n"
    "  nx\n"
@@ -524,7 +524,7 @@ static int doargs(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
 #ifdef HKSC_DECOMPILER
-  if (compiling && decompiling) /* both compile and decompile mode specified? */
+  if (compiling && decompiling)/* both compile and decompile mode specified? */
     usage("both '%s' and '%s' used; only one may be used per invokation",
           opt_compile, opt_decompile);
 #endif /* HKSC_DECOMPILER */

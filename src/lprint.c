@@ -389,7 +389,7 @@ static void PrintCode (PrintState *P, const Proto *f) {
 #ifdef LUA_CODIW6
       case OP_DELETE: case OP_DELETE_BK:
         if (c == DELETE_UPVAL) {
-          Print(P, CM "%s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+          Print(P, CM "%s",(f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
         }
         else if (c == DELETE_GLOBAL) {
           Print(P, CM "%s",svalue(&f->k[INDEXK(b)]));

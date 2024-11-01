@@ -314,7 +314,7 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
 #endif /* LUA_UI64_S */
           {
             ls->buff->n--; /* don't include the null character in messages */
-            luaX_lexerror(ls, "int literal too large for lightuserdata", token);
+            luaX_lexerror(ls, "int literal too large for lightuserdata",token);
           }
         }
       }

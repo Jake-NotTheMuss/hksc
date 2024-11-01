@@ -90,7 +90,8 @@ static void fixjump (FuncState *fs, int pc, int dest) {
   int offset = dest-(pc+1);
   lua_assert(dest != NO_JUMP);
   if (abs(offset) > MAXARG_sBx)
-    luaX_inputerror(fs->ls,"Control structure contains too many instructions.");
+    luaX_inputerror(fs->ls,
+                    "Control structure contains too many instructions.");
   SETARG_sBx(*jmp, offset);
 }
 
@@ -312,7 +313,8 @@ int luaK_literalK(FuncState *fs, lu_int64 l, int type)
 #ifdef HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG
     luaX_inputerror(fs->ls,"60-bit literal not supported without HKS_UI64API");
 #else /* !HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
-    luaX_inputerror(fs->ls,"60-bit literal not supported without HKSC_UI64API");
+    luaX_inputerror(fs->ls,
+                    "60-bit literal not supported without HKSC_UI64API");
 #endif /* HKSC_MATCH_HAVOKSCRIPT_ERROR_MSG */
 #endif /* HKSC_UI64API */
   }
@@ -370,12 +372,12 @@ void luaK_setoneret (FuncState *fs, expdesc *e) {
 #define STRUCT_LOOKUP_MAX_STEPS  15
 
 /*
-** kinds of struct index for the code generator; controls what code is generated
-** for struct indexes
+** kinds of struct index for the code generator; controls what code is
+** generated for struct indexes
 */
 enum StructIndexKind {
   STRUCT_INDEX_SLOT,  /* a valid slot in the structure */
-  STRUCT_INDEX_PROXYTABLE,  /* slot was not resolved, index the backing table */
+  STRUCT_INDEX_PROXYTABLE, /* slot was not resolved, index the backing table */
   STRUCT_INDEX_INVALID  /* an invalid index */
 };
 
@@ -392,8 +394,8 @@ typedef struct StructSlotLookup {
   /* the slot type info; `is_static' in this context refers to the consistency
      of the slot type across the tag chain */
   TypeInfo t;
-  /* the tag-method slot to search for when tarversing up the meta chain, either
-     `__index' or `__newindex' */
+  /* the tag-method slot to search for when tarversing up the meta chain,
+     either `__index' or `__newindex' */
   TString *tm_search_name;
   /* number of slot lookups so far */
   int nsteps;
@@ -470,8 +472,8 @@ static int resolveprimitive (FuncState *fs, StructProto *proto, TString *name,
 }
 
 
-static int resolvestructindex (FuncState *fs, StructProto *proto, TString *name,
-                               StructSlotLookup *s) {
+static int resolvestructindex (FuncState *fs, StructProto *proto,
+                               TString *name, StructSlotLookup *s) {
   int result1 = resolveprimitive(fs, proto, name, s);
   if (result1 == STRUCT_INDEX_PROXYTABLE) {
     s->t.type = LUA_TNONE;
@@ -480,9 +482,9 @@ static int resolvestructindex (FuncState *fs, StructProto *proto, TString *name,
   }
   if (proto->hasmeta) {
     /* save the current state; if the meta slot does not need to be accessed
-       because it doesn't have a tag-mathod slot or the structure type said slot
-       contains does not have the desired slot, the state of the lookup will be
-       reverted back to this value */
+       because it doesn't have a tag-mathod slot or the structure type said
+       slot contains does not have the desired slot, the state of the lookup
+       will be reverted back to this value */
     int nsteps = s->nsteps;
     StructSlot *metaslot = getmetaslot(proto);
     /* the structure contained by the meta slot if it is a structure type */
@@ -499,7 +501,8 @@ static int resolvestructindex (FuncState *fs, StructProto *proto, TString *name,
     /* find the tag-method slot in the meta slot structure type */
     tmslot = luaR_findslot(metaproto, s->tm_search_name);
     if (tmslot != NULL) {
-      /* structure contained by the tag-method slot if it is a structure type */
+      /* structure contained by the tag-method slot if it is a structure
+         type */
       StructProto *parent;
       int result;  /* result of recursive call */
       /* a lookup to access the tag-method slot */
@@ -519,8 +522,8 @@ static int resolvestructindex (FuncState *fs, StructProto *proto, TString *name,
         return result;
       else if (s->store)
         /* for slot assignments, when the `__newindex' slot contains a
-           structure, but the dseired slot cannot be resolved in that structure,
-           SETTABLE is emitted */
+           structure, but the dseired slot cannot be resolved in that
+           structure, SETTABLE is emitted */
         return STRUCT_INDEX_PROXYTABLE;
       /* else go through and handle the terminal case */
     }
@@ -614,9 +617,9 @@ static int code_getslot (FuncState *fs, expdesc *e, StructProto *proto,
 
 /*
 ** call this for primitive slot assignments; KIND controls what store code gets
-** generated for the assignment; KEY and VAL are RK-values for the key and value
-** in the assignment; REG is the struct; T has the slot type info, SLOT may be
-** NULL if assigning to the proxytable
+** generated for the assignment; KEY and VAL are RK-values for the key and
+** value in the assignment; REG is the struct; T has the slot type info, SLOT
+** may be NULL if assigning to the proxytable
 */
 void luaK_setslot (FuncState *fs, StructSlot *slot, const TypeInfo *t, int reg,
                    int key, int val, int kind) {
@@ -706,7 +709,7 @@ void luaK_dischargevars (FuncState *fs, expdesc *e) {
 #if HKSC_GETGLOBAL_MEMOIZATION
       int k = e->u.s.info;
       if (Settings(fs->H).skip_memo == 0) {
-        OpCode op = Settings(fs->H).emit_memo ? OP_GETGLOBAL_MEM : OP_GETGLOBAL;
+        OpCode op =Settings(fs->H).emit_memo ? OP_GETGLOBAL_MEM : OP_GETGLOBAL;
         e->u.s.info = luaK_codeABx(fs, op, 0, k);
         luaK_codeABx(fs, OP_DATA, 20, addmemoslot(fs, k));
       }
@@ -974,7 +977,7 @@ int luaK_checkslotassignment (FuncState *fs, TString *slotname, expdesc *e,
       return ASSIGN_SLOT_DYNAMIC;
     if (t->type != type) {  /* static type mismatch */
       luaX_semerror(fs->ls, luaO_pushfstring(fs->H, "Attempt to assign a "
-        "value of invalid type to slot '%s' (expected '%s').", getstr(slotname),
+        "value of invalid type to slot '%s' (expected '%s').",getstr(slotname),
         luaX_typename(t->type)));
     }
     else if (type == LUA_TSTRUCT && t->proto != proto) {
@@ -1553,9 +1556,9 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
 }
 
 
-/*******************************************************************************
-** Code optimization ***********************************************************
-*******************************************************************************/
+/******************************************************************************
+** Code optimization **********************************************************
+******************************************************************************/
 
 /*
 ** Identify `leaders' in an instruction sequence
@@ -1575,7 +1578,7 @@ static void identify_leaders (int sizecode, Instruction *code,
       int offs = GETARG_sBx(instr);
       lua_assert(0 <= i+1+offs && i+1+offs < sizecode);
       properties[i+1] = 1; /* next instruction is leader */
-      properties[i+1+offs] = 1; /* jump target (maybe false-target) is leader */
+      properties[i+1+offs] = 1;/* jump target (maybe false-target) is leader */
     }
   }
 }

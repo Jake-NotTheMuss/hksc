@@ -53,12 +53,13 @@ LUAI_FUNC void luaU_target_info (hksc_State *H, struct target_info *target);
 ** The LoadState structure is private to lundump.c; the individual members that
 ** need initializing are passed by reference (ZIO and Mbuffer), as well as the
 ** name of the chunk. The constructor/destructor are referenced with separate
-** pointers in the global state, and it is ensured that the destructor will fire
-** if it is non-NULL and if the constructor was fired even if an exception is
-** thrown in between the 2 callbacks, eliminiating the library's chance of
+** pointers in the global state, and it is ensured that the destructor will
+** fire if it is non-NULL and if the constructor was fired even if an exception
+** is thrown in between the 2 callbacks, eliminiating the library's chance of
 ** leaking user memory.
 */
-typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b, const char *name);
+typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b,
+                           const char *name);
 
 #endif /* LUA_CODT6 */
 

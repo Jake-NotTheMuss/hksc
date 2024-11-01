@@ -6,36 +6,19 @@ dir=${0%/*}
 cd "$dir" || exit
 
 limit=79
+x=0
 
-t=0
-
-if test $t = 1; then
-echo \
-'** kinds of struct index for the code generator; controls what code is generated' \
-> a.a
-echo \
-'  STRUCT_INDEX_PROXYTABLE,  /* slot was not resolved, index the backing table */' \
-> b.a
-fi
-
-if test $t = 1; then
-	files=`echo *.a`
-else
-	files=`echo *.c *.h *.def`
-fi
-
-for f in $files; do
+for f in *.c *.h *.def; do
 	i=1
 	sed 's/\r$//' < "$f" | \
 	while IFS= read -r line; do
 		len=${#line}
 		if test $len -gt $limit; then
 			printf '%s:%s (%s characters)\n' "$f" "$i" "$len"
+			x=1
 		fi
 		i=$(($i+1))
 	done
 done
 
-if test $t = 1; then
-	rm -f a.a b.a
-fi
+test $x = 0 && echo "No lines found exceeding line limit"

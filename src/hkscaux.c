@@ -219,7 +219,7 @@ int hksc_dump_bytecode(hksc_State *H, const char *filename) {
   else
     outname = output;
 #ifdef LUA_CODT6
-  status = luacod_dumpdebug(H, outname); /* dump debug info to separate files */
+  status = luacod_dumpdebug(H, outname);/* dump debug info to separate files */
   if (status)
     return status;
 #endif /* LUA_CODT6 */

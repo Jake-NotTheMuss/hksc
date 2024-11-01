@@ -389,9 +389,9 @@ static void DumpDebug(const Proto *f, const TString *p, DumpState *D)
 #endif /* LUA_CODT6 */
   else { /* (BYTECODE_STRIPPING_NONE || BYTECODE_STRIPPING_DEBUG_ONLY) */
 #if HKSC_FORMAT_VERSION <= 13
-    int sizeneeded = f->sizelocvars*(D->target.sizesize + D->target.sizeint*2) +
-                     f->sizeupvalues*(D->target.sizesize) +
-                     f->sizelineinfo*(D->target.sizeint);
+    int sizeneeded = f->sizelocvars*(D->target.sizesize + D->target.sizeint*2)
+                     + f->sizeupvalues*(D->target.sizesize)
+                     + f->sizelineinfo*(D->target.sizeint);
     DumpInt(sizeneeded+sizeofdebuginfo(&D->target),D);
 #else /* HKSC_FORMAT_VERSION > 13 */
     DumpInt(1,D);

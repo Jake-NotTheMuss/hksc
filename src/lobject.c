@@ -318,7 +318,7 @@ const char *luaO_pushvfstring (hksc_State *H, const char *fmt, va_list argp) {
         break;
       }
       case 'p': {
-        char buff[4*sizeof(void *) + 8]; /* should be enough space for a `%p' */
+        char buff[4*sizeof(void *) + 8];/* should be enough space for a `%p' */
         sprintf(buff, "%p", va_arg(argp, void *));
         pushstr(&sb, buff);
         break;
