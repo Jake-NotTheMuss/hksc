@@ -49,7 +49,7 @@ LUA_API hksc_State *debug_newstate(hksc_StateSettings *settings)
   hksc_State *H;
   hksc_StateSettings default_settings;
   if (!settings) {
-    hksI_StateSettings(&default_settings);
+    hksI_settings(&default_settings);
     settings = &default_settings;
   }
   settings->frealloc = debug_realloc;

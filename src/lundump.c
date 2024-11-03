@@ -377,7 +377,7 @@ static void LoadDebug(LoadState *S, Proto *f, TString *p)
 #ifndef LUA_CODT6
   /* all the arrays above needed to be allocated in any case to read and
   advance over the data, but now it needs to be freed if ignoring debug info */
-  if (hksc_getignoredebug(S->H)) {
+  if (Settings(S->H).ignore_debug) {
     luaM_freearray(S->H, f->lineinfo, f->sizelineinfo, int);
     luaM_freearray(S->H, f->locvars, f->sizelocvars, LocVar);
     luaM_freearray(S->H, f->upvalues, f->sizeupvalues, TString *);
@@ -649,7 +649,7 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   ZIO ZD; /* debugS->Z */
   Mbuffer buffD; /* debugS->b */
 #endif /* LUA_CODT6 */
-  LoadState *debugS;
+  LoadState *debugS = NULL;
   if (*name=='@' || *name=='=')
     S.name=name+1;
   else if (*name==LUA_SIGNATURE[0])
@@ -669,15 +669,19 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   /* need some info in the header before initializing the COD debug reader */
   LoadHeader(&S);
 #ifdef LUA_CODT6 /* some gymnastics for loading Call of Duty debug files */
-  if (G(H)->debugLoadStateOpen && !Settings(H).ignore_debug) {
-    int openstatus = (*G(H)->debugLoadStateOpen)(H, &ZD, &buffD, name);
-    if (openstatus == 0) {
+  if (!Settings(H).ignore_debug && H->debugsource.reader) {
+    /* run pre-load callback */
+    int preloadstatus = H->debugsource.preload ?
+    (*H->debugsource.preload)(H, name) : 0;
+    if (preloadstatus)
+      luaD_throw(H, preloadstatus);
+    else {
       debugS = &SD;
       SD.H = H;
       SD.Z = &ZD;
       SD.b = &buffD;
       SD.swapendian = S.swapendian;
-      SD.name = H->currdebugfile;
+      SD.name = H->debugsource.name;
       SD.pos = 0;
       SD.desc="debug info";
       SD.target = S.target;
@@ -685,13 +689,10 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
       SD.loadint = S.loadint;
       SD.loadsize = S.loadsize;
 #endif /* HKSC_MULTIPLAT */
-    }
-    else {
-      luaD_throw(S.H,openstatus);
-      debugS = NULL; /* to avoid uninitialized variable warning */
+      luaZ_init(H, SD.Z, H->debugsource.reader, H->debugsource.ud);
+      luaZ_initbuffer(H, SD.b);
     }
   }
-  else debugS = NULL; /* do not load debug info */
 #else /* !LUA_CODT6 */
   debugS = &S; /* still need to read the embedded debug info if present */
 #endif /* LUA_CODT6 */
@@ -699,10 +700,14 @@ Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff, const char *name)
   u.debugS = debugS;
   status = luaD_pcall(H, f_undump, &u);
 #ifdef LUA_CODT6
-  if (G(H)->debugLoadStateClose && !Settings(H).ignore_debug) {
-    int closestatus = (*G(H)->debugLoadStateClose)(H, &ZD, &buffD, name);
-    if (status == 0 && closestatus != 0)
-      status = closestatus;
+  if (!Settings(H).ignore_debug && H->debugsource.reader) {
+    int postloadstatus;
+    luaZ_freebuffer(H, SD.b);
+    /* run post-load callback */
+    postloadstatus = H->debugsource.postload ?
+    (*H->debugsource.postload)(H, name) : 0;
+    if (status == 0 && postloadstatus != 0)
+      status = postloadstatus;
   }
 #endif /* LUA_CODT6 */
   if (status)

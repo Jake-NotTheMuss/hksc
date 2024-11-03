@@ -76,10 +76,6 @@ typedef struct global_State {
   const char *prefix_map_from;  /* OLD value in file prefix map */
   const char *prefix_map_to;  /* NEW value in file prefix map */
   lua_CFunction panic;  /* to be called in unprotected errors */
-#if defined(LUA_CODT6)
-  LoadStateCB debugLoadStateOpen; /* (COD) debug reader initializer */
-  LoadStateCB debugLoadStateClose; /* (COD) debug reader finalizer */
-#endif /* LUA_CODT6 */
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
   /* only `__index' and `__newindex' are needed by the compiler */
@@ -104,7 +100,22 @@ struct hksc_State {
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
 #if defined(LUA_CODT6)
-  const char *currdebugfile;
+  /* data for controlling loading of debug info */
+  struct {
+    lua_Reader reader;  /* debug info reader */
+    void *ud;  /* userdata for reader */
+    const char *name;  /* name to use in LoadState */
+    /* I use these callbacks to open and close the input file, rather than
+       opening it earlier before I know if I actually need it; by the time
+       this callback happens, it is known that the file is needed */
+    DebugLoadCB preload, postload;
+    struct {
+      /* auxiliary memory used by the library */
+      void *ptr;
+      size_t size;
+    } mem;
+    int cycles;  /* how many translation cycles to use this configuration */
+  } debugsource;
 #endif /* LUA_CODT6 */
   const char *currinputname;
 };
@@ -116,20 +127,6 @@ struct hksc_State {
 #define hksc_mode(H) (G(H)->mode)
 
 #define hksc_seterror(H,s) ((H)->errormsg = (s))
-
-/* macros for setting compiler options */
-#define hksc_getemitstruct(H) (Settings(H).emit_struct)
-#define hksc_setemitstruct(H,v) (Settings(H).emit_struct = (v))
-#define hksc_getintliteralsenabled(H) (Settings(H).enable_int_literals)
-#define hksc_setintliteralsenabled(H,v) (Settings(H).enable_int_literals = (v))
-#define hksc_getbytecodestrippinglevel(H) (Settings(H).strip)
-#define hksc_setbytecodestrippinglevel(H,v) (Settings(H).strip = (v))
-#define hksc_getignoredebug(H) (Settings(H).ignore_debug)
-#define hksc_setignoredebug(H,v) (Settings(H).ignore_debug = (v))
-#ifdef HKSC_DECOMPILER
-#define hksc_getmatchlineinfo(H) (Settings(H).match_line_info)
-#define hksc_setmatchlineinfo(H,v) (Settings(H).match_line_info = (v))
-#endif /* HKSC_DECOMPILER */
 
 
 /*
@@ -170,6 +167,11 @@ union GCObject {
 
 /* macro to convert any Lua object into a GCObject */
 #define obj2gco(v)	(cast(GCObject *, (v)))
+
+
+#ifdef LUA_CODT6
+LUAI_FUNC void *luaE_allocdebugsource (hksc_State *H, size_t size);
+#endif
 
 #endif
 

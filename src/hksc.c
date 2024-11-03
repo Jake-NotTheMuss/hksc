@@ -589,7 +589,7 @@ static int dofiles (hksc_State *H, int argc, char *argv[]) {
     if (status) {
       if (status == LUA_ERRSYNTAX) {
         fprintf(stderr, "%s\n", lua_geterror(H));
-        lua_clearerror(H); /* discharge the error message and keep going */
+        /*lua_clearerror(H);*/ /* discharge the error message and keep going */
       } else {
         fprintf(stderr, "%s: %s\n", progname, lua_geterror(H));
         break; /* fatal */
@@ -619,7 +619,7 @@ int main(int argc, char *argv[])
       error_multiple_inputs("--callstackdb");
 #endif /* LUA_CODT6 */
   }
-  hksI_StateSettings(&settings);
+  hksI_settings(&settings);
 #ifdef HKSC_MULTIPLAT
   settings.target_plat = target_plat;
   settings.target_ws = target_ws;
@@ -629,14 +629,14 @@ int main(int argc, char *argv[])
   for (i = 0; i < nprefixmaps; i++)
     lua_addprefixmap(H, file_prefix_maps[i]);
   lua_setmode(H, mode);
-  lua_setintliteralsenabled(H,literals_enabled);
+  lua_setliteralsenabled(H,literals_enabled);
 #ifdef LUA_CODT6
   lua_onstartcycle(H, luacod_startcycle);
   lua_onendcycle(H, luacod_endcycle);
-  lua_setbytecodestrippinglevel(H,BYTECODE_STRIPPING_ALL);
+  lua_setstrip(H,BYTECODE_STRIPPING_ALL);
   lua_setignoredebug(H, !withdebug);
 #else /* !LUA_CODT6 */
-  lua_setbytecodestrippinglevel(H,striplevel);
+  lua_setstrip(H,striplevel);
   lua_setignoredebug(H, ignore_debug);
 #endif /* LUA_CODT6 */
   status = dofiles(H, argc, argv);

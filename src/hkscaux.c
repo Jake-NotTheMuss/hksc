@@ -118,7 +118,7 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
   memcpy(buff+n, ext, extlen);
   n+=extlen;
   buff[n]='\0';
-  return lua_newlstring(H, buff, n);
+  return lua_pushlstr(H, buff, n);
 }
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
@@ -133,7 +133,9 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 
 /* push error string "cannot <what> <filename>" */
 #define cannot(what,name) do { \
-  lua_setferror(H, "cannot " what " %s: %s", name, strerror(errno)); \
+  char buffer [1024]; \
+  sprintf(buffer, "cannot " what " %.512s: %.64s", name, strerror(errno)); \
+  lua_seterror(H, lua_pushstr(H, buffer)); \
   return LUA_ERRFILE; \
 } while (0)
 
@@ -157,7 +159,7 @@ void luacod_startcycle(hksc_State *H, const char *name) {
       debugfile = lua2luadebug(H, name);
     if (profilefile == NULL)
       profilefile = lua2luaprofile(H, name);
-    lua_setdebugfile(H, debugfile);
+    hksI_setdebugfile(H, debugfile);
   }
 }
 
@@ -168,13 +170,12 @@ void luacod_endcycle(hksc_State *H, const char *name) {
      run in that case */
   debugfile = NULL;
   profilefile = NULL;
-  lua_setdebugfile(H, NULL);
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
   FILE *debug_file_; \
   xopenfile(debug_file_,name,mode); \
-  lua_setbytecodestrippinglevel(H,striplevel); \
+  lua_setstrip(H,striplevel); \
   lua_dump(H,writer_2file,debug_file_); \
   if (ferror(debug_file_)) cannot("write",name); \
   if (fclose(debug_file_)) cannot("close",name); \
@@ -192,7 +193,7 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
       profilefile = lua2luaprofile(H, outname);
     dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
   }
-  lua_setbytecodestrippinglevel(H,BYTECODE_STRIPPING_ALL); /* reset */
+  lua_setstrip(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
 }
 #endif /* LUA_CODT6 */

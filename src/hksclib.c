@@ -179,9 +179,26 @@ static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
 /* }====================================================== */
 
 
+#ifdef LUA_CODT6
+#define CYCLE_INFINITE  (-100)
+
+static void resetdebugsource (hksc_State *H) {
+  H->debugsource.reader = NULL;
+  H->debugsource.ud = NULL;
+  H->debugsource.name = NULL;
+  H->debugsource.preload = NULL;
+  H->debugsource.postload = NULL;
+  H->debugsource.cycles = 0;
+}
+#endif /* LUA_CODT6 */
+
+
 /* put here all logic to be run at the start of a parser cycle */
 static void startcycle(hksc_State *H, const char *name) {
   global_State *g = G(H);
+  /* in case ERRORMSG is a string that is about to be collected, reset it to an
+     empty string */
+  H->errormsg = NULL;
 #ifdef LUA_DEBUG
   if (g->incyclecallback) {
     luaG_runerror(H, "cannot start a new parser cycle from inside a "
@@ -232,6 +249,12 @@ static void endcycle(hksc_State *H, const char *name) {
     g->incyclecallback = 0;
 #endif /* LUA_DEBUG */
   }
+#ifdef LUA_CODT6
+  if (H->debugsource.cycles != CYCLE_INFINITE) {
+    if (--H->debugsource.cycles <= 0)
+      resetdebugsource(H);
+  }
+#endif /* LUA_CODT6 */
   /* start of library end-cycle logic */
   if (H->last_result != NULL)
     makedead(obj2gco(H->last_result)); /* now it can die */
@@ -257,7 +280,7 @@ struct SParser {
   const char *source;  /* source name */
   lua_Reader reader;
   void *aux;  /* data depending on sourcekind */
-  hksc_DumpFunction dumpf;
+  hksc_Dumper dumpf;
   void *ud;
 };
 
@@ -283,7 +306,7 @@ static void fparser(hksc_State *H, void *ud) {
 
 
 LUA_API int hksI_parser(hksc_State *H, lua_Reader reader, void *readerdata,
-             hksc_DumpFunction dumpf, void *dumpdata, const char *chunkname)
+             hksc_Dumper dumpf, void *dumpdata, const char *chunkname)
 {
   int status;
   struct SParser p;
@@ -300,7 +323,7 @@ LUA_API int hksI_parser(hksc_State *H, lua_Reader reader, void *readerdata,
 
 
 LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
-                     hksc_DumpFunction dumpf, void *ud) {
+                     hksc_Dumper dumpf, void *ud) {
   int status;
   struct SParser p;
   lua_lock(H);
@@ -315,7 +338,7 @@ LUA_API int hksI_parser_file(hksc_State *H, const char *filename,
 
 
 LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
-                       const char *source, hksc_DumpFunction dumpf, void *ud) {
+                       const char *source, hksc_Dumper dumpf, void *ud) {
   int status;
   struct SParser p;
   lua_lock(H);
@@ -327,6 +350,109 @@ LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
   lua_unlock(H);
   return status;
 }
+
+
+#ifdef LUA_CODT6
+
+/*
+** LoadDF - differs from LoadF because I delay opening the input file until the
+** callback from luaU_undump is called, because until then, it is unknown if
+** this file will be used for input or output; if used for output, the file
+** shouldn't be opened from inside the library
+*/
+typedef struct LoadDF {
+  const char *filename;
+  FILE *f;
+  char buff [LUAL_BUFFERSIZE];
+} LoadDF;
+
+/* preload callback when the debug info is in a file */
+static int opendebugfile (hksc_State *H, const char *chunkname) {
+  LoadDF *lf = H->debugsource.ud;
+  lua_assert(lf != NULL && lf->f == NULL);
+  if (lf->filename == NULL) {
+    luaD_setferror(H,"debug file name not set for input `%s'", chunkname);
+    return LUA_ERRRUN;
+  }
+  lf->f = fopen(lf->filename, "rb");
+  if (lf->f == NULL)
+    return errfile(H, "open", lf->filename);
+  return 0;
+}
+
+/* postload callback when the debug info is in a file */
+static int closedebugfile (hksc_State *H, const char *chunkname) {
+  int readstatus, closestatus;
+  LoadDF *lf = H->debugsource.ud;
+  lua_assert(lf != NULL && lf->f != NULL);
+  readstatus = ferror(lf->f);
+  closestatus = fclose(lf->f);
+  lf->f = NULL;
+  if (readstatus) return errfile(H, "read", lf->filename);
+  if (closestatus) return errfile(H, "close", lf->filename);
+  UNUSED(chunkname);
+  return 0;
+}
+
+
+/* reader callback for debug info files */
+static const char *getDF (hksc_State *H, void *ud, size_t *size) {
+  LoadDF *lf = (LoadDF *)ud;
+  (void)H;
+  if (feof(lf->f)) return NULL;
+  *size = fread(lf->buff, 1, LUAL_BUFFERSIZE, lf->f);
+  return (*size > 0) ? lf->buff : NULL;
+}
+
+
+/*
+** Debug info reader APIs
+*/
+
+LUA_API void hksI_setdebugreader (hksc_State *H, lua_Reader r, void *ud,
+                                  const char *name) {
+  H->debugsource.reader = r;
+  H->debugsource.ud = ud;
+  H->debugsource.preload = H->debugsource.postload = NULL;
+  /* when the user handles it all on their own, it is expected they will not
+     need to change the internal configuration of Hksc every cycle to make
+     their system work; on the other hand, if using files for example, they
+     would need to specify a new debug info file name every cycle */
+  H->debugsource.cycles = CYCLE_INFINITE;
+  H->debugsource.name = name ? name : "(debug info source)";
+}
+
+
+LUA_API void hksI_setdebugfile (hksc_State *H, const char *filename) {
+  LoadDF *lf;
+  if (filename == NULL) {
+    resetdebugsource(H);
+    return;
+  }
+  H->debugsource.reader = getDF;
+  lf = H->debugsource.ud = luaE_allocdebugsource(H, sizeof(LoadDF));
+  H->debugsource.preload = &opendebugfile;
+  H->debugsource.postload = &closedebugfile;
+  H->debugsource.name = filename;
+  H->debugsource.cycles = 1;
+  lf->filename = filename;
+  lf->f = NULL;
+}
+
+
+LUA_API void hksI_setdebugbuffer (hksc_State *H, const void *buff, size_t size,
+                                  const char *name) {
+  LoadS *ls;
+  H->debugsource.reader = getS;
+  H->debugsource.preload = H->debugsource.postload = NULL;
+  ls = H->debugsource.ud = luaE_allocdebugsource(H, sizeof(LoadS));
+  H->debugsource.name = name ? name : "(debug info string)";
+  H->debugsource.cycles = 1;
+  ls->s = buff;
+  ls->size = size;
+}
+
+#endif /* LUA_CODT6 */
 
 
 static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize) {
@@ -347,67 +473,8 @@ static int panic (hksc_State *H) {
   return 0;
 }
 
-#if defined(LUA_CODT6) /*&& defined(HKSC_DECOMPILER)*/
 
-typedef struct LoadDebug
-{
-  FILE *f;
-  char buff[LUAL_BUFFERSIZE];
-} LoadDebug;
-
-static const char *debug_reader (hksc_State *H, void *ud, size_t *size) {
-  LoadDebug *ld = (LoadDebug *)ud;
-  UNUSED(H);
-  if (feof(ld->f)) return NULL;
-  *size = fread(ld->buff, 1, LUAL_BUFFERSIZE, ld->f);
-  return (*size > 0) ? ld->buff : NULL;
-}
-
-
-static int init_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                             const char *name) {
-  LoadDebug *ld;
-  FILE *f;
-  lua_assert(hksc_getignoredebug(H) == 0);
-  if (H->currdebugfile == NULL) {
-    luaD_setferror(H, "debug file name not set for input `%s'", name);
-    return LUA_ERRRUN;
-  }
-  ld = luaM_new(H, LoadDebug);
-  f = fopen(H->currdebugfile, "rb");
-  if (f == NULL) {
-    luaM_free(H, ld);
-    return errfile(H, "open", H->currdebugfile);
-  }
-  ld->f = f;
-  luaZ_init(H, z, debug_reader, ld);
-  luaZ_initbuffer(H, buff);
-  return 0;
-}
-
-static int close_debug_reader(hksc_State *H, ZIO *z, Mbuffer *buff,
-                              const char *name) {
-  int readstatus, closestatus;
-  LoadDebug *ld;
-  FILE *f;
-  UNUSED(name);
-  lua_assert(hksc_getignoredebug(H) == 0);
-  ld = z->data;
-  f = ld->f;
-  luaM_free(H, ld); UNUSED(ld);
-  luaZ_freebuffer(H, buff); UNUSED(buff);
-  if (f == NULL) return 0;
-  readstatus = ferror(f);
-  closestatus = fclose(f);
-  UNUSED(f);
-  if (readstatus) return errfile(H, "read", H->currdebugfile);
-  if (closestatus) return errfile(H, "close", H->currdebugfile);
-  return 0;
-}
-
-#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
-
-LUA_API void hksI_CompilerSettings(hksc_CompilerSettings *settings) {
+LUA_API void hksI_compilersettings(hksc_CompilerSettings *settings) {
 #ifdef LUA_CODT6
 # ifdef LUA_CODT7
   settings->hash_step = 1;
@@ -421,14 +488,14 @@ LUA_API void hksI_CompilerSettings(hksc_CompilerSettings *settings) {
   settings->emit_memo = 1;
   settings->skip_memo = 0;
 #endif /* HKSC_GETGLOBAL_MEMOIZATION */
-  settings->enable_int_literals = INT_LITERALS_NONE;
+  settings->literals = INT_LITERALS_NONE;
 #ifdef HKSC_DECOMPILER
   settings->match_line_info = 1;
 #endif /* HKSC_DECOMPILER */
 }
 
-LUA_API void hksI_StateSettings(hksc_StateSettings *settings) {
-  hksI_CompilerSettings(&settings->compilersettings);
+LUA_API void hksI_settings(hksc_StateSettings *settings) {
+  hksI_compilersettings(&settings->compilersettings);
   settings->frealloc = &l_alloc;
   settings->ud = NULL;
   settings->panic = &panic;
@@ -446,17 +513,10 @@ LUA_API hksc_State *hksI_newstate(hksc_StateSettings *settings)
   hksc_State *H;
   hksc_StateSettings default_settings;
   if (!settings) {
-    hksI_StateSettings(&default_settings);
+    hksI_settings(&default_settings);
     settings = &default_settings;
   }
   H = lua_newstate(settings);
-  if (H) {
-#if defined(LUA_CODT6)
-    /* Call of Duty needs a separate debug reader when loading bytecode */
-    G(H)->debugLoadStateOpen = init_debug_reader;
-    G(H)->debugLoadStateClose = close_debug_reader;
-#endif /* LUA_CODT6 */
-  }
   return H;
 }
 

@@ -37,6 +37,7 @@
 #define LUA_ERRSYNTAX	3
 #define LUA_ERRMEM	4
 #define LUA_ERRERR	5
+#define LUA_ERRUSER  6  /* error is user-defined callback */
 
 
 typedef struct hksc_State hksc_State;
@@ -173,7 +174,7 @@ typedef struct {
   int ignore_debug; /* do not try to load/dump debug info */
   /* compiler-specific settings */
   int emit_struct; /* whether `hstructure' and `hmake' should be emitted */
-  int enable_int_literals; /* int literal setting */
+  int literals; /* int literal setting */
 #if HKSC_GETGLOBAL_MEMOIZATION
   int emit_memo;
   int skip_memo;
@@ -236,20 +237,10 @@ LUA_API hksc_CycleCallback (lua_onendcycle) (hksc_State *H,
 /*
 ** miscellaneous functions
 */
-LUA_API const char *(lua_newfixedstring) (hksc_State *H, const char *str);
-LUA_API const char *(lua_newfixedlstring) (hksc_State *H, const char *str,
-                                           size_t l);
-LUA_API const char *(lua_newstring) (hksc_State *H, const char *str);
-LUA_API const char *(lua_newlstring) (hksc_State *H, const char *str,
-                                      size_t l);
-LUA_API const char *(lua_newfstring) (hksc_State *H, const char *fmt, ...);
-LUA_API const char *(lua_newvfstring) (hksc_State *H, const char *fmt,
-                                       va_list argp);
+LUA_API const char *(lua_pushlstr) (hksc_State *H, const char *s, size_t l);
+LUA_API const char *(lua_pushstr) (hksc_State *H, const char *s);
 LUA_API const char *(lua_geterror) (hksc_State *H);
-LUA_API void (lua_seterror) (hksc_State *H, const char *s);
-LUA_API void (lua_setferror) (hksc_State *H, const char *fmt, ...);
-LUA_API void (lua_setvferror) (hksc_State *H, const char *fmt, va_list argp);
-LUA_API void (lua_clearerror) (hksc_State *H);
+LUA_API void (lua_seterror) (hksc_State *H, const char *msg);
 LUA_API int (lua_getmode) (hksc_State *H);
 LUA_API void (lua_setmode) (hksc_State *H, int mode);
 LUA_API lua_Alloc (lua_getallocf) (hksc_State *H, void **ud);
@@ -257,21 +248,17 @@ LUA_API void (lua_setallocf) (hksc_State *H, lua_Alloc f, void *ud);
 
 LUA_API void (lua_addprefixmap) (hksc_State *H, const char *arg);
 
-#if defined(LUA_CODT6)
-LUA_API const char *(lua_getdebugfile) (hksc_State *H);
-LUA_API void (lua_setdebugfile) (hksc_State *H, const char *name);
-#endif /* LUA_CODT6 */
 
 /*
 ** Lua compiler/decompiler settings
 */
 LUA_API int (lua_getemitstruct) (hksc_State *H);
 LUA_API void (lua_setemitstruct) (hksc_State *H, int emit_struct);
-LUA_API int (lua_getintliteralsenabled) (hksc_State *H);
-LUA_API void (lua_setintliteralsenabled) (hksc_State *H,
-                                          int enable_int_literals);
-LUA_API int (lua_getbytecodestrippinglevel) (hksc_State *H);
-LUA_API void (lua_setbytecodestrippinglevel) (hksc_State *H, int strip);
+LUA_API int (lua_getliteralsenabled) (hksc_State *H);
+LUA_API void (lua_setliteralsenabled) (hksc_State *H,
+                                          int literals);
+LUA_API int (lua_getstrip) (hksc_State *H);
+LUA_API void (lua_setstrip) (hksc_State *H, int strip);
 LUA_API int (lua_getignoredebug) (hksc_State *H);
 LUA_API void (lua_setignoredebug) (hksc_State *H, int ignore_debug);
 #ifdef HKSC_DECOMPILER

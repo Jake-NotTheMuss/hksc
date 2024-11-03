@@ -76,7 +76,13 @@ static void preinit_state (hksc_State *H, global_State *g) {
   H->errormsg = NULL;
   H->last_result = NULL;
 #if defined(LUA_CODT6)
-  H->currdebugfile = NULL;
+  H->debugsource.reader = NULL;
+  H->debugsource.ud = NULL;
+  H->debugsource.preload = NULL;
+  H->debugsource.postload = NULL;
+  H->debugsource.mem.ptr = NULL;
+  H->debugsource.mem.size = 0;
+  H->debugsource.cycles = 0;
 #endif /* defined(LUA_CODT6) */
   H->currinputname = NULL;
 }
@@ -93,9 +99,29 @@ static void close_state (hksc_State *H) {
   luaM_freearray(H, g->protolist.list, g->protolist.size, StructProto *);
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   luaZ_freebuffer(H, &g->buff);
+#ifdef LUA_CODT6
+  luaE_allocdebugsource(H, 0);
+#endif
   lua_assert(g->totalbytes == sizeof(LG));
   (*g->frealloc)(g->ud, fromstate(H), state_size(LG), 0);
 }
+
+
+#ifdef LUA_CODT6
+/* when the library supplies the debug info readers, it allocates memory for
+   its userdata */
+void *luaE_allocdebugsource (hksc_State *H, size_t size) {
+  void *ptr;
+  if (size == H->debugsource.mem.size)
+    return H->debugsource.mem.ptr;
+  if (size != 0 && size < H->debugsource.mem.size)
+    return H->debugsource.mem.ptr;
+  ptr= luaM_realloc_(H, H->debugsource.mem.ptr, H->debugsource.mem.size, size);
+  H->debugsource.mem.ptr = ptr;
+  H->debugsource.mem.size = size;
+  return ptr;
+}
+#endif /* LUA_CODT6 */
 
 
 LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
@@ -144,10 +170,6 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->totalbytes = sizeof(LG);
   VEC_INIT(g->prefixmaps);
   g->startcycle = g->endcycle = NULL;
-#if defined(LUA_CODT6)
-  g->debugLoadStateOpen = NULL;
-  g->debugLoadStateClose = NULL;
-#endif /* defined(LUA_CODT6) && defined(HKSC_DECOMPILER) */
 #if HKSC_STRUCTURE_EXTENSION_ON
   g->protolist.list = NULL;
   g->protolist.nuse = g->protolist.size = 0;
