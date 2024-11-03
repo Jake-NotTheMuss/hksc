@@ -37,7 +37,6 @@
 #define LUA_ERRSYNTAX	3
 #define LUA_ERRMEM	4
 #define LUA_ERRERR	5
-#define LUA_ERRUSER  6  /* error is user-defined callback */
 
 
 typedef struct hksc_State hksc_State;

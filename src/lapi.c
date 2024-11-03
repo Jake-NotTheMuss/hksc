@@ -91,7 +91,6 @@ LUA_API const char *lua_geterror (hksc_State *H) {
 
 LUA_API void lua_seterror (hksc_State *H, const char *msg) {
   lua_lock(H);
-  H->status = LUA_ERRUSER;
   H->errormsg = msg;
   lua_unlock(H);
 }

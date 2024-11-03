@@ -47,22 +47,7 @@ LUAI_FUNC void luaU_target_info (hksc_State *H, struct target_info *target);
 #endif /* ldump_c || lundump_c */
 
 #if defined(LUA_CODT6)
-
-/*
-** Callback function signature for constructing/destructing a debug load state.
-** The LoadState structure is private to lundump.c; the individual members that
-** need initializing are passed by reference (ZIO and Mbuffer), as well as the
-** name of the chunk. The constructor/destructor are referenced with separate
-** pointers in the global state, and it is ensured that the destructor will
-** fire if it is non-NULL and if the constructor was fired even if an exception
-** is thrown in between the 2 callbacks, eliminiating the library's chance of
-** leaking user memory.
-*/
-typedef int (*LoadStateCB)(hksc_State *H, ZIO *z, Mbuffer *b,
-                           const char *name);
-
 typedef int (*DebugLoadCB) (hksc_State *H, const char *name);
-
 #endif /* LUA_CODT6 */
 
 /* load one chunk; from lundump.c */

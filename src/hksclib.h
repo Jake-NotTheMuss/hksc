@@ -89,6 +89,6 @@ LUA_API void hksI_setdebugbuffer (hksc_State *H, const void *buff,
 #endif /* LUA_CODT6 */
 
 /* extra error code for `luaL_load' */
-#define LUA_ERRFILE     (LUA_ERRUSER+1)
+#define LUA_ERRFILE     (LUA_ERRERR+1)
 
 #endif /* HKSC_LIB_H */
