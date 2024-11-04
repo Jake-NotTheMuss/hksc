@@ -6357,6 +6357,8 @@ static ExpNode *addexp2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
   ExpNode node;
   ExpNode *exp = &node;
   const Proto *f = fs->f;
+  if (o == OP_DATA)
+    return NULL;
   lua_assert(ispcvalid(fs, pc));
   initexp2(fs, exp, a, pc);
   switch (o) {
