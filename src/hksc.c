@@ -242,6 +242,8 @@ static const char *getarg (int argc, char *argv [], int *ind, int optlen) {
 #define SHORTLONG_INT(v,s) (v) = IS(s) ? 1 : -1
 #define SHORTLONG_STR(v,s,l) ((v) == 1 ? (s) : (l))
 
+#define num_infiles(nfiles) ((nfiles) + opts.from_stdin)
+
 static int doargs(int argc, char *argv[])
 {
   int i, nfiles = 0, version = 0, info = 0;
@@ -263,10 +265,10 @@ static int doargs(int argc, char *argv[])
       if (version) ++version;
       break;
     }
-#if 0
-    else if (IS("-"))     /* end of options; use stdin */
+    else if (IS("-")) {    /* end of options; use stdin */
+      opts.from_stdin = 1;
       break;
-#endif
+    }
     else if (IS("-a") || IS("--source"))
       /* 1 or -1 indicates whether the short or long form was used */
       SHORTLONG_INT(a, "-a");
@@ -521,10 +523,12 @@ static int hksc_dump_f(hksc_State *H, void *ud) {
 /*
 ** parser loop function
 */
-static int dofiles (hksc_State *H, int argc, char *argv[]) {
+static int dofiles (hksc_State *H, int nfiles, char *files[]) {
   int i, status, error = 0;
-  for (i = 0; i < argc; i++) {
-    error |= (status = hksI_parser_file(H, argv[i], hksc_dump_f, argv[i]));
+  int done_stdin = 0;
+  for (i = 0; i < nfiles; i++) {
+    error |= (status = hksI_parser_file(H, files[i], hksc_dump_f, files[i]));
+    checkstatus:
     if (status) {
       if (status == LUA_ERRSYNTAX) {
         fprintf(stderr, "%s\n", lua_geterror(H));
@@ -534,6 +538,11 @@ static int dofiles (hksc_State *H, int argc, char *argv[]) {
         break; /* fatal */
       }
     }
+  }
+  if (opts.from_stdin && !done_stdin) {
+    done_stdin = 1;
+    error |= (status = hksI_parser_file(H, NULL, hksc_dump_f, STDIN_NAME));
+    goto checkstatus;
   }
   return error;
 }
@@ -545,10 +554,11 @@ int main(int argc, char *argv[])
   hksc_State *H;
   int status;
   int i=doargs(argc,argv);
-  argc=i;argv+=1; /* in-files are pushed to front */
-  if (argc<=0) usage("no input files given");
+  int nfiles = i;
+  argv += 1; /* in-files are pushed to front */
+  if (num_infiles(nfiles) <= 0) usage("no input files given");
   /* warn about using -o with multiple input files */
-  else if (argc > 1) {
+  else if (num_infiles(nfiles) > 1) {
     if (opts.output != NULL)
       error_multiple_inputs("--output");
 #ifdef LUA_CODT6
@@ -578,7 +588,7 @@ int main(int argc, char *argv[])
   lua_setstrip(H, opts.strip);
   lua_setignoredebug(H, opts.ignore_debug);
 #endif /* LUA_CODT6 */
-  status = dofiles(H, argc, argv);
+  status = dofiles(H, nfiles, argv);
   hksI_close(H);
   return status ? EXIT_FAILURE : EXIT_SUCCESS;
 }

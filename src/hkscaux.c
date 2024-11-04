@@ -154,6 +154,8 @@ void luacod_startcycle(hksc_State *H, const char *name) {
   if (lua_getmode(H) == HKSC_MODE_SOURCE && opts.output != NULL)
     name = opts.output;/* the debug files go the directory with the output
     file */
+  else if (name == NULL)
+    name = STDIN_NAME;
   if (opts.with_debug) {
     debug_file = opts.debug_file;
     callstack_file = opts.callstack_file;

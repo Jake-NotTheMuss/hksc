@@ -11,6 +11,8 @@
 
 #define MAX_PREFIX_MAPS 32
 
+#define STDIN_NAME "stdin" /* stdin output file name */
+
 struct Opts {
   int listing;
   int dumping;

@@ -99,16 +99,16 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
 }
 
 static int loadfile(hksc_State *H, const char *filename) {
-  char chunknamebuff[CHUNKNAME_BUFFER_SIZE];
   LoadF lf;
   int status, readstatus;
   int c;
   const char *chunkname;
   lf.extraline = 0;
   if (filename == NULL) { /* shouldn't happen */
-    hksc_seterror(H, "Hksc does not support reading from stdin");
-    return LUA_ERRRUN;
+    chunkname = getstr(luaS_new(H, "=stdin"));
+    lf.f = stdin;
   } else {
+    char chunknamebuff[CHUNKNAME_BUFFER_SIZE];
     cleanfilename(filename, chunknamebuff);
     chunkname = luaO_generatechunkname(H, chunknamebuff);
     lf.f = fopen(filename, "r");
