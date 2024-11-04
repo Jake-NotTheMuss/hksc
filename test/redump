@@ -109,8 +109,8 @@ if test "x$cod" = xyes; then
 	status=$?
 	if test $status = 0 && test "x$luadebug" != x; then
 		# redump callstackdb and debug info
-		"$hksc" $flags --with-debug --debugfile="$luadebug" "$tmp" \
-		--callstackdb="$luaprofile" -o /dev/null
+		"$hksc" $flags --with-debug --debug-info="$luadebug" "$tmp" \
+		--callstack-info="$luaprofile" -o /dev/null
 		status=$?
 	fi
 	rm -f "$tmp"

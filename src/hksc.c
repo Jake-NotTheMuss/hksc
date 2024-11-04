@@ -21,45 +21,12 @@
 
 #define HKSC_NAME "hksc" /* default program name */
 
-static int listing=0;     /* list bytecodes? */
-static int dumping=1;     /* dump bytecodes? */
-static int compiling=0;
-#ifdef HKSC_DECOMPILER
-static int decompiling=0;
-#endif /* HKSC_DECOMPILER */
+struct Opts opts = {0};
 
-static int mode=HKSC_MODE_DEFAULT; /* compiling or decompiling? */
-
-/* parser settings */
-static int striplevel=BYTECODE_STRIPPING_NONE; /* bytecode stripping level */
-static int literals_enabled=INT_LITERALS_NONE; /* int literal options */
-static const char *progname=HKSC_NAME;
-const char *output=NULL;
-
-#ifdef LUA_CODT6
-int withdebug=0;
-#endif /* LUA_CODT6 */
-
-#ifdef HKSC_MULTIPLAT
-static int target_plat=HKSC_TARGET_PLAT_DEFAULT;
-static int target_ws=HKSC_TARGET_WS_DEFAULT;
-#endif /* HKSC_MULTIPLAT */
-
-#ifdef LUA_CODT6
-const char *debugfile=NULL;
-const char *profilefile=NULL;
-int debugfile_arg=0;
-int profilefile_arg=0;
-#endif /* LUA_CODT6 */
-
-static int ignore_debug=0;
+const char *progname = HKSC_NAME;
 
 #define STRINGIFYARG(x) #x
 #define STRINGIFY(x) STRINGIFYARG(x)
-
-#define MAX_PREFIX_MAPS 32
-static int nprefixmaps = 0;
-static const char *file_prefix_maps[MAX_PREFIX_MAPS];
 
 static void fatal(const char *message)
 {
@@ -107,8 +74,9 @@ static void print_usage(void)
    "\nInput/Output options:\n"
    "  -o, --output=FILE       Output to file FILE\n"
 #ifdef LUA_CODT6
-   "      --callstackdb=FILE  Dump callstack reconstruction to FILE\n"
-   "      --debugfile=FILE    Use FILE for loading/dumping debug information\n"
+   "      --callstack-file=FILE\n"
+   "                          Dump callstack reconstruction to FILE\n"
+   "      --debug-info=FILE   Use FILE for loading/dumping debug information\n"
 #endif
    , stderr);
   fputs(
@@ -234,82 +202,63 @@ static void print_config(void)
 #endif /* LUA_CODIW6 */
 }
 
-#ifdef HKSC_MULTIPLAT
-static int hksc_casecmp(const char *str1, const char *str2)
-{
+/* strcasecmp in ANSI C */
+int hksc_casecmp (const char *str1, const char *str2) {
   for (; *str1 && *str2; str1++, str2++) {
     if (tolower(*str1) != tolower(*str2))
-      return 0;
+      return tolower(*str1) < tolower(*str2) ? -1 : 1;
   }
-  return (*str1 == *str2);
+  return
+  (tolower(*str1) == tolower(*str2) ? 0 :
+   (tolower(*str1) < tolower(*str2) ? -1 : 1));
 }
 
-static int hksc_casencmp(const char *str1, const char *str2, size_t n)
-{
-  size_t i = 0;
-  for (; *str1 && *str2; str1++, str2++) {
-    if (i++ >= n)
-      return 1;
-    if (tolower(*str1) != tolower(*str2))
-      return 0;
+#define STREQ(a,b) (hksc_casecmp(a, b) == 0)
+
+static const char *getarg (int argc, char *argv [], int *ind, int optlen) {
+  const char *opt = argv[*ind];
+  const char *val = opt + optlen;
+  if (*val == '=') val++;
+  else if (*val == 0) {
+    if (++(*ind) >= argc)
+      goto needarg;
+    val = argv[*ind];
   }
-  return (i >= n) || (*str1 == *str2);
+  else
+    usage(opt);
+  if (val == NULL || *val == 0)
+    needarg: usage("'%.*s' needs an argument", optlen, opt);
+  return val;
 }
-#endif /* HKSC_MULTIPLAT */
 
-#define STREQ(a,b) (hksc_casecmp(a,b))
-#define STREQN(a,b) (hksc_casencmp(a,"" b,sizeof(b)-1))
-#define IS(s) (strcmp(argv[i],s)==0)
-#define HAS(s) (strncmp(argv[i],"" s,sizeof(s)-1)==0)
 
-#define DO_ARG(opt,v) do { \
-  char *val = argv[i] + sizeof(opt)-1; \
-  if (*val == '=') val++; \
-  else if (*val == '\0') { \
-    if (++i >= argc) usage("'" opt "' needs an argument"); \
-    val = argv[i]; \
-  } \
-  else usage(argv[i]); \
-  if (val == NULL || *val == '\0') \
-    usage("'" opt "' needs an argument"); \
-  v = (const char *)val; \
-} while (0)
+#define IS(s) (strcmp(argv[i], "" s) == 0)
+#define HAS(s) (strncmp(argv[i], "" s, sizeof(s) - 1) == 0)
 
-#define CHECK_OPT(s,l,v) \
-  else if (HAS(s)) DO_ARG(s,v); \
-  else if (HAS(l)) DO_ARG(l,v)
+#define CHECK_OPT(o,v) else if \
+  (HAS(o)) v = getarg(argc, argv, &i, sizeof(o) - 1)
+#define CHECK_OPT2(s,l,v) CHECK_OPT(s,v); CHECK_OPT(l,v)
 
-#define CHECK_LONG_OPT(l,v)  else if (HAS(l)) DO_ARG(l,v)
-
-#define CHECK_SHORT_OPT(s,v)  else if (HAS(s)) DO_ARG(s,v)
+#define SHORTLONG_INT(v,s) (v) = IS(s) ? 1 : -1
+#define SHORTLONG_STR(v,s,l) ((v) == 1 ? (s) : (l))
 
 static int doargs(int argc, char *argv[])
 {
-  int i;
-  int nfiles=0;
-  int striparg=0;
-  int version=0;
-  int info=0;
-  int a=0,b=0; /* uses of `-a' and `-b' */
-  int explicit_dumping=0;
-  const char *opt_a=NULL, *opt_b=NULL;
-#ifdef LUA_CODT6
-  const char *opt_withdebug=NULL;
-#endif /* LUA_CODT6 */
-#ifdef HKSC_DECOMPILER
-  const char *opt_compile=NULL, *opt_decompile=NULL;
-#endif /* HKSC_DECOMPILER */
-  if (argv[0]!=NULL && *argv[0]!=0) progname=argv[0];
-  for (i=1; i<argc; i++)
-  {
-    if (*argv[i]!='-')      /* input file */
-    {
+  int i, nfiles = 0, version = 0, info = 0;
+  int a = 0, b = 0;  /* uses of -a and -b */
+  int explicit_dumping = 0;
+  int strip_supplied = 0;
+  /* if no options are given, the default action is to dump bytecode */
+  opts.dumping = 1;
+  if (argv[0] != NULL && *argv[0] != 0)
+    progname = argv[0];
+  for (i = 1; i < argc; i++) {
+    if (*argv[i] != '-') {     /* input file */
       char *tmp = argv[++nfiles]; /* push names to the front */
       argv[nfiles] = argv[i];
       argv[i] = tmp;
     }
-    else if (IS("--"))      /* end of options; skip it */
-    {
+    else if (IS("--")) {      /* end of options; skip it */
       ++i;
       if (version) ++version;
       break;
@@ -318,67 +267,59 @@ static int doargs(int argc, char *argv[])
     else if (IS("-"))     /* end of options; use stdin */
       break;
 #endif
-    else if (IS("-a") || IS("--source")) {
-      ++a;
-      opt_a = (const char *)argv[i];
-    }
-    else if (IS("-b") || IS("--binary")) {
-      ++b;
-      opt_b = (const char *)argv[i];
-    }
+    else if (IS("-a") || IS("--source"))
+      /* 1 or -1 indicates whether the short or long form was used */
+      SHORTLONG_INT(a, "-a");
+    else if (IS("-b") || IS("--binary"))
+      SHORTLONG_INT(b, "-b");
 #ifdef LUA_CODT6
-    else if (IS("-g") || IS("--with-debug")) {
-      withdebug=1;
-      opt_withdebug = (const char *)argv[i];
-    }
-    CHECK_LONG_OPT("--callstackdb", profilefile);
-    CHECK_LONG_OPT("--debugfile", debugfile);
+    else if (IS("-g") || IS("--with-debug"))
+      SHORTLONG_INT(opts.with_debug, "-g");
+    CHECK_OPT("--callstack-info", opts.callstack_file);
+    CHECK_OPT("--debug-info", opts.debug_file);
 #endif /* LUA_CODT6 */
-    else if (IS("-i") || IS("--ignore-debug")) ignore_debug=1;
-    else if (IS("--print-config")) ++info;
+    else if (IS("-i") || IS("--ignore-debug"))
+      opts.ignore_debug = 1;
+    else if (IS("--print-config"))
+      ++info;
     else if (IS("--help")) { /* print help message and exit */
       print_usage();
       exit(EXIT_SUCCESS);
     }
     else if (IS("-l") || IS("--list")) {     /* list */
-      ++listing;
+      ++opts.listing;
       if (!explicit_dumping)
-        dumping=0;
+        opts.dumping = 0;
     }
     else if (IS("-c") || IS("--compile")) {
-      compiling=1;
-      dumping=1;
+      SHORTLONG_INT(opts.compile, "-c");
+      opts.dumping = 1;
       explicit_dumping=1;
-#ifdef HKSC_DECOMPILER
-      opt_compile = (const char *)argv[i];
-#endif /* HKSC_DECOMPILER */
     }
 #ifdef HKSC_DECOMPILER
     else if (IS("-d") || IS("--decompile")) {
-      decompiling=1;
-      dumping=1;
+      SHORTLONG_INT(opts.decompile, "-d");
+      opts.dumping=1;
       explicit_dumping=1;
-      opt_decompile = (const char *)argv[i];
     }
 #endif /* HKSC_DECOMPILER */
-    else if (HAS("-L"))   /* specify int literal options */
-    {
+    else if (HAS("-L")) {  /* specify int literal options */
       char *mode;
       if (argv[i][2] == 0) {
-        literals_enabled=INT_LITERALS_ALL; /* default */
+        opts.literals = INT_LITERALS_ALL; /* default */
         continue;
       }
-      mode = argv[i]+2;
+      mode = argv[i] + 2;
       if (*mode == '=') mode++;
       if (mode[0] == '\0' || mode[1] == '\0' || mode[2] != '\0')
         goto badliteralarg;
       switch (*mode) {
         case '3':
           if (mode[1] != '2') goto badliteralarg;
-          literals_enabled|=INT_LITERALS_LUD; break;
+          opts.literals |= INT_LITERALS_LUD; break;
         case '6':
           if (mode[1] != '4') goto badliteralarg;
-          literals_enabled|=INT_LITERALS_UI64; break;
+          opts.literals |= INT_LITERALS_UI64; break;
         default:
           goto badliteralarg;
       }
@@ -386,22 +327,20 @@ static int doargs(int argc, char *argv[])
       badliteralarg:
       usage("invalid int literal type given with '-L'");
     }
-    else if (HAS("--file-prefix-map"))
-    {
-      const char *prefixmaparg;
-      DO_ARG("--file-prefix-map", prefixmaparg);
+    else if (HAS("--file-prefix-map")) {
+      const char *prefixmaparg = getarg(argc, argv, &i,
+                                        sizeof("--file-prefix-map") - 1);
       if (strchr(prefixmaparg, '=') == NULL)
         usage("invalid use of '--file-prefix-map'");
-      if (nprefixmaps < MAX_PREFIX_MAPS)
-        file_prefix_maps[nprefixmaps++] = prefixmaparg;
+      if (opts.nprefixmaps < MAX_PREFIX_MAPS)
+        opts.prefixmaps[opts.nprefixmaps++] = prefixmaparg;
       else
         fatal("too many file prefix maps (maximum of "
               STRINGIFY(MAX_PREFIX_MAPS) " allowed)");
     }
-    CHECK_OPT("-o", "--output", output);
+    CHECK_OPT2("-o", "--output", opts.output);
 #ifdef HKSC_MULTIPLAT
-    else if (HAS("-m"))
-    {
+    else if (HAS("-m")) {
       int optionalnumber = 0; /* numeric suffix is optional */
       char *arg;
       if (argv[i][2] == 0) {
@@ -415,53 +354,53 @@ static int doargs(int argc, char *argv[])
       if (*arg == '\0')
         usage("'-m' needs an argument");
       else if (STREQ(arg, "wii"))
-        target_plat = HKSC_TARGET_PLAT_WII;
+        opts.plat = HKSC_TARGET_PLAT_WII;
       else if (STREQ(arg, "wiiu") || STREQ(arg, "cafe"))
-        target_plat = HKSC_TARGET_PLAT_CAFE;
+        opts.plat = HKSC_TARGET_PLAT_CAFE;
       else if (STREQ(arg, "switch") || STREQ(arg, "nx"))
-        target_plat = HKSC_TARGET_PLAT_NX;
+        opts.plat = HKSC_TARGET_PLAT_NX;
       else if (STREQ(arg, "ps3"))
-        target_plat = HKSC_TARGET_PLAT_PS3;
+        opts.plat = HKSC_TARGET_PLAT_PS3;
       else if (STREQ(arg, "psv"))
-        target_plat = HKSC_TARGET_PLAT_PSV;
+        opts.plat = HKSC_TARGET_PLAT_PSV;
       else if (STREQ(arg, "ps4") || STREQ(arg, "orbis"))
-        target_plat = HKSC_TARGET_PLAT_ORBIS;
+        opts.plat = HKSC_TARGET_PLAT_ORBIS;
       else if (STREQ(arg, "xbox360") || STREQ(arg, "xenon"))
-        target_plat = HKSC_TARGET_PLAT_XENON;
+        opts.plat = HKSC_TARGET_PLAT_XENON;
       else if (STREQ(arg, "xboxone") || STREQ(arg, "durango"))
-        target_plat = HKSC_TARGET_PLAT_DURANGO;
-      else if (STREQN(arg, "windows")) {
+        opts.plat = HKSC_TARGET_PLAT_DURANGO;
+      else if (STREQ(arg, "windows")) {
         optionalnumber = 1;
-        target_plat = HKSC_TARGET_PLAT_WINDOWS;
+        opts.plat = HKSC_TARGET_PLAT_WINDOWS;
         arg += sizeof("windows")-1;
         goto numsuffix;
       }
-      else if (STREQN(arg, "win")) {
+      else if (STREQ(arg, "win")) {
         optionalnumber = 1;
-        target_plat = HKSC_TARGET_PLAT_WINDOWS;
+        opts.plat = HKSC_TARGET_PLAT_WINDOWS;
         arg += sizeof("win")-1;
         goto numsuffix;
       }
-      else if (STREQN(arg, "gnu")) {
+      else if (STREQ(arg, "gnu")) {
         optionalnumber = 1;
-        target_plat = HKSC_TARGET_PLAT_GNU;
+        opts.plat = HKSC_TARGET_PLAT_GNU;
         arg += sizeof("gnu")-1;
         goto numsuffix;
       }
-      else if (STREQN(arg, "darwin")) {
+      else if (STREQ(arg, "darwin")) {
         optionalnumber = 1;
-        target_plat = HKSC_TARGET_PLAT_DARWIN;
+        opts.plat = HKSC_TARGET_PLAT_DARWIN;
         arg += sizeof("darwin")-1;
         goto numsuffix;
       }
       else { /* `-m<16|32|64>' */
         numsuffix:
         if (arg[0] == '1' && arg[1] == '6')
-          target_ws = HKSC_TARGET_WS_16;
+          opts.wordsize = HKSC_TARGET_WS_16;
         else if (arg[0] == '3' && arg[1] == '2')
-          target_ws = HKSC_TARGET_WS_32;
+          opts.wordsize = HKSC_TARGET_WS_32;
         else if (arg[0] == '6' && arg[1] == '4')
-          target_ws = HKSC_TARGET_WS_64;
+          opts.wordsize = HKSC_TARGET_WS_64;
         else {
           if (!optionalnumber)
             usage("invalid argument given with '-m'");
@@ -470,23 +409,21 @@ static int doargs(int argc, char *argv[])
     }
 #endif /* HKSC_MULTIPLAT */
     else if (IS("-p") || IS("--parse")) {     /* parse only */
-      dumping=0;
-      explicit_dumping=0;
+      opts.dumping = 0;
+      explicit_dumping = 0;
     }
-    else if (HAS("-s"))     /* specify stripping level */
-    {
+    else if (HAS("-s")) {     /* specify stripping level */
 #ifdef LUA_CODT6
       /* do nothing */
-      (void)striplevel;
       if (argv[i][2] != '\0')
         usage(argv[i]);
 #else /* !LUA_CODT6 */
       char *mode;
-      if (striparg)
+      if (strip_supplied)
         usage("'-s' used multiple times");
       if (argv[i][2] == '\0') {
-        striplevel=BYTECODE_STRIPPING_ALL; /* default */
-        striparg=1;
+        opts.strip = BYTECODE_STRIPPING_ALL; /* default */
+        strip_supplied = 1;
         continue;
       }
       mode = argv[i]+2;
@@ -495,15 +432,15 @@ static int doargs(int argc, char *argv[])
         goto badstriparg;
       switch (*mode) {
         case 'N': case 'n':
-          striplevel=BYTECODE_STRIPPING_NONE; break;
+          opts.strip = BYTECODE_STRIPPING_NONE; break;
         case 'P': case 'p':
-          striplevel=BYTECODE_STRIPPING_PROFILING; break;
+          opts.strip = BYTECODE_STRIPPING_PROFILING; break;
         case 'A': case 'a':
-          striplevel=BYTECODE_STRIPPING_ALL; break;
+          opts.strip = BYTECODE_STRIPPING_ALL; break;
         default:
           goto badstriparg;
       }
-      striparg=1;
+      strip_supplied = 1;
       continue;
       badstriparg:
       usage("invalid stripping mode given with '-s'");
@@ -524,31 +461,33 @@ static int doargs(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
 #ifdef HKSC_DECOMPILER
-  if (compiling && decompiling)/* both compile and decompile mode specified? */
+  if (opts.compile && opts.decompile)
+    /* both compile and decompile mode specified? */
     usage("both '%s' and '%s' used; only one may be used per invokation",
-          opt_compile, opt_decompile);
+          SHORTLONG_STR(opts.compile, "-c", "--compile"),
+          SHORTLONG_STR(opts.decompile, "-d", "--decompile"));
 #endif /* HKSC_DECOMPILER */
   if (a && b) /* both source and binary mode specified? */
     usage("both '%s' and '%s' used; only one may be used per invokation",
-          opt_a, opt_b);
+          SHORTLONG_STR(a, "-a", "--source"),
+          SHORTLONG_STR(b, "-b", "--binary"));
   else if (a) {
-    if (ignore_debug)
+    if (opts.ignore_debug)
       warn_unused("--ignore-debug", "compiling");
-    mode=HKSC_MODE_SOURCE;
+    opts.mode = HKSC_MODE_SOURCE;
   }
   else if (b)
-    mode=HKSC_MODE_BINARY;
-  if (striparg && !dumping)
+    opts.mode = HKSC_MODE_BINARY;
+  if (strip_supplied && !opts.dumping)
     warn_unused("-s", "not dumping bytecode");
 #ifdef LUA_CODT6
-  debugfile_arg = (debugfile != NULL);
-  profilefile_arg = (profilefile != NULL);
-  if ((debugfile_arg || profilefile_arg) && !withdebug) {
-    usage("'--with-debug' must be provided with '--debugfile' or "
-          "'--callstackdb'");
+  if ((opts.debug_file || opts.callstack_file) && !opts.with_debug) {
+    usage("'-g' must be provided with '--debug-info' or "
+          "'--callstack-info'");
   }
-  if (striparg && withdebug)
-    usage("'-s' cannot be used when '%s' is provided", opt_withdebug);
+  if (strip_supplied && opts.with_debug)
+    usage("'-s' cannot be used when '%s' is provided",
+          SHORTLONG_STR(opts.with_debug, "-g", "--with-debug"));
 #endif /* LUA_CODT6 */
   return nfiles;
 }
@@ -557,20 +496,20 @@ static int doargs(int argc, char *argv[])
 
 static int hksc_dump_f(hksc_State *H, void *ud) {
   const char *filename = (const char *)ud;
-  if (!listing && !dumping) {
+  if (!opts.listing && !opts.dumping) {
     fprintf(stderr, "Successfully parsed `%s'\n", filename);
     return 0;
   }
-  if (listing) {
-    int status = hksc_list_bytecode(H, NULL, listing > 1);
+  if (opts.listing) {
+    int status = hksc_list_bytecode(H, NULL, opts.listing > 1);
     if (status)
       return status;
-    if (!dumping)
+    if (!opts.dumping)
       return 0;
   }
 #ifdef HKSC_DECOMPILER
-  if (decompiling) {
-    if (lua_getmode(H) != HKSC_MODE_BINARY && ignore_debug == 0)
+  if (opts.decompile) {
+    if (lua_getmode(H) != HKSC_MODE_BINARY && opts.ignore_debug == 0)
       lua_setignoredebug(H, 0);
     return hksc_dump_decomp(H, filename);
   }
@@ -610,34 +549,34 @@ int main(int argc, char *argv[])
   if (argc<=0) usage("no input files given");
   /* warn about using -o with multiple input files */
   else if (argc > 1) {
-    if (output != NULL)
+    if (opts.output != NULL)
       error_multiple_inputs("--output");
 #ifdef LUA_CODT6
-    if (debugfile_arg)
-      error_multiple_inputs("--debugfile");
-    if (profilefile_arg)
-      error_multiple_inputs("--callstackdb");
+    if (opts.debug_file)
+      error_multiple_inputs("--debug-info");
+    if (opts.callstack_file)
+      error_multiple_inputs("--callstack-info");
 #endif /* LUA_CODT6 */
   }
   hksI_settings(&settings);
 #ifdef HKSC_MULTIPLAT
-  settings.target_plat = target_plat;
-  settings.target_ws = target_ws;
+  settings.target_plat = opts.plat;
+  settings.target_ws = opts.wordsize;
 #endif /* HKSC_MULTIPLAT */
   H = hksI_newstate(&settings);
   if (H==NULL) fatal("cannot create state: not enough memory");
-  for (i = 0; i < nprefixmaps; i++)
-    lua_addprefixmap(H, file_prefix_maps[i]);
-  lua_setmode(H, mode);
-  lua_setliteralsenabled(H,literals_enabled);
+  for (i = 0; i < opts.nprefixmaps; i++)
+    lua_addprefixmap(H, opts.prefixmaps[i]);
+  lua_setmode(H, opts.mode);
+  lua_setliteralsenabled(H, opts.literals);
 #ifdef LUA_CODT6
   lua_onstartcycle(H, luacod_startcycle);
   lua_onendcycle(H, luacod_endcycle);
   lua_setstrip(H,BYTECODE_STRIPPING_ALL);
-  lua_setignoredebug(H, !withdebug);
+  lua_setignoredebug(H, !opts.with_debug);
 #else /* !LUA_CODT6 */
-  lua_setstrip(H,striplevel);
-  lua_setignoredebug(H, ignore_debug);
+  lua_setstrip(H, opts.strip);
+  lua_setignoredebug(H, opts.ignore_debug);
 #endif /* LUA_CODT6 */
   status = dofiles(H, argc, argv);
   hksI_close(H);

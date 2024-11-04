@@ -19,12 +19,11 @@
 
 #include "hkscaux.h"
 
-extern const char *output;
+extern const struct Opts opts;
 
 #ifdef LUA_CODT6
-extern int withdebug;
-extern const char *debugfile;
-extern const char *profilefile;
+const char *debug_file;
+const char *callstack_file;
 extern int debugfile_arg;
 extern int profilefile_arg;
 #endif /* LUA_CODT6 */
@@ -152,14 +151,17 @@ void luacod_startcycle(hksc_State *H, const char *name) {
      needed from the start; if dumping, the names will be regenerated to go to
      the output directory; this doesn't apply when the names are provided
      explicitly in the command line  */
-  if (lua_getmode(H) == HKSC_MODE_SOURCE && output != NULL)
-    name = output;/* the debug files go the directory with the output file */
-  if (withdebug) {
-    if (debugfile == NULL) /* may be provided in command line */
-      debugfile = lua2luadebug(H, name);
-    if (profilefile == NULL)
-      profilefile = lua2luaprofile(H, name);
-    hksI_setdebugfile(H, debugfile);
+  if (lua_getmode(H) == HKSC_MODE_SOURCE && opts.output != NULL)
+    name = opts.output;/* the debug files go the directory with the output
+    file */
+  if (opts.with_debug) {
+    debug_file = opts.debug_file;
+    callstack_file = opts.callstack_file;
+    if (debug_file == NULL) /* may be provided in command line */
+      debug_file = lua2luadebug(H, name);
+    if (callstack_file == NULL)
+      callstack_file = lua2luaprofile(H, name);
+    hksI_setdebugfile(H, debug_file);
   }
 }
 
@@ -168,8 +170,8 @@ void luacod_endcycle(hksc_State *H, const char *name) {
   /* output names are only generated if they were previously NULL; this works
      even if output names were explicitly provided, since only 1 cycle should
      run in that case */
-  debugfile = NULL;
-  profilefile = NULL;
+  debug_file = NULL;
+  callstack_file = NULL;
 }
 
 #define dumpdebugfile(name, striplevel, mode) do { \
@@ -185,13 +187,14 @@ void luacod_endcycle(hksc_State *H, const char *name) {
 /* (COD) dump debug info to files */
 static int luacod_dumpdebug(hksc_State *H, const char *outname){
   /* make sure generated names are in the same directory as outname */
-  if (withdebug) {
-    if (!debugfile_arg)
-      debugfile = lua2luadebug(H, outname);
-    dumpdebugfile(debugfile,BYTECODE_STRIPPING_DEBUG_ONLY,"wb");
-    if (!profilefile_arg)
-      profilefile = lua2luaprofile(H, outname);
-    dumpdebugfile(profilefile,BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,"w");
+  if (opts.with_debug) {
+    if (debug_file == NULL)
+      debug_file = lua2luadebug(H, outname);
+    dumpdebugfile(debug_file, BYTECODE_STRIPPING_DEBUG_ONLY, "wb");
+    if (callstack_file == NULL)
+      callstack_file = lua2luaprofile(H, outname);
+    dumpdebugfile(callstack_file, BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,
+                  "w");
   }
   lua_setstrip(H,BYTECODE_STRIPPING_ALL); /* reset */
   return 0;
@@ -215,10 +218,10 @@ int hksc_dump_bytecode(hksc_State *H, const char *filename) {
   int status;
   FILE *out; /* output file */
   const char *outname; /* output file name */
-  if (output == NULL) /* generate an output name if needed */
+  if (opts.output == NULL) /* generate an output name if needed */
     outname = basename(lua2luac(H, filename));
   else
-    outname = output;
+    outname = opts.output;
 #ifdef LUA_CODT6
   status = luacod_dumpdebug(H, outname);/* dump debug info to separate files */
   if (status)
@@ -240,10 +243,10 @@ int hksc_dump_decomp(hksc_State *H, const char *filename) {
   int status;
   FILE *out; /* output file */
   const char *outname; /* output file name */
-  if (output == NULL) /* generate an output name if needed */
+  if (opts.output == NULL) /* generate an output name if needed */
     outname = basename(luac2luadec(H, filename));
   else
-    outname = output;
+    outname = opts.output;
   out = fopen(outname, "w");
   if (out == NULL)
     cannot("open", outname);
