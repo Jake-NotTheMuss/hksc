@@ -31,12 +31,12 @@
 #include "lzio.h"
 
 
-#define MAX_CLEANED_FILENAME_SIZE 260
+#define CHUNKNAME_BUFFER_SIZE 260
 
-static void cleanFileName(const char *instr, char *outstr) {
+static void cleanfilename(const char *instr, char *outstr) {
   int numdots = 0;
   int length = 0;
-  while (*instr != '\0' && length < (MAX_CLEANED_FILENAME_SIZE-1)) {
+  while (*instr != '\0' && length < (CHUNKNAME_BUFFER_SIZE-1)) {
     if (*instr == '.')
       numdots++;
     else if (numdots == 1 && (*instr == '/' || *instr == '\\')) /* omit `./' */
@@ -99,7 +99,7 @@ static int load(hksc_State *H, lua_Reader reader, void *data,
 }
 
 static int loadfile(hksc_State *H, const char *filename) {
-  char cleanedFileName[MAX_CLEANED_FILENAME_SIZE];
+  char chunknamebuff[CHUNKNAME_BUFFER_SIZE];
   LoadF lf;
   int status, readstatus;
   int c;
@@ -109,8 +109,8 @@ static int loadfile(hksc_State *H, const char *filename) {
     hksc_seterror(H, "Hksc does not support reading from stdin");
     return LUA_ERRRUN;
   } else {
-    cleanFileName(filename, cleanedFileName);
-    chunkname = luaO_generatechunkname(H, cleanedFileName);
+    cleanfilename(filename, chunknamebuff);
+    chunkname = luaO_generatechunkname(H, chunknamebuff);
     lf.f = fopen(filename, "r");
     if (lf.f == NULL) return errfile(H, "open", filename);
   }
@@ -157,16 +157,13 @@ static const char *getS (hksc_State *H, void *ud, size_t *size) {
 static int lua_loadbuffer (hksc_State *H, const char *buff, size_t size,
                            const char *name) {
   LoadS ls;
-  char cleanedFileName[MAX_CLEANED_FILENAME_SIZE];
+  char chunknamebuff[CHUNKNAME_BUFFER_SIZE];
   if (name != buff && name != NULL) {
-    if (strlen(name) < (MAX_CLEANED_FILENAME_SIZE-1)) {
-      char *cleanedFileNamePtr;
-      if (*name != '=' && *name != '@') {
-        cleanedFileName[0] = '@';
-        cleanedFileNamePtr = &cleanedFileName[1];
-      } else
-        cleanedFileNamePtr = &cleanedFileName[0];
-      cleanFileName(name, cleanedFileNamePtr);
+    if (strlen(name) < (CHUNKNAME_BUFFER_SIZE-1)) {
+      char *outstr = chunknamebuff;
+      if (*name != '=' && *name != '@')
+        *outstr++ = '@';
+      cleanfilename(name, outstr);
     }
   }
   ls.s = buff;
