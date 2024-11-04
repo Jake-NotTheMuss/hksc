@@ -6,14 +6,6 @@ TODO for Hksc
 
 * Maintainer Suggestions
 
-** API
-Shorten some of the function names. The API probably doesn't need to provide a
-function for formatting strings. As well, the fixed vs normal strings API
-complicates it; I would just go with one over the other.
-
-The user should be able to provide a custom debug info reader callback, not
-just a file name (Only applies for T6 extensions)
-
 ** Decompiler sections
 ldecomp.c is massive even in its incomplete state. It may be easier to read
 and maintain if it were split up into different files.
