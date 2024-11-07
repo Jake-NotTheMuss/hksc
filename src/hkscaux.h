@@ -25,6 +25,9 @@ struct Opts {
   int from_stdin;  /* stdin is an infile */
   const char *output;
   int with_debug;
+#ifdef HKSC_TESTING
+  int testing;
+#endif
 #ifdef HKSC_MULTIPLAT
   int plat;
   int wordsize;

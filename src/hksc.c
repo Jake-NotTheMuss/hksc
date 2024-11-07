@@ -450,6 +450,10 @@ static int doargs(int argc, char *argv[])
     }
     else if (IS("--version"))     /* show version */
       ++version;
+#ifdef HKSC_TESTING
+    else if (IS("--testing"))
+      opts.testing = 1;
+#endif
     else
       usage(argv[i]);
   }
@@ -588,6 +592,12 @@ int main(int argc, char *argv[])
   lua_setstrip(H, opts.strip);
   lua_setignoredebug(H, opts.ignore_debug);
 #endif /* LUA_CODT6 */
+#ifdef HKSC_TESTING
+  if (opts.testing) {
+    extern int test_main (hksc_State *H, int nfiles, char *files []);
+    status = test_main(H, nfiles, argv);
+  } else
+#endif
   status = dofiles(H, nfiles, argv);
   hksI_close(H);
   return status ? EXIT_FAILURE : EXIT_SUCCESS;
