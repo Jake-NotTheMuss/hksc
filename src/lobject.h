@@ -124,10 +124,6 @@ typedef struct lua_TValue {
 #define checkconsistency(obj) \
   lua_assert(!iscollectable(obj) || (ttype(obj) == (obj)->value.gc->gch.tt))
 
-#define checkliveness(g,obj) \
-  lua_assert(!iscollectable(obj) || \
-  ((ttype(obj) == (obj)->value.gc->gch.tt) && !isdead(g, (obj)->value.gc)))
-
 
 /* Macros to set values */
 #define setnilvalue(obj) do { (obj)->tt=LUA_TNIL; } while (0)

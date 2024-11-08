@@ -21,7 +21,7 @@
 #define luaS_newliteral(H, s) (luaS_newlstr(H, "" s, \
                                  (sizeof(s)/sizeof(char))-1))
 
-#define luaS_fix(s) l_setbit((s)->tsv.marked, FIXEDBIT)
+#define luaS_fix(s) l_setbit((s)->tsv.marked, GC_FIXED)
 
 #define MAINCHUNKNAME "(main chunk)"
 

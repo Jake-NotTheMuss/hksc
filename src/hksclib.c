@@ -230,10 +230,6 @@ static void endcycle(hksc_State *H, const char *name) {
   lua_assert(!g->incyclecallback);
   g->midcycle = 0; /* set this before running user-defined logic so that temp
                       objects can be collected if a GC cycle happens */
-  if (H->last_result != NULL) /* it can be NULL if there was a syntax error */
-    /* make sure the compiler result is not collected until the cycle really
-       ends */
-    makelive(obj2gco(H->last_result));
   H->currinputname = NULL;
   if (G(H)->endcycle) { /* user-defined logic */
 #ifdef LUA_DEBUG
@@ -253,8 +249,6 @@ static void endcycle(hksc_State *H, const char *name) {
   }
 #endif /* LUA_CODT6 */
   /* start of library end-cycle logic */
-  if (H->last_result != NULL)
-    makedead(obj2gco(H->last_result)); /* now it can die */
   H->last_result = NULL; /* will be collected, remove dangling pointer */
 }
 

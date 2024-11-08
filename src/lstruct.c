@@ -82,7 +82,7 @@ static Udata *newproto(hksc_State *H, StructProto *proto) {
     return NULL;
   }
   u = luaS_newproto(H, proto->nslots);
-  u->uv.marked = luaC_white(g) | bitmask(FIXEDBIT);
+  u->uv.marked = bitmask(GC_FIXED);
   memcpy(getproto(u), proto, sizestruct(proto->nslots));
   addtolist(H, cast(StructProto *, u+1));
   return u;
@@ -425,7 +425,7 @@ void luaR_mergeprototypes(hksc_State *H, Table *t) {
          point to the same userdata */
       lua_assert(rawuvalue(v) == vmdata);
     else {
-      lua_assert(isfixed(g, obj2gco(vmdata)));
+      lua_assert(testbit(obj2gco(vmdata)->gch.marked, GC_FIXED));
       setuvalue(v, vmdata);
     }
   }

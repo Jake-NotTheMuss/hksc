@@ -47,7 +47,7 @@ static void f_luaopen (hksc_State *H, void *ud) {
   UNUSED(ud);
 #if HKSC_STRUCTURE_EXTENSION_ON
   g->prototable = luaH_new(H, 0, MIN_PROTO_LIST_SIZE);
-  l_setbit(g->prototable->marked, FIXEDBIT);
+  l_setbit(g->prototable->marked, GC_FIXED);
   g->protolist.list = luaM_newvector(H, MIN_PROTO_LIST_SIZE, StructProto *);
   g->protolist.nuse = 0;
   g->protolist.size = MIN_PROTO_LIST_SIZE;
@@ -91,7 +91,7 @@ static void preinit_state (hksc_State *H, global_State *g) {
 static void close_state (hksc_State *H) {
   global_State *g = G(H);
   luaC_freeall(H);  /* collect all objects */
-  lua_assert(g->rootgc == obj2gco(H));
+  lua_assert(g->rootgc == NULL);
   lua_assert(g->strt.nuse == 0);
   luaM_freearray(H, G(H)->strt.hash, G(H)->strt.size, TString *);
   VEC_FREE(H, g->prefixmaps);
@@ -141,9 +141,7 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g = &((LG *)H)->g;
   H->next = NULL;
   H->tt = LUA_TTHREAD;
-  g->currentwhite = bitmask(FIXEDBIT);
-  H->marked = luaC_white(g);
-  set2bits(H->marked, FIXEDBIT, SFIXEDBIT);
+  H->marked = 0;
   preinit_state(H, g);
   g->frealloc = f;
   g->ud = ud;
@@ -166,7 +164,7 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
 #ifdef LUA_DEBUG
   g->incyclecallback = 0;
 #endif /* LUA_DEBUG */
-  g->rootgc = obj2gco(H);
+  g->rootgc = NULL;
   g->totalbytes = sizeof(LG);
   VEC_INIT(g->prefixmaps);
   g->startcycle = g->endcycle = NULL;

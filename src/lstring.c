@@ -54,7 +54,7 @@ static TString *newlstr (hksc_State *H, const char *str, size_t l,
   ts = cast(TString *, luaM_malloc(H, (l+1)*sizeof(char)+sizeof(TString)));
   ts->tsv.len = l;
   ts->tsv.hash = h;
-  ts->tsv.marked = luaC_white(G(H));
+  ts->tsv.marked = bitmask(GC_REACHABLE);
   ts->tsv.tt = LUA_TSTRING;
   ts->tsv.reserved = 0;
   memcpy(ts+1, str, l*sizeof(char));
@@ -83,7 +83,7 @@ TString *luaS_newlstr (hksc_State *H, const char *str, size_t l) {
     TString *ts = rawgco2ts(o);
     if (ts->tsv.len == l && (memcmp(str, getstr(ts), l) == 0)) {
       /* string may be dead */
-      if (isdead(G(H), o)) makelive(o);
+      l_setbit(o->gch.marked, GC_REACHABLE);
       return ts;
     }
   }
@@ -96,14 +96,14 @@ Udata *luaS_newudata (hksc_State *H, size_t s, Table *e) {
   if (s > MAX_SIZET - sizeof(Udata))
     luaM_toobig(H);
   u = cast(Udata *, luaM_malloc(H, s + sizeof(Udata)));
-  u->uv.marked = bitmask(TEMPBIT);
+  u->uv.marked = bitmask(GC_TEMP);
   u->uv.tt = LUA_TUSERDATA;
   u->uv.len = s;
   u->uv.metatable = NULL;
   u->uv.env = e;
   /* chain it on udata list (after main thread) */
-  u->uv.next = G(H)->mainthread->next;
-  G(H)->mainthread->next = obj2gco(u);
+  u->uv.next = G(H)->rootgc;
+  G(H)->rootgc = obj2gco(u);
   return u;
 }
 

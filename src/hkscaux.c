@@ -66,10 +66,10 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
   return (strcmp(buff, ext) == 0);
 }
 
-#define lua2luac(H,name) lua2ext(H,name,LUAC_EXT)
-#define luac2luadec(H,name) lua2ext(H,name,LUADEC_EXT)
-#define lua2luaprofile(H,name) lua2ext(H,name,LUACALLSTACK_EXT)
-#define lua2luadebug(H,name) lua2ext(H,name,LUADEBUG_EXT)
+#define lua2luac(buff,name) lua2ext(buff,name,LUAC_EXT)
+#define luac2luadec(buff,name) lua2ext(buff,name,LUADEC_EXT)
+#define lua2luaprofile(buff,name) lua2ext(buff,name,LUACALLSTACK_EXT)
+#define lua2luadebug(buff,name) lua2ext(buff,name,LUADEBUG_EXT)
 
 #define MAXLUACNAME 1024
 
@@ -98,11 +98,14 @@ static const char *basename(const char *name) {
 }
 
 
+static char outname_buff [MAXLUACNAME];
+
+
 /*
 ** generate a name for a an output file from a given input name
 */
-static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
-  char buff[MAXLUACNAME];
+static char *lua2ext(char buff [MAXLUACNAME], const char *name,
+                     const char *ext) {
   size_t n = 0;
   size_t namelen = strlen(name);
   size_t extlen = strlen(ext);
@@ -117,7 +120,7 @@ static const char *lua2ext(hksc_State *H, const char *name, const char *ext) {
   memcpy(buff+n, ext, extlen);
   n+=extlen;
   buff[n]='\0';
-  return lua_pushlstr(H, buff, n);
+  return buff;
 }
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
@@ -134,7 +137,7 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 #define cannot(what,name) do { \
   char buffer [1024]; \
   sprintf(buffer, "cannot " what " %.512s: %.64s", name, strerror(errno)); \
-  lua_seterror(H, lua_pushstr(H, buffer)); \
+  lua_seterror(H, buffer); \
   return LUA_ERRFILE; \
 } while (0)
 
@@ -144,6 +147,9 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 } while (0)
 
 #ifdef LUA_CODT6
+
+static char debug_file_buff [MAXLUACNAME];
+static char callstack_file_buff [MAXLUACNAME];
 
 void luacod_startcycle(hksc_State *H, const char *name) {
   /* err on the side of generating names from the input file - output debug
@@ -160,9 +166,9 @@ void luacod_startcycle(hksc_State *H, const char *name) {
     debug_file = opts.debug_file;
     callstack_file = opts.callstack_file;
     if (debug_file == NULL) /* may be provided in command line */
-      debug_file = lua2luadebug(H, name);
+      debug_file = lua2luadebug(debug_file_buff, name);
     if (callstack_file == NULL)
-      callstack_file = lua2luaprofile(H, name);
+      callstack_file = lua2luaprofile(callstack_file_buff, name);
     hksI_setdebugfile(H, debug_file);
   }
 }
@@ -191,10 +197,10 @@ static int luacod_dumpdebug(hksc_State *H, const char *outname){
   /* make sure generated names are in the same directory as outname */
   if (opts.with_debug) {
     if (debug_file == NULL)
-      debug_file = lua2luadebug(H, outname);
+      debug_file = lua2luadebug(debug_file_buff, outname);
     dumpdebugfile(debug_file, BYTECODE_STRIPPING_DEBUG_ONLY, "wb");
     if (callstack_file == NULL)
-      callstack_file = lua2luaprofile(H, outname);
+      callstack_file = lua2luaprofile(callstack_file_buff, outname);
     dumpdebugfile(callstack_file, BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION,
                   "w");
   }
@@ -221,7 +227,7 @@ int hksc_dump_bytecode(hksc_State *H, const char *filename) {
   FILE *out; /* output file */
   const char *outname; /* output file name */
   if (opts.output == NULL) /* generate an output name if needed */
-    outname = basename(lua2luac(H, filename));
+    outname = basename(lua2luac(outname_buff, filename));
   else
     outname = opts.output;
 #ifdef LUA_CODT6
@@ -246,7 +252,7 @@ int hksc_dump_decomp(hksc_State *H, const char *filename) {
   FILE *out; /* output file */
   const char *outname; /* output file name */
   if (opts.output == NULL) /* generate an output name if needed */
-    outname = basename(luac2luadec(H, filename));
+    outname = basename(luac2luadec(outname_buff, filename));
   else
     outname = opts.output;
   out = fopen(outname, "w");

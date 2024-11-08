@@ -97,6 +97,7 @@ struct hksc_State {
   global_State *h_G;
   Proto *last_result;
   unsigned short nCcalls;  /* number of nested C calls */
+  GCObject *gclist;
   struct lua_longjmp *errorJmp;  /* current error recover point */
   const char *errormsg; /* the last error message */
 #if defined(LUA_CODT6)

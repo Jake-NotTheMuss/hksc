@@ -62,8 +62,6 @@ LUA_API hksc_State *debug_newstate (hksc_StateSettings *settings);
 
 
 
-int lua_checkmemory (hksc_State *H);
-
 
 /* test for lock/unlock */
 #undef luai_userstateopen

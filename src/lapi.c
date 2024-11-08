@@ -65,21 +65,6 @@ LUA_API hksc_CycleCallback lua_onendcycle (hksc_State *H,
 }
 
 
-LUA_API const char *lua_pushlstr (hksc_State *H, const char *s, size_t l) {
-  const char *ret;
-  lua_lock(H);
-  luaC_checkGC(H);
-  ret = getstr(luaS_newlstr(H, s, l));
-  lua_unlock(H);
-  return ret;
-}
-
-
-LUA_API const char *lua_pushstr (hksc_State *H, const char *s) {
-  return lua_pushlstr(H, s, strlen(s));
-}
-
-
 LUA_API const char *lua_geterror (hksc_State *H) {
   const char *msg;
   lua_lock(H);
@@ -91,6 +76,8 @@ LUA_API const char *lua_geterror (hksc_State *H) {
 
 LUA_API void lua_seterror (hksc_State *H, const char *msg) {
   lua_lock(H);
+  if (msg)
+    msg = getstr(luaS_new(H, msg));
   H->errormsg = msg;
   lua_unlock(H);
 }

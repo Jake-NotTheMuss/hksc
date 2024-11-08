@@ -236,8 +236,6 @@ LUA_API hksc_CycleCallback (lua_onendcycle) (hksc_State *H,
 /*
 ** miscellaneous functions
 */
-LUA_API const char *(lua_pushlstr) (hksc_State *H, const char *s, size_t l);
-LUA_API const char *(lua_pushstr) (hksc_State *H, const char *s);
 LUA_API const char *(lua_geterror) (hksc_State *H);
 LUA_API void (lua_seterror) (hksc_State *H, const char *msg);
 LUA_API int (lua_getmode) (hksc_State *H);
