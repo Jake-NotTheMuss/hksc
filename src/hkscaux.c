@@ -24,8 +24,6 @@ extern const struct Opts opts;
 #ifdef LUA_CODT6
 const char *debug_file;
 const char *callstack_file;
-extern int debugfile_arg;
-extern int profilefile_arg;
 #endif /* LUA_CODT6 */
 /*extern const char *debugext;*/
 
