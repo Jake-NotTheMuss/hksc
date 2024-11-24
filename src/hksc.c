@@ -453,6 +453,8 @@ static int doargs(int argc, char *argv[])
 #ifdef HKSC_TESTING
     else if (IS("--testing"))
       opts.testing = 1;
+    else if (IS("--expect-error"))
+      opts.expect_error = 1;
 #endif
     else
       usage(argv[i]);

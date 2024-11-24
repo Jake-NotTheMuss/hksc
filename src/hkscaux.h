@@ -27,6 +27,7 @@ struct Opts {
   int with_debug;
 #ifdef HKSC_TESTING
   int testing;
+  int expect_error;
 #endif
 #ifdef HKSC_MULTIPLAT
   int plat;
