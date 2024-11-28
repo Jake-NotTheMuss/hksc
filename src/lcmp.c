@@ -14,6 +14,8 @@
 #include "lobject.h"
 #include "lundump.h"
 
+#ifdef HKSC_TESTING
+
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
@@ -189,3 +191,5 @@ void luaO_cmp (const Proto *p1, const Proto *p2, const char *name1,
   (*printer)(ud, "The following fields differ:\n");
   cmpfunc(&S, p1, p2);
 }
+
+#endif /* HKSC_TESTING */
