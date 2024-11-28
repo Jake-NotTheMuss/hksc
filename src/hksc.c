@@ -455,6 +455,7 @@ static int doargs(int argc, char *argv[])
       opts.testing = 1;
     else if (IS("--expect-error"))
       opts.expect_error = 1;
+    CHECK_OPT("--test-srcdir", opts.testsrcdir);
 #endif
     else
       usage(argv[i]);

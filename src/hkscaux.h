@@ -13,6 +13,8 @@
 
 #define STDIN_NAME "stdin" /* stdin output file name */
 
+#include "hkscfile.h"
+
 struct Opts {
   int listing;
   int dumping;
@@ -28,6 +30,7 @@ struct Opts {
 #ifdef HKSC_TESTING
   int testing;
   int expect_error;
+  const char *testsrcdir;
 #endif
 #ifdef HKSC_MULTIPLAT
   int plat;
@@ -40,6 +43,10 @@ struct Opts {
   int nprefixmaps;
   const char *prefixmaps [MAX_PREFIX_MAPS];
 };
+
+extern void xerror (const char *fmt, ...);
+extern void *xmalloc (size_t n);
+extern void *xrealloc (void *mem, size_t n);
 
 #ifdef LUA_CODT6
 

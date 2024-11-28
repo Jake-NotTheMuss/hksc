@@ -71,31 +71,6 @@ static int hasext(const char *name, size_t namelen, const char *ext) {
 
 #define MAXLUACNAME 1024
 
-
-#if (defined(_WIN32) && !defined(__CYGWIN__)) || defined(__MSDOS__) || \
-  defined(__DJGPP__) || defined(__OS2__)
-# define HAVE_DOS_BASED_FILE_SYSTEM
-# define IS_DIR_SEP(c)  ((c) == '/' || (c) == '\\')
-#else
-# undef HAVE_DOS_BASED_FILE_SYSTEM
-# define IS_DIR_SEP(c)  ((c) == '/') 
-#endif
-
-static const char *basename(const char *name) {
-  const char *base;
-#ifdef HAVE_DOS_BASED_FILE_SYSTEM
-  /* skip over disk name in MSDOS pathnames */
-  if (isalpha(name[0]) && name[1] == ':')
-    name += 2;
-#endif /* HAVE_DOS_BASED_FILE_SYSTEM */
-  for (base = name; *name; name++) {
-    if (IS_DIR_SEP(*name))
-      base = name + 1;
-  }
-  return base;
-}
-
-
 static char outname_buff [MAXLUACNAME];
 
 
