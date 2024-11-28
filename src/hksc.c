@@ -253,7 +253,7 @@ static int doargs(int argc, char *argv[])
   /* if no options are given, the default action is to dump bytecode */
   opts.dumping = 1;
   if (argv[0] != NULL && *argv[0] != 0)
-    progname = argv[0];
+    progname = basename(argv[0]);
   for (i = 1; i < argc; i++) {
     if (*argv[i] != '-') {     /* input file */
       char *tmp = argv[++nfiles]; /* push names to the front */
