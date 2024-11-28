@@ -71,9 +71,9 @@ STATICLIB=@STATICLIB@
 SHAREDLIB=@SHAREDLIB@
 
 CORE_T=	$(STATICLIB)
-CORE_O=	lanalyzer.o lapi.o lcode.o ldebug.o ldecomp.o ldo.o ldump.o lfunc.o  \
-	lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lprint.o lstate.o  \
-	lstring.o lstruct.o ltable.o lundump.o lzio.o ltests.o
+CORE_O=	lanalyzer.o lapi.o lcmp.o lcode.o ldebug.o ldecomp.o ldo.o ldump.o  \
+	lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lprint.o  \
+	lstate.o lstring.o lstruct.o ltable.o lundump.o lzio.o ltests.o
 AUX_O=	hksclib.o
 
 # PIC objects for linking the shared library
@@ -81,7 +81,7 @@ CORE_PIC_O= $(CORE_O:.o=.lo)
 AUX_PIC_O=	$(AUX_O:.o=.lo)
 
 # the standalone program which links with the static library
-HKSC_O=	hksc.o hkscaux.o hksctest.o
+HKSC_O=	hksc.o hkscaux.o hkscfile.o hkscmalloc.o hksctest.o
 
 HKSC_T=@HKSC_T@
 HKSC_SH=@HKSC_SH@

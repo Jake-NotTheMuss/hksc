@@ -342,6 +342,50 @@ LUA_API int hksI_parser_buffer(hksc_State *H, const char *buff, size_t size,
   return status;
 }
 
+#ifdef HKSC_TESTING
+
+static int cmp_printf (void *ud, const char *fmt, ...) {
+  va_list ap;
+  int n;
+  va_start(ap, fmt);
+  n = vfprintf((FILE *)ud, fmt, ap);
+  va_end(ap);
+  return n;
+}
+
+static void cmpfiles (hksc_State *H, void *ud) {
+  int status;
+  const Proto *p1, *p2;
+  const char **files = ud;
+  startcycle(H, files[0]);
+  status = loadfile(H, files[0]);
+  if (status) goto fail;
+  p1 = H->last_result;
+  H->last_result = NULL;
+  status = loadfile(H, files[1]);
+  if (status) goto fail;
+  p2 = H->last_result;
+  luaO_cmp(p1, p2, files[0], files[1], Settings(H).strip,
+           cmp_printf, stderr);
+  fail:
+  endcycle(H, files[0]);
+  if (status) luaD_throw(H, status);
+}
+
+/* this is only for developers running tests */
+LUA_API int hksI_cmpfiles (hksc_State *H,
+                           const char *file1, const char *file2) {
+  int status;
+  const char *files [2];
+  lua_lock(H);
+  files[0] = file1;
+  files[1] = file2;
+  status = luaD_pcall(H, &cmpfiles, files);
+  lua_unlock(H);
+  return status;
+}
+#endif
+
 
 #ifdef LUA_CODT6
 

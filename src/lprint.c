@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define hksc_c
@@ -38,8 +39,6 @@ typedef struct {
 } PrintState;
 
 
-#define PrintLiteral(P,s)  PrintBlock(P, "" s, sizeof(s)-1)
-#define PrintString (P,s)  PrintBlock(P, s, strlen(s))
 #define CM "\t; " /* comment in listing */
 
 static void PrintBlock (PrintState *P, const void *b, size_t size) {
@@ -61,351 +60,380 @@ static void f_pfn (const char *s, size_t l, void *ud) {
 }
 
 
-#define PrintTString(P, ts)  luaO_printstring(ts, (P)->quote, f_pfn, P)
-
 #define DEFCODE(name,m,t,a,b,c,mr1,ur1,vr1)  char name##_buff [sizeof(#name)];
 static const int max_opcode_len = (int)(sizeof(union {
 #include "lopcodes.def"
 }));
 #undef DEFCODE
 
-#define growbuff(H,b,n) luaZ_openspace(H, b, (b)->buffsize + n)
+static int getfarg (va_list *pap, const char **p, int *arg) {
+  const char *s = *p;
+  *arg = 0;
+  if (*s == '*') {
+    *arg = va_arg(*pap, int);
+    *p = s+1;
+    return 1;
+  }
+  else if (isdigit(*s)) {
+    do {
+      int d = *s++ - '0';
+      if (*arg < 999) *arg = *arg * 10 + d;
+    } while (isdigit(*s));
+    *p = s;
+    return 1;
+  }
+  return 0;
+}
 
-static void Print (PrintState *P, const char *fmt, ...) {
-  va_list ap;
-  hksc_State *H = P->H;
-  Mbuffer *b = &P->buff;
-  size_t n;
-  luaZ_resetbuffer(b);
-  va_start(ap, fmt);
+static int Printv (PrintState *P, const char *fmt, va_list ap) {
+  char buff [1024];
+  int nchar = 0;
+  struct {
+    char s [128];
+    int n;
+  } spec;
   for (;;) {
-    int advance = 2;  /* default is `%<spec>' */
-    const char *e = strchr(fmt, '%');
-    if (e == NULL) break;
-    n = e - fmt;
-    growbuff(H, b, n);
-    memcpy(b->buffer + b->n, fmt, n);
-    b->n += n;
-    switch (*(e+1)) {
-      int ival;
-      unsigned int uval;
-      case 'd':
-        ival = va_arg(ap, int);
-        printint: growbuff(H, b, MAX_CHAR_DEC(int));
-        b->n += sprintf(b->buffer + b->n, "%d", ival);
+    char *buffer = buff;
+    int n;
+    char code, qual = 0, *pcode;
+    const char *s;
+    int width, prec, havewidth;
+    spec.n = 0;
+    spec.s[spec.n++] = '%';  /* begin format string */
+    for (s = fmt; *s && *s != '%'; s++)
+      ;
+    nchar += (n = s - fmt);
+    PrintBlock(P, fmt, cast(size_t, n));
+    if (*s == 0)
+      break;
+    n = 0;
+    s++; /* advance over '%' */
+    {  /* conversion specifier */
+      static const char fchar [] = " +-#0";
+      const char *t;
+      int i, flags;
+      for (flags = 0; (t = strchr(fchar, *s)) != NULL; s++)
+        flags |= 1 << (t - fchar);
+      for (i = 0; i < cast_int(sizeof fchar) - 1; i++)
+        if (flags & (1 << i)) spec.s[spec.n++] = fchar[i];
+    }
+    /* width and precision */
+    if ((havewidth = getfarg(&ap, &s, &width)))
+      spec.n += sprintf(spec.s + spec.n, "%d", width);
+    if (*s == '.') {
+      s++;
+      spec.s[spec.n++] = '.';
+      if (getfarg(&ap, &s, &prec))
+        spec.n += sprintf(spec.s + spec.n, "%d", prec);
+    }
+    /* qualifier */
+    if (strchr("hlL", *s) != NULL)
+      spec.s[spec.n++] = qual = *s++;
+    code = *s;
+    spec.s[spec.n++] = code;
+    spec.s[spec.n] = '\0';  /* end of format string */
+    pcode = &spec.s[spec.n-1];
+    /* BUFF will be enough room for anything other than `%s' */
+    switch (code) {
+      int c;
+      long li;
+      unsigned long lu;
+      long double ld;
+      void *p;
+      case 'c': case '%':
+        c = code == 'c' ? va_arg(ap, int) : '%';
+        *pcode = 'c';
+        n = sprintf(buff, spec.s, c);
         break;
-      case 'u':
-        uval = va_arg(ap, unsigned int);
-        growbuff(H, b, MAX_CHAR_DEC(int));
-        b->n += sprintf(b->buffer + b->n, "%u", uval);
+      case 'd': case 'i':
+        li = qual == 'l' ? va_arg(ap, long) : va_arg(ap, int);
+        if (qual != 'l') {
+          *pcode = 'l';
+          *(pcode+1) = code;
+          *(pcode+2) = '\0';
+        }
+        n = sprintf(buff, spec.s, li);
         break;
-      case 'c':
-        ival = va_arg(ap, int);
-        printch: growbuff(H, b, 1);
-        b->buffer[b->n++] = ival;
+      case 'o': case 'u': case 'x': case 'X':
+        lu = qual == 'l' ? va_arg(ap, unsigned long) :
+        va_arg(ap, unsigned int);
+        if (qual != 'l') {
+          *pcode = 'l';
+          *(pcode+1) = code;
+          *(pcode+2) = '\0';
+        }
+        n = sprintf(buff, spec.s, lu);
+        break;
+      case 'e': case 'E': case 'f': case 'g': case 'G':
+        ld = qual == 'L' ? va_arg(ap, long double) : va_arg(ap, double);
+        if (qual != 'L') {
+          *pcode = 'L';
+          *(pcode+1) = code;
+          *(pcode+2) = '\0';
+        }
+        n = sprintf(buff, spec.s, ld);
+        break;
+      case 'n':
+        if (qual == 'h')
+          *va_arg(ap, short *) = nchar;
+        else if (qual == 'l')
+          *va_arg(ap, long *) = nchar;
+        else
+          *va_arg(ap, int *) = nchar;
+        break;
+      case 'p':
+        p = va_arg(ap, void *);
+        n = sprintf(buff, spec.s, p);
         break;
       case 's': {
+        size_t size;
         const char *s = va_arg(ap, const char *);
-        size_t len;
         if (s == NULL) s = "(null)";
-        len = strlen(s);
-        growbuff(H, b, len);
-        memcpy(b->buffer + b->n, s, len);
-        b->n += len;
+        size = strlen(s);
+        if (havewidth && cast(size_t, abs(width)) > size)
+          size = cast(size_t, abs(width));
+        buffer = luaZ_openspace(P->H, &P->buff, size+1);
+        n = sprintf(buffer, spec.s, s);
         break;
       }
-      case 'p':
-        growbuff(H, b, 4*sizeof(void *) + 8);
-        b->n += sprintf(b->buffer + b->n, "%p", va_arg(ap, void *));
-        break;
-      case '%':
-        ival = '%';
-        goto printch;
-      case 'I': /* print pc */
-        ival = va_arg(ap, int) + 1;
-        goto printint;
-      case 'L':  /* print line */
-        ival = va_arg(ap, int);
-        if (ival > 0)
-          goto printint;
-        ival = '-';
-        goto printch;
-      case 'R':  /* RK value */
-        ival = va_arg(ap, int);
-        if (ISK(ival)) ival = -1 - INDEXK(ival);
-        goto printint;
-      case 'K':  /* K value */
-        ival = va_arg(ap, int);
-        ival = -1 - INDEXK(ival);
-        goto printint;
-      case 'O': {  /* print opcode name */
-        OpCode o = va_arg(ap, OpCode);
-        growbuff(H, b, max_opcode_len + 2);
-        b->n += sprintf(b->buffer + b->n, "%-*s", max_opcode_len,
-                        luaP_opnames[o]);
-        break;
-      }
-      default: {
-        /* handle whatever the format specifier is for lu_int32 */
-#ifdef LUA_CODT6
-        const char hashfmt[] = "%" LUA_INT_FRMLEN "x";
-        advance = sizeof(hashfmt)-1;
-        if (strncmp(e, hashfmt, advance) == 0) {
-          growbuff(H, b, sizeof(hashfmt));
-          b->n += sprintf(b->buffer + b->n, "%" LUA_INT_FRMLEN "x",
-                          va_arg(ap, lu_int32));
-
-          break;
-        }
-#endif /* LUA_CODT6 */
-        lua_assert(0);
-      }
+      default:  /* undefined specifier */
+        n = sprintf(buff, "%c", code);
     }
-    fmt = e + advance;
+    PrintBlock(P, buffer, n);
+    fmt = s+1;
+    nchar += n;
   }
-  n = strlen(fmt);
-  growbuff(H, b, n);
-  memcpy(b->buffer + b->n, fmt, n);
-  b->n += n;
+  return nchar;
+}
+
+static int Print (void *P, const char *fmt, ...) {
+  va_list ap;
+  int ret;
+  va_start(ap, fmt);
+  ret = Printv(P, fmt, ap);
   va_end(ap);
-  PrintBlock(P, b->buffer, b->n);
-}
-
-static void PrintUI64 (PrintState *P, const lu_int64 literal) {
-  char buff[LUAI_MAXUI642STR];
-  lua_ui642str(buff, literal);
-  Print(P, "0x%shl", buff);
-}
-
-static void PrintLUD (PrintState *P, size_t s) {
-  char buff[MAX_CHAR_DEC(long) + 4];
-  int n = sprintf(buff, "0x%lxhi", cast(unsigned long, s));
-  PrintBlock(P, buff, cast(size_t, n));
-}
-
-static void PrintNumber (PrintState *P, lua_Number num) {
-  char buff[LUAI_MAXNUMBER2STR];
-  int n = lua_number2str(buff, num);
-  PrintBlock(P, buff, cast(size_t, n));
-}
-
-static void PrintConstant (PrintState *P, const Proto *f, int i) {
-  const TValue *o=&f->k[i];
-  switch (ttype(o)) {
-    case LUA_TNIL:
-      PrintLiteral(P, "nil");
-      break;
-    case LUA_TBOOLEAN:
-      (void)(bvalue(o) ? PrintLiteral(P, "true") : PrintLiteral(P, "false"));
-      break;
-    case LUA_TLIGHTUSERDATA:
-      PrintLUD(P, hlvalue(o));
-      break;
-    case LUA_TNUMBER:
-      PrintNumber(P, nvalue(o));
-      break;
-    case LUA_TSTRING:
-      PrintTString(P, rawtsvalue(o));
-      break;
-    case LUA_TUI64:
-      PrintUI64(P, ui64value(o));
-      break;
-    default:        /* cannot happen */
-      Print(P, "? type=%d",ttype(o));
-      break;
-  }
+  return ret;
 }
 
 #if HKSC_STRUCTURE_EXTENSION_ON
-static void PrintStructName (PrintState *P, short id) {
+static void PrintStructName (PFN *pfn, short id) {
   StructProto *p = luaR_getstructbyid(P->H, id);
   if (p == NULL)
-    PrintLiteral(P, "(unknown struct)");
+    (*pfn->f)(pfn->ud, "(unknown struct)");
   else
-    PrintBlock(P, getstr(p->name), p->name->tsv.len);
+    (*pfn->f)(pfn->ud, "%s", getstr(p->name));
 }
 
-static void PrintSlotIndex (PrintState *P, int position) {
+static void PrintSlotIndex (PFN *pfn, int position) {
   int slot;
   if (position == 0) return;
   slot = cast_int(luaR_pos2index(P->H, cast_byte(position)));
-  Print(P, "slot %d", slot+1);
+  (*pfn->f)(pfn->ud, "slot %d", slot+1);
 }
 
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 
-static void PrintCode (PrintState *P, const Proto *f) {
-  int pc;
+typedef struct PFN {
+  int (*f) (void *ud, const char *fmt, ...);
+  void *ud;
+} PFN;
+
+static void printk_fn (const char *s, size_t l, void *ud) {
+  PFN *pfn = ud;
+  (*pfn->f)(pfn->ud, "%.*s", cast_int(l), s);
+}
+
+void luaU_printcode (const Proto *f, int pc,
+                     int (*pfn) (void *ud, const char *fmt, ...), void *ud,
+                     int quote) {
+#define Print (*pfn)
+#define P ud
+#define PrintK(i) luaO_printk(&f->k[i], printk_fn, &PFN, quote)
 #if HKSC_STRUCTURE_EXTENSION_ON
   int tagchain = 0;
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
-  for (pc = 0; pc < f->sizecode; pc++) {
-    Instruction i=f->code[pc];
-    OpCode o=GET_OPCODE(i);
-    int a=GETARG_A(i);
-    int b=GETARG_B(i);
-    int c=GETARG_C(i);
-    int bx=GETARG_Bx(i);
-    int sbx=GETARG_sBx(i);
-    int line=getline(f,pc);
-    Print(P, "\t%I\t[%L]\t%O\t", pc, line, o);
-    switch (getOpMode(o)) {
-      case iABC:
-        Print(P, "%d",a);
-        if (getBMode(o)!=OpArgN) Print(P, " %R", b);
-        if (getCMode(o)!=OpArgN) Print(P, " %R", c);
-        break;
-      case iABx:
-        if (getBMode(o)==OpArgK) Print(P, "%d %K", a, bx);
-        else Print(P, "%d %d", a, bx);
-        break;
-      case iAsBx:
-        if (o==OP_JMP) Print(P, "%d",sbx); else Print(P, "%d %d",a,sbx);
-        break;
-    }
-    switch (o) {
-      case OP_LOADK:
-        PrintLiteral(P, CM); PrintConstant(P, f, bx);
-        break;
-      case OP_GETUPVAL:
-      case OP_SETUPVAL:
-        Print(P, CM "%s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
-        break;
-      case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
-      case OP_SETGLOBAL:
-        Print(P, CM "%s",svalue(&f->k[bx]));
-        break;
-      case OP_GETTABLE:
-      case OP_GETTABLE_S:
-      case OP_GETTABLE_N:
-      case OP_SELF:
-        if (ISK(c))
-      case OP_GETFIELD: case OP_GETFIELD_R1:
-          { PrintLiteral(P, CM); PrintConstant(P, f,INDEXK(c)); }
-        break;
-      case OP_SETTABLE: case OP_SETTABLE_BK:
-      case OP_SETTABLE_S: case OP_SETTABLE_S_BK:
-      case OP_SETTABLE_N: case OP_SETTABLE_N_BK:
-      case OP_ADD: case OP_ADD_BK:
-      case OP_SUB: case OP_SUB_BK:
-      case OP_MUL: case OP_MUL_BK:
-      case OP_DIV: case OP_DIV_BK:
-      case OP_POW: case OP_POW_BK:
-      case OP_EQ:
-      case OP_LT: case OP_LT_BK:
-      case OP_LE: case OP_LE_BK:
+  PFN PFN;
+  Instruction i=f->code[pc];
+  OpCode o=GET_OPCODE(i);
+  int a=GETARG_A(i);
+  int b=GETARG_B(i);
+  int c=GETARG_C(i);
+  int bx=GETARG_Bx(i);
+  int sbx=GETARG_sBx(i);
+  int line=getline(f,pc);
+  PFN.f = pfn;
+  PFN.ud = ud;
+  Print(P, "\t%d\t[", pc + 1);
+  if (line > 0)
+    Print(P, "%d", line);
+  else
+    Print(P, "-");
+  Print(P, "]\t%-*s\t", max_opcode_len, luaP_opnames[o]);
+  switch (getOpMode(o)) {
+    case iABC:
+      Print(P, "%d",a);
+      if (getBMode(o)!=OpArgN) Print(P, " %d", ISK(b) ? -1 - INDEXK(b) : b);
+      if (getCMode(o)!=OpArgN) Print(P, " %d", ISK(c) ? -1 - INDEXK(c) : c);
+      break;
+    case iABx:
+      if (getBMode(o)==OpArgK) Print(P, "%d %d", a, -1 - INDEXK(bx));
+      else Print(P, "%d %d", a, bx);
+      break;
+    case iAsBx:
+      if (o==OP_JMP) Print(P, "%d",sbx); else Print(P, "%d %d",a,sbx);
+      break;
+  }
+  switch (o) {
+    case OP_LOADK:
+      Print(P, CM);  PrintK(bx);
+      break;
+    case OP_GETUPVAL:
+    case OP_SETUPVAL:
+      Print(P, CM "%s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+      break;
+    case OP_GETGLOBAL: case OP_GETGLOBAL_MEM:
+    case OP_SETGLOBAL:
+      Print(P, CM "%s",svalue(&f->k[bx]));
+      break;
+    case OP_GETTABLE:
+    case OP_GETTABLE_S:
+    case OP_GETTABLE_N:
+    case OP_SELF:
+      if (ISK(c))
+    case OP_GETFIELD: case OP_GETFIELD_R1:
+        { Print(P, CM); PrintK(INDEXK(c)); }
+      break;
+    case OP_SETTABLE: case OP_SETTABLE_BK:
+    case OP_SETTABLE_S: case OP_SETTABLE_S_BK:
+    case OP_SETTABLE_N: case OP_SETTABLE_N_BK:
+    case OP_ADD: case OP_ADD_BK:
+    case OP_SUB: case OP_SUB_BK:
+    case OP_MUL: case OP_MUL_BK:
+    case OP_DIV: case OP_DIV_BK:
+    case OP_POW: case OP_POW_BK:
+    case OP_EQ:
+    case OP_LT: case OP_LT_BK:
+    case OP_LE: case OP_LE_BK:
 #ifdef LUA_CODT7
-      case OP_LEFT_SHIFT: case OP_LEFT_SHIFT_BK:
-      case OP_RIGHT_SHIFT: case OP_RIGHT_SHIFT_BK:
-      case OP_BIT_AND: case OP_BIT_AND_BK:
-      case OP_BIT_OR: case OP_BIT_OR_BK:
+    case OP_LEFT_SHIFT: case OP_LEFT_SHIFT_BK:
+    case OP_RIGHT_SHIFT: case OP_RIGHT_SHIFT_BK:
+    case OP_BIT_AND: case OP_BIT_AND_BK:
+    case OP_BIT_OR: case OP_BIT_OR_BK:
 #endif /* LUA_CODT7 */
-        if (ISK(b) || ISK(c)) {
-          PrintLiteral(P, CM);
-          if (ISK(b)) PrintConstant(P, f,INDEXK(b)); else PrintLiteral(P, "-");
-          PrintLiteral(P, " ");
-          if (ISK(c)) PrintConstant(P, f,INDEXK(c)); else PrintLiteral(P, "-");
-        }
-        break;
-      case OP_SETFIELD: case OP_SETFIELD_R1:
-        PrintLiteral(P, CM);
-        PrintConstant(P,f,b);
-        PrintLiteral(P, " ");
-        if (ISK(c)) PrintConstant(P,f,INDEXK(c)); else PrintLiteral(P, "-");
-        break;
-      case OP_JMP:
-      case OP_FORLOOP:
-      case OP_FORPREP:
-        Print(P, CM "to %d",sbx+pc+2);
-        break;
-      case OP_CLOSURE:
-        Print(P, CM "%p",cast(void *, f->p[bx]));
-        break;
-      case OP_SETLIST:
-        if (c==0) Print(P, CM "%d", GETARG_Bx(f->code[pc+1]));
-        else Print(P, CM "%d",c);
-        break;
+      if (ISK(b) || ISK(c)) {
+        Print(P, CM);
+        if (ISK(b)) PrintK(INDEXK(b)); else Print(P, "-");
+        Print(P, " ");
+        if (ISK(c)) PrintK(INDEXK(c)); else Print(P, "-");
+      }
+      break;
+    case OP_SETFIELD: case OP_SETFIELD_R1:
+      Print(P, CM);
+      PrintK(b);
+      Print(P, " ");
+      if (ISK(c)) PrintK(INDEXK(c)); else Print(P, "-");
+      break;
+    case OP_JMP:
+    case OP_FORLOOP:
+    case OP_FORPREP:
+      Print(P, CM "to %d",sbx+pc+2);
+      break;
+    case OP_CLOSURE:
+      Print(P, CM "%p",cast(void *, f->p[bx]));
+      break;
+    case OP_SETLIST:
+      if (c==0) Print(P, CM "%d", GETARG_Bx(f->code[pc+1]));
+      else Print(P, CM "%d",c);
+      break;
 #if HKSC_STRUCTURE_EXTENSION_ON
-      case OP_NEWSTRUCT:
-        PrintLiteral(P, CM);
-        PrintStructName(P, cast(short, GETARG_Bx(f->code[pc+1])));
-        break;
-      case OP_SETSLOTN:
-      case OP_SETSLOTI:
-        PrintLiteral(P, CM);
-        PrintSlotIndex(P, (o == OP_SETSLOTN) ? c : b);
-        break;
-      case OP_SETSLOT:
-        PrintLiteral(P, CM);
-        PrintSlotIndex(P, b);
-        PrintLiteral(P, " : ");
-        Print(P, "%s", luaX_typename(GETARG_Bx(f->code[pc+1])));
-        break;
-      case OP_SETSLOTS:
-        PrintLiteral(P, CM);
-        PrintSlotIndex(P, b);
-        PrintLiteral(P, " : ");
-        PrintStructName(P, cast(short, GETARG_Bx(f->code[pc+1])));
-        break;
-      case OP_SETSLOTMT:
-        tagchain = GET_SLOTMT_TAGCHAIN(i)+1;
-        Print(P, CM "chain %d : ", tagchain);
-        if (GET_SLOTMT_TYPE(i) == LUA_TSTRUCT)
-          PrintStructName(P, cast(short, GETARG_Bx(f->code[pc+1])));
-        else
-          Print(P, "%s", luaX_typename(GET_SLOTMT_TYPE(i)));
-        break;
-      case OP_GETSLOT:
-      case OP_GETSLOT_D:
-      case OP_SELFSLOT:
-        PrintLiteral(P, CM);
-        PrintSlotIndex(P, c);
-        break;
-      case OP_GETSLOTMT:
-      case OP_SELFSLOTMT:
-        tagchain = c+1;
-        Print(P, CM "chain %d", tagchain);
-        break;
-      case OP_DATA:
-        if (tagchain) {
-          PrintLiteral(P, CM);
-          PrintSlotIndex(P, a);
-          if (tagchain > 1) {
-            PrintLiteral(P, " --> tm ");
-            PrintSlotIndex(P, bx);
-          }
-          tagchain--;
+    case OP_NEWSTRUCT:
+      Print(P, CM);
+      PrintStructName(&PFN, cast(short, GETARG_Bx(f->code[pc+1])));
+      break;
+    case OP_SETSLOTN:
+    case OP_SETSLOTI:
+      Print(P, CM);
+      PrintSlotIndex(&PFN, (o == OP_SETSLOTN) ? c : b);
+      break;
+    case OP_SETSLOT:
+      Print(P, CM);
+      PrintSlotIndex(&PFN, b);
+      Print(P, " : ");
+      Print(P, "%s", luaX_typename(GETARG_Bx(f->code[pc+1])));
+      break;
+    case OP_SETSLOTS:
+      Print(P, CM);
+      PrintSlotIndex(&PFN, b);
+      Print(P, " : ");
+      PrintStructName(&PFN, cast(short, GETARG_Bx(f->code[pc+1])));
+      break;
+    case OP_SETSLOTMT:
+      tagchain = GET_SLOTMT_TAGCHAIN(i)+1;
+      Print(P, CM "chain %d : ", tagchain);
+      if (GET_SLOTMT_TYPE(i) == LUA_TSTRUCT)
+        PrintStructName(&PFN, cast(short, GETARG_Bx(f->code[pc+1])));
+      else
+        Print(P, "%s", luaX_typename(GET_SLOTMT_TYPE(i)));
+      break;
+    case OP_GETSLOT:
+    case OP_GETSLOT_D:
+    case OP_SELFSLOT:
+      Print(P, CM);
+      PrintSlotIndex(&PFN, c);
+      break;
+    case OP_GETSLOTMT:
+    case OP_SELFSLOTMT:
+      tagchain = c+1;
+      Print(P, CM "chain %d", tagchain);
+      break;
+    case OP_DATA:
+      if (tagchain) {
+        Print(P, CM);
+        PrintSlotIndex(&PFN, a);
+        if (tagchain > 1) {
+          Print(P, " --> tm ");
+          PrintSlotIndex(&PFN, bx);
         }
-        break;
-      case OP_CHECKTYPE:
-        Print(P, CM "%s", luaX_typename(bx));
-        break;
-      case OP_CHECKTYPES:
-      case OP_CHECKTYPE_D:
-        PrintLiteral(P, CM);
-        PrintStructName(P, cast(short, bx));
-        break;
+        tagchain--;
+      }
+      break;
+    case OP_CHECKTYPE:
+      Print(P, CM "%s", luaX_typename(bx));
+      break;
+    case OP_CHECKTYPES:
+    case OP_CHECKTYPE_D:
+      Print(P, CM);
+      PrintStructName(&PFN, cast(short, bx));
+      break;
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 #ifdef LUA_CODIW6
-      case OP_DELETE: case OP_DELETE_BK:
-        if (c == DELETE_UPVAL) {
-          Print(P, CM "%s",(f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+    case OP_DELETE: case OP_DELETE_BK:
+      if (c == DELETE_UPVAL) {
+        Print(P, CM "%s",(f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+      }
+      else if (c == DELETE_GLOBAL) {
+        Print(P, CM "%s",svalue(&f->k[INDEXK(b)]));
+      }
+      else if (c == DELETE_INDEXED) {
+        if (ISK(b)) {
+          Print(P, CM); PrintK(INDEXK(b));
         }
-        else if (c == DELETE_GLOBAL) {
-          Print(P, CM "%s",svalue(&f->k[INDEXK(b)]));
-        }
-        else if (c == DELETE_INDEXED) {
-          if (ISK(b)) {
-            PrintLiteral(P, CM); PrintConstant(P,f,INDEXK(b));
-          }
-        }
-        break;
+      }
+      break;
 #endif /* LUA_CODIW6 */
-      default:
-        break;
-    }
-    PrintLiteral(P, "\n");
+    default:
+      break;
   }
+  Print(P, "\n");
+#undef Print
+#undef P
+#undef PrintK
+}
+
+static void PrintCode (PrintState *P, const Proto *f) {
+  int pc;
+  for (pc = 0; pc < f->sizecode; pc++)
+    luaU_printcode(f, pc, Print, P, P->quote);
 }
 
 #define SS(x) (x==1)?"":"s"
@@ -443,8 +471,8 @@ static void PrintConstants (PrintState *P, const Proto *f) {
   Print(P, "constants (%d) for %p:\n",n,cast(void *, f));
   for (i = 0; i < n; i++) {
     Print(P, "\t%d\t",i+1);
-    PrintConstant(P, f, i);
-    PrintLiteral(P, "\n");
+    luaO_printk(&f->k[i], f_pfn, P, P->quote);
+    PrintChar(P, '\n');
   }
 }
 

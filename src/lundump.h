@@ -50,6 +50,10 @@ LUAI_FUNC void luaU_target_info (hksc_State *H, struct target_info *target);
 typedef int (*DebugLoadCB) (hksc_State *H, const char *name);
 #endif /* LUA_CODT6 */
 
+LUAI_FUNC void luaU_printcode (const Proto *f, int pc,
+                     int (*pfn) (void *ud, const char *fmt, ...), void *ud,
+                     int quote);
+
 /* load one chunk; from lundump.c */
 LUAI_FUNC Proto *luaU_undump (hksc_State *H, ZIO *Z, Mbuffer *buff,
                               const char *name);

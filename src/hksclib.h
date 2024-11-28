@@ -88,6 +88,11 @@ LUA_API void hksI_setdebugbuffer (hksc_State *H, const void *buff,
                                   size_t size, const char *name);
 #endif /* LUA_CODT6 */
 
+#ifdef HKSC_TESTING
+LUA_API int hksI_cmpfiles (hksc_State *H,
+                           const char *file1, const char *file2);
+#endif
+
 /* extra error code for `luaL_load' */
 #define LUA_ERRFILE     (LUA_ERRERR+1)
 

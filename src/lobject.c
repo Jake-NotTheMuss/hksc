@@ -171,44 +171,6 @@ int luaO_str2ui64(const char *s, const char *suffix, lu_int64 *result) {
 }
 
 
-/* print a string as it would appear in Lua code */
-void luaO_printstring (const TString *ts, int quote,
-                       void (*pfn) (const char *s, size_t l, void *ud),
-                       void *ud) {
-  char ch;
-  size_t i, n = ts->tsv.len;
-#define PUTCHAR(c) do { ch = (c); (*pfn)(&ch, 1, ud); } while (0)
-  PUTCHAR(quote);
-  for (i = 0; i < n; i++) {
-    int c = getstr(ts)[i];
-    if (c != quote && c != '\\' && isprint(c))
-      PUTCHAR(c);
-    else {
-      PUTCHAR('\\');
-      if (c == quote)
-        PUTCHAR(quote);
-      else switch (c) {
-        case '\\': PUTCHAR('\\'); break;
-        case '\a': PUTCHAR('a'); break;
-        case '\b': PUTCHAR('b'); break;
-        case '\f': PUTCHAR('f'); break;
-        case '\n': PUTCHAR('n'); break;
-        case '\r': PUTCHAR('r'); break;
-        case '\t': PUTCHAR('t'); break;
-        case '\v': PUTCHAR('v'); break;
-        default: {
-          char buff[16];
-          int n = sprintf(buff, "%03u", c);
-          (*pfn)(buff, n, ud);
-        }
-      }
-    }
-  }
-  PUTCHAR(quote);
-#undef PUTCHAR
-}
-
-
 /*
 ** `stringbuilder' holds data needed by `luaO_pushvfstring'
 */
