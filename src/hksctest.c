@@ -47,10 +47,11 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 
 #define LUA_ERREXPECT 10001
 
-#define COMPARE(b1,b2,text) do { \
+#define COMPARE(b1,b2,text,printok) do { \
   int result = fcmp(buff_get(&b1), buff_get(&b2), text); \
-  if (result == 0) \
-    printf("%s OK\n", buff_get(&b1)); \
+  if (result == 0) { \
+    if (printok) printf("%s OK\n", buff_get(&b1)); \
+  } \
   else { \
     showdiff.yes = 1; \
     showdiff.file1 = buff_get(&b1); \
@@ -71,7 +72,7 @@ static int test_dump_f (hksc_State *H, void *ud) {
   lua_setstrip(H, BYTECODE_STRIPPING_ALL);
   dump2file(H, dumpfile);
   /* compare stripped bytecode to expected */
-  COMPARE(dumpfile, expectfile, 0);
+  COMPARE(dumpfile, expectfile, 0, 1);
   /* generate profile info */
   replace_ext(&expectfile, filename, ".profileexpect");
   replace_ext(&dumpfile, filename, ".luaprofile");
@@ -84,7 +85,7 @@ static int test_dump_f (hksc_State *H, void *ud) {
 #endif
   dump2file(H, dumpfile);
   /* compare profile info with expected */
-  COMPARE(dumpfile, expectfile, callstackdb);
+  COMPARE(dumpfile, expectfile, callstackdb, 1);
   /* generate debug info */
   replace_ext(&expectfile, filename, ".debugexpect");
   replace_ext(&dumpfile, filename, ".luadebug");
@@ -95,7 +96,7 @@ static int test_dump_f (hksc_State *H, void *ud) {
 #endif
   dump2file(H, dumpfile);
   /* compare debug info with expected */
-  COMPARE(dumpfile, expectfile, 0);
+  COMPARE(dumpfile, expectfile, 0, 1);
   return status;
 }
 
@@ -115,7 +116,7 @@ static int test_redump_f (hksc_State *H, void *ud) {
       replace_ext(&expectfile, filename, ".cexpect");
       replace_ext(&dumpfile, filename, ".credump");
       dump2file(H, dumpfile);
-      COMPARE(dumpfile, expectfile, 0);
+      COMPARE(dumpfile, expectfile, 0, 0);
       break;
 #ifdef LUA_CODT6
     case BYTECODE_STRIPPING_DEBUG_ONLY:
@@ -127,10 +128,10 @@ static int test_redump_f (hksc_State *H, void *ud) {
       replace_ext(&dumpfile, filename, ".profileredump");
       dump2file(H, dumpfile);
 #ifndef LUA_CODT6
-      COMPARE(dumpfile, expectfile, 0);
+      COMPARE(dumpfile, expectfile, 0, 0);
       break;
 #else
-      COMPARE(dumpfile, expectfile, 1);
+      COMPARE(dumpfile, expectfile, 1, 0);
 #endif
       /* fallthrough */
     case BYTECODE_STRIPPING_NONE:
@@ -138,7 +139,7 @@ static int test_redump_f (hksc_State *H, void *ud) {
       replace_ext(&expectfile, filename, ".debugexpect");
       replace_ext(&dumpfile, filename, ".debugredump");
       dump2file(H, dumpfile);
-      COMPARE(dumpfile, expectfile, 0);
+      COMPARE(dumpfile, expectfile, 0, 0);
       break;
   }
   remove(buff_get(&dumpfile));

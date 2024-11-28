@@ -567,5 +567,10 @@ LUAI_FUNC void luaO_printk (const TValue *o,
                   void (*pfn) (const char *s, size_t l, void *ud),
                   void *ud, int quote);
 
+LUAI_FUNC void luaO_cmp (const Proto *p1, const Proto *p2, const char *name1,
+              const char *name2,
+              int strip, int (*printer) (void *ud, const char *fmt, ...),
+              void *ud);
+
 #endif
 

@@ -92,10 +92,10 @@ static void printk_f (const char *s, size_t l, void *ud) {
   (*S->printer)(S->ud, "%.*s", cast_int(l), s);
 }
 
-static int cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
+static void cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
   int i;
   if (p1 == p2)
-    return 0;
+    return;
   /*(*S->printer)(S->ud, )*/
   cmpfieldint(numparams);
   cmpfield(is_vararg, "%s",
@@ -166,10 +166,9 @@ static int cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
     cmpfieldint(linedefined);
     cmpfieldint(lastlinedefined);
   }
-  return 0;
 }
 
-int luaO_cmp (const Proto *p1, const Proto *p2, const char *name1,
+void luaO_cmp (const Proto *p1, const Proto *p2, const char *name1,
               const char *name2,
               int strip, int (*printer) (void *ud, const char *fmt, ...),
               void *ud) {
@@ -188,5 +187,5 @@ int luaO_cmp (const Proto *p1, const Proto *p2, const char *name1,
   (*printer)(ud, "a \"%s\"\n", name1 ? name1 : "input 1");
   (*printer)(ud, "b \"%s\"\n", name2 ? name2 : "input 2");
   (*printer)(ud, "The following fields differ:\n");
-  return cmpfunc(&S, p1, p2);
+  cmpfunc(&S, p1, p2);
 }
