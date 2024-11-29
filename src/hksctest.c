@@ -57,10 +57,11 @@ static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
 
 #define LUA_ERREXPECT 10001
 
-#define COMPARE(b1,b2,text,printok) do { \
+#define COMPARE(b1,b2,text,printok,action) do { \
   int result = fcmp(buff_get(&b1), buff_get(&b2), text); \
   if (result == 0) { \
-    if (printok) printf("%s OK\n", buff_get(&b1)); \
+    if (printok) printf("%s %sOK\n", buff_get(&b1), \
+         sizeof(action) > 1 ? action " " : ""); \
   } \
   else { \
     showdiff.yes = 1; \
@@ -77,12 +78,15 @@ static int test_dump_f (hksc_State *H, void *ud) {
   int callstackdb;  /* true if codt6/t7 */
   const char *filename = (const char *)ud;
   /* generate stripped bytecode */
-  replace_ext(&expectfile, filename, ".cexpect");
+  replace_ext(&expectfile, filename,
+              opts.test_struct ? ".cexpect1" : ".cexpect");
   replace_ext(&dumpfile, filename, ".luac");
   lua_setstrip(H, BYTECODE_STRIPPING_ALL);
   dump2file(H, dumpfile);
   /* compare stripped bytecode to expected */
-  COMPARE(dumpfile, expectfile, 0, 1);
+  COMPARE(dumpfile, expectfile, 0, 1, "");
+  if (opts.test_struct)
+    return status;
   /* generate profile info */
   replace_ext(&expectfile, filename, ".profileexpect");
   replace_ext(&dumpfile, filename, ".luaprofile");
@@ -95,7 +99,7 @@ static int test_dump_f (hksc_State *H, void *ud) {
 #endif
   dump2file(H, dumpfile);
   /* compare profile info with expected */
-  COMPARE(dumpfile, expectfile, callstackdb, 1);
+  COMPARE(dumpfile, expectfile, callstackdb, 1, "");
   /* generate debug info */
   replace_ext(&expectfile, filename, ".debugexpect");
   replace_ext(&dumpfile, filename, ".luadebug");
@@ -106,7 +110,7 @@ static int test_dump_f (hksc_State *H, void *ud) {
 #endif
   dump2file(H, dumpfile);
   /* compare debug info with expected */
-  COMPARE(dumpfile, expectfile, 0, 1);
+  COMPARE(dumpfile, expectfile, 0, 1, "");
   return status;
 }
 
@@ -124,9 +128,14 @@ static int test_redump_f (hksc_State *H, void *ud) {
   switch (s->strip) {
     case BYTECODE_STRIPPING_ALL:
       replace_ext(&expectfile, filename, ".cexpect");
-      replace_ext(&dumpfile, filename, ".credump");
+      replace_ext(&dumpfile, filename,
+                  /* for struct tests, this name will be printed when the test
+                     finishes, so I would rather it be shown as .luac,
+                     but non-struct tests will still use .luac afterward, so
+                     use a different name */
+                  opts.test_struct ? ".luac" : ".credump");
       dump2file(H, dumpfile);
-      COMPARE(dumpfile, expectfile, 0, 0);
+      COMPARE(dumpfile, expectfile, 0, opts.test_struct, "redumped");
       break;
 #ifdef LUA_CODT6
     case BYTECODE_STRIPPING_DEBUG_ONLY:
@@ -138,10 +147,10 @@ static int test_redump_f (hksc_State *H, void *ud) {
       replace_ext(&dumpfile, filename, ".profileredump");
       dump2file(H, dumpfile);
 #ifndef LUA_CODT6
-      COMPARE(dumpfile, expectfile, 0, 0);
+      COMPARE(dumpfile, expectfile, 0, 0, "redumped");
       break;
 #else
-      COMPARE(dumpfile, expectfile, 1, 0);
+      COMPARE(dumpfile, expectfile, 1, 0, "redumped");
 #endif
       /* fallthrough */
     case BYTECODE_STRIPPING_NONE:
@@ -149,12 +158,29 @@ static int test_redump_f (hksc_State *H, void *ud) {
       replace_ext(&expectfile, filename, ".debugexpect");
       replace_ext(&dumpfile, filename, ".debugredump");
       dump2file(H, dumpfile);
-      COMPARE(dumpfile, expectfile, 0, 0);
+      COMPARE(dumpfile, expectfile, 0, 0, "redumped");
       break;
   }
   remove(buff_get(&dumpfile));
   return status;
 }
+
+#define BEGIN_TEST(file) do { \
+  const char *dot; \
+  int n; \
+  buff_concat(&testfile, file); \
+  if (opts.expect_error) break; \
+  printf("------------ "); \
+  dot = strchr(file, '.'); \
+  if (dot == NULL) \
+    n = (int)strlen(file); \
+  else \
+    n = dot - file; \
+  printf("%.*s", n, file); \
+  printf(" ------------\n"); \
+} while (0)
+
+#define END_TEST() buff_revert(&testfile);
 
 static int test_files (hksc_State *H, int nfiles, char *files []) {
   int i, status;
@@ -165,12 +191,8 @@ static int test_files (hksc_State *H, int nfiles, char *files []) {
   struct Redump s;
   for (i = 0; i < nfiles; i++) {
     showdiff.yes = 0;
-    buff_concat(&testfile, files[i]);
-    if (1)
+    BEGIN_TEST(files[i]);
     status = hksI_parser_file(H, buff_get(&testfile), test_dump_f, files[i]);
-    else
-      status = 0, printf("testing '%s'\n", buff_get(&testfile));
-    buff_revert(&testfile);
     if (status)
       goto fail;
     /* re-dump */
@@ -178,7 +200,7 @@ static int test_files (hksc_State *H, int nfiles, char *files []) {
     s.strip = BYTECODE_STRIPPING_ALL;
     s.filename = buff_get(&redumpfile);
     status = hksI_parser_file(H, s.filename, test_redump_f, &s);
-    if (status == 0) {
+    if (status == 0 && !opts.test_struct) {
 #ifdef LUA_CODT6
     replace_ext(&debugfile, files[i], ".luadebug");
     hksI_setdebugfile(H, buff_get(&debugfile));
@@ -208,6 +230,7 @@ static int test_files (hksc_State *H, int nfiles, char *files []) {
         fprintf(stderr, "%s: redump error: %s\n", files[i], lua_geterror(H));
       abort();
     }
+    END_TEST();
   }
   return 0;
 }
@@ -221,9 +244,8 @@ static int error_check (hksc_State *H, int nfiles, char *files []) {
   int i, status;
   for (i = 0; i < nfiles; i++) {
     const char *msg;
-    buff_concat(&testfile, files[i]);
+    BEGIN_TEST(files[i]);
     status = hksI_parser_file(H, buff_get(&testfile), error_dump_f, NULL);
-    buff_revert(&testfile);
     if (status == 0) {
       fprintf(stderr,
               "%s: no error was raised\n", files[i]);
@@ -247,6 +269,7 @@ static int error_check (hksc_State *H, int nfiles, char *files []) {
       system(BUILD_DIFF_CMD(command, dumpfile, expectfile));
       abort();
     }
+    END_TEST();
   }
   return 0;
 }

@@ -31,6 +31,7 @@ struct Opts {
   int testing;
   int expect_error;
   const char *testsrcdir;
+  int test_struct;
 #endif
 #ifdef HKSC_MULTIPLAT
   int plat;

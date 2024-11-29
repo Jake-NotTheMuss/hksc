@@ -31,6 +31,7 @@ HKSC_NAME=hksc
 
 HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
 
+TESTFLAGS=--testing --test-srcdir='$(srcdir)'
 # flags for loading source files
 HKSCAFLAGS=-L $(HKSC_TARGET_PLAT) $(HKSC_PREFIX_MAP)
 # flags for loading binary files
@@ -178,7 +179,7 @@ STRUCT_TESTS=$(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
 
 ALL_TESTS=$(TEST_SRC:.lua=@TESTSUFFIX@) $(EXTRA_TESTS:.lua=@TESTSUFFIX@)
 
-all: prepare dummy version error tests
+all: prepare dummy version error tests @STRUCT_TEST_RULE@
 	@echo ----------------------------
 	@echo ---------------------------- >> $(MAKELOG)
 	@echo All Lua tests passed
@@ -228,7 +229,12 @@ error:
 	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC_NAME=$(HKSC_NAME)
 
 tests:
-	@$(HKSC) --testing --test-srcdir='$(srcdir)' $(HKSCAFLAGS) $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS)
+	@$(HKSC) $(TESTFLAGS) $(HKSCAFLAGS) $(TEST_SRC) $(EXTRA_TESTS)
+
+structtests:
+	@$(HKSC) $(TESTFLAGS) --test-struct $(HKSCAFLAGS) $(STRUCT_TESTS)
+
+empty:
 
 temp-expect:
 	@for f in $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS); do \

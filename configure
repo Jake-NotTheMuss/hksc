@@ -409,6 +409,7 @@ else
 			EXTRA_TESTS_VAR=EXTRA_TESTS;;
 	esac
 fi
+setifelse STRUCTURE_EXTENSION_ON STRUCT_TEST_RULE structtests empty
 # set which error tests to do for compatibility features
 setifelse STRUCTURE_EXTENSION_ON STRUCT_ERROR_SRC STRUCT_SRC NOSTRUCT_SRC
 setifelse with_ui64 UI64_ERROR_SRC UI64_SRC NOUI64_SRC
@@ -622,6 +623,7 @@ config_makefile()
 			s&@HKSC_VERSION1@&$VER1&;t t
 			$sed_vpath;t t
 			s&@GAMETESTDIR@&$game&;t t
+			s&@STRUCT_TEST_RULE@&$STRUCT_TEST_RULE&;t t
 			s&@STRUCT_ERROR_SRC@&$STRUCT_ERROR_SRC&;t t
 			s&@UI64_ERROR_SRC@&$UI64_ERROR_SRC&;t t
 			s&@HKSC_GEN_PROFILE@&$HKSC_GEN_PROFILE&;t t

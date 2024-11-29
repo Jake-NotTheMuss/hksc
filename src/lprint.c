@@ -428,6 +428,7 @@ void luaU_printcode (hksc_State *H, const Proto *f, int pc,
 #undef Print
 #undef P
 #undef PrintK
+  UNUSED(H);
 }
 
 static void PrintCode (PrintState *P, const Proto *f) {

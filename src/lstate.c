@@ -119,9 +119,16 @@ void luaE_cleanstate (hksc_State *H) {
     i = sizenode(h);
     while (i--) {
       Node *n = gnode(h, i);
-      setnilvalue(gval(n));
-      setnilvalue(key2tval(n));
+      TValue *key = key2tval(n);
+      TValue *val = gval(n);
+      if (ttislightuserdata(key)) {
+        Udata *u = rawuvalue(val);
+        u->uv.marked = 0;
+      }
+      setnilvalue(key);
+      setnilvalue(val);
     }
+    luaC_sweep(H, GC_COLLECT_KEEP_TEMP);
   }
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   UNUSED(g);
