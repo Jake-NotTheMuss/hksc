@@ -178,7 +178,7 @@ STRUCT_TESTS=$(HSTRUCTURE_SRC_@WITH_STRUCTURES@)
 
 ALL_TESTS=$(TEST_SRC:.lua=@TESTSUFFIX@) $(EXTRA_TESTS:.lua=@TESTSUFFIX@)
 
-all: prepare dummy version error $(ALL_TESTS) $(STRUCT_TESTS:.lua=.ctest1)
+all: prepare dummy version error tests
 	@echo ----------------------------
 	@echo ---------------------------- >> $(MAKELOG)
 	@echo All Lua tests passed
@@ -227,6 +227,8 @@ version:
 error:
 	@cd $@ && $(MAKE) $(TESTMAKEFLAGS) HKSC_NAME=$(HKSC_NAME)
 
+tests:
+	@$(HKSC) --testing --test-srcdir='$(srcdir)' $(HKSCAFLAGS) $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS)
 
 temp-expect:
 	@for f in $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS); do \
@@ -355,6 +357,6 @@ clean:
 	@cd error && $(MAKE) $@
 	@cd programs && $(MAKE) $@
 
-.PHONY: test all checkexpect expectsum dummy clean version error
+.PHONY: test all checkexpect expectsum dummy clean version error tests
 
 # (end of Makefile)

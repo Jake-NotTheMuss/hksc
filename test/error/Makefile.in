@@ -8,13 +8,15 @@ top_builddir=@top_builddir@
 
 RM=@RM@
 
+HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
+
 HKSC_NAME=hksc
 EXESUF=@EXESUF@
 
 HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
 
 # -p so that no binaries get generated accidentally
-HKSCFLAGS=--testing --test-srcdir='$(srcdir)' --expect-error -a
+HKSCFLAGS=--testing --test-srcdir='$(srcdir)' --expect-error -a $(HKSC_PREFIX_MAP)
 
 BOM_SRC=utf16be_bom.lua utf16le_bom.lua utf32be_bom.lua utf32le_bom.lua  \
 	utf16or32le_bom.lua unknown_bom.lua

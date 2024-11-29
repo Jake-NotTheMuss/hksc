@@ -196,6 +196,9 @@ static void startcycle(hksc_State *H, const char *name) {
   /* in case ERRORMSG is a string that is about to be collected, reset it to an
      empty string */
   H->errormsg = NULL;
+#ifdef HKSC_TESTING
+  luaE_cleanstate(H);
+#endif
 #ifdef LUA_DEBUG
   if (g->incyclecallback) {
     luaG_runerror(H, "cannot start a new parser cycle from inside a "
@@ -365,7 +368,7 @@ static void cmpfiles (hksc_State *H, void *ud) {
   status = loadfile(H, files[1]);
   if (status) goto fail;
   p2 = H->last_result;
-  luaO_cmp(p1, p2, files[0], files[1], Settings(H).strip,
+  luaO_cmp(H, p1, p2, files[0], files[1], Settings(H).strip,
            cmp_printf, stderr);
   fail:
   endcycle(H, files[0]);

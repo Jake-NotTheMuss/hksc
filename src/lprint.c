@@ -215,35 +215,35 @@ static int Print (void *P, const char *fmt, ...) {
   return ret;
 }
 
+typedef struct PFN {
+  int (*f) (void *ud, const char *fmt, ...);
+  void *ud;
+} PFN;
+
 #if HKSC_STRUCTURE_EXTENSION_ON
-static void PrintStructName (PFN *pfn, short id) {
-  StructProto *p = luaR_getstructbyid(P->H, id);
+static void PrintStructName (hksc_State *H, PFN *pfn, short id) {
+  StructProto *p = luaR_getstructbyid(H, id);
   if (p == NULL)
     (*pfn->f)(pfn->ud, "(unknown struct)");
   else
     (*pfn->f)(pfn->ud, "%s", getstr(p->name));
 }
 
-static void PrintSlotIndex (PFN *pfn, int position) {
+static void PrintSlotIndex (hksc_State *H, PFN *pfn, int position) {
   int slot;
   if (position == 0) return;
-  slot = cast_int(luaR_pos2index(P->H, cast_byte(position)));
+  slot = cast_int(luaR_pos2index(H, cast_byte(position)));
   (*pfn->f)(pfn->ud, "slot %d", slot+1);
 }
 
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
-
-typedef struct PFN {
-  int (*f) (void *ud, const char *fmt, ...);
-  void *ud;
-} PFN;
 
 static void printk_fn (const char *s, size_t l, void *ud) {
   PFN *pfn = ud;
   (*pfn->f)(pfn->ud, "%.*s", cast_int(l), s);
 }
 
-void luaU_printcode (const Proto *f, int pc,
+void luaU_printcode (hksc_State *H, const Proto *f, int pc,
                      int (*pfn) (void *ud, const char *fmt, ...), void *ud,
                      int quote) {
 #define Print (*pfn)
@@ -348,30 +348,30 @@ void luaU_printcode (const Proto *f, int pc,
 #if HKSC_STRUCTURE_EXTENSION_ON
     case OP_NEWSTRUCT:
       Print(P, CM);
-      PrintStructName(&PFN, cast(short, GETARG_Bx(f->code[pc+1])));
+      PrintStructName(H, &PFN, cast(short, GETARG_Bx(f->code[pc+1])));
       break;
     case OP_SETSLOTN:
     case OP_SETSLOTI:
       Print(P, CM);
-      PrintSlotIndex(&PFN, (o == OP_SETSLOTN) ? c : b);
+      PrintSlotIndex(H, &PFN, (o == OP_SETSLOTN) ? c : b);
       break;
     case OP_SETSLOT:
       Print(P, CM);
-      PrintSlotIndex(&PFN, b);
+      PrintSlotIndex(H, &PFN, b);
       Print(P, " : ");
       Print(P, "%s", luaX_typename(GETARG_Bx(f->code[pc+1])));
       break;
     case OP_SETSLOTS:
       Print(P, CM);
-      PrintSlotIndex(&PFN, b);
+      PrintSlotIndex(H, &PFN, b);
       Print(P, " : ");
-      PrintStructName(&PFN, cast(short, GETARG_Bx(f->code[pc+1])));
+      PrintStructName(H, &PFN, cast(short, GETARG_Bx(f->code[pc+1])));
       break;
     case OP_SETSLOTMT:
       tagchain = GET_SLOTMT_TAGCHAIN(i)+1;
       Print(P, CM "chain %d : ", tagchain);
       if (GET_SLOTMT_TYPE(i) == LUA_TSTRUCT)
-        PrintStructName(&PFN, cast(short, GETARG_Bx(f->code[pc+1])));
+        PrintStructName(H, &PFN, cast(short, GETARG_Bx(f->code[pc+1])));
       else
         Print(P, "%s", luaX_typename(GET_SLOTMT_TYPE(i)));
       break;
@@ -379,7 +379,7 @@ void luaU_printcode (const Proto *f, int pc,
     case OP_GETSLOT_D:
     case OP_SELFSLOT:
       Print(P, CM);
-      PrintSlotIndex(&PFN, c);
+      PrintSlotIndex(H, &PFN, c);
       break;
     case OP_GETSLOTMT:
     case OP_SELFSLOTMT:
@@ -389,10 +389,10 @@ void luaU_printcode (const Proto *f, int pc,
     case OP_DATA:
       if (tagchain) {
         Print(P, CM);
-        PrintSlotIndex(&PFN, a);
+        PrintSlotIndex(H, &PFN, a);
         if (tagchain > 1) {
           Print(P, " --> tm ");
-          PrintSlotIndex(&PFN, bx);
+          PrintSlotIndex(H, &PFN, bx);
         }
         tagchain--;
       }
@@ -403,7 +403,7 @@ void luaU_printcode (const Proto *f, int pc,
     case OP_CHECKTYPES:
     case OP_CHECKTYPE_D:
       Print(P, CM);
-      PrintStructName(&PFN, cast(short, bx));
+      PrintStructName(H, &PFN, cast(short, bx));
       break;
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 #ifdef LUA_CODIW6
@@ -433,7 +433,7 @@ void luaU_printcode (const Proto *f, int pc,
 static void PrintCode (PrintState *P, const Proto *f) {
   int pc;
   for (pc = 0; pc < f->sizecode; pc++)
-    luaU_printcode(f, pc, Print, P, P->quote);
+    luaU_printcode(P->H, f, pc, Print, P, P->quote);
 }
 
 #define SS(x) (x==1)?"":"s"

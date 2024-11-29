@@ -20,6 +20,7 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 typedef struct {
+  hksc_State *H;
   int (*printer)(void *ud, const char *fmt, ...);
   void *ud;
   const char *a, *b;
@@ -119,9 +120,9 @@ static void cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
     if (p1->code[i] != p2->code[i]) {
       PUTHEADER("Instructions");
       (*S->printer)(S->ud, "    a: ");
-      luaU_printcode(p1, i, S->printer, S->ud, S->quote);
+      luaU_printcode(S->H, p1, i, S->printer, S->ud, S->quote);
       (*S->printer)(S->ud, "    b: ");
-      luaU_printcode(p2, i, S->printer, S->ud, S->quote);
+      luaU_printcode(S->H, p2, i, S->printer, S->ud, S->quote);
     }
   }
   /* print extra instructions */
@@ -131,7 +132,7 @@ static void cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
           p == p1 ? S->a : S->b, field_max(sizecode) - field_min(sizecode));
     for (i = field_min(sizecode); i < field_max(sizecode); i++) {
       (*S->printer)(S->ud, "    + ");
-      luaU_printcode(p, i, S->printer, S->ud, S->quote);
+      luaU_printcode(S->H, p, i, S->printer, S->ud, S->quote);
     }
   }
   /* compare constants */
@@ -170,11 +171,12 @@ static void cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
   }
 }
 
-void luaO_cmp (const Proto *p1, const Proto *p2, const char *name1,
-              const char *name2,
+void luaO_cmp (hksc_State *H, const Proto *p1, const Proto *p2,
+               const char *name1, const char *name2,
               int strip, int (*printer) (void *ud, const char *fmt, ...),
               void *ud) {
   CmpState S;
+  S.H = H;
   S.printer = printer;
   S.ud = ud;
 #ifdef LUA_CODT6

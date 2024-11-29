@@ -73,8 +73,6 @@ typedef struct global_State {
   lu_mem GCthreshold;
   lu_mem totalbytes;  /* number of bytes currently allocated */
   VEC_DECL(FilePrefixMap, prefixmaps);
-  const char *prefix_map_from;  /* OLD value in file prefix map */
-  const char *prefix_map_to;  /* NEW value in file prefix map */
   lua_CFunction panic;  /* to be called in unprotected errors */
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;
@@ -172,6 +170,10 @@ union GCObject {
 
 #ifdef LUA_CODT6
 LUAI_FUNC void *luaE_allocdebugsource (hksc_State *H, size_t size);
+#endif
+
+#ifdef HKSC_TESTING
+LUAI_FUNC void luaE_cleanstate (hksc_State *H);
 #endif
 
 #endif

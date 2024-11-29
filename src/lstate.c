@@ -106,6 +106,28 @@ static void close_state (hksc_State *H) {
   (*g->frealloc)(g->ud, fromstate(H), state_size(LG), 0);
 }
 
+#ifdef HKSC_TESTING
+void luaE_cleanstate (hksc_State *H) {
+  global_State *g = G(H);
+#if HKSC_STRUCTURE_EXTENSION_ON
+  g->protolist.nuse = 0;
+  if (g->prototable) {
+    Table *h = g->prototable;
+    int i = h->sizearray;
+    while (i--)
+      setnilvalue(&h->array[i]);
+    i = sizenode(h);
+    while (i--) {
+      Node *n = gnode(h, i);
+      setnilvalue(gval(n));
+      setnilvalue(key2tval(n));
+    }
+  }
+#endif /* HKSC_STRUCTURE_EXTENSION_ON */
+  UNUSED(g);
+}
+#endif
+
 
 #ifdef LUA_CODT6
 /* when the library supplies the debug info readers, it allocates memory for
@@ -157,8 +179,6 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
 #endif /* HKSC_MULTIPLAT */
   g->settings = settings->compilersettings;
   luaZ_initbuffer(H, &g->buff);
-  g->prefix_map_from = NULL;
-  g->prefix_map_to = NULL;
   g->panic = NULL;
   g->midcycle = 0;
 #ifdef LUA_DEBUG
