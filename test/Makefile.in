@@ -231,6 +231,15 @@ error:
 tests:
 	@$(HKSC) $(TESTFLAGS) $(HKSCAFLAGS) $(TEST_SRC) $(EXTRA_TESTS)
 
+# test lprint.c
+testlprint:
+	@files= ; \
+	for f in $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS); do \
+		files="$$files $(srcdir)/$$f"; \
+	done; \
+	$(HKSC) -l -l $(HKSCAFLAGS) $$files > lprint.log
+	@echo lprint.c OK
+
 structtests:
 	@$(HKSC) $(TESTFLAGS) --test-struct $(HKSCAFLAGS) $(STRUCT_TESTS)
 
@@ -363,6 +372,6 @@ clean:
 	@cd error && $(MAKE) $@
 	@cd programs && $(MAKE) $@
 
-.PHONY: test all checkexpect expectsum dummy clean version error tests
+.PHONY: test all checkexpect expectsum dummy clean version error tests lprinttests structtests empty
 
 # (end of Makefile)
