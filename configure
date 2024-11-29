@@ -410,8 +410,8 @@ else
 	esac
 fi
 # set which error tests to do for compatibility features
-setifelse STRUCTURE_EXTENSION_ON HSTRUCTURE_ERROR_CHECK yeshstructure nohstructure
-setifelse with_ui64 UI64_ERROR_CHECK yesui64 noui64
+setifelse STRUCTURE_EXTENSION_ON STRUCT_ERROR_SRC STRUCT_SRC NOSTRUCT_SRC
+setifelse with_ui64 UI64_ERROR_SRC UI64_SRC NOUI64_SRC
 # flags for generating Lua profiling info
 # for the COD build, suppress bytecode output and only generate a callstackdb
 # for non-COD, use profile stripping mode
@@ -622,8 +622,8 @@ config_makefile()
 			s&@HKSC_VERSION1@&$VER1&;t t
 			$sed_vpath;t t
 			s&@GAMETESTDIR@&$game&;t t
-			s&@HSTRUCTURE_ERROR_CHECK@&$HSTRUCTURE_ERROR_CHECK&;t t
-			s&@UI64_ERROR_CHECK@&$UI64_ERROR_CHECK&;t t
+			s&@STRUCT_ERROR_SRC@&$STRUCT_ERROR_SRC&;t t
+			s&@UI64_ERROR_SRC@&$UI64_ERROR_SRC&;t t
 			s&@HKSC_GEN_PROFILE@&$HKSC_GEN_PROFILE&;t t
 			s&@HKSC_GEN_DEBUG@&$HKSC_GEN_DEBUG&;t t
 			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&;t t

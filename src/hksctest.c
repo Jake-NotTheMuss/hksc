@@ -22,6 +22,17 @@ extern const char *progname;
 static Buffer testfile;  /* the current test source file name */
 static Buffer dumpfile;
 static Buffer expectfile;
+static Buffer command;  /* argument to `system()' */
+
+static char *build_diff_cmd (Buffer *buff, const char *a, const char *b) {
+  buff_concat(buff, "diff -u ");
+  buff_concat(buff, a);
+  buff_concat(buff, " ");
+  buff_concat(buff, b);
+  return buff_get(buff);
+}
+
+#define BUILD_DIFF_CMD(d,a,b)  build_diff_cmd(&d, buff_get(&a), buff_get(&b))
 
 static struct {
   int yes;
@@ -29,7 +40,6 @@ static struct {
   const char *file2;
 } showdiff;
 
-#define error_check(a,b,c) 0
 
 static int writer_2file(hksc_State *H, const void *p, size_t size, void *u) {
   size_t n;
@@ -196,6 +206,45 @@ static int test_files (hksc_State *H, int nfiles, char *files []) {
       }
       else
         fprintf(stderr, "%s: redump error: %s\n", files[i], lua_geterror(H));
+      abort();
+    }
+  }
+  return 0;
+}
+
+static int error_dump_f (hksc_State *H, void *ud) {
+  (void)H; (void)ud;
+  return 0;
+}
+
+static int error_check (hksc_State *H, int nfiles, char *files []) {
+  int i, status;
+  for (i = 0; i < nfiles; i++) {
+    const char *msg;
+    buff_concat(&testfile, files[i]);
+    status = hksI_parser_file(H, buff_get(&testfile), error_dump_f, NULL);
+    buff_revert(&testfile);
+    if (status == 0) {
+      fprintf(stderr,
+              "%s: no error was raised\n", files[i]);
+      abort();
+    }
+    msg = lua_geterror(H);
+    if (msg == NULL) msg = "";
+    replace_ext(&dumpfile, files[i], ".test");
+    {
+      FILE *f = xopen(buff_get(&dumpfile), "w");
+      fprintf(f, "%s\n", msg);
+      fclose(f);
+    }
+    replace_ext(&expectfile, files[i], ".expect");
+    if (fcmp(buff_get(&dumpfile), buff_get(&expectfile), 0) == 0)
+      printf("%s error check OK\n", files[i]);
+    else {
+      fprintf(stderr,
+              "%s: error check failed (output differs from expected)\n\n",
+              files[i]);
+      system(BUILD_DIFF_CMD(command, dumpfile, expectfile));
       abort();
     }
   }
