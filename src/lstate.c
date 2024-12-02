@@ -189,6 +189,7 @@ LUA_API hksc_State *lua_newstate (hksc_StateSettings *settings) {
   g->panic = NULL;
   g->midcycle = 0;
 #ifdef LUA_DEBUG
+  g->logfile = NULL;
   g->incyclecallback = 0;
 #endif /* LUA_DEBUG */
   g->rootgc = NULL;

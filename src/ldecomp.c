@@ -438,6 +438,25 @@ typedef struct FuncState {
 #ifdef LUA_DEBUG
 #define D(x) x
 
+#undef printf
+#define printf luaprintf
+
+static hksc_State *luaprintf_state;
+
+static int luaprintf (const char *fmt, ...) {
+  va_list ap;
+  int ret;
+  void *logfile;
+  lua_assert(luaprintf_state != NULL);
+  logfile = G(luaprintf_state)->logfile;
+  if (logfile == NULL)
+    logfile = stdout;
+  va_start(ap, fmt);
+  ret = vfprintf(cast(FILE *, logfile), fmt, ap);
+  va_end(ap);
+  return ret;
+}
+
 /*****************************************************************************/
 /* Debug print functions */
 /*****************************************************************************/
@@ -8353,6 +8372,9 @@ static void f_decompiler (hksc_State *H, void *ud) {
 int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data) {
   DecompState D = {0};
   int status;
+#ifdef LUA_DEBUG
+  luaprintf_state = H;
+#endif
   D.H=H;
   D.mainfunc=f;
   D.writer=w;

@@ -73,6 +73,9 @@ typedef struct global_State {
   lu_mem GCthreshold;
   lu_mem totalbytes;  /* number of bytes currently allocated */
   VEC_DECL(FilePrefixMap, prefixmaps);
+#ifdef LUA_DEBUG
+  void *logfile;
+#endif
   lua_CFunction panic;  /* to be called in unprotected errors */
   hksc_CycleCallback startcycle, endcycle;
   struct hksc_State *mainthread;

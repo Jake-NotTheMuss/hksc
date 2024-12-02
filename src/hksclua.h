@@ -264,6 +264,10 @@ LUA_API int (lua_getmatchlineinfo) (hksc_State *H);
 LUA_API void (lua_setmatchlineinfo) (hksc_State *H, int match_line_info);
 #endif /* HKSC_DECOMPILER */
 
+#ifdef LUA_DEBUG
+LUA_API void (lua_setlogfile) (hksc_State *H, void *logfile);
+#endif
+
 /*
 ** dump functions
 */

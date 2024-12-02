@@ -117,6 +117,15 @@ LUA_API void lua_setallocf (hksc_State *H, lua_Alloc f, void *ud) {
 }
 
 
+#ifdef LUA_DEBUG
+LUA_API void lua_setlogfile (hksc_State *H, void *logfile) {
+  lua_lock(H);
+  G(H)->logfile = logfile;
+  lua_unlock(H);
+}
+#endif /* LUA_DEBUG */
+
+
 LUA_API void lua_addprefixmap (hksc_State *H, const char *arg) {
   const char *eq;  /* equals sign in ARG */
   lua_lock(H);
