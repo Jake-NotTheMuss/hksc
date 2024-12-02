@@ -35,6 +35,9 @@ extern void buff_space (Buffer *b, size_t n);
 extern void buff_concat (Buffer *b, const char *str);
 extern void buff_concatn (Buffer *b, const char *str, size_t len);
 extern void buff_revert (Buffer *b);
+extern void buff_move (Buffer *dest, Buffer *src);
+
+#define buff_reset(b)  ((b)->n = 0)
 
 #define buff_get(b)  ((b)->buffer)
 #define buff_len(b)  ((b)->n)

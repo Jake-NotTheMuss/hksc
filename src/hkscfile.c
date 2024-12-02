@@ -98,3 +98,11 @@ void buff_concatn (Buffer *b, const char *str, size_t len) {
 void buff_revert (Buffer *b) {
   b->n = b->oldn;
 }
+
+void buff_move (Buffer *dest, Buffer *src) {
+  free(dest->buffer);
+  *dest = *src;
+  src->buffer = NULL;
+  src->size = 0;
+  src->n = src->oldn = 0;
+}
