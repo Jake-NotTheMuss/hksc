@@ -27,15 +27,8 @@ typedef struct {
   int strip;
   int needheader;
   int quote;
+  int level;
 } CmpState;
-
-/*#ifdef LUA_CODT6
-#define needprofinfo(S) ((S)->strip == BYTECODE_STRIPPING_CALLSTACK_RECONSTRUCTION)
-#define needdebuginfo(S) ((S)->strip == BYTECODE_STRIPPING_DEBUG_ONLY)
-#else
-#define needprofinfo(S)
-#define needdebuginfo(S)
-#endif*/
 
 #define cmpfield(m,f,a,b) \
   if (p1->m != p2->m) \
@@ -95,11 +88,74 @@ static void printk_f (const char *s, size_t l, void *ud) {
   (*S->printer)(S->ud, "%.*s", cast_int(l), s);
 }
 
+#define printdiff(m, what, T, printnl, eq_func, print_func) \
+do { \
+  char buffer [64]; \
+  cmpfieldint(size##m); \
+  S->needheader = 1; \
+  for (i = 0; i < field_min(size##m); i++) { \
+    T *t1 = &p1->m[i]; T *t2 = &p2->m[i]; \
+    if (!eq_func(t1, t2)) { \
+      PUTHEADER(what "s"); \
+      (*S->printer)(S->ud, "    [%d]\n      a: ", i+1); \
+      print_func(S, p1, t1); \
+      if (printnl) \
+        (*S->printer)(S->ud, "\n"); \
+      (*S->printer)(S->ud, "      b: "); \
+      print_func(S, p2, t2); \
+      if (printnl) \
+        (*S->printer)(S->ud, "\n"); \
+    } \
+  } \
+  if (p1->size##m != p2->size##m) { \
+    const Proto *p = p1->size##m > p2->size##m ? p1 : p2; \
+    int difference = field_max(size##m) - field_min(size##m); \
+    (*S->printer)(S->ud, "  \"%s\" has %d more %s%s:\n", \
+                  p == p1 ? S->a : S->b, difference, \
+                  str2lower(what, buffer), difference == 1 ? "" : "s"); \
+    for (i = field_min(size##m); i < field_max(size##m); i++) { \
+      (*S->printer)(S->ud, "    + [%d] ", i+1); \
+      print_func(S, p, p->m + i); \
+      if (printnl) \
+        (*S->printer)(S->ud, "\n"); \
+    } \
+  } \
+} while (0)
+
+#define print_object(S, p, o) do { \
+  print_type(S, ttype(o)); \
+  luaO_printk(o, printk_f, S, S->quote); \
+} while (0)
+
+#define print_instruction(S, p, _) \
+  luaU_printcode(S->H, p, i, S->printer, S->ud, S->quote)
+
+#define print_linemapping(S, p, l) (S->printer)(S->ud, "%d", *(l))
+
+#define default_eq(o1, o2) (*(o1) == *(o2))
+#define object_eq(o1, o2) luaO_rawequalObj(o1, o2)
+
+static int locvar_eq (const LocVar *v1, const LocVar *v2) {
+  if (v1->startpc != v2->startpc)
+    return 0;
+  if (v1->endpc != v2->endpc)
+    return 0;
+  return (v1->varname == v2->varname);
+}
+
+static void print_locvar (CmpState *S, const Proto *p, const LocVar *var) {
+  (void)p;
+  (*S->printer)(S->ud, "[%d-%d] %s",
+                var->startpc+1, var->endpc+1, getstr(var->varname));
+}
+
+#define print_upval(S,p,pts) ((*S->printer)(S->ud, "%s", getstr(*(pts))))
+
 static void cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
   int i;
   if (p1 == p2)
     return;
-  /*(*S->printer)(S->ud, )*/
+  S->level++;
   cmpfieldint(numparams);
   cmpfield(is_vararg, "%s",
            vararg_2str(p1->is_vararg), vararg_2str(p2->is_vararg));
@@ -113,62 +169,33 @@ static void cmpfunc (CmpState *S, const Proto *p1, const Proto *p2) {
     cmpfieldts(name);
   }
   /* compare code */
-  cmpfieldint(sizecode);
-  S->needheader = 1;
-  /* print differing instructions */
-  for (i = 0; i < field_min(sizecode); i++) {
-    if (p1->code[i] != p2->code[i]) {
-      PUTHEADER("Instructions");
-      (*S->printer)(S->ud, "    a: ");
-      luaU_printcode(S->H, p1, i, S->printer, S->ud, S->quote);
-      (*S->printer)(S->ud, "    b: ");
-      luaU_printcode(S->H, p2, i, S->printer, S->ud, S->quote);
-    }
-  }
-  /* print extra instructions */
-  if (p1->sizecode != p2->sizecode) {
-    const Proto *p = p1->sizecode > p2->sizecode ? p1 : p2;
-    (*S->printer)(S->ud, "  \"%s\" has %d more instructions:\n",
-          p == p1 ? S->a : S->b, field_max(sizecode) - field_min(sizecode));
-    for (i = field_min(sizecode); i < field_max(sizecode); i++) {
-      (*S->printer)(S->ud, "    + ");
-      luaU_printcode(S->H, p, i, S->printer, S->ud, S->quote);
-    }
-  }
+  printdiff(code, "Instruction", Instruction, 0, default_eq,
+            print_instruction);
   /* compare constants */
-  cmpfieldint(sizek);
-  S->needheader = 1;
-  /* print differing constants */
-  for (i = 0; i < field_min(sizek); i++) {
-    const TValue *o1 = &p1->k[i], *o2 = &p2->k[i];
-    if (!luaO_rawequalObj(o1, o2)) {
-      PUTHEADER("Constants");
-      (*S->printer)(S->ud, "    [%d]\n"
-                             "      a: ", i);
-      print_type(S, ttype(o1));
-      luaO_printk(o1, printk_f, S, S->quote);
-      (*S->printer)(S->ud, "\n      b: ");
-      print_type(S, ttype(o2));
-      luaO_printk(o2, printk_f, S, S->quote);
-      (*S->printer)(S->ud, "\n");
-    }
-  }
-  /* print extra constants */
-  if (p1->sizek != p2->sizek) {
-    const Proto *p = p1->sizek > p2->sizek ? p1 : p2;
-    (*S->printer)(S->ud, "  \"%s\" has %d more constants:",
-                  p == p1 ? S->a : S->b, field_max(sizek) - field_min(sizek));
-    for (i = field_min(sizek); i < field_max(sizek); i++) {
-      (*S->printer)(S->ud, "\n    + [%d] ", i);
-      print_type(S, ttype(&p->k[i]));
-      luaO_printk(&p->k[i], printk_f, S, S->quote);
-    }
-    (*S->printer)(S->ud, "\n");
-  }
+  printdiff(k, "Constant", TValue, 1, object_eq, print_object);
   if (S->strip >= BYTECODE_STRIPPING_PROFILING) {
     cmpfieldint(linedefined);
     cmpfieldint(lastlinedefined);
   }
+  /* compare line info */
+  if (S->strip >= BYTECODE_STRIPPING_NONE) {
+    printdiff(lineinfo, "Line mapping", int,
+              1, default_eq, print_linemapping);
+    printdiff(locvars, "Local variable", LocVar, 1, locvar_eq, print_locvar);
+    printdiff(upvalues, "Upvalue", TString *, 1, default_eq, print_upval);
+  }
+  /* compare child functions */
+  cmpfieldint(sizep);
+  if (p1->sizep == p2->sizep) {
+    for (i = 0; i < p1->sizep; i++) {
+      (*S->printer)(S->ud, "\nComparison of child function (level %d) %s:\n",
+                    S->level, p1->name ? getstr(p1->name) : "(anonymous)");
+      cmpfunc(S, p1->p[i], p2->p[i]);
+    }
+  }
+  else
+    (*S->printer)(S->ud, "\nIgnoring child functions due to count mismatch\n");
+  S->level--;
 }
 
 void luaO_cmp (hksc_State *H, const Proto *p1, const Proto *p2,
@@ -188,6 +215,7 @@ void luaO_cmp (hksc_State *H, const Proto *p1, const Proto *p2,
   S.strip = strip;
   S.quote = '"';
   S.a = name1; S.b = name2;
+  S.level = 0;
   (*printer)(ud, "a \"%s\"\n", name1 ? name1 : "input 1");
   (*printer)(ud, "b \"%s\"\n", name2 ? name2 : "input 2");
   (*printer)(ud, "The following fields differ:\n");
