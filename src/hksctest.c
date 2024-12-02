@@ -193,9 +193,12 @@ static int dump_decomp (hksc_State *H, void *ud) {
   FILE *f;
   const char *filename = (const char *)ud;
   replace_ext(&dumpfile, filename, DECOMP_EXT);
+  if (opts.ignore_debug)
+    lua_setignoredebug(H, 1);
   f = xopen(buff_get(&dumpfile), "w");
   status = lua_decompile(H, writer_2file, f);
   fclose(f);
+  lua_setignoredebug(H, 0);
   if (status)
     return status;
 #ifdef HKSC_DECOMP_DEBUG_PASS1
