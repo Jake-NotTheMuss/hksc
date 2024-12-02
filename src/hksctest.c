@@ -231,9 +231,12 @@ static void test_decomp (hksc_State *H, char *file) {
   fclose(log);
   log = NULL;
   if (status) {
+    goto error;
     error:
     if (status == LUA_ERREXPECT)
       system(BUILD_DIFF_CMD(command, dumpfile, expectfile));
+    else if (status == LUA_ERRSYNTAX)
+      fprintf(stderr, "%s\n", lua_geterror(H));
     else
       fprintf(stderr, "%s: %s\n", file, lua_geterror(H));
     abort();
@@ -304,12 +307,14 @@ static int test_files (hksc_State *H, int nfiles, char *files []) {
   static Buffer redumpfile;
   struct Redump s;
   for (i = 0; i < nfiles; i++) {
+    const char *action = "";
     test_file_comparison.a = test_file_comparison.b = NULL;
     BEGIN_TEST(files[i]);
     status = hksI_parser_file(H, buff_get(&testfile), test_dump_f, files[i]);
     if (status)
       goto fail;
     /* re-dump */
+    action = "redump ";
     replace_ext(&redumpfile, files[i], ".luac");
     s.strip = BYTECODE_STRIPPING_ALL;
     s.filename = buff_get(&redumpfile);
@@ -347,8 +352,11 @@ static int test_files (hksc_State *H, int nfiles, char *files []) {
                 files[i]);
         hksI_cmpfiles(H, test_file_comparison.a, test_file_comparison.b);
       }
+      else if (status == LUA_ERRSYNTAX)
+        fprintf(stderr, "%s\n", lua_geterror(H));
       else
-        fprintf(stderr, "%s: redump error: %s\n", files[i], lua_geterror(H));
+        fprintf(stderr, "%s: %serror: %s\n", files[i], action,
+                lua_geterror(H));
       abort();
     }
     END_TEST();
