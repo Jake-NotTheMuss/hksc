@@ -6,6 +6,8 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,7 +57,7 @@ const char *basename (const char *name) {
 }
 
 char *replace_ext (Buffer *b, const char *name, const char *newext) {
-  size_t totalsize, n, extlen = strlen(newext);
+  size_t n;
   const char *ext = NULL;
   for (n = 0; name[n]; n++) {
     if (name[n] == '.') ext = name + n;
@@ -63,20 +65,20 @@ char *replace_ext (Buffer *b, const char *name, const char *newext) {
   }
   if (ext)
     n = ext - name;
-  totalsize = n + extlen + 1;
-  if (totalsize > b->size) {
-    b->size = totalsize;
-    b->buffer = xrealloc(b->buffer, totalsize);
-  }
-  memcpy(b->buffer, name, n);
-  memcpy(b->buffer + n, newext, extlen);
-  n += extlen;
-  b->buffer[n] = 0;
-  b->n = n;
+  buff_reset(b);
+  buff_concatn(b, name, n);
+  buff_concat(b, newext);
   return b->buffer;
 }
 
 void buff_space (Buffer *b, size_t n) {
+  /* this is specifically for how I use Buffer in the tests; I want to avoid
+     constantly reallocating a larger string for a longer filename, and would
+     rather have a buffer that is large enough for most filenames */
+  if (b->size + n < 256) {
+    buff_space(b, 256);
+    return;
+  }
   if (b->n + n > b->size) {
     b->size += n;
     b->buffer = xrealloc(b->buffer, b->size);
