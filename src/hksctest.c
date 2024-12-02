@@ -406,7 +406,10 @@ int test_main (hksc_State *H, int nfiles, char *files []) {
     lua_addprefixmap(H, buff_get(&testfile));
     buff_revert(&testfile);
   }
-  buff_space(&testfile, 256);  /* space to concat each test file name */
+  /* create some space in each buffer */
+  buff_space(&testfile, 256);
+  buff_space(&dumpfile, 256);
+  buff_space(&expectfile, 256);
   /* ensure debug info loader callbacks happen */
   lua_setignoredebug(H, 0);
   if (opts.expect_error)
