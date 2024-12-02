@@ -262,6 +262,7 @@ void luaC_sweep (hksc_State *H, int kind) {
 
 /* mark root set */
 static void markroot (GCState *st, hksc_State *H) {
+  int i;
 #if HKSC_STRUCTURE_EXTENSION_ON
   if (st->g->prototable)
     markobject(st, st->g->prototable);
@@ -269,6 +270,11 @@ static void markroot (GCState *st, hksc_State *H) {
 #endif
   if (H->last_result)
     markobject(st, H->last_result);
+  for (i = 0; i < st->g->prefixmaps.used; i++) {
+    FilePrefixMap *map = st->g->prefixmaps.s + i;
+    stringmark(map->from);
+    stringmark(map->to);
+  }
 }
 
 

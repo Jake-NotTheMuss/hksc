@@ -117,18 +117,14 @@ LUA_API void lua_setallocf (hksc_State *H, lua_Alloc f, void *ud) {
 }
 
 
-LUA_API void lua_addprefixmap (hksc_State *H, const char *arg)
-{
+LUA_API void lua_addprefixmap (hksc_State *H, const char *arg) {
   const char *eq;  /* equals sign in ARG */
   lua_lock(H);
   eq = strchr(arg, '=');
   if (eq != NULL) {
     int i;
-    TString *from, *to;
-    from = luaS_newlstr(H, arg, cast(size_t, eq - arg));
-    luaS_fix(from);
-    to = luaS_new(H, eq+1);
-    luaS_fix(to);
+    TString *from = luaS_newlstr(H, arg, cast(size_t, eq - arg));
+    TString *to = luaS_new(H, eq+1);
     for (i = 0; i < G(H)->prefixmaps.used; i++)
       if (G(H)->prefixmaps.s[i].from == from && G(H)->prefixmaps.s[i].to == to)
         break;
@@ -136,6 +132,32 @@ LUA_API void lua_addprefixmap (hksc_State *H, const char *arg)
       FilePrefixMap *map = VEC_NEWELT(H, G(H)->prefixmaps);
       map->from = from;
       map->to = to;
+    }
+  }
+  lua_unlock(H);
+}
+
+
+LUA_API void lua_removeprefixmap (hksc_State *H, const char *arg) {
+  const char *eq;  /* equals sign in ARG */
+  lua_lock(H);
+  eq = strchr(arg, '=');
+  if (eq != NULL) {
+    int i;
+    size_t from_len = cast(size_t, eq - arg);
+    const char *from = arg, *to = eq + 1;
+    for (i = 0; i < G(H)->prefixmaps.used; i++) {
+      FilePrefixMap *map = &G(H)->prefixmaps.s[i];
+      if (map->from->tsv.len == from_len &&
+          strncmp(getstr(map->from), from, from_len) == 0 &&
+          strcmp(getstr(map->to), to) == 0) {
+        int j;
+        /* remove this entry */
+        for (j = i+1; j < G(H)->prefixmaps.used; j++)
+          G(H)->prefixmaps.s[j-1] = G(H)->prefixmaps.s[j];
+        G(H)->prefixmaps.used--;
+        /* continue in case there are duplicates in the array */
+      }
     }
   }
   lua_unlock(H);

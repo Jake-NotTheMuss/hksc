@@ -244,6 +244,7 @@ LUA_API lua_Alloc (lua_getallocf) (hksc_State *H, void **ud);
 LUA_API void (lua_setallocf) (hksc_State *H, lua_Alloc f, void *ud);
 
 LUA_API void (lua_addprefixmap) (hksc_State *H, const char *arg);
+LUA_API void (lua_removeprefixmap) (hksc_State *H, const char *arg);
 
 
 /*
