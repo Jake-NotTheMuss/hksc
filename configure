@@ -388,23 +388,18 @@ setifelse lua_codt6 LUA_COD_YESNO yes no
 # set build compiler flags for debug or release builds
 setifelse debug BUILDCONFIGTYPE TESTS RELEASE
 # set which tests to include based on whether the decompiler is enabled
-# setifelse with_decompiler TESTSUFFIX .dtest .ctest
 if test "x$with_decompiler" = x0; then
-	TESTSUFFIX=.ctest
 	TESTS_SRC_VAR=ALL_SRC
 	EXTRA_TESTS_VAR=EXTRA_TESTS
 else
 	case $debug_pass in
 		1)
-			TESTSUFFIX=.p1test
 			TESTS_SRC_VAR=PASS1_SRC
 			EXTRA_TESTS_VAR='#';;
 		2)
-			TESTSUFFIX=.dtest
 			TESTS_SRC_VAR=PASS2_SRC
 			EXTRA_TESTS_VAR='#';;
 		*)
-			TESTSUFFIX=.dtest
 			TESTS_SRC_VAR=ALL_SRC
 			EXTRA_TESTS_VAR=EXTRA_TESTS;;
 	esac
@@ -423,16 +418,6 @@ setifelse lua_codt6 HKSC_GEN_PROFILE \
 # for non-COD, use debug stripping mode
 setifelse lua_codt6 HKSC_GEN_DEBUG \
 "--with-debug -o /dev/null --callstack-info /dev/null --debug-info" "-s=n -o"
-HKSC_CMP_CODE="cmp -bl"
-if test x$test_with_debug != x0; then
-# command for comparing profiling info
-# use diff for COD profile info because it is printed as text
-# otherwise use cmp to compare binary files
-setifelse lua_codt6 HKSC_CMP_PROFILE "diff -u --strip-trailing-cr" "cmp -bl"
-else
-HKSC_CMP_PROFILE="true"
-fi
-setifelse test_with_debug HKSC_CMP_DEBUG "cmp -bl" "true"
 setifelse with_ui64 WITH_UI64_YESNO YES NO
 setifelse STRUCTURE_EXTENSION_ON WITH_STRUCTURES_YESNO YES NO
 
@@ -584,7 +569,7 @@ config_makefile()
 		fi
 		# test "x$doing_what" != x && \
 		# echo Using VPATH=$VPATH_dir for $doing_what Lua
-		sed < "${SRCDIR}$f.in" -e "
+		cat "${SRCDIR}common.mk" "${SRCDIR}$f.in" | sed -e "
 			:t
 			s&@prefix@&$prefix&;t t
 			s&@exec_prefix@&$exec_prefix&;t t
@@ -628,12 +613,7 @@ config_makefile()
 			s&@UI64_ERROR_SRC@&$UI64_ERROR_SRC&;t t
 			s&@HKSC_GEN_PROFILE@&$HKSC_GEN_PROFILE&;t t
 			s&@HKSC_GEN_DEBUG@&$HKSC_GEN_DEBUG&;t t
-			s&@HKSC_GEN_CODE@&$HKSC_GEN_CODE&;t t
-			s&@HKSC_CMP_PROFILE@&$HKSC_CMP_PROFILE&;t t
-			s&@HKSC_CMP_DEBUG@&$HKSC_CMP_DEBUG&;t t
-			s&@HKSC_CMP_CODE@&$HKSC_CMP_CODE&;t t
 			s&@DECOMPILER_IGNORE_DEBUG@&$DECOMPILER_IGNORE_DEBUG&;t t
-			s&@TESTSUFFIX@&$TESTSUFFIX&;t t
 			s&@TESTS_SRC_VAR@&$TESTS_SRC_VAR&;t t
 			s&@EXTRA_TESTS_VAR@&$EXTRA_TESTS_VAR&;t t
 			s&@BUILDCONFIGTYPE@&$BUILDCONFIGTYPE&;t t
@@ -644,7 +624,6 @@ config_makefile()
 			s&@HKSC_TARGET_PLAT@&$HKSC_TARGET_PLAT&;t t
 			s&@HKSC_PREFIX_MAP@&$HKSC_PREFIX_MAP&;t t
 			s&@CONFIGURE@&$me&;t t
-			s&@WITH_COD_EXT@&$LUA_COD_YESNO&;t t
 			s&@WITH_STRUCTURES@&$WITH_STRUCTURES_YESNO&;t t
 			s&@WITH_UI64@&$WITH_UI64_YESNO&;t t
 			s&@TEST_ALL_RULE@&$TEST_ALL_RULE&;t t

@@ -6,33 +6,6 @@
 # Your platform. See PLATS for possible values.
 PLAT= none
 
-prefix=@prefix@
-exec_prefix=@exec_prefix@
-bindir=@bindir@
-libdir=@libdir@
-sharedlibdir=@sharedlibdir@
-includedir=@includedir@
-sharedir=@sharedir@
-docdir=@docdir@
-mandir=@mandir@
-pkgconfigdir=@pkgconfigdir@
-CP=@CP@
-RM=@RM@
-FIND=@FIND@
-INSTALL=@INSTALL@
-MKDIR=@MKDIR@
-EXESUF=@EXESUF@
-
-STATICLIB=@STATICLIB@@LIBSUF@
-SHAREDLIB=@SHAREDLIB@@DLLSUF@
-HKSC_T=@HKSC_T@
-HKSC_SH=@HKSC_SH@
-HKSC_INSTALL_NAME=@HKSC_INSTALL_NAME@
-
-srcdir=@srcdir@
-top_srcdir=@top_srcdir@
-top_builddir=@top_builddir@
-
 # Where to install. The installation starts in the src directory, so take care
 # if INSTALL_TOP is not an absolute path. (Man pages are installed from the
 # doc directory.)
@@ -137,7 +110,7 @@ echo:
 	@echo "docdir = $(docdir)"
 	@echo "mandir = $(mandir)"
 	@echo "pkgconfigdir = $(pkgconfigdir)"
-	@echo "SRCDIR = $(SRCDIR)"
+	@echo "SRCDIR = $(srcdir)"
 	@echo "SHAREDLIB = $(SHAREDLIB)"
 	@echo "HKSC_VERSION = $(HKSC_VERSION)"
 	@echo "PLAT = $(PLAT)"

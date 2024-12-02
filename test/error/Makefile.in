@@ -1,23 +1,5 @@
 # makefile for checking hksc error messages
 
-srcdir=@srcdir@
-top_srcdir=@top_srcdir@
-top_builddir=@top_builddir@
-
-# @VPATH_SET@
-
-RM=@RM@
-
-HKSC_PREFIX_MAP=@HKSC_PREFIX_MAP@
-
-HKSC_NAME=hksc
-EXESUF=@EXESUF@
-
-HKSC=$(top_builddir)/src/$(HKSC_NAME)$(EXESUF)
-
-# -p so that no binaries get generated accidentally
-HKSCFLAGS=--testing --test-srcdir='$(srcdir)' --expect-error -a $(HKSC_PREFIX_MAP)
-
 BOM_SRC=utf16be_bom.lua utf16le_bom.lua utf32be_bom.lua utf32le_bom.lua  \
 	utf16or32le_bom.lua unknown_bom.lua
 OTHER_SRC=badassign.lua badbreak.lua badlhs.lua earlybreak.lua  \
@@ -40,6 +22,9 @@ UI64_SRC=ui64.lua
 STANDARD_TESTS= $(OTHER_SRC) $(BOM_SRC)
 
 ALL_ERROR_TESTS=$(STANDARD_TESTS) $(@STRUCT_ERROR_SRC@) $(@UI64_ERROR_SRC@)
+
+# flags for loading source files
+HKSCFLAGS=$(HKSC_COMMON_FLAGS)
 
 all: prepare tests literaltests
 	@printf -- '----------------------------\nAll Lua error checks passed\n\n'
@@ -70,10 +55,10 @@ expectsum:
 	shasum -a1 -U $$files > expect.sum
 
 tests:
-	@$(HKSC) $(HKSCFLAGS) $(ALL_ERROR_TESTS)
+	@$(HKSC) $(TESTFLAGS) $(HKSCFLAGS) --expect-error -a $(ALL_ERROR_TESTS)
 
 literaltests:
-	@$(HKSC) $(HKSCFLAGS) -L $(LITERAL_SRC)
+	@$(HKSC) $(TESTFLAGS) $(HKSCFLAGS) --expect-error -a -L $(LITERAL_SRC)
 
 Makefile: $(srcdir)/Makefile.in $(top_srcdir)/configure
 	@echo regenerating test/error/$@
