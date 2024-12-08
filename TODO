@@ -18,9 +18,6 @@ D->maxtreedepth. This way, if an exception is thrown, all the FuncStates can
 still be accessed and all the memory can be freed before returning from
 luaU_decompile.
 
-** Decompiler Tests
-Add decompiler tests to hksctest.c
-
 ------------------------------------------------------------------------------
 
 (end of TODO)
