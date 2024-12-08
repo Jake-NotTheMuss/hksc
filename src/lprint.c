@@ -85,6 +85,16 @@ static int getfarg (va_list *pap, const char **p, int *arg) {
   return 0;
 }
 
+#define HANDLE_CODE(T, Lqual) do { \
+  long T x = (qual == Lqual) ? va_arg(ap, long T) : va_arg(ap, T); \
+  if (qual != Lqual) { \
+    pcode[0] = Lqual; \
+    pcode[1] = code; \
+    pcode[2] = '\0'; \
+  } \
+  n = sprintf(buff, spec.s, x); \
+} while (0)
+
 static int Printv (PrintState *P, const char *fmt, va_list ap) {
   char buff [1024];
   int nchar = 0;
@@ -135,43 +145,20 @@ static int Printv (PrintState *P, const char *fmt, va_list ap) {
     pcode = &spec.s[spec.n-1];
     /* BUFF will be enough room for anything other than `%s' */
     switch (code) {
-      int c;
-      long li;
-      unsigned long lu;
-      long double ld;
-      void *p;
-      case 'c': case '%':
-        c = code == 'c' ? va_arg(ap, int) : '%';
+      case 'c': case '%': {
+        int c = code == 'c' ? va_arg(ap, int) : '%';
         *pcode = 'c';
         n = sprintf(buff, spec.s, c);
         break;
+      }
       case 'd': case 'i':
-        li = qual == 'l' ? va_arg(ap, long) : va_arg(ap, int);
-        if (qual != 'l') {
-          *pcode = 'l';
-          *(pcode+1) = code;
-          *(pcode+2) = '\0';
-        }
-        n = sprintf(buff, spec.s, li);
+        HANDLE_CODE(int, 'l');
         break;
       case 'o': case 'u': case 'x': case 'X':
-        lu = qual == 'l' ? va_arg(ap, unsigned long) :
-        va_arg(ap, unsigned int);
-        if (qual != 'l') {
-          *pcode = 'l';
-          *(pcode+1) = code;
-          *(pcode+2) = '\0';
-        }
-        n = sprintf(buff, spec.s, lu);
+        HANDLE_CODE(unsigned, 'l');
         break;
       case 'e': case 'E': case 'f': case 'g': case 'G':
-        ld = qual == 'L' ? va_arg(ap, long double) : va_arg(ap, double);
-        if (qual != 'L') {
-          *pcode = 'L';
-          *(pcode+1) = code;
-          *(pcode+2) = '\0';
-        }
-        n = sprintf(buff, spec.s, ld);
+        HANDLE_CODE(double, 'L');
         break;
       case 'n':
         if (qual == 'h')
@@ -181,10 +168,11 @@ static int Printv (PrintState *P, const char *fmt, va_list ap) {
         else
           *va_arg(ap, int *) = nchar;
         break;
-      case 'p':
-        p = va_arg(ap, void *);
+      case 'p': {
+        void *p = va_arg(ap, void *);
         n = sprintf(buff, spec.s, p);
         break;
+      }
       case 's': {
         size_t size;
         const char *s = va_arg(ap, const char *);
