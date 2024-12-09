@@ -11,7 +11,6 @@
 
 #include "hksclua.h"
 
-#include "lanalyzer.h"
 #include "ldebug.h"
 #include "ldo.h"
 #include "lfunc.h"
@@ -169,9 +168,6 @@ static void propagatemarks (GCState *st) {
 
 static void freeobj (hksc_State *H, GCObject *o) {
   switch (o->gch.tt) {
-#ifdef HKSC_DECOMPILER
-    case LUA_TANALYZER: luaA_freeanalyzer(H, gco2a(o)); break;
-#endif /* HKSC_DECOMPILER */
     case LUA_TTYPEANALYZER: luaY_freetypeanalyzer(H, gco2ta(o)); break;
     case LUA_TPROTO: luaF_freeproto(H, gco2p(o)); break;
     case LUA_TTABLE: luaH_free(H, gco2h(o)); break;

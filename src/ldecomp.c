@@ -18,9 +18,9 @@
 
 #include "hksclua.h"
 
-#include "lanalyzer.h"
 #include "lbitmap.h"
 #include "lcode.h"
+#include "ldecomp.h"
 #include "ldebug.h"
 #include "ldo.h"
 #include "llex.h"
@@ -141,6 +141,7 @@ typedef struct linemap {
 typedef struct {
   hksc_State *H;
   struct FuncState *fs;  /* current function state */
+  struct FuncState *fs_stack;
   lua_Writer writer;
   void *data;
   const char *name;  /* input name */
@@ -170,7 +171,6 @@ typedef struct {
 #define VEC_LIST \
   DEF_VEC(struct LoopState, loopstk) \
   DEF_VEC(int, blockstk) \
-  DEF_VEC(BlockNode *, freeblocknodes) \
   DEF_VEC(int, varnotes) \
   DEF_VEC(StackExpr, stackexpr) \
   DEF_VEC(struct ConsControl, cons) \
@@ -189,12 +189,12 @@ typedef struct {
      constant or upval has been referenced in the current function - used in
      the first pass when generating variable info */
   Bitmap kmap, upvalmap;
+  List blocknodes;
   struct ExpressionParser *parser;
   /* this structure is for per-function data that only needs to be instanced
      once at any time, because it is only needed in the initial passes where
      functions are processsed consecutively, not recursively */
   struct {
-    const OpenExpr *openexpr;  /* next OpenExpr to process while scanning */
     struct BlockState *bl;  /* current block scope */
     /* prevnode is the lexical scope that was just left, nextnode is the next
        child scope to enter while scanning */
@@ -258,9 +258,12 @@ typedef struct {
 typedef struct FuncState {
   struct FuncState *prev;  /* enclosing function */
   DecompState *D;  /* decompiler state */
-  Analyzer *a;  /* function analyzer data */
   const Proto *f;  /* current function header */
   hksc_State *H;  /* copy of the Lua state */
+  InstructionFlags *insproperties;  /* instruction flags */
+  SlotDesc *regproperties;  /* register properties */
+  unsigned short *actvar;
+  VEC_DECL(ExpNode, expstack);
   int idx;  /* the nth function, used for generating local variable names */
   struct LocVar *locvars;  /* information about local variables */
   TString **upvalues;
@@ -280,7 +283,7 @@ typedef struct FuncState {
   int firstfree;
   int lastcallexp;  /* exp index of last function call node */
   int curr_constructor;  /* exp index of current table constructor */
-  int nopencalls;  /* number of OpenExpr entries created */
+  unsigned int used : 1;  /* arrays need to be freed */
 } FuncState;
 
 
@@ -325,7 +328,7 @@ static void printinsflags (const FuncState *fs, int pc) {
   int i;
   printf("pc (%d):", pc+1);
   for (i = 0; i < MAX_INSFLAG; i++) {
-    if (fs->a->insproperties[pc] & (1 << i))
+    if (fs->insproperties[pc] & (1 << i))
       printf("  %s", insflagnames[i]);
   }
   printf("\n");
@@ -357,19 +360,19 @@ static int isregvalid (const FuncState *fs, int reg) {
 
 static int test_ins_property (const FuncState *fs, int pc, int prop) {
   lua_assert(ispcvalid(fs, pc));
-  return ((fs->a->insproperties[pc] & (cast(lu_int32, 1) << prop)) != 0);
+  return ((fs->insproperties[pc] & (cast(lu_int32, 1) << prop)) != 0);
 }
 
 
 static void set_ins_property (FuncState *fs, int pc, int prop) {
   lua_assert(ispcvalid(fs, pc));
-  fs->a->insproperties[pc] |= (cast(lu_int32, 1) << prop);
+  fs->insproperties[pc] |= (cast(lu_int32, 1) << prop);
 }
 
 
 static void unset_ins_property (FuncState *fs, int pc, int prop) {
   lua_assert(ispcvalid(fs, pc));
-  fs->a->insproperties[pc] &= ~(cast(lu_int32, 1) << prop);
+  fs->insproperties[pc] &= ~(cast(lu_int32, 1) << prop);
 }
 
 
@@ -377,18 +380,18 @@ static void unset_ins_property (FuncState *fs, int pc, int prop) {
 
 static void set_reg_property (FuncState *fs, int reg, int prop) {
   lua_assert(isregvalid(fs, reg));
-  fs->a->regproperties[reg].flags |= (1 << prop);
+  fs->regproperties[reg].flags |= (1 << prop);
 }
 
 
 static void unset_reg_property (FuncState *fs, int reg, int prop) {
   lua_assert(isregvalid(fs, reg));
-  fs->a->regproperties[reg].flags &= ~(1 << prop);
+  fs->regproperties[reg].flags &= ~(1 << prop);
 }
 
 static int test_reg_property(const FuncState *fs, int reg, int prop) {
   lua_assert(isregvalid(fs, reg));
-  return ((fs->a->regproperties[reg].flags & (1 << prop)) != 0);
+  return ((fs->regproperties[reg].flags & (1 << prop)) != 0);
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
@@ -410,7 +413,8 @@ static int test_reg_property(const FuncState *fs, int reg, int prop) {
    endpc, or similarly, a previous empty sibling block that ends immediately
    before its next sibling block, which would have a startpc that is equal to
    its sibling block's startpc) */
-#define blstartpc(bl)  check_exp(bl, cast_int((bl)->startpc - (bl)->isempty))
+#define blstartpc(bl)  \
+  check_exp(bl, cast_int((bl)->startpc - nodegetflag(node, EMPTY)))
 
 #define isforloop(bl)  ((bl)->kind == BL_FORNUM || (bl)->kind == BL_FORLIST)
 
@@ -423,14 +427,9 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
   node->startpc = startpc;
   node->endpc = endpc;
   node->kind = kind;
-  node->isempty = (endpc < startpc);
-  node->upval = 0;
-  node->iselseif = 0;
-  node->hardstatbeforechild = 0;
-  node->repuntiltrue = 0;
   node->parentnilvars = 0;
-  node->fixedstartline = 0;
-  D(node->visited = 0);
+  if (endpc < startpc)
+    nodesetflag(node, EMPTY);
 }
 
 
@@ -442,7 +441,8 @@ static int isloopnode(const BlockNode *node)
 
 
 static void recalcemptiness(BlockNode *node) {
-  node->isempty = (node->endpc < node->startpc);
+  if (node->endpc < node->startpc)
+    nodesetflag(node, EMPTY);
 }
 
 
@@ -479,7 +479,7 @@ static int getnaturalvarendpc (const BlockNode *node) {
     /* repeat-loops without upvalues have variables end 1 after the endpc,
        whereas repeat-loops with upvalues have variables end on the OP_CLOSE,
        which is 1 before the endpc */
-    case BL_REPEAT: return node->endpc+1 - 2*node->upval;
+    case BL_REPEAT: return node->endpc+1 - 2*nodegetflag(node, UPVAL);
     case BL_FORLIST: pc = node->endpc-1; break;
     case BL_IF: pc = node->endpc+!haselsepart(node); break;
     /* variables in do-blocks that have upvalues end on the OP_CLOSE code,
@@ -488,7 +488,7 @@ static int getnaturalvarendpc (const BlockNode *node) {
     case BL_DO: pc = node->endpc+1; break;
     default: /* FUNCTION, WHILE, FORNUM, ELSE */ pc = node->endpc; break;
   }
-  return pc - node->upval;
+  return pc - nodegetflag(node, UPVAL);
 }
 
 
@@ -524,7 +524,7 @@ static int getblockfollowpc(const BlockNode *node)
   int pc;
   switch (node->kind) {
     /* for REPEAT, it needs to be calculated with stack analysis */
-    case BL_REPEAT: return node->repuntiltrue ? node->endpc : -1;
+    case BL_REPEAT: return nodegetflag(node, REPUNTILTRUE) ? node->endpc : -1;
     /* for-list ends with TFORLOOP and JMP; subtract 2 from endpc */
     case BL_FORLIST: pc = node->endpc-2; break;
     /* for do-blocks which have OP_CLOSE, subtract 1 from endpc */
@@ -535,7 +535,7 @@ static int getblockfollowpc(const BlockNode *node)
     /* the rest have single termination code; subtract 1 */
     default: /* FUNCTION, WHILE, FORNUM */ pc = node->endpc-1; break;
   }
-  return pc - node->upval;
+  return pc - nodegetflag(node, UPVAL);
 }
 
 
@@ -585,10 +585,7 @@ static int getnumforloopvars (const Instruction *code, const BlockNode *node) {
 
 
 static SlotDesc *getslotdesc (const FuncState *fs, int reg) {
-  SlotDesc *slot;
-  Analyzer *a = fs->a;
-  lua_assert(isregvalid(fs, reg));
-  slot = &a->regproperties[reg];
+  SlotDesc *slot = check_exp(isregvalid(fs, reg), &fs->regproperties[reg]);
   return slot;
 }
 
@@ -602,12 +599,8 @@ static SlotDesc *getslotdesc (const FuncState *fs, int reg) {
 
 static ExpNode *newexp (FuncState *fs) {
   hksc_State *H = fs->H;
-  Analyzer *a = fs->a;
-  lua_assert(a->pendingstk.used >= 0 &&
-             a->pendingstk.used <= a->pendingstk.total);
-  luaM_growvector(H, a->pendingstk.u.s2,a->pendingstk.used,a->pendingstk.total,
-                  ExpNode, MAX_INT, "too many expression nodes");
-  return &a->pendingstk.u.s2[a->pendingstk.used++];
+  lua_assert(fs->expstack.used >= 0 && fs->expstack.used <=fs->expstack.alloc);
+  return VEC_NEWELT(H, fs->expstack);
 }
 
 
@@ -617,9 +610,9 @@ static int exp2index (const FuncState *fs, const ExpNode *exp) {
   if (exp == NULL)
     return 0;
   else {
-    lua_assert(exp >= fs->a->pendingstk.u.s2 &&
-               exp < fs->a->pendingstk.u.s2+fs->a->pendingstk.used);
-    return exp-fs->a->pendingstk.u.s2+1;
+    lua_assert(exp >= fs->expstack.s &&
+               exp < fs->expstack.s + fs->expstack.used);
+    return exp-fs->expstack.s+1;
   }
 }
 
@@ -628,7 +621,7 @@ static ExpNode *index2exp (const FuncState *fs, int index) {
   if (index == 0)
     return NULL;
   else
-    return fs->a->pendingstk.u.s2+(index-1);
+    return fs->expstack.s+(index-1);
 }
 
 
@@ -636,23 +629,23 @@ static ExpNode *index2exp (const FuncState *fs, int index) {
 #define checktopexp(fs) check_exp(gettopexp(fs) != NULL, gettopexp(fs))
 
 static ExpNode *getfirstexp (const FuncState *fs) {
-  int used = fs->a->pendingstk.used;
+  int used = fs->expstack.used;
   if (used == 0)
     return NULL;
   else {
     lua_assert(used > 0);
-    return &fs->a->pendingstk.u.s2[0];
+    return &fs->expstack.s[0];
   }
 }
 
 
 static ExpNode *gettopexp (const FuncState *fs) {
-  int used = fs->a->pendingstk.used;
+  int used = fs->expstack.used;
   if (used == 0)
     return NULL;
   else {
     lua_assert(used > 0);
-    return &fs->a->pendingstk.u.s2[used-1];
+    return &fs->expstack.s[used-1];
   }
 }
 
@@ -972,17 +965,24 @@ static int getforloopstartline (const FuncState *fs, BlockNode *node) {
   lua_assert(fs->D->matchlineinfo);
   pc = node->endpc - (node->kind == BL_FORLIST);
   startline = getline(fs->f, pc);
-  return node->fixedstartline ? startline : 0;
+  return nodegetflag(node, FIXEDSTARTLINE) ? startline : 0;
 }
 
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 
-static void open_func (FuncState *fs, DecompState *D, const Proto *f) {
+static void initregproperties (FuncState *fs) {
+  int i;
+  for (i = 0; i < fs->f->maxstacksize; i++)
+    fs->regproperties[i].flags = 0;
+}
+
+
+static FuncState *open_func (DecompState *D, const Proto *f) {
+  int i;
   hksc_State *H = D->H;
-  Analyzer *a = luaA_newanalyzer(H);
+  FuncState *fs = D->fs_stack + D->funcidx;
   D->loopstk.used = D->blockstk.used = 0;
-  fs->a = a;
   fs->prev = D->fs;  /* linked list of funcstates */
   fs->D = D;
   fs->H = H;
@@ -995,6 +995,15 @@ static void open_func (FuncState *fs, DecompState *D, const Proto *f) {
   fs->pc = 0;
   fs->inopenexpr = 0;
   fs->freereg = 0;
+  /* initialize arrays before setting used to 1 */
+  fs->insproperties = NULL;
+  fs->regproperties = NULL;
+  fs->locvars = NULL;
+  fs->sizelocvars = 0;
+  fs->upvalues = NULL;
+  fs->sizeupvalues = 0;
+  VEC_INIT(fs->expstack);
+  fs->used = 1;
   fs->startlinemapbase = D->fixedstartlines.used;
   if (f->name)
     D(printf("-- Decompiling function (%d) named '%s'\n", D->funcidx,
@@ -1010,76 +1019,66 @@ static void open_func (FuncState *fs, DecompState *D, const Proto *f) {
     fs->upvalues = f->upvalues;
   }
   else {
-    fs->sizelocvars = 0;
-    a->sizelocvars = fs->sizelocvars;
-    a->locvars = NULL;
-    fs->locvars = a->locvars;
+    fs->upvalues = luaM_newvector(H, f->nups, TString *);
     fs->sizeupvalues = f->nups;
-    a->sizeupvalues = fs->sizeupvalues;
-    a->upvalues = luaM_newvector(H, a->sizeupvalues, TString *);
-    memset(a->upvalues, 0, a->sizeupvalues * sizeof(TString *));
-    fs->upvalues = a->upvalues;
-    fs->sizeupvalues = a->sizeupvalues;
+    for (i = 0; i < f->nups; i++)
+      fs->upvalues[i] = NULL;
   }
-  a->sizeactvar = f->maxstacksize;
-  a->actvar = luaM_newvector(H, a->sizeactvar, unsigned short);
-  memset(a->actvar, 0, a->sizeactvar * sizeof(unsigned short));
-  fs->nopencalls = 0;
+  fs->actvar = luaM_newvector(H, f->maxstacksize, unsigned short);
+  for (i = 0; i < f->maxstacksize; i++)
+    fs->actvar[i] = 0;
   fs->firstclob = -1;
   fs->firstclobnonparam = -1;
   fs->firstfree = 0;
   fs->lastcallexp = 0;
   fs->curr_constructor = 0;
   /* allocate vectors for instruction and register properties */
-  a->sizeinsproperties = f->sizecode; /* flags for each instruction */
-  a->insproperties = luaM_newvector(H, a->sizeinsproperties, InstructionFlags);
-  memset(a->insproperties, 0, f->sizecode * sizeof(InstructionFlags));
-  a->sizeregproperties = f->maxstacksize; /* flags for each register */
-  a->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
-  memset(a->regproperties, 0, a->sizeregproperties * sizeof(SlotDesc));
+  fs->insproperties = luaM_newvector(H, f->sizecode, InstructionFlags);
+  for (i = 0; i < f->sizecode; i++)
+    fs->insproperties[i] = 0;
+  fs->regproperties = luaM_newvector(H, f->maxstacksize, SlotDesc);
+  for (i = 0; i < f->maxstacksize; i++)
+    fs->regproperties[i].flags = 0;
 #ifdef HKSC_DECOMP_HAVE_PASS2
   if (D->usedebuginfo == 0 && fs->prev != NULL)
     initupvalues(fs, fs->prev);
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
+  return fs;
 }
 
 
+static void free_funcstate (DecompState *D, FuncState *fs) {
+  hksc_State *H = D->H;
+  luaM_freearray(H, fs->insproperties, fs->f->sizecode, InstructionFlags);
+  luaM_freearray(H, fs->regproperties, fs->f->maxstacksize, SlotDesc);
+  luaM_freearray(H, fs->actvar, fs->f->maxstacksize, unsigned short);
+  if (D->usedebuginfo == 0) {
+    luaM_freearray(H, fs->locvars, fs->sizelocvars, struct LocVar);
+    luaM_freearray(H, fs->upvalues, fs->sizeupvalues, TString *);
+  }
+  VEC_FREE(H, fs->expstack);
+  fs->used = 0;
+}
+
 static void close_func (DecompState *D) {
   FuncState *fs = D->fs;
+  lua_assert(fs->used);
   D->funcidx--;
-  UNUSED(fs->locvars);
-  UNUSED(fs->sizelocvars);
   D->fs = fs->prev;
   D->fixedstartlines.used = fs->startlinemapbase;
-  killtemp(obj2gco(fs->a)); /* make analyzer collectable */
-  UNUSED(fs->a);
+  free_funcstate(D, fs);
 }
 
 
 static BlockNode *addblnode (FuncState *fs, int startpc, int endpc, int kind) {
-  DecompState *D = fs->D;
-  BlockNode *new_node;
-  if (D->freeblocknodes.used > 0)
-    new_node = D->freeblocknodes.s[--D->freeblocknodes.used];
-  else {
-    Analyzer *a = fs->a;
-    BlockNode *curr = a->bllist.first;
-    new_node = luaM_new(fs->H, BlockNode);
-    new_node->next = curr;
-    a->bllist.first = new_node;
-    if (curr == NULL)
-      a->bllist.last = new_node;
-  }
+  BlockNode *new_node = luaO_newnode(fs->H, &fs->D->blocknodes);
   initblnode(new_node, startpc, endpc, kind);
   return new_node;
 }
 
 
 static void freeblnode (FuncState *fs, BlockNode *node) {
-  hksc_State *H = fs->H;
-  DecompState *D = fs->D;
-  VEC_GROW(H, D->freeblocknodes);
-  D->freeblocknodes.s[D->freeblocknodes.used++] = node;
+  luaO_delnode(&fs->D->blocknodes, node);
 }
 
 
@@ -1382,8 +1381,8 @@ static void debugblnode1 (BlockNode *node, int indent) {
            nextsibling->endpc+1, blocktypename(nextsibling->kind));
   else
     printf("(NO sibling)\n");
-  lua_assert(node->visited == 0);
-  node->visited = 1;
+  lua_assert(nodegetflag(node, VISITED) == 0);
+  nodesetflag(node, VISITED);
   while (child != NULL) {
     debugblnode1(child, indent+1);
     child = child->nextsibling;
@@ -1393,7 +1392,7 @@ static void debugblnode1 (BlockNode *node, int indent) {
 
 static void unvisittree (BlockNode *node) {
   BlockNode *child;
-  node->visited = 0;
+  nodeclearflag(node, VISITED);
   child = node->firstchild;
   while (child != NULL) {
     unvisittree(child);
@@ -1451,7 +1450,7 @@ static void checktreevisited (const BlockNode *node) {
   const BlockNode *child;
   lua_assert(node != NULL);
   child = node->firstchild;
-  lua_assert(node->visited);
+  lua_assert(nodegetflag(node, VISITED));
   while (child != NULL) {
     checktreevisited(child);
     child = child->nextsibling;
@@ -2552,7 +2551,7 @@ static int stackexprisunreachable (const FuncState *fs, const StackExpr *e) {
 
 static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   int r;
-  memset(fs->a->regproperties, 0, fs->f->maxstacksize*sizeof(SlotDesc));
+  memset(fs->regproperties, 0, fs->f->maxstacksize*sizeof(SlotDesc));
   for (r = 0; r < fs->f->maxstacksize; r++)
     getslotdesc(fs, r)->u.s.firstactive = 0;
   D->parser->status =(base==NO_REG)?PARSER_STATUS_INITIAL:PARSER_STATUS_ACTIVE;
@@ -3728,7 +3727,7 @@ static void pass1 (DecompState *D, FuncState *fs) {
     recordfixedstartlines(fs);
 #endif
   end:
-  memset(fs->a->regproperties, 0, fs->a->sizeregproperties * sizeof(SlotDesc));
+  memset(fs->regproperties, 0, fs->f->maxstacksize * sizeof(SlotDesc));
 }
 
 
@@ -3802,7 +3801,7 @@ static int istempreg (const FuncState *fs, int rk) {
 ** returns the LocVar currently corresponding to REG
 */
 static LocVar *getlocvar2 (const FuncState *fs, int reg) {
-  return &fs->locvars[fs->a->actvar[reg]];
+  return &fs->locvars[fs->actvar[reg]];
 }
 
 
@@ -3815,9 +3814,9 @@ static void addlocalvars2 (FuncState *fs, int n) {
   lua_assert(fs->nactvar >= 0 && fs->nactvar <= fs->sizelocvars);
   lua_assert(fs->nlocvars >= 0 && fs->nlocvars <= fs->sizelocvars);
   lua_assert(fs->nlocvars >= n);
-  lua_assert(fs->nactvar+n-1 <= fs->a->sizeactvar);
+  lua_assert(fs->nactvar+n-1 <= fs->f->maxstacksize);
   for (i = 0; i < n; i++)
-    fs->a->actvar[fs->nactvar+i] = fs->nlocvars-n+i;
+    fs->actvar[fs->nactvar+i] = fs->nlocvars-n+i;
 }
 
 
@@ -3840,19 +3839,9 @@ static int varstartsatpc2 (FuncState *fs, int pc) {
 
 
 static void updatenextopenexpr2 (StackAnalyzer *sa, FuncState *fs) {
-  OpenExpr *next;
-  lua_assert(fs->nopencalls >= 0);
-  if (fs->nopencalls == 0) {
-    sa->nextopenexpr = NULL;
-    sa->nextopenreg = -1;
-    return;
-  }
-  next = &fs->a->opencalls[--fs->nopencalls];
-  sa->nextopenexpr = next;
-  sa->nextopenreg = next->firstreg;
-  lua_assert(ispcvalid(fs, sa->nextopenexpr->startpc));
-  lua_assert(ispcvalid(fs, sa->nextopenexpr->endpc));
-  lua_assert(isregvalid(fs, sa->nextopenreg));
+  sa->nextopenexpr = NULL;
+  sa->nextopenreg = -1;
+  (void)fs;
 }
 
 
@@ -3907,7 +3896,7 @@ static void assertblvalid (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   int endpc = node->endpc;
   int type = node->kind;
   BlockNode *nextsibling = node->nextsibling;
-  lua_assert((startpc > endpc) == node->isempty);
+  lua_assert((startpc > endpc) == nodegetflag(node, EMPTY));
   lua_assert(type >= 0 && type < MAX_BLTYPE);
   if (sa->intailemptyblock) {
     lua_assert(sa->pc+1 == startpc);
@@ -4262,7 +4251,7 @@ static void dumpexpfunc2 (DecompState *D, FuncState *fs, ExpNode *exp) {
     int i;
     /* update lines for pending expressions after the line number may have been
        changed by the child function */
-    for (i = 1; i <= fs->a->pendingstk.used; i++) {
+    for (i = 1; i <= fs->expstack.used; i++) {
       ExpNode *exp = index2exp(fs, i);
       if (exp->pending) {
         exp->line = D->nextlinenumber;
@@ -4345,12 +4334,12 @@ static void setfirstfree (FuncState *fs, int newfirstfree) {
 static void flushpendingexp2 (FuncState *fs) {
 #ifdef LUA_DEBUG
   int i;
-  for (i = 0; i < fs->a->pendingstk.used; i++) {
-    ExpNode *exp = &fs->a->pendingstk.u.s2[i];
+  for (i = 0; i < fs->expstack.used; i++) {
+    ExpNode *exp = &fs->expstack.s[i];
     lua_assert(exp->pending == 0);
   }
 #endif /* LUA_DEBUG */
-  fs->a->pendingstk.used = 0;
+  fs->expstack.used = 0;
   D(printf("resetting fs->firstfree from %d to %d\n", fs->firstfree,
             fs->nactvar));
   setfirstfree(fs, fs->nactvar);
@@ -7307,9 +7296,9 @@ dumpbranchheader2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   else
     iselseif = 0;
   if (iselseif) {
-    node->iselseif = 1;
+    nodesetflag(node, ISELSEIF);
     if (haselsepart(node))
-      node->nextsibling->iselseif = 1;
+      nodesetflag(node->nextsibling, ISELSEIF);
     D->indentlevel--;
   }
   if (sa->pendingcond.e) {
@@ -7550,7 +7539,7 @@ static int getlastblockline (const FuncState *fs, const BlockNode *node) {
      only functions for for-list blocks always have a final opcode which has a
      distinct line-mapping that needs to be matched */
   switch (node->kind) {
-    case BL_REPEAT: if (node->repuntiltrue) return 0;
+    case BL_REPEAT: if (nodegetflag(node, REPUNTILTRUE)) return 0;
     /* fallthrough */
     case BL_FUNCTION: case BL_FORLIST: return getline(fs->f, node->endpc);
     default: break;
@@ -7622,7 +7611,7 @@ static void leaveblock2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   /* when leaving an elseif-block, do not dump anything unless this is an
      if-block which has an else part; in that case, dump `else'; otherwise,
      the parent block will dump the correct token when leaving */
-  if (node->iselseif &&
+  if (nodegetflag(node, ISELSEIF) &&
       ((node->kind == BL_IF && !haselsepart(node)) || node->kind == BL_ELSE)) {
     D->indentlevel+= 1+(node->kind != BL_ELSE && haselsepart(node));
     return;
@@ -7755,11 +7744,11 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   enterblock2(sa, fs, node, &blockheader);
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
   /* mark this block as visited */
-  lua_assert(node->visited == 0);
-  D(node->visited = 1);
+  lua_assert(nodegetflag(node, VISITED) == 0);
+  nodesetflag(node, VISITED);
   fs->seenstatinblock = 0;
   D->indentlevel++;
-  if (node->isempty) /* block has no instructions */
+  if (nodegetflag(node, EMPTY)) /* block has no instructions */
     goto loopfinished;
   /* main instruction loop */
   for (; sa->pc < sa->sizecode; sa->pc++) {
@@ -7790,7 +7779,7 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
       prevheaderline = sa->currheaderline;
       sa->currparent = node;
       lua_assert(nextchild != NULL);
-      waschildempty = nextchild->isempty;
+      waschildempty = nodegetflag(nextchild, EMPTY);
       blnode2(sa, fs, nextchild);
       sa->currparent = prevparent;
       sa->currheaderline = prevheaderline;
@@ -7951,7 +7940,8 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
           checkdischargestores2(sa, fs);
           emitbreakstat2(fs, pc);
         }
-        else if (pc == endpc && (node->kind != BL_REPEAT || node->upval)) {
+        else if (pc == endpc && (node->kind != BL_REPEAT ||
+                                 nodegetflag(node, UPVAL))) {
           /* do nothing */
         }
         else if (test_ins_property(fs, pc, INS_AUGBREAK)) {
@@ -7978,7 +7968,7 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
   /* check for an empty child block at the end of this block */
   if (nextchildstartpc != -1) {
     lua_assert(nextchild != NULL);
-    lua_assert(nextchild->isempty != 0);
+    lua_assert(nodegetflag(nextchild, EMPTY) != 0);
     lua_assert(nextchild->nextsibling == NULL);
     lua_assert(sa->intailemptyblock == 0);
     sa->intailemptyblock = 1;
@@ -7999,30 +7989,15 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 }
 
-
-/*
-** initialize memory for second pass
-*/
-static void initpass2 (FuncState *fs) {
-  Analyzer *a = fs->a;
-  a->decomppass = 2;
-  a->pendingstk.total = 4;
-  a->pendingstk.used = 0;
-  a->pendingstk.u.s2 = luaM_newvector(fs->H, a->pendingstk.total, ExpNode);
+static void freeblocktree (DecompState *D, BlockNode *tree) {
+  BlockNode *node = tree->firstchild;
+  while (node) {
+    BlockNode *nextsibling = node->nextsibling;
+    freeblocktree(D, node);
+    node = nextsibling;
+  }
+  luaO_delnode(&D->blocknodes, tree);
 }
-
-
-/*
-** free memory for second pass
-*/
-static void cleanuppass2 (FuncState *fs) {
-  Analyzer *a = fs->a;
-  lua_assert(a->decomppass == 2);
-  luaM_freearray(fs->H, a->pendingstk.u.s2, a->pendingstk.total, ExpNode);
-  a->pendingstk.u.s2 = NULL;
-  a->pendingstk.total = a->pendingstk.used = 0;
-}
-
 
 static void pass2 (const Proto *f, FuncState *fs) {
   BlockNode *functionblock = fs->root;
@@ -8052,7 +8027,6 @@ static void pass2 (const Proto *f, FuncState *fs) {
   lua_assert(fs->firstfree == 0);
   lua_assert(functionblock != NULL);
   lua_assert(functionblock->kind == BL_FUNCTION);
-  initpass2(fs);
 #ifdef HKSC_DECOMP_HAVE_PASS2
   addparams(fs, f);
   updatenextopenexpr2(&sa, fs);
@@ -8067,16 +8041,15 @@ static void pass2 (const Proto *f, FuncState *fs) {
     checktreevisited(functionblock);
   }
 #endif /* LUA_DEBUG */
-  cleanuppass2(fs);
+  freeblocktree(fs->D, fs->root);
 }
 
 
 static void DecompileFunction (DecompState *D, const Proto *f) {
-  FuncState new_fs;
-  open_func(&new_fs, D, f);
-  pass1(D, &new_fs);
-  debugpass1summary(&new_fs);
-  pass2(f,&new_fs);
+  FuncState *fs = open_func(D, f);
+  pass1(D, fs);
+  debugpass1summary(fs);
+  pass2(f,fs);
   close_func(D);
 }
 
@@ -8136,6 +8109,22 @@ static void postscan_func (DecompState *D, const Proto *f) {
     postscan_func(D, f->p[i]);
 }
 
+static void alloc_fs_stack (DecompState *D) {
+  int i;
+  D->fs_stack = luaM_newvector(D->H, D->maxtreedepth, struct FuncState);
+  for (i = 0; i < D->maxtreedepth; i++)
+    D->fs_stack[i].used = 0;
+}
+
+static void free_fs_stack (DecompState *D) {
+  int i;
+  for (i = 0; i < D->maxtreedepth; i++) {
+    FuncState *fs = D->fs_stack + i;
+    if (fs->used) free_funcstate(D, fs);
+  }
+  luaM_freearray(D->H, D->fs_stack, D->maxtreedepth, struct FuncState);
+  D->fs_stack = NULL;
+}
 
 /*
 ** Execute a protected decompiler.
@@ -8147,6 +8136,7 @@ static void f_decompiler (hksc_State *H, void *ud) {
   lua_assert(D->funcidx == 0);
   luaO_bitmapalloc(H, &D->kmap, 256);
   luaO_bitmapalloc(H, &D->upvalmap, LUAI_MAXUPVALUES);
+  alloc_fs_stack(D);
   DecompileFunction(D, f);
   postscan_func(D, f);
 }
@@ -8172,8 +8162,11 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data) {
   D.matchlineinfo = (Settings(H).match_line_info && D.usedebuginfo);
   luaZ_initbuffer(H, &D.buff);
   luaZ_resetbuffer(&D.buff);
+  luaO_initlist(&D.blocknodes, BlockNode);
   status = luaD_pcall(H, f_decompiler, &D);
   luaZ_freebuffer(H, &D.buff);
+  free_fs_stack(&D);
+  luaO_freelist(H, &D.blocknodes);
 #define DEF_VEC(t,n) VEC_FREE(H, D.n);
   VEC_LIST
 #undef DEF_VEC

@@ -16,7 +16,7 @@
 ** the header fields change, use `grep NodeHeader' to find all places where
 ** member order may need to be adjusted in your node type to optimize space.
 */
-#define NodeHeader struct Node *next; lu_byte flags
+#define NodeHeader void *next; lu_byte flags
 
 /*
 ** Node flags, to be expanded on by inheriting structs

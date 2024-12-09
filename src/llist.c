@@ -108,13 +108,12 @@ static void freebanks (hksc_State *H, Node *list, int bank_size) {
     node = next;
   }
   /* free all owner nodes */
-  lua_assert(ownerlist != NULL);
   node = ownerlist;
-  do {
+  while (node != NULL) {
     Node *next = node->next;
     luaM_freemem(H, node, bank_size);
     node = next;
-  } while (node != NULL);
+  }
 }
 
 void luaO_freelist (hksc_State *H, List *list) {

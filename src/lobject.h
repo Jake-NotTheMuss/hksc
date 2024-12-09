@@ -28,8 +28,7 @@
 #define LUA_TPROTO  (LAST_TAG+1)
 #define LUA_TUPVAL  (LAST_TAG+2)
 #define LUA_TDEADKEY  (LAST_TAG+3)
-#define LUA_TANALYZER  (LAST_TAG+4)
-#define LUA_TTYPEANALYZER  (LAST_TAG+5)
+#define LUA_TTYPEANALYZER  (LAST_TAG+4)
 
 
 /*
@@ -279,55 +278,6 @@ typedef struct LocVar {
   int startpc;  /* first point where variable is active */
   int endpc;    /* first point where variable is dead */
 } LocVar;
-
-
-
-#ifdef HKSC_DECOMPILER
-
-/* flags defined in lanalyzer.h */
-typedef lu_int32 InstructionFlags;
-struct BlockState2;
-struct SlotDesc;
-struct BlockNode;
-struct ExpNode;
-struct OpenExpr;
-
-/*
-** Function analyzers
-*/
-typedef struct Analyzer {
-  CommonHeader;
-  InstructionFlags *insproperties;  /* instruction flags */
-  struct OpenExpr *opencalls;
-  struct SlotDesc *regproperties;  /* register properties */
-  struct LocVar *locvars;  /* information about local variables */
-  TString **upvalues;  /* upvalue names */
-  lu_int32 *kmap;  /* bitmap blocks for marking referenced constants */
-  unsigned short *actvar;
-  int sizeinsproperties;
-  int sizeopencalls;
-  int sizeregproperties;
-  int sizelocvars;
-  int sizeactvar;
-  int sizeupvalues;
-  int sizekmap;
-  int decomppass;  /* which decompiler pass */
-  /* when the function has <= 32 constants, KMAP points to this field */
-  lu_int32 kmap_1;
-  struct {
-    struct BlockNode *first, *last;
-  } bllist;
-  struct {
-    /* the first pass keeps a stack of pending block states, the second pass
-       keeps a stack of pending expression nodes; both stacks only live within
-       their respective decompiler passes */
-    union { struct BlockState2 *s1; struct ExpNode *s2; } u;
-    int total;  /* number of allocated elements in the stack */
-    int used;  /* number of used elements in the stack */
-  } pendingstk;
-} Analyzer;
-
-#endif /* HKSC_DECOMPILER */
 
 
 struct StructProto;

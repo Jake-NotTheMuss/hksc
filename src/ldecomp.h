@@ -1,18 +1,20 @@
 /*
-** $Id: lanalyzer.h $
-** Auxiliary functions to manipulate function analyzer structures
+** $Id: ldecomp.h $
+** decompile precompiled Lua chunks
 ** See Copyright Notice in lua.h
 */
 
-#ifndef lanalyzer_h
-#define lanalyzer_h
+#ifndef ldecomp_h
+#define ldecomp_h
 
 #ifdef HKSC_DECOMPILER
 
 #include "lcode.h"
+#include "llist.h"
+#include "lmember.h"
 #include "lobject.h"
 
-#if defined(ldecomp_c) || defined(lanalyzer_c)
+#if defined(ldecomp_c)
 
 /*
 ** lexical block types
@@ -34,6 +36,8 @@ enum BLTYPE {
 };
 #undef DEFBLTYPE
 
+
+typedef lu_int32 InstructionFlags;
 
 /*
 ** instruction properties
@@ -97,49 +101,27 @@ enum REGFLAG {
 };
 #undef DEFREGFLAG
 
+enum BLOCKNODE_FLAG {
+  NODE_EMPTY = NODE_FIRST_EXTENDED_FLAG,
+  NODE_UPVAL,
+  NODE_ISELSEIF,
+  NODE_HARDSTATBEFORECHILD,
+  NODE_REPUNTILTRUE,
+  NODE_FIXEDSTARTLINE,
+  NODE_LAST_FLAG = NODE_FIXEDSTARTLINE
+};
 
 typedef struct BlockNode {
-  struct BlockNode *next;  /* next block */
+  NodeHeader;
+  ENUM_BYTE(enum BLTYPE, kind);
+  short parentnilvars;
   struct BlockNode *nextsibling;  /* next sibling block */
   struct BlockNode *firstchild;  /* first child block */
   int startpc;  /* startpc of the block */
   int endpc;  /* endpc of the block */
-  short parentnilvars;
-#ifdef LUA_DEBUG
-  /* use the enum type when debugging so it's easy to see what kind it is */
-  enum BLTYPE kind;  /* the type of the block */
-#else
-  /* save space otherwise */
-  unsigned kind : 3;
-#endif
-  unsigned isempty : 1;  /* true if the block has zero instructions */
-  unsigned upval : 1;
-  unsigned iselseif : 1;
-  unsigned hardstatbeforechild : 1;  /* used by first pass */
-  unsigned repuntiltrue : 1;  /* used by first pass */
-  unsigned fixedstartline : 1;  /* true if start-line is fixed; in this case,
-                                   the actual start line is mapped to a
-                                   specific opcode at the end of the block */
-#ifdef LUA_DEBUG
-  unsigned visited : 1;  /* has this block been visited in pass2 */
-#endif
 } BlockNode;
 
-
-/*
-** BlockState tracks the state of a pending do-block terminated by OP_CLOSE
-*/
-typedef struct BlockState2 {
-  BlockNode *nextsibling;  /* the next sibling of this block */
-  BlockNode *firstchild;  /* the first child of this block */
-  BlockNode *prevsibling;  /* the previous sibling of this block */
-  int nested;  /* nesting level within the current loop or function */
-  int startpc;
-  int endpc;
-  unsigned reg : 15;  /* closed register */
-  unsigned loop : 1; /* true if the OP_CLOSE code was at the end of the loop */
-} BlockState2;
-
+lua_static_assert(NODE_LAST_FLAG < sizeofmember(BlockNode, flags) * CHAR_BIT);
 
 
 typedef enum {
@@ -304,9 +286,6 @@ typedef struct SlotDesc {
 } SlotDesc;
 
 #endif /* ldecomp_c */
-
-LUAI_FUNC Analyzer *luaA_newanalyzer (hksc_State *H);
-LUAI_FUNC void luaA_freeanalyzer (hksc_State *H, Analyzer *a);
 
 #endif /* HKSC_DECOMPILER */
 

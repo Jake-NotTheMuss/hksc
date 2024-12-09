@@ -141,9 +141,6 @@ union GCObject {
   union Closure cl;
   struct Table h;
   struct Proto p;
-#ifdef HKSC_DECOMPILER
-  struct Analyzer a;
-#endif /* HKSC_DECOMPILER */
   struct TypeAnalyzer ta;
   struct UpVal uv;
   struct hksc_State th;  /* thread */
@@ -158,9 +155,6 @@ union GCObject {
 #define gco2cl(o)	check_exp((o)->gch.tt == LUA_TFUNCTION, &((o)->cl))
 #define gco2h(o)	check_exp((o)->gch.tt == LUA_TTABLE, &((o)->h))
 #define gco2p(o)  check_exp((o)->gch.tt == LUA_TPROTO, &((o)->p))
-#ifdef HKSC_DECOMPILER
-#define gco2a(o)	check_exp((o)->gch.tt == LUA_TANALYZER, &((o)->a))
-#endif /* HKSC_DECOMPILER */
 #define gco2ta(o)  check_exp((o)->gch.tt == LUA_TTYPEANALYZER, &((o)->ta))
 #define gco2uv(o)	check_exp((o)->gch.tt == LUA_TUPVAL, &((o)->uv))
 #define ngcotouv(o) \
