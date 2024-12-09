@@ -25,8 +25,6 @@
 #include "lundump.h"
 #include "lzio.h"
 
-#define MAX_CHAR_DEC(T)  ((CHAR_BIT * sizeof(T) - 1) / 3 + 2)
-
 typedef struct {
   hksc_State *H;
   lua_Writer writer;
@@ -66,139 +64,11 @@ static const int max_opcode_len = (int)(sizeof(union {
 }));
 #undef DEFCODE
 
-static int getfarg (va_list *pap, const char **p, int *arg) {
-  const char *s = *p;
-  *arg = 0;
-  if (*s == '*') {
-    *arg = va_arg(*pap, int);
-    *p = s+1;
-    return 1;
-  }
-  else if (isdigit(*s)) {
-    do {
-      int d = *s++ - '0';
-      if (*arg < 999) *arg = *arg * 10 + d;
-    } while (isdigit(*s));
-    *p = s;
-    return 1;
-  }
-  return 0;
-}
-
-#define HANDLE_CODE(T, Lqual) do { \
-  long T x = (qual == Lqual) ? va_arg(ap, long T) : va_arg(ap, T); \
-  if (qual != Lqual) { \
-    pcode[0] = Lqual; \
-    pcode[1] = code; \
-    pcode[2] = '\0'; \
-  } \
-  n = sprintf(buff, spec.s, x); \
-} while (0)
-
-static int Printv (PrintState *P, const char *fmt, va_list ap) {
-  char buff [1024];
-  int nchar = 0;
-  struct {
-    char s [128];
-    int n;
-  } spec;
-  for (;;) {
-    char *buffer = buff;
-    int n;
-    char code, qual = 0, *pcode;
-    const char *s;
-    int width, prec, havewidth;
-    spec.n = 0;
-    spec.s[spec.n++] = '%';  /* begin format string */
-    for (s = fmt; *s && *s != '%'; s++)
-      ;
-    nchar += (n = s - fmt);
-    PrintBlock(P, fmt, cast(size_t, n));
-    if (*s == 0)
-      break;
-    n = 0;
-    s++; /* advance over '%' */
-    {  /* conversion specifier */
-      static const char fchar [] = " +-#0";
-      const char *t;
-      int i, flags;
-      for (flags = 0; (t = strchr(fchar, *s)) != NULL; s++)
-        flags |= 1 << (t - fchar);
-      for (i = 0; i < cast_int(sizeof fchar) - 1; i++)
-        if (flags & (1 << i)) spec.s[spec.n++] = fchar[i];
-    }
-    /* width and precision */
-    if ((havewidth = getfarg(&ap, &s, &width)))
-      spec.n += sprintf(spec.s + spec.n, "%d", width);
-    if (*s == '.') {
-      s++;
-      spec.s[spec.n++] = '.';
-      if (getfarg(&ap, &s, &prec))
-        spec.n += sprintf(spec.s + spec.n, "%d", prec);
-    }
-    /* qualifier */
-    if (strchr("hlL", *s) != NULL)
-      spec.s[spec.n++] = qual = *s++;
-    code = *s;
-    spec.s[spec.n++] = code;
-    spec.s[spec.n] = '\0';  /* end of format string */
-    pcode = &spec.s[spec.n-1];
-    /* BUFF will be enough room for anything other than `%s' */
-    switch (code) {
-      case 'c': case '%': {
-        int c = code == 'c' ? va_arg(ap, int) : '%';
-        *pcode = 'c';
-        n = sprintf(buff, spec.s, c);
-        break;
-      }
-      case 'd': case 'i':
-        HANDLE_CODE(int, 'l');
-        break;
-      case 'o': case 'u': case 'x': case 'X':
-        HANDLE_CODE(unsigned, 'l');
-        break;
-      case 'e': case 'E': case 'f': case 'g': case 'G':
-        HANDLE_CODE(double, 'L');
-        break;
-      case 'n':
-        if (qual == 'h')
-          *va_arg(ap, short *) = nchar;
-        else if (qual == 'l')
-          *va_arg(ap, long *) = nchar;
-        else
-          *va_arg(ap, int *) = nchar;
-        break;
-      case 'p': {
-        void *p = va_arg(ap, void *);
-        n = sprintf(buff, spec.s, p);
-        break;
-      }
-      case 's': {
-        size_t size;
-        const char *s = va_arg(ap, const char *);
-        if (s == NULL) s = "(null)";
-        size = strlen(s);
-        if (havewidth && cast(size_t, abs(width)) > size)
-          size = cast(size_t, abs(width));
-        buffer = luaZ_openspace(P->H, &P->buff, size+1);
-        n = sprintf(buffer, spec.s, s);
-        break;
-      }
-      default:  /* undefined specifier */
-        n = sprintf(buff, "%c", code);
-    }
-    PrintBlock(P, buffer, n);
-    fmt = s+1;
-    nchar += n;
-  }
-  return nchar;
-}
-
 static int Print (void *P, const char *fmt, ...) {
   va_list ap;
   int ret;
   va_start(ap, fmt);
-  ret = Printv(P, fmt, ap);
+  ret = luaO_vprintf(f_pfn, P, fmt, ap);
   va_end(ap);
   return ret;
 }

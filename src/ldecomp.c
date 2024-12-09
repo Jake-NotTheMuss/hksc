@@ -48,6 +48,12 @@
 
 #ifndef HKSC_VERSION
 #define hksc_State lua_State
+void luaO_printstring (const TString *ts,
+                       void (*pfn) (const char *s, size_t l, void *ud),
+                       void *ud, int quote);
+void luaO_printk (const TValue *o,
+                  void (*pfn) (const char *s, size_t l, void *ud),
+                  void *ud, int quote);
 #endif /* HKSC_VERSION */
 
 /*
@@ -863,7 +869,11 @@ static int hasmultretsinglereg (const ExpNode *exp) {
 #ifdef LUA_DEBUG
 static const char *getunoprstring (UnOpr op);
 static const char *getbinoprstring (BinOpr op);
-static const char *TValueToString (const TValue *o, DecompState *D);
+
+static void pfn_printf (const char *s, size_t l, void *ud) {
+  printf("%.*s", cast_int(l), s);
+  UNUSED(ud);
+}
 
 static void debugexp (const FuncState *fs, const ExpNode *exp, int indent) {
   if (exp == NULL) {
@@ -880,7 +890,9 @@ static void debugexp (const FuncState *fs, const ExpNode *exp, int indent) {
     case ETRUE:    printf("'true'"); break;
     case EFALSE:   printf("'false'"); break;
     case EVARARG:  printf("'...'"); break;
-    case ELITERAL: printf("'%s'", TValueToString(exp->u.k, fs->D)); break;
+    case ELITERAL:
+      luaO_printk(exp->u.k, pfn_printf, NULL, '"');
+      break;
     case ECALL:
       printf("[CALL %d,  %d ret, %d arg]", exp->info, exp->u.call.nret,
               exp->u.call.narg);
@@ -1274,41 +1286,8 @@ static void DumpTString (const TString *ts, DecompState *D) {
 }
 
 
-static const char *TValueToString (const TValue *o, DecompState *D) {
-  TString *res;
-  switch (ttype(o))
-  {
-    case LUA_TNIL:
-      return "nil";
-    case LUA_TBOOLEAN:
-      return bvalue(o) ? "true" : "false";
-    case LUA_TLIGHTUSERDATA: {
-      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      sprintf(s, "0x%lxhi", cast(unsigned long, hlvalue(o)));
-      res = luaS_new(D->H, s);
-      break;
-    }
-    case LUA_TNUMBER: {
-      char s[LUAI_MAXNUMBER2STR];
-      lua_number2str(s, nvalue(o));
-      res = luaS_new(D->H, s);
-      break;
-    }
-    case LUA_TSTRING:
-      res = luaO_kstring2print(D->H, rawtsvalue(o));
-      break;
-    case LUA_TUI64: {
-      char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
-      lua_ui642str(s+2, ui64value(o));
-      s[0] = '0'; s[1] = 'x';
-      strcat(s, "hl");
-      res = luaS_new(D->H, s);
-      break;
-    }
-    default:
-      return "";
-  }
-  return getstr(res);
+static void pfn_dumpobj (const char *s, size_t l, void *ud) {
+  DumpBlock(s, l, ud);
 }
 
 
@@ -1316,9 +1295,7 @@ static const char *TValueToString (const TValue *o, DecompState *D) {
 ** prints a Lua object as it would appear in source code to output
 */
 static void DumpTValue (const TValue *o, DecompState *D) {
-  /* resulting string will not have embedded null bytes, strlen is ok */
-  const char *str = TValueToString(o, D);
-  DumpString(str, D);
+  luaO_printk(o, pfn_dumpobj, D, '"');
 }
 
 
@@ -4588,13 +4565,27 @@ static void dumpRK2 (DecompState *D, FuncState *fs, int reg, ExpNode *op) {
 }
 
 
+static void pfn_stringifyobj (const char *s, size_t l, void *ud) {
+  hksc_State *H = ud;
+  Mbuffer *b = &G(H)->buff;
+  luaZ_openspace(H, b, luaZ_sizebuffer(b) + l);
+  memcpy(luaZ_buffer(b) + luaZ_bufflen(b), s, l);
+  luaZ_bufflen(b) += l;
+}
+
+
 static void holdRK2 (DecompState *D, FuncState *fs, int reg,
                      struct HoldItem *hold, int addspace) {
   const char *str;
   size_t len;
   if (ISK(reg)) {
-    str = TValueToString(&fs->f->k[INDEXK(reg)], D);
-    len = strlen(str);
+    TString *ts;
+    Mbuffer *b = &G(D->H)->buff;
+    luaZ_resetbuffer(b);
+    luaO_printk(&fs->f->k[INDEXK(reg)], pfn_stringifyobj, D->H, '"');
+    ts = luaS_newlstr(D->H, luaZ_buffer(b), luaZ_bufflen(b));
+    str = getstr(ts);
+    len = ts->tsv.len;
   }
   else {
     TString *varname;
@@ -5511,48 +5502,6 @@ addstr2buff (hksc_State *H, Mbuffer *b, const char *str, size_t len) {
 }
 
 
-static void addkvalue2buff (hksc_State *H, Mbuffer *b, TValue *o) {
-  switch (ttype(o))
-  {
-    case LUA_TNIL:
-      addliteral2buff(H, b, "nil");
-      break;
-    case LUA_TBOOLEAN:
-      if (bvalue(o)) addliteral2buff(H, b,"true");
-      else addliteral2buff(H, b,"false");
-      break;
-    case LUA_TLIGHTUSERDATA: {
-      char s[LUAI_MAXUI642STR+sizeof("0xhi")-1];
-      sprintf(s, "0x%lxhi", cast(unsigned long, hlvalue(o)));
-      addstr2buff(H,b,s,strlen(s));
-      break;
-    }
-    case LUA_TNUMBER: {
-      char s[LUAI_MAXNUMBER2STR];
-      sprintf(s, "%g", nvalue(o));
-      addstr2buff(H,b,s,strlen(s));
-      break;
-    }
-    case LUA_TSTRING: {
-      TString *str = luaO_kstring2print(H, rawtsvalue(o));
-      addstr2buff(H,b,getstr(str),str->tsv.len);
-      break;
-    }
-    case LUA_TUI64: {
-      char s[LUAI_MAXUI642STR+sizeof("oxhl")-1];
-      lua_ui642str(s+2, ui64value(o));
-      s[0] = '0'; s[1] = 'x';
-      strcat(s, "hl");
-      addstr2buff(H,b,s,strlen(s));
-      break;
-    }
-    default:
-      lua_assert(0);
-      break;
-  }
-}
-
-
 /*
 ** `LHSStringBuilder' is an auxiliary structure used by `dischargestores2' to
 ** ensure all L-values are emitted in the correct order and with even spacing
@@ -5567,6 +5516,12 @@ struct LHSStringBuilder {
   unsigned int currpriority;
   lu_byte empty;
 };
+
+
+static void pfn_addk2buff (const char *s, size_t l, void *ud) {
+  struct LHSStringBuilder *sb = ud;
+  addstr2buff(sb->H, sb->buff, s, l);
+}
 
 
 static void initstringbuilder2 (struct LHSStringBuilder *sb, DecompState *D) {
@@ -5602,7 +5557,7 @@ static void flushlhsbuff2 (struct LHSStringBuilder *sb) {
 static void addkvalue2lhs (struct LHSStringBuilder *sb, TValue *o) {
   if (sb->empty == 0 && sb->needspace)
     addliteral2buff(sb->H, sb->buff, " ");
-  addkvalue2buff(sb->H, sb->buff, o);
+  luaO_printk(o, pfn_addk2buff, sb, '"');
   sb->needspace = 1;
   sb->empty = 0;
 }

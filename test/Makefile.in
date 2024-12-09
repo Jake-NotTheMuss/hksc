@@ -188,7 +188,7 @@ testlprint:
 	for f in $(TEST_SRC) $(EXTRA_TESTS) $(STRUCT_TESTS); do \
 		files="$$files $(srcdir)/$$f"; \
 	done; \
-	$(HKSC) -l -l $(HKSCFLAGS) $$files > lprint.log
+	$(HKSC) -l -l $(HKSC_PREFIX_MAP) $(HKSCFLAGS) $$files > lprint.log
 	@echo lprint.c OK
 
 structtests:

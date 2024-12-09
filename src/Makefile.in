@@ -73,7 +73,7 @@ SHAREDLIB=@SHAREDLIB@
 CORE_T=	$(STATICLIB)
 CORE_O=	lanalyzer.o lapi.o lcmp.o lcode.o ldebug.o ldecomp.o ldo.o ldump.o  \
 	lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lprint.o  \
-	lstate.o lstring.o lstruct.o ltable.o lundump.o lzio.o ltests.o
+	lprintf.o lstate.o lstring.o lstruct.o ltable.o lundump.o lzio.o ltests.o
 AUX_O=	hksclib.o
 
 # PIC objects for linking the shared library
