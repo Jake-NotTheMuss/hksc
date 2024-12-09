@@ -8409,15 +8409,29 @@ void luaO_printk (const TValue *o,
   switch (ttype(o)) {
     char buff[LUAI_MAXNUMBER2STR+LUAI_MAXUI642STR+1];
     int n;
+    char lsuf;
+    lu_int64 ui64;
     case LUA_TNIL: (*pfn)("nil", 3, ud); break;
     case LUA_TBOOLEAN:
       if (bvalue(o)) (*pfn)("true", 4, ud);
       else (*pfn)("false", 5, ud);
       break;
-    case LUA_TLIGHTUSERDATA:
-      n = sprintf(buff, "0x%lxhi", cast(unsigned long, hlvalue(o)));
-      (*pfn)(buff, n, ud);
-      break;
+#ifdef HKSC_VERSION
+    case LUA_TLIGHTUSERDATA: {
+      size_t hl = hlvalue(o);
+      lsuf = 'i';
+#ifndef LUA_UI64_S
+      ui64 = cast(lu_int64, hl);
+#else
+      ui64.lo = hl & 0xffffffff;
+      if (sizeof(size_t) * CHAR_BIT > 32)
+        ui64.hi = hl >> 32;
+      else
+        ui64.hi = 0;
+#endif /* LUA_UI64_S */
+      goto printui64;
+    }
+#endif /* HKSC_VERSION */
     case LUA_TNUMBER:
       n = lua_number2str(buff, nvalue(o));
       (*pfn)(buff, n, ud);
@@ -8425,13 +8439,17 @@ void luaO_printk (const TValue *o,
     case LUA_TSTRING:
       luaO_printstring(rawtsvalue(o), pfn, ud, quote);
       break;
+#ifdef HKSC_VERSION
     case LUA_TUI64:
-      n = lua_ui642str(buff + 2, ui64value(o)) + 2;
+      lsuf = 'l';
+      ui64 = ui64value(o);
+      printui64: n = lua_ui642str(buff + 2, ui64) + 2;
       buff[0] = '0', buff[1] = 'x';
-      buff[n++] = 'h', buff[n++] = 'l';
+      buff[n++] = 'h', buff[n++] = lsuf;
       buff[n] = 0;
       (*pfn)(buff, n, ud);
       break;
+#endif /* HKSC_VERSION */
     default: lua_assert(0);
   }
 }
