@@ -19,6 +19,7 @@
 #include "hksclua.h"
 
 #include "lanalyzer.h"
+#include "lbitmap.h"
 #include "lcode.h"
 #include "ldebug.h"
 #include "ldo.h"
@@ -32,6 +33,7 @@
 #include "lstruct.h"
 #endif /* HKSC_VERSION */
 #include "lundump.h"
+#include "lvec.h"
 #include "lzio.h"
 
 /* end of includes */
@@ -134,38 +136,6 @@ typedef struct linemap {
 
 
 /*
-** macros to define and create vectors of element type T
-*/
-#ifndef VEC_DECL
-#define VEC_DECL(T,name) struct { T *s; int used, alloc; } name
-
-#define VEC_GROW(H,v) do { \
-  if ((v).used+1 > (v).alloc) \
-    (v).s=luaM_growaux_(H, (v).s, &(v).alloc, sizeof((v).s[0]), MAX_INT, ""); \
-} while (0)
-
-#define VEC_FREE(H,v) do { \
-  luaM_freemem(H, (v).s, (v).alloc * sizeof((v).s[0])); \
-  (v).s = NULL; (v).used = (v).alloc = 0; \
-} while (0)
-#endif
-
-
-#define bitmapnumblocks(n) cast_int((cast(unsigned int, (n)) + 31) >> 5)
-
-/*
-** static sizes of bitmaps
-** - kmap is the constants bitmap, used to mark which constants have been
-**   referenced so far - 8 blocks gives 256 bits, which will usually be enough
-**   for a program, but if more is needed, a heap-allocated bitmap is used
-** - upvalmap is the upvalues bitmap, used to mark which upvalues have been
-**   referenced so far - at most 8 blocks is needed
-*/
-#define SIZE_STATIC_KMAP bitmapnumblocks(256)
-/* LUAI_MAXUPVALUES is less then 250 */
-#define SIZE_UPVAL_MAP bitmapnumblocks(250)
-
-/*
 ** DecompState - state of decompilation across all functions
 */
 typedef struct {
@@ -215,15 +185,10 @@ typedef struct {
      they correspond to lines in source code that are earlier than the line
      that they are mapped to in debug info */
   /*VEC_DECL(linemap, fixedstartlines);*/
-  /* constants bitmap - each bit represents whether the corresponding constant
-     has been referenced in the current function - used in the first pass when
-     generating variable info */
-  lu_int32 *kmap;
-  /* if the function has <= 32*SIZE_STATIC_KMAP constants, no heap allocation
-     is needed, this static array can be used */
-  lu_int32 kmap_1[SIZE_STATIC_KMAP];
-  lu_int32 upvalmap[SIZE_UPVAL_MAP];
-  int sizekmap;
+  /* constants/upval bitmaps - each bit represents whether the corresponding
+     constant or upval has been referenced in the current function - used in
+     the first pass when generating variable info */
+  Bitmap kmap, upvalmap;
   struct ExpressionParser *parser;
   /* this structure is for per-function data that only needs to be instanced
      once at any time, because it is only needed in the initial passes where
@@ -287,128 +252,6 @@ typedef struct {
     int pc, line, haveself;
   } lastcl;  /* data for the last encountered closure */
 } DecompState;
-
-
-/*****************************************************************************/
-/* Bitmaps */
-/*****************************************************************************/
-
-
-/*
-** ensure D->kmap has enough space for NK constants
-*/
-static void allockmap (DecompState *D, int nk)
-{
-  int prevnumblocks = D->sizekmap;
-  int numblocks = bitmapnumblocks(nk);
-  if (prevnumblocks > SIZE_STATIC_KMAP) {
-    /* current vector is dynamically allocated, grow if needed */
-    if (numblocks > prevnumblocks) {
-      luaM_reallocvector(D->H, D->kmap, prevnumblocks, numblocks, lu_int32);
-      D->sizekmap = numblocks;
-    }
-  }
-  else {
-    /* current vector is static, allocate on the heap if needed */
-    if (numblocks > SIZE_STATIC_KMAP)
-      D->kmap = luaM_newvector(D->H, numblocks, lu_int32);
-    else
-      D->kmap = D->kmap_1;
-    D->sizekmap = numblocks;
-  }
-  memset(D->kmap, 0, numblocks * sizeof(lu_int32));
-}
-
-
-static void freekmap (DecompState *D)
-{
-  if (D->sizekmap > SIZE_STATIC_KMAP) {
-    lua_assert(D->kmap != D->kmap_1);
-    luaM_freearray(D->H, D->kmap, D->sizekmap, lu_int32);
-  }
-  D->kmap = NULL;
-  D->sizekmap = 0;
-}
-
-
-static int bitmaptest (const lu_int32 *bitmap, unsigned int index) {
-  return (bitmap[index >> 5] & (1u << (index & 31))) != 0;
-}
-
-
-static int bitmapset (lu_int32 *bitmap, unsigned int index) {
-  int wasunset = !bitmaptest(bitmap, index);
-  bitmap[index >> 5] |= cast(lu_int32, 1) << (index & 31);
-  return wasunset;
-}
-
-
-/*
-** return the position of the first set bit in BLOCK
-*/
-static int findfirstset (lu_int32 block) {
-  int bit = 0;
-  if ((block & 0xffff) == 0)
-    block >>= 16, bit += 16;
-  if ((block & 0xff) == 0)
-    block >>= 8, bit += 8;
-  if ((block & 0xf) == 0)
-    block >>= 4, bit += 4;
-  if ((block & 3) == 0)
-    block >>= 2, bit += 2;
-  if ((block & 1) == 0)
-    bit += 1;
-  return bit;
-}
-
-
-/*
-** find the first set or unset bit in the bitmap within NBITS starting at
-** OFFSET
-*/
-static int bitmapfind (const lu_int32 *bitmap, int nbits, int offset, int set){
-  int i, numblocks = bitmapnumblocks(nbits);
-  lua_assert(offset >= 0 && offset <= nbits);
-  /* skip over completely set or unset blocks, starting at bit OFFSET */
-  i = bitmapnumblocks(offset+1)-1;
-  if (i < numblocks) {
-    /* the first test excludes the bits before the offset */
-    const lu_int32 excludedbits = (1u << (offset & 31)) - 1;
-    const lu_int32 comparebits = set ? 0 : ~0u;
-    lu_int32 firstblock = bitmap[i];
-    firstblock = set ? firstblock & ~excludedbits : firstblock | excludedbits;
-    /* traverse blocks */
-    if (firstblock == comparebits) do { /* nothing */
-    } while (++i < numblocks && bitmap[i] == comparebits);
-    /* check for block partially set */
-    if (i < numblocks) {
-      lu_int32 block = set ? bitmap[i] : ~bitmap[i];
-      /* exclude any extra bits at the end of the bitmap */
-      if (i == numblocks-1 && (nbits & 31)) {
-        block &= (1u << (nbits & 31)) - 1;
-        if (block == 0) return -1;
-      }
-      return findfirstset(block) + (cast(unsigned int, i) << 5);
-    }
-  }
-  return -1;
-}
-
-
-#define bitmapfindunset(b,n,o) bitmapfind(b,n,o,0)
-#define bitmapfindset(b,n,o) bitmapfind(b,n,o,1)
-
-
-/*
-** return true if BIT is set consecutively, meaning all bits before BIT are set
-** and all bits after BIT are unset
-*/
-static int isbitconsecutive (const lu_int32 *bitmap, int nbits, int bit) {
-  lua_assert(bit < nbits);
-  lua_assert(bitmaptest(bitmap, bit));
-  return (bitmapfindunset(bitmap, bit, 0) == -1 &&
-          bitmapfindset(bitmap, nbits, bit+1) == -1);
-}
 
 
 /* a decompiled function */
@@ -2469,8 +2312,8 @@ static void checkloadoptimization (DecompState *D, FuncState *fs) {
 
 
 static void initbitmaps (DecompState *D, FuncState *fs) {
-  allockmap(D, fs->f->sizek);
-  memset(D->upvalmap, 0, sizeof(D->upvalmap));
+  luaO_bitmapalloc(D->H, &D->kmap, fs->f->sizek);
+  luaO_bitmapalloc(D->H, &D->upvalmap, fs->f->nups);
 }
 
 static void updatebitmaps (DecompState *D, FuncState *fs) {
@@ -2481,8 +2324,8 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
   D->a.newref = 0;
   while (n--) {
     int k = ak[n];
-    if (bitmapset(D->kmap, k)) {
-      if (!D->a.newref && !isbitconsecutive(D->kmap, fs->f->sizek, k))
+    if (luaO_bitmapsetq(&D->kmap, k)) {
+      if (!D->a.newref && !luaO_isbitconsecutive(&D->kmap, k))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
       D->a.newref |= (cast(lu_int32, k) << (2 + (D->a.newref ? SIZE_A : 0)));
       D->a.newref++;
@@ -2494,9 +2337,9 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
     int up = D->a.insn.b;
     /* same as with constant references, upvalue references are used to check
        if an assignment list is necessary */
-    if (bitmapset(D->upvalmap, up)) {
+    if (luaO_bitmapsetq(&D->upvalmap, up)) {
       D->a.newref = (cast(lu_int32, up) << 2) | 3;
-      if (!isbitconsecutive(D->upvalmap, fs->f->nups, up))
+      if (!luaO_isbitconsecutive(&D->upvalmap, up))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
     }
   }
@@ -8270,39 +8113,27 @@ static void UnmarkGlobals (const Proto *f) {
       }
     }
   }
-  for (i = 0; i < f->sizep; i++)
-    UnmarkGlobals(f->p[i]);
-}
-
-#define prescan_enterfunc(D) \
-  if (++(D)->funcidx > (D)->maxtreedepth) (D)->maxtreedepth = (D)->funcidx
-
-#define prescan_leavefunc(D) --(D)->funcidx
-
-
-/*
-** when using debug info, just calculcate the maximum function tree depth
-*/
-static void prescan_withdebug (DecompState *D, const Proto *f) {
-  int i;
-  prescan_enterfunc(D);
-  for (i = 0; i < f->sizep; i++)
-    prescan_withdebug(D, f->p[i]);
-  prescan_leavefunc(D);
 }
 
 
-/*
-** when not using debug info, mark global variable names referenced in the code
-** and calculate the maximum function tree depth
-*/
-static void prescan_nodebug (DecompState *D, const Proto *f) {
+static void prescan_func (DecompState *D, const Proto *f) {
   int i;
-  prescan_enterfunc(D);
-  MarkGlobals(f);
+  if (++D->funcidx > D->maxtreedepth)
+    D->maxtreedepth = D->funcidx;
+  if (D->usedebuginfo == 0)
+    MarkGlobals(f);
   for (i = 0; i < f->sizep; i++)
-    prescan_nodebug(D, f->p[i]);
-  prescan_leavefunc(D);
+    prescan_func(D, f->p[i]);
+  --D->funcidx;
+}
+
+
+static void postscan_func (DecompState *D, const Proto *f) {
+  int i;
+  if (D->usedebuginfo == 0)
+    UnmarkGlobals(f);
+  for (i = 0; i < f->sizep; i++)
+    postscan_func(D, f->p[i]);
 }
 
 
@@ -8312,12 +8143,12 @@ static void prescan_nodebug (DecompState *D, const Proto *f) {
 static void f_decompiler (hksc_State *H, void *ud) {
   DecompState *D = ud;
   const Proto *f = D->mainfunc;
-  (D->usedebuginfo ? prescan_withdebug : prescan_nodebug)(D, f);
+  prescan_func(D, f);
   lua_assert(D->funcidx == 0);
+  luaO_bitmapalloc(H, &D->kmap, 256);
+  luaO_bitmapalloc(H, &D->upvalmap, LUAI_MAXUPVALUES);
   DecompileFunction(D, f);
-  if (D->usedebuginfo == 0)
-    UnmarkGlobals(f);
-  UNUSED(H);
+  postscan_func(D, f);
 }
 
 
@@ -8346,7 +8177,8 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data) {
 #define DEF_VEC(t,n) VEC_FREE(H, D.n);
   VEC_LIST
 #undef DEF_VEC
-  freekmap(&D);
+  luaO_bitmapfree(H, &D.kmap);
+  luaO_bitmapfree(H, &D.upvalmap);
   if (status) D.status = status;
   return D.status;
 }
