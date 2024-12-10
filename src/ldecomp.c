@@ -893,8 +893,7 @@ static void addfixedstartline (FuncState *fs, int pc, int line) {
   if (test_ins_property(fs, pc, INS_FIXEDSTARTLINE))
     return;  /* already have an entry for PC */
   set_ins_property(fs, pc, INS_FIXEDSTARTLINE);
-  VEC_GROW(fs->H, D->fixedstartlines);
-  map = &D->fixedstartlines.s[D->fixedstartlines.used++];
+  map = VEC_NEWELT(D->H, D->fixedstartlines);
   map->pc = pc;
   map->line = line;
 }
@@ -1877,11 +1876,7 @@ static void setloophasbreak (FuncState *fs, const LoopState *loop, int pc) {
 
 
 static LoopState *pushloopstate (FuncState *fs, int kind, int start, int end) {
-  hksc_State *H = fs->H;
-  DecompState *D = fs->D;
-  LoopState *loop;
-  VEC_GROW(H, D->loopstk);
-  loop = &D->loopstk.s[D->loopstk.used++];
+  LoopState *loop = VEC_NEWELT(fs->H, fs->D->loopstk);
   loop->kind = kind;
   loop->startlabel = start;
   loop->endlabel = end;
@@ -2562,9 +2557,7 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   D->parser->prevpc = -1;
   D->parser->lastopen = -1;
   D->stackexpr.used = 0;
-  VEC_GROW(D->H, D->stackexpr);
-  D->stackexpr.used = 1;
-  D->parser->expr = D->stackexpr.s;
+  D->parser->expr = VEC_NEWELT(D->H, D->stackexpr);
   initstackexpr(D->parser->expr);
   if (mode == PARSER_MODE_ASSIGNMENTS)
     initbitmaps(D, fs);
@@ -2599,9 +2592,8 @@ static StackExpr *parser_pushexpr (DecompState *D) {
   StackExpr *prevexpr;
   if (D->parser->expr->startpc == -1)
     return NULL;
-  VEC_GROW(D->H, D->stackexpr);
-  prevexpr = &D->stackexpr.s[D->stackexpr.used++ - 1];
-  D->parser->expr = prevexpr+1;
+  D->parser->expr = VEC_NEWELT(D->H, D->stackexpr);
+  prevexpr = D->parser->expr - 1;
   initstackexpr(D->parser->expr);
   return prevexpr;
 }
@@ -2839,8 +2831,7 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
        once the label is reached; use the special value NO_REG to indiciate the
        StackExpr is fake */
     pushfakeexpr:
-    VEC_GROW(D->H, D->stackexpr);
-    D->parser->expr = &D->stackexpr.s[D->stackexpr.used++];
+    D->parser->expr = VEC_NEWELT(D->H, D->stackexpr);
     *D->parser->expr = *(D->parser->expr-1);
     lastbb = D->parser->expr-1;
     initstackexpr(lastbb);
