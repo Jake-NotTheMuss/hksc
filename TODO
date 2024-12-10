@@ -10,14 +10,6 @@ TODO for Hksc
 ldecomp.c is massive even in its incomplete state. It may be easier to read
 and maintain if it were split up into different files.
 
-** Analyzer tag
-Get rid of the tagged Analyzer structure. It doesn't need to be part of
-garbage collection. Its fields could be moved to ldecomp.c::FuncState, and the
-FuncStates could all be allocated at once as a stack, where the size is
-D->maxtreedepth. This way, if an exception is thrown, all the FuncStates can
-still be accessed and all the memory can be freed before returning from
-luaU_decompile.
-
 ------------------------------------------------------------------------------
 
 (end of TODO)
