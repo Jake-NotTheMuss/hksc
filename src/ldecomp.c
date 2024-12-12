@@ -2316,6 +2316,7 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
   /* mark any constants referenced by the current instruction */
   int n = getkoperands(o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, ak);
   D->a.newref = 0;
+  unset_ins_property(fs, fs->pc, INS_SKIPPEDREF);
   while (n--) {
     int k = ak[n];
     if (luaO_bitmapsetq(&D->kmap, k)) {
@@ -2559,8 +2560,7 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   D->stackexpr.used = 0;
   D->parser->expr = VEC_NEWELT(D->H, D->stackexpr);
   initstackexpr(D->parser->expr);
-  if (mode == PARSER_MODE_ASSIGNMENTS)
-    initbitmaps(D, fs);
+  initbitmaps(D, fs);
 }
 
 static void parser_reset (DecompState *D) {
@@ -2577,8 +2577,7 @@ static void parser_advance (DecompState *D, FuncState *fs) {
 
 
 static void parser_visit (DecompState *D, FuncState *fs) {
-  if (D->parser->mode == PARSER_MODE_ASSIGNMENTS)
-    updatebitmaps(D, fs);
+  updatebitmaps(D, fs);
 }
 
 
