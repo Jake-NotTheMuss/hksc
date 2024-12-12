@@ -45,9 +45,9 @@ void luaO_delnode (List *list, void *n) {
       list->head = NULL;
     else {
       Node *prev;
-      for (prev = list->head; prev != node; prev = prev->next)
+      for (prev = list->head; prev && prev->next != node; prev = prev->next)
         lua_assert(prev != NULL);
-      prev->next = NULL;
+      if (prev != NULL) prev->next = NULL;
     }
     freenode = node;
   }
