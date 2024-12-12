@@ -972,8 +972,16 @@ static int getforloopstartline (const FuncState *fs, BlockNode *node) {
 
 static void initregproperties (FuncState *fs) {
   int i;
-  for (i = 0; i < fs->f->maxstacksize; i++)
-    fs->regproperties[i].flags = 0;
+  for (i = 0; i < fs->f->maxstacksize; i++) {
+    SlotDesc *slot = fs->regproperties + i;
+    slot->flags = 0;
+#if HKSC_STRUCTURE_EXTENSION_ON
+    slot->type = LUA_TNIL;
+    slot->proto = NULL;
+#endif
+    slot->u.s.firstactive = 0;
+    slot->u.s.aux = 0;
+  }
 }
 
 
@@ -2546,10 +2554,7 @@ static int stackexprisunreachable (const FuncState *fs, const StackExpr *e) {
 
 
 static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
-  int r;
-  memset(fs->regproperties, 0, fs->f->maxstacksize*sizeof(SlotDesc));
-  for (r = 0; r < fs->f->maxstacksize; r++)
-    getslotdesc(fs, r)->u.s.firstactive = 0;
+  initregproperties(fs);
   D->parser->status =(base==NO_REG)?PARSER_STATUS_INITIAL:PARSER_STATUS_ACTIVE;
   D->parser->mode = mode;
   D->parser->token = DEFAULT_TOKEN;
