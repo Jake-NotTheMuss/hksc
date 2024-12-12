@@ -3427,6 +3427,7 @@ static void parseconstructors (DecompState *D, FuncState *fs) {
     finalizeconstructor(D, fs);
   }
   VEC_FREE(D->H, D->cons_pc);
+  VEC_INIT(D->cons_pc);
   D->parser = NULL;
 }
 
