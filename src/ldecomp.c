@@ -3723,7 +3723,7 @@ static void pass1 (DecompState *D, FuncState *fs) {
     recordfixedstartlines(fs);
 #endif
   end:
-  memset(fs->regproperties, 0, fs->f->maxstacksize * sizeof(SlotDesc));
+  initregproperties(fs);
 }
 
 
