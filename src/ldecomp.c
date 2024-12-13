@@ -7804,6 +7804,7 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
     bx = GETARG_Bx(i);
     sbx = GETARG_sBx(i);
 #ifdef HKSC_DECOMP_DEBUG_PASS1
+    (void)a; (void)b; (void)c; (void)sbx;
     visitinsn2(fs, node, pc, i); /* visit this instruction */
     /* make sure to run the first pass on all nested closures */
     if (o == OP_CLOSURE) { /* nested closure? */
