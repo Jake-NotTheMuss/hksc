@@ -28,8 +28,10 @@ enum NODE_FLAG {
 };
 
 #define nodegetflag(n,f)  (((n)->flags & (1u << NODE_##f)) != 0)
-#define nodesetflag(n,f)  cast(void, (n)->flags |= (1u << NODE_##f))
-#define nodeclearflag(n,f)  cast(void, (n)->flags &= ~(1u << NODE_##f))
+#define nodesetflagval(n,f,v)  cast(void, \
+(n)->flags = ((n)->flags & ~(1u << NODE_##f)) | ((unsigned)!!(v) << NODE_##f))
+#define nodesetflag(n,f)  nodesetflagval(n,f,1)
+#define nodeclearflag(n,f)  nodesetflagval(n,f,0)
 /* set flag, assert clear */
 #define nodesetflag_ac(n,f) check_exp(!nodegetflag(n,f), nodesetflag(n,f))
 

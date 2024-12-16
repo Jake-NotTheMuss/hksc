@@ -428,8 +428,7 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
   node->endpc = endpc;
   node->kind = kind;
   node->parentnilvars = 0;
-  if (endpc < startpc)
-    nodesetflag(node, EMPTY);
+  nodesetflagval(node, EMPTY, endpc < startpc);
 }
 
 
@@ -441,8 +440,7 @@ static int isloopnode(const BlockNode *node)
 
 
 static void recalcemptiness(BlockNode *node) {
-  if (node->endpc < node->startpc)
-    nodesetflag(node, EMPTY);
+  nodesetflagval(node, EMPTY, node->endpc < node->startpc);
 }
 
 
