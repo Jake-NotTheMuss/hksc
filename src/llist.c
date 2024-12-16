@@ -34,9 +34,11 @@ void luaO_delnode (List *list, void *n) {
   Node *node = n, *freenode;
   if (node->next != NULL) {  /* copy next into node and free NEXT */
     Node *next = node->next;
-    int f1 = node->flags, f2 = next->flags;
+    int o1 = nodegetflag(node, OWNER);
+    int o2 = nodegetflag(next, OWNER);
     memcpy(node, next, list->node_size);
-    node->flags = f1, next->flags = f2;
+    o1 ? nodesetflag(node, OWNER) : nodeclearflag(node, OWNER);
+    o2 ? nodesetflag(next, OWNER) : nodeclearflag(next, OWNER);
     /* NEXT is now unreachable, add it to the free list */
     freenode = next;
   }
