@@ -2210,7 +2210,7 @@ static void detectloops (DecompState *D, FuncState *fs) {
       }
     }
     while (fs->pc == getcurrloop(fs)->startlabel)
-      nextnode = finalizeloopstate(fs, nextnode);
+      pendingbreak = -1, nextnode = finalizeloopstate(fs, nextnode);
   }
   set_ins_property(fs, 0, INS_LEADER);  /* first instruction is a leader */
   fs->root = addblnode(fs, 0, fs->f->sizecode-1, BL_FUNCTION);
