@@ -795,10 +795,14 @@ static int getlastclosurepc (const DecompState *D, const FuncState *fs) {
   return lastclpc;
 }
 
+#endif /* HKSC_DECOMP_HAVE_PASS2 */
+
 enum {
-  UPVAL_FROM_STACK,  /* from the current stack frame */
-  UPVAL_FROM_UPVAL  /* from the upvalue array */
+  UPVAL_FROM_STACK = 1,  /* from the current stack frame */
+  UPVAL_FROM_UPVAL = 2  /* from the upvalue array */
 };
+
+#ifdef HKSC_DECOMP_HAVE_PASS2
 
 /*
 ** stores the upval index in UPVAL, which is to be interpreted based on whether
@@ -1790,6 +1794,80 @@ static const Instruction *getjumpcontrol (const FuncState *fs, int pc) {
 
 
 /*****************************************************************************/
+/* First bytecode scan functions */
+/*****************************************************************************/
+
+static void firstscan_handleop (DecompState *D, FuncState *fs) {
+  OpCode o = D->a.insn.o;
+  int pc = fs->pc, a = D->a.insn.a, b = D->a.insn.b, c = D->a.insn.c;
+  assertphase(D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
+  switch (o) {
+    case OP_JMP: {
+      int offs = D->a.insn.sbx, label = pc + 1 + offs;
+      const Instruction *jc = getjumpcontrol(fs, pc);
+      /* check if this jump skips over a pair of bool labels */
+      if (jc == NULL && offs >= 2 && test_ins_property(fs,pc+1,INS_BOOLLABEL))
+        set_ins_property(fs, pc, INS_SKIPBOOLLABEL);
+      /* if the jump is tested, the jump instruction is a leader */
+      if (jc != NULL)
+        set_ins_property(fs, pc, INS_LEADER);
+      set_ins_property(fs, pc+1, INS_LEADER);
+      set_ins_property(fs, label, INS_LEADER);
+      break;
+    }
+    case OP_LOADBOOL:
+      if (c) {
+        set_ins_property(fs, pc, INS_BOOLLABEL);
+        set_ins_property(fs, pc, INS_LEADER);
+        set_ins_property(fs, pc+1, INS_BOOLLABEL);
+        set_ins_property(fs, pc+1, INS_LEADER);
+      }
+      break;
+    case OP_LOADNIL:
+      if (GET_OPCODE(fs->f->code[pc+1]) == OP_LOADNIL) {
+        int nextA = GETARG_A(fs->f->code[pc+1]);
+        /* if these 2 nil codes could have been combined, the next pc must have
+           been a possible leader when the code was generated, which indicates
+           to the decompiler that there should be a basic block boundary
+           emitted in the source that will be optimized away when compiled,
+           for example, an if-true block:
+              local a = nil;
+              if true than -- falls through
+                  local b = nil;
+              end
+            */
+        if (nextA >= a && nextA <= b+1)
+          set_ins_property(fs, pc+1, INS_NILLABEL);
+      }
+      break;
+    case OP_CLOSURE: {
+      int nupn, nup = fs->f->p[D->a.insn.bx]->nups;
+      /* check if any of the upvalues are the closure itself */
+      for (nupn = nup; nupn > 0; nupn--) {
+        Instruction i = fs->f->code[pc+nupn];
+        if (GETARG_A(i) == UPVAL_FROM_STACK && GETARG_Bx(i) == a)
+          /* using its own register as an upvalue */
+          set_ins_property(fs, pc, INS_SELFUPVAL);
+      }
+      break;
+    }
+    case OP_NEWTABLE:
+#ifdef HKSC_VERSION
+    case OP_NEWSTRUCT:
+#endif
+      if (c) {
+        VEC_GROW(D->H, D->cons_pc);
+        D->cons_pc.s[D->cons_pc.used++] = pc;
+      }
+      break;
+    case OP_CLOSE:
+      set_ins_property(fs, pc, INS_ENDSCOPE);
+      break;
+    default:;
+  }
+}
+
+/*****************************************************************************/
 /* Loop Detection phase - marks basic instruction flags and loop boundaries */
 /*****************************************************************************/
 
@@ -1799,29 +1877,24 @@ static const Instruction *getjumpcontrol (const FuncState *fs, int pc) {
 ** at TARGET
 */
 static int isjumplinefixed (FuncState *fs, int pc, int target) {
-  const Proto *f = fs->f;
-  int i, pcline, targetline;
-  lua_assert(ispcvalid(fs, pc));
-  lua_assert(ispcvalid(fs, target));
-  lua_assert(pc >= target);
-  lua_assert(fs->D->usedebuginfo);
-  pcline = getline(f, pc);
-  targetline = getline(f, target);
-  if (pcline > targetline)
-    return 0;  /* line was not fixed */
-  else if (pcline < targetline)
-    return 1;  /* line was fixed */
-  else for (i = target+1; i < pc; i++)
-    if (getline(f, i) > targetline)
-      return 1;  /* line was fixed */
-  return 0;  /* line may have been fixed but it does not manifest */
+  int pc_line = check_exp(ispcvalid(fs, pc), getline(fs->f, pc));
+  int target_line = check_exp(ispcvalid(fs, target), getline(fs->f, target));
+  if (pc_line != target_line)
+    /* if the final jump maps to an earlier line than the start of the loop,
+       the line was fixed */
+    return pc_line < target_line;
+  /* if PC_LINE and TARGET_LINE are the same, the line may be fixed; this can
+     be confirmed if there is another line mapping inside the loop which
+     maps to a line greater than PC_LINE */
+  while (--pc > target)
+    if (getline(fs->f, pc) > pc_line) return 1;
+  return 0;  /* no evidence that the line was fixed */
 }
 
 
 typedef struct LoopState {
-  /* the start and end label of the loop */
-  int startlabel, endlabel;
-  /* BREAKLABEL and EXITLABEL may vary between each other.
+  int startlabel, endlabel;  /* start and end labels of the loop */
+  /* breaklabel and exitlabel may vary between each other.
      This happens when there is a conditional expression after the loop whose
      first operand is a literal boolean value. For example:
         while a do
@@ -1829,17 +1902,13 @@ typedef struct LoopState {
         end
         local a = false and 1;
      The break will target one of the bool labels generated by the expression,
-     while the loop condition will exit to the instruction after the bool
-     labels. This has to do with a bug in Lua that was fixed in 5.1.5. The bug
-     was caused by Lua optimizing conditional expressions which tested a
-     constant. In 5.1.5, testing boolean literals was no longer optimized */
-  /* the label that break statements will target */
-  int breaklabel;
-  /* the exit label for the loop condition */
-  int exitlabel;
-  unsigned kind : 4;
-  unsigned unsure : 1;
-  unsigned hasbreak : 2;  /* value of 1 means maybe, 2 means yes */
+     while the loop conditional will exit to the instruction after the bool
+     labels. This is bug in Lua 5.1.4/Havok Script that was fixed in 5.1.5
+     when Lua removed optimization for testing bool literals. */
+  int breaklabel, exitlabel;
+  unsigned int kind : 4;  /* 4 kinds of loops + BL_FUNCTION */
+  unsigned int unsure : 1;
+  unsigned int hasbreak : 2;  /* value of 1 means maybe, 2 means yes */
 } LoopState;
 
 
@@ -1847,14 +1916,12 @@ static const LoopState dummyloop = {-1, -1, -1, -1, BL_FUNCTION, 0, 0};
 
 
 static void setlooplabels (FuncState *fs, LoopState *loop) {
-  int endlabel = loop->endlabel;
-  lua_assert(ispcvalid(fs, endlabel));
+  int endlabel = check_exp(ispcvalid(fs, loop->endlabel), loop->endlabel);
   loop->breaklabel = loop->exitlabel = endlabel;
   if (GET_OPCODE(fs->f->code[endlabel]) == OP_JMP) {
     /* breaks will jump to the label targeted by the jump at ENDLABEL */
     int breaklabel = getjump(fs, endlabel);
-    loop->breaklabel = breaklabel;
-    loop->exitlabel = breaklabel;
+    loop->breaklabel = loop->exitlabel = breaklabel;
     /* if the break label is a bool label, and the bool labels have a jump
        before them to skip the labels, exits from the loop condition will
        target the end of the bool labels, that is, 1 pc after the second bool
@@ -1868,11 +1935,13 @@ static void setlooplabels (FuncState *fs, LoopState *loop) {
 }
 
 
+/*
+** call this when encountering another break jump for a given loop
+*/
 static void setloophasbreak (FuncState *fs, const LoopState *loop, int pc) {
-  LoopState *loop1;
+  LoopState *loop1 = cast(LoopState *, loop);
   if (loop == &dummyloop)
     return;
-  loop1 = ((LoopState *)loop);
   if (loop1->unsure == 0)
     loop1->hasbreak = 2;
   else if (loop1->hasbreak == 0)
@@ -1920,9 +1989,12 @@ static BlockNode *finalizeloopstate (FuncState *fs, BlockNode *nextnode) {
   int skip = (loop->unsure && loop->hasbreak < 2);
   BlockNode *new_node;
   poploopstate(fs);
+  fs->D->a.pendingbreak = -1;
   if (skip)
     return nextnode;
   new_node = addblnode(fs, startpc, endpc, kind);
+  /* find the next sibling for NEW_NODE from NEXTNODE, which may be a child
+     block */
   if (nextnode != NULL && nextnode->endpc <= endpc) {
     BlockNode *temp;
     new_node->firstchild = nextnode;
@@ -1972,9 +2044,36 @@ static int isloopbreak (const LoopState *loop, int target) {
 static void
 calcloopunsure (FuncState *fs, LoopState *loop, const LoopState *outerloop) {
   int target = getjump(fs, loop->endlabel-1);
+  /* check the target of the final jump in the loop; if it jumps to the start
+     of the enclosing loop, the current loop may not exist, and may instead be
+     be a jump that targets the final jump of the outer loop */
   if (target == outerloop->startlabel) {
+    /* the following example highlights the necessity to mark `unsure' loops,
+       for when the outer loop is either a while-loop or a repeat-loop with an
+       unconditional jump (i.e. `until false')
+
+          repeat
+              local a = 1;
+              if false then -- jumps to start
+                  return;
+              end
+          until false;
+
+       looks like
+
+          repeat
+              while true
+                local a = 1;
+              end -- jumps to start
+              return;
+          until false;
+    */
     if (outerloop->kind == BL_WHILE) {
       if (fs->D->usedebuginfo)
+        /* in Havok Script, while-loops have their final jump line mapping
+           fixed to the start of the loop; this would indicate the presence of
+           a loop; in regular Lua, isjumplinefixed() will return false as
+           required */
         loop->unsure = !isjumplinefixed(fs, loop->endlabel-1, target);
       else
         loop->unsure = 1;
@@ -1983,85 +2082,6 @@ calcloopunsure (FuncState *fs, LoopState *loop, const LoopState *outerloop) {
              getjumpcontrol(fs, outerloop->endlabel-1) == NULL)
       loop->unsure = 1;
   }
-}
-
-
-/* first-time handler for OP_JMP */
-static void markjump (FuncState *fs, int pc, int offs) {
-  int label = pc+1+offs;
-  const Instruction *jc = getjumpcontrol(fs, pc);
-  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
-  /* check if this jump skips over a pair of bool labels */
-  if (jc == NULL && offs >= 2 && test_ins_property(fs, pc+1, INS_BOOLLABEL))
-    set_ins_property(fs, pc, INS_SKIPBOOLLABEL);
-  /* if the jump is tested, the jump instruction is a leader */
-  if (jc != NULL)
-    set_ins_property(fs, pc, INS_LEADER);
-  set_ins_property(fs, pc+1, INS_LEADER);
-  set_ins_property(fs, label, INS_LEADER);
-}
-
-
-/* first-time handler for OP_LOADBOOL */
-static void markloadbool (FuncState *fs, int pc, int c) {
-  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
-  if (c) {
-    set_ins_property(fs, pc, INS_BOOLLABEL);
-    set_ins_property(fs, pc, INS_LEADER);
-    set_ins_property(fs, pc+1, INS_BOOLLABEL);
-    set_ins_property(fs, pc+1, INS_LEADER);
-  }
-}
-
-
-/* first-time handler for OP_LOADNIL */
-static void markloadnil (FuncState *fs, int pc, int a, int b) {
-  Instruction nextcode = fs->f->code[pc+1];
-  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
-  if (GET_OPCODE(nextcode) == OP_LOADNIL) {
-    int nextA = GETARG_A(nextcode);
-    /* if these 2 nil codes could have been optimized, the next pc must have
-       been a possible leader when the code was generated; but it may not
-       actually have been rendered a leader if the basic block boundary was
-       optimized away, for example, in an if-true block:
-          local a = nil;
-          if true then -- falls through with no jump emitted in bytecode
-              local b = nil;
-          end */
-    if (nextA >= a && nextA <= b+1)
-      set_ins_property(fs, pc+1, INS_NILLABEL);
-  }
-}
-
-
-/* first-time handler for OP_CLOSURE */
-static void markloadclosure (FuncState *fs, int pc, int a, int bx) {
-  int nup, nupn;
-  assertphase(fs->D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
-  nup = fs->f->p[bx]->nups;
-  /* check if any of the upvalues are the closure itself */
-  for (nupn = nup; nupn > 0; nupn--) {
-    Instruction i = fs->f->code[pc+nupn];
-    if (GETARG_A(i) == 1 && GETARG_Bx(i) == a) {
-      /* using its own register as an upvalue */
-      set_ins_property(fs, pc, INS_SELFUPVAL);
-      break;
-    }
-  }
-}
-
-
-/* first-time handler for OP_NEWTABLE and OP_NEWSTRUCT */
-static void marknewtable (FuncState *fs, int pc, int b, int c) {
-  DecompState *D = fs->D;
-  assertphase(D, DECOMP_PHASE_FIRST_BYTECODE_SCAN);
-  /* if the table has hash items, it will be scanned in the parse-constructor
-     phase */
-  if (c) {
-    VEC_GROW(D->H, D->cons_pc);
-    D->cons_pc.s[D->cons_pc.used++] = pc;
-  }
-  (void)b;
 }
 
 
@@ -2098,6 +2118,8 @@ static void detectloops_onjump (DecompState *D, FuncState *fs) {
     }
   }
   else {
+    const LoopState *loop;
+    int i;
     /* check if it is a break statement */
     if (jc == NULL && isloopbreak(currloop, target)) {
       setloophasbreak(fs, currloop, pc);
@@ -2108,39 +2130,32 @@ static void detectloops_onjump (DecompState *D, FuncState *fs) {
          line of the loop; if the line for this jump is greater than the start
          line, this cannot be a while-loop */
       if (D->usedebuginfo && getline(fs->f, pc) > getline(fs->f, target))
+        /* repeat-loops do not have fixed lines */
         loopkind = BL_REPEAT;
       else
         loopkind = BL_WHILE;
     }
+    /* check if this jump breaks from an outer loop, not the current one, which
+       would imply that the current loop does not exist */
     else if (currloop->unsure && !isloopexit(currloop, target)) {
-      const LoopState *loop;
-      int i;
-      /* check if this jump breaks from an outer loop and not the current one
-      */
       for (i = 2; (loop = getloopstate(fs, i))->kind != BL_FUNCTION; i++) {
         if (isloopexit(loop, target)) {
-          popnloopstate(fs, i-1);
+          combineloops: popnloopstate(fs, i-1);
           /* try again */
           detectloops_onjump(D, fs);
           return;
         }
       }
     }
-    /* check if there is a break out of an outer repeat-loop; in that case, the
-       outer loop and current loop are one loop */
+    /* combine the conditions of different repeat-loop states into 1 loop when
+       necessary */
     else if (jc == NULL &&
              currloop->kind == BL_REPEAT && !isloopbreak(currloop, target)) {
-      const LoopState *loop;
-      int i;
       for (i = 2; (loop = getloopstate(fs, i))->kind == BL_REPEAT; i++) {
         if (loop->startlabel != currloop->startlabel)
           break;
-        if (isloopbreak(loop, target)) {
-          popnloopstate(fs, i-1);
-          /* try again */
-          detectloops_onjump(D, fs);
-          return;
-        }
+        if (isloopbreak(loop, target))
+          goto combineloops;
       }
     }
   }
@@ -2164,9 +2179,9 @@ static void detectloops (DecompState *D, FuncState *fs) {
     /* fetch */
     updateinsn(D, fs);
     /* dispatch */
+    firstscan_handleop(D, fs);
     switch (D->a.insn.o) {
       case OP_JMP:
-        markjump(fs, fs->pc, D->a.insn.sbx);
         detectloops_onjump(D, fs);
         break;
       case OP_FORLOOP:
@@ -2180,25 +2195,7 @@ static void detectloops (DecompState *D, FuncState *fs) {
         set_ins_property(fs, target, INS_LEADER);
         break;
       }
-      case OP_LOADBOOL:
-        markloadbool(fs, fs->pc, D->a.insn.c);
-        break;
-      case OP_LOADNIL:
-        markloadnil(fs, fs->pc, D->a.insn.a, D->a.insn.b);
-        break;
-      case OP_CLOSURE:
-        markloadclosure(fs, fs->pc, D->a.insn.a, D->a.insn.bx);
-        break;
-      case OP_NEWTABLE:
-#ifdef HKSC_VERSION
-      case OP_NEWSTRUCT:
-#endif /* HKSC_VERSION */
-        marknewtable(fs, fs->pc, D->a.insn.b, D->a.insn.c);
-        break;
-      case OP_CLOSE:
-        set_ins_property(fs, fs->pc, INS_ENDSCOPE);
-        break;
-      default: break;
+      default:;
     }
     /* pump `hasbreak' every instruction; I use 2 bits for its value, a value
        of 1 means there was a jump detected that may or may not be a break */
@@ -2210,14 +2207,13 @@ static void detectloops (DecompState *D, FuncState *fs) {
       }
     }
     while (fs->pc == getcurrloop(fs)->startlabel)
-      D->a.pendingbreak = -1, nextnode = finalizeloopstate(fs, nextnode);
+      nextnode = finalizeloopstate(fs, nextnode);
   }
   set_ins_property(fs, 0, INS_LEADER);  /* first instruction is a leader */
   fs->root = addblnode(fs, 0, fs->f->sizecode-1, BL_FUNCTION);
   fs->root->firstchild = nextnode;
   D->loopstk.used = 0;
 }
-
 
 /*****************************************************************************/
 /* Check optiimzation phase - checks the function constants to get information
