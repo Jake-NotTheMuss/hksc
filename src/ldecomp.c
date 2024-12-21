@@ -195,6 +195,7 @@ typedef struct {
      once at any time, because it is only needed in the initial passes where
      functions are processsed consecutively, not recursively */
   struct {
+    int pendingbreak;  /* used in detectloops */
     struct BlockState *bl;  /* current block scope */
     /* prevnode is the lexical scope that was just left, nextnode is the next
        child scope to enter while scanning */
@@ -1875,7 +1876,7 @@ static void setloophasbreak (FuncState *fs, const LoopState *loop, int pc) {
   if (loop1->unsure == 0)
     loop1->hasbreak = 2;
   else if (loop1->hasbreak == 0)
-    loop1->hasbreak = 1;
+    loop1->hasbreak = 1, fs->D->a.pendingbreak = pc;
   if (loop1->hasbreak == 2)
     set_ins_property(fs, pc, INS_BREAKSTAT);
 }
@@ -1889,6 +1890,7 @@ static LoopState *pushloopstate (FuncState *fs, int kind, int start, int end) {
   loop->unsure = 0;
   loop->hasbreak = 0;
   setlooplabels(fs, loop);
+  fs->D->a.pendingbreak = -1;
   return loop;
 }
 
@@ -2154,7 +2156,7 @@ static void detectloops_onjump (DecompState *D, FuncState *fs) {
 */
 static void detectloops (DecompState *D, FuncState *fs) {
   BlockNode *nextnode = NULL;
-  int pendingbreak = -1;
+  D->a.pendingbreak = -1;
   assertphase(D, DECOMP_PHASE_DETECT_LOOPS);
   /* traverse code backwards, skip final return */
   fs->pc = fs->f->sizecode-1;
@@ -2200,17 +2202,15 @@ static void detectloops (DecompState *D, FuncState *fs) {
     }
     /* pump `hasbreak' every instruction; I use 2 bits for its value, a value
        of 1 means there was a jump detected that may or may not be a break */
-    if (getcurrloop(fs)->hasbreak == 1) {
-      if (pendingbreak == -1)
-        pendingbreak = fs->pc;
+    if (getcurrloop(fs)->hasbreak == 1 && D->a.pendingbreak != -1) {
       if (D->a.insn.o != OP_JMP && !testTMode(D->a.insn.o)) {
         cast(LoopState *, getcurrloop(fs))->hasbreak = 2;
-        set_ins_property(fs, pendingbreak, INS_BREAKSTAT);
-        pendingbreak = -1;
+        set_ins_property(fs, D->a.pendingbreak, INS_BREAKSTAT);
+        D->a.pendingbreak = -1;
       }
     }
     while (fs->pc == getcurrloop(fs)->startlabel)
-      pendingbreak = -1, nextnode = finalizeloopstate(fs, nextnode);
+      D->a.pendingbreak = -1, nextnode = finalizeloopstate(fs, nextnode);
   }
   set_ins_property(fs, 0, INS_LEADER);  /* first instruction is a leader */
   fs->root = addblnode(fs, 0, fs->f->sizecode-1, BL_FUNCTION);
