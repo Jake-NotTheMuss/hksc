@@ -2173,7 +2173,7 @@ static void detectloops (DecompState *D, FuncState *fs) {
   BlockNode *nextnode = NULL;
   D->a.pendingbreak = -1;
   assertphase(D, DECOMP_PHASE_DETECT_LOOPS);
-  /* traverse code backwards, skip final return */
+  /* traverse code backwards */
   fs->pc = fs->f->sizecode-1;
   for (; fs->pc >= 0; fs->pc = getprevpc(fs, fs->pc)) {
     /* fetch */
@@ -2187,7 +2187,7 @@ static void detectloops (DecompState *D, FuncState *fs) {
       case OP_FORLOOP:
       case OP_FORPREP: {
         int target = fs->pc+1+D->a.insn.sbx;
-        /* if enetering the forloop push a loop state */
+        /* if entering the forloop push a loop state */
         if (D->a.insn.o == OP_FORLOOP)
           pushloopstate(fs, BL_FORNUM, target, fs->pc+1);
         /* mark leader instructions */
