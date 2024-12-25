@@ -1981,20 +1981,21 @@ static const LoopState *getloopstate (FuncState *fs, int n) {
 }
 
 
-static BlockNode *finalizeloopstate (FuncState *fs, BlockNode *nextnode) {
+static void finalizeloopstate (FuncState *fs, BlockNode **pnextnode) {
   const LoopState *loop = getcurrloop(fs);
   int kind = loop->kind;
   int startpc = loop->startlabel;
   int endpc = loop->endlabel-1;
   int skip = (loop->unsure && loop->hasbreak < 2);
-  BlockNode *new_node;
+  BlockNode *new_node, *nextnode;
   poploopstate(fs);
   fs->D->a.pendingbreak = -1;
   if (skip)
-    return nextnode;
+    return;
   new_node = addblnode(fs, startpc, endpc, kind);
   /* find the next sibling for NEW_NODE from NEXTNODE, which may be a child
      block */
+  nextnode = *pnextnode;
   if (nextnode != NULL && nextnode->endpc <= endpc) {
     BlockNode *temp;
     new_node->firstchild = nextnode;
@@ -2016,7 +2017,7 @@ static BlockNode *finalizeloopstate (FuncState *fs, BlockNode *nextnode) {
     set_ins_property(fs, endpc, INS_FAILJUMP);
     set_ins_property(fs, endpc, INS_LOOPFAIL);
   }
-  return new_node;
+  *pnextnode = new_node;
 }
 
 
@@ -2207,7 +2208,7 @@ static void detectloops (DecompState *D, FuncState *fs) {
       }
     }
     while (fs->pc == getcurrloop(fs)->startlabel)
-      nextnode = finalizeloopstate(fs, nextnode);
+      finalizeloopstate(fs, &nextnode);
   }
   set_ins_property(fs, 0, INS_LEADER);  /* first instruction is a leader */
   fs->root = addblnode(fs, 0, fs->f->sizecode-1, BL_FUNCTION);
