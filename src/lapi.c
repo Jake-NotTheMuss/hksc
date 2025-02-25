@@ -177,86 +177,50 @@ LUA_API void lua_removeprefixmap (hksc_State *H, const char *arg) {
 ** compiler/decompiler settings (C -> stack)
 */
 
-LUA_API int lua_getemitstruct (hksc_State *H) {
-  int emit_struct;
-  lua_lock(H);
-  emit_struct = Settings(H).emit_struct;
-  lua_unlock(H);
-  return emit_struct;
-}
+#define returnfield(s) \
+  int s; lua_lock(H); s = Settings(H).s; lua_unlock(H); return s
+#define setfield(s) lua_lock(H); Settings(H).s = s; lua_unlock(H)
 
+LUA_API int lua_getemitstruct (hksc_State *H) {
+  returnfield(emit_struct);
+}
 
 LUA_API void lua_setemitstruct (hksc_State *H, int emit_struct) {
-  lua_lock(H);
-  Settings(H).emit_struct = emit_struct;
-  lua_unlock(H);
+  setfield(emit_struct);
 }
-
 
 LUA_API int lua_getliteralsenabled (hksc_State *H) {
-  int literals;
-  lua_lock(H);
-  literals = Settings(H).literals;
-  lua_unlock(H);
-  return literals;
+  returnfield(literals);
 }
 
-
-LUA_API void lua_setliteralsenabled (hksc_State *H, int literals)
-{
-  lua_lock(H);
-  Settings(H).literals = literals;
-  lua_unlock(H);
+LUA_API void lua_setliteralsenabled (hksc_State *H, int literals) {
+  setfield(literals);
 }
-
 
 LUA_API int lua_getstrip (hksc_State *H) {
-  int strip;
-  lua_lock(H);
-  strip = Settings(H).strip;
-  lua_unlock(H);
-  return strip;
+  returnfield(strip);
 }
-
 
 LUA_API void lua_setstrip (hksc_State *H, int strip) {
-  lua_lock(H);
-  Settings(H).strip = strip;
-  lua_unlock(H);
+  setfield(strip);
 }
-
 
 LUA_API int lua_getignoredebug (hksc_State *H) {
-  int ignore_debug;
-  lua_lock(H);
-  ignore_debug = Settings(H).ignore_debug;
-  lua_unlock(H);
-  return ignore_debug;
+  returnfield(ignore_debug);
 }
-
 
 LUA_API void lua_setignoredebug (hksc_State *H, int ignore_debug) {
-  lua_lock(H);
-  Settings(H).ignore_debug = ignore_debug;
-  lua_unlock(H);
+  setfield(ignore_debug);
 }
-
 
 #ifdef HKSC_DECOMPILER
 
 LUA_API int lua_getmatchlineinfo (hksc_State *H) {
-  int match_line_info;
-  lua_lock(H);
-  match_line_info = Settings(H).match_line_info;
-  lua_unlock(H);
-  return match_line_info;
+  returnfield(match_line_info);
 }
 
-
 LUA_API void lua_setmatchlineinfo (hksc_State *H, int match_line_info) {
-  lua_lock(H);
-  Settings(H).match_line_info = match_line_info;
-  lua_unlock(H);
+  setfield(match_line_info);
 }
 
 #endif /* HKSC_DECOMPILER */
