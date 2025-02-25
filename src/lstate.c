@@ -128,7 +128,7 @@ void luaE_cleanstate (hksc_State *H) {
       setnilvalue(key);
       setnilvalue(val);
     }
-    luaC_sweep(H, GC_COLLECT_KEEP_TEMP);
+    luaC_collectgarbage(H);
   }
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
   UNUSED(g);
