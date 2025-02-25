@@ -1007,15 +1007,9 @@ static void check_memo_testing_mode (LexState *ls) {
 #endif /* HKSC_GETGLOBAL_MEMOIZATION */
 
 
-struct SParser {
-  struct LexState *ls;
-  struct FuncState *fs;
-};
-
 static void parser_inner_func (hksc_State *H, void *ud) {
-  struct SParser *p = cast(struct SParser *, ud);
-  struct LexState *ls = p->ls;
-  struct FuncState *fs = p->fs;
+  struct LexState *ls = cast(void **, ud)[0];
+  struct FuncState *fs = cast(void **, ud)[1];
   open_func(ls, fs);
   fs->f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
   luaX_readfirsttoken(ls);  /* read first token */
@@ -1042,19 +1036,18 @@ static void parser_inner_func (hksc_State *H, void *ud) {
 
 
 Proto *luaY_parser (hksc_State *H, ZIO *z, Mbuffer *buff, const char *name) {
+  void *data [2];
   int status;
-  struct SParser p;
   struct LexState lexstate;
   struct FuncState funcstate;
   struct FunctionNameStack funcnamestack;
-  p.ls = &lexstate;
-  p.fs = &funcstate;
+  data[0] = &lexstate, data[1] = &funcstate;
   lexstate.buff = buff;
   lexstate.funcnamestack = &funcnamestack;
   funcnamestack.names = NULL;
   funcnamestack.used = funcnamestack.alloc = 0;
   luaX_setinput(H, &lexstate, z, luaS_new(H, name));
-  status = luaD_pcall(H, parser_inner_func, &p);
+  status = luaD_pcall(H, parser_inner_func, data);
   freefuncnamestack(&lexstate);
   if (status)
     luaD_throw(H, status); /* return the error to the outer pcall */
