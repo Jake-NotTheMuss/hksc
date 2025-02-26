@@ -1669,19 +1669,15 @@ static int getkoperands (OpCode o, int b, int c, int bx, int operands[2]) {
   switch (getBMode(o)) {
     case OpArgRK: if (!ISK(b)) break;
     /* fallthrough */
-    case OpArgK:
-      operands[n++] = INDEXK(b);
-      break;
-    default: break;
+    case OpArgK: operands[n++] = INDEXK(b); break;
+    default:;
   }
   /* see if C is a K index */
-  if (mode == iABC) switch (getCMode(o)) {
+  switch (getCMode(o)) {
     case OpArgRK: if (!ISK(c)) break;
     /* fallthrough */
-    case OpArgK:
-      operands[n++] = INDEXK(c);
-      break;
-    default: break;
+    case OpArgK: operands[n++] = INDEXK(c); break;
+    default:;
   }
   return n;
 }
@@ -2227,17 +2223,17 @@ static void detectloops (DecompState *D, FuncState *fs) {
 ** update the fields `isnilrk', `istruerk' and `isfalserk' accordingly
 */
 static void updateisrk (DecompState *D, FuncState *fs) {
-  int n, k[2];
+  int nk, k[2];
   assertphase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
-  n = getkoperands(D->a.insn.o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, k);
+  nk = getkoperands(D->a.insn.o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, k);
   /* check if true, false, or nil exist within MAXINDEXRK; for each of these
      values, if it does not exist within MAXINDEXRK, than the corresponding
      non-label opcode (OP_LOADNIL or OP_LOADBOOL) that loads the value could
      not have been optimized as an RK operand in the next instruction; if it
      could, the lack of optimization indicates a statement boundary */
-  while (n--) {
-    const TValue *o = &fs->f->k[k[n]];
-    int isrk = (k[n] <= MAXINDEXRK);
+  while (nk--) {
+    const TValue *o = &fs->f->k[k[nk]];
+    int isrk = (k[nk] <= MAXINDEXRK);
     if (ttisnil(o))
       D->a.isnilrk = isrk;
     else if (ttisboolean(o)) {
@@ -2317,11 +2313,11 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
   int ak[2];
   OpCode o = D->a.insn.o;
   /* mark any constants referenced by the current instruction */
-  int n = getkoperands(o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, ak);
+  int nk = getkoperands(o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, ak);
   D->a.newref = 0;
   unset_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-  while (n--) {
-    int k = ak[n];
+  while (nk--) {
+    int k = ak[nk];
     if (luaO_bitmapsetq(&D->kmap, k)) {
       if (!D->a.newref && !luaO_isbitconsecutive(&D->kmap, k))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
