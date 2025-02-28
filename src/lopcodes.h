@@ -273,4 +273,7 @@ LUAI_DATA const char *const luaP_opnames[NUM_OPCODES+1];  /* opcode names */
   ((o) == OP_SETSLOTN || (o) == OP_SETSLOTI || (o) == OP_SETSLOT || \
    (o) == OP_SETSLOTS || (o) == OP_SETSLOTMT)
 
+#define CASE_OP_R1_LABEL(o) o: case o##_R1
+#define IS_OP_R1(o, op) ((o) == op || (o) == op##_R1)
+
 #endif

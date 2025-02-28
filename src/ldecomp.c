@@ -1549,7 +1549,7 @@ static int getinsndata (FuncState *fs, int pc) {
 
 
 static int isunarycode (OpCode o) {
-  return (o == OP_UNM || o == OP_NOT || o == OP_NOT_R1 || o == OP_LEN);
+  return (o == OP_UNM || IS_OP_R1(o, OP_NOT) || o == OP_LEN);
 }
 
 
@@ -1715,9 +1715,8 @@ static int getregoperands (OpCode o, int a, int b, int c, OperandDesc slots[3])
       return n;
 #endif /* LUA_CODIW6 */
     case OP_CHECKTYPE: case OP_CHECKTYPES: case OP_CHECKTYPE_D:
-    case OP_TEST_R1:
 #endif /* HKSC_VERSION */
-    case OP_TEST:
+    case CASE_OP_R1_LABEL(OP_TEST):
       slots[0].r = a;
       slots[0].mode = OpArgR;
       return 1;
@@ -2272,7 +2271,7 @@ static int isunaryfullexpr (DecompState *D, FuncState *fs) {
     /* if previous is LOADK and the constant is a number, it cannot be a
        subexpression */
     return (prevOp == OP_LOADK && ttisnumber(&fs->f->k[GETARG_Bx(prev)]));
-  else if (o == OP_NOT || o == OP_NOT_R1)
+  else if (IS_OP_R1(o, OP_NOT))
     /* if the previous is a constant, is cannot be a subexpression */
     return opLoadsK(prevOp) && !test_ins_property(fs, prevpc, INS_BOOLLABEL);
   return 0;
@@ -2327,7 +2326,7 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
     }
   }
   /* update the highest upvalue referenced */
-  if (o == OP_GETUPVAL || o == OP_SETUPVAL || o == OP_SETUPVAL_R1) {
+  if (o == OP_GETUPVAL || IS_OP_R1(o, OP_SETUPVAL)) {
     int up = D->a.insn.b;
     /* same as with constant references, upvalue references are used to check
        if an assignment list is necessary */
@@ -4456,25 +4455,21 @@ static void dumpcloseparen2 (DecompState *D, FuncState *fs, ExpNode *exp) {
 
 static void dumphashitem2 (DecompState *D, FuncState *fs, ExpNode *exp) {
   struct HoldItem hold1, hold2;
-  int isfield;
-  int rkkey;
-  lua_assert(exp->kind == ESTORE);
-  isfield = exp->u.store.rootop == OP_SETFIELD;
-  rkkey = exp->u.store.aux2;
-  if (isfield && ISK(rkkey) && ttisstring(&fs->f->k[INDEXK(rkkey)])) {
-    TString *field = rawtsvalue(&fs->f->k[INDEXK(rkkey)]);
+  int key = check_exp(exp->kind == ESTORE, exp->u.store.aux2);
+  if (exp->u.store.isfield && ISK(key) && ttisstring(&fs->f->k[INDEXK(key)])) {
+    TString *field = rawtsvalue(&fs->f->k[INDEXK(key)]);
     addtsholditem2(D, &hold1, field, 1);
     addliteralholditem2(D, &hold2, "=", 1);
   }
   else {
     struct HoldItem bracket;
     addliteralholditem2(D, &bracket, "[", 0);
-    if (istempreg(fs, rkkey))
+    if (istempreg(fs, key))
       dumpexpoperand2(D, fs, index2exp(fs, exp->auxlistprev), exp, 0);
     else {
       if (exp->line)
         checklineneeded2(D, fs, exp);
-      dumpRK2(D, fs, rkkey, 0);
+      dumpRK2(D, fs, key, 0);
     }
     DumpLiteral("] =",D);
     D->needspace = 1;
@@ -5523,7 +5518,7 @@ static TString *buildfuncname (struct LHSStringBuilder *sb, ExpNode *exp,
     return getlocvar2(fs, exp->info)->varname;
   }
   else {
-    OpCode rootop = exp->u.store.rootop;
+    OpCode rootop = cast(OpCode, exp->u.store.rootop);
     if (rootop == OP_SETGLOBAL) {
       TString *name = rawtsvalue(&fs->f->k[exp->u.store.aux1]);
       if (name->tsv.reserved == CONFLICTING_GLOBAL) {
@@ -5538,7 +5533,7 @@ static TString *buildfuncname (struct LHSStringBuilder *sb, ExpNode *exp,
     else if (rootop == OP_SETUPVAL) {
       return fs->upvalues[exp->u.store.aux1];
     }
-    else if (rootop == OP_SETFIELD || rootop == OP_SETTABLE) {
+    else if (rootop == OP_SETTABLE) {
       int tab = exp->u.store.aux1;
       int k = exp->u.store.aux2;
       if (!istempreg(fs, tab)) {
@@ -5610,13 +5605,13 @@ static void dischargestores2 (StackAnalyzer *sa, FuncState *fs) {
         D(printf("OP_MOVE from reg %d\n", exp->info));
         addregtolhs2(&sb, exp->info);
       }
-      else if (rootop == OP_SETFIELD || rootop == OP_SETTABLE) {
+      else if (rootop == OP_SETTABLE) {
         sb.currpriority = SUBEXPR_PRIORITY;
         addregtolhs2(&sb, exp->u.store.aux1);  /* add table variable */
         sb.needspace = 0;  /* no space between table and `[' */
         sb.currpriority = 0;
         /* add index */
-        addindextolhs2(&sb, exp->u.store.aux2, rootop == OP_SETFIELD);
+        addindextolhs2(&sb, exp->u.store.aux2, exp->u.store.isfield);
       }
       else if (rootop == OP_SETGLOBAL || rootop == OP_SETUPVAL) {
         TString *varname;
@@ -5665,9 +5660,9 @@ static void dischargestores2 (StackAnalyzer *sa, FuncState *fs) {
   lastsrc->closeparenline = 0;
   D(printf("lastsrcreg = %d\n", lastsrcreg));
   for (;;) { /* tarverse the chain to dump RHS values */
-    /* get expression to assigm */
+    /* get expression to assign */
     ExpNode *src = (exp->kind == ESTORE) ? index2exp(fs, exp->aux) : exp;
-    if (exp->u.store.srcreg == -1)
+    if (exp->u.store.srcreg == NO_REG)
       lua_assert(src != NULL);
     if (src != NULL && src != lastsrc) {
       /* for N remaining variables, if there are exactly N expressions
@@ -5689,7 +5684,7 @@ static void dischargestores2 (StackAnalyzer *sa, FuncState *fs) {
         DumpComma(D);
       dumpRK2(D, fs, exp->u.store.srcreg, exp);
     }
-    else if (exp->u.store.srcreg != -1 &&
+    else if (exp->u.store.srcreg != NO_REG &&
              test_reg_property(fs, exp->u.store.srcreg, REG_LOCAL)) {
       if (i != 0)
         DumpComma(D);
@@ -6267,7 +6262,7 @@ static ExpNode *addexp2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
       exp->u.unop.b = b;
       exp->u.unop.op = OPR_MINUS;
       break;
-    case OP_NOT: case OP_NOT_R1:
+    case CASE_OP_R1_LABEL(OP_NOT):
       exp->kind = EUNOP;
       exp->u.unop.b = b;
       exp->u.unop.op = OPR_NOT;
@@ -6284,7 +6279,8 @@ static ExpNode *addexp2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
       exp->u.indexed.isfield = 0;
       exp->aux = a+1;
       break;
-    case OP_GETFIELD: case OP_GETFIELD_R1:
+#ifdef HKSC_VERSION
+    case CASE_OP_R1_LABEL(OP_GETFIELD):
       exp->kind = EINDEXED;
       exp->u.indexed.b = b;
       exp->u.indexed.c = RKASK(c);
@@ -6293,22 +6289,14 @@ static ExpNode *addexp2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
       break;
     case OP_GETTABLE_S:
     case OP_GETTABLE_N:
+#endif /* HKSC_VERSION */
     case OP_GETTABLE:
       exp->kind = EINDEXED;
       exp->u.indexed.b = b;
       exp->u.indexed.c = c;
       exp->u.indexed.isfield = 0;
       break;
-    case OP_CALL:
-    case OP_CALL_I:
-    case OP_CALL_I_R1:
-    case OP_CALL_C:
-    case OP_CALL_M:
-    case OP_TAILCALL:
-    case OP_TAILCALL_I:
-    case OP_TAILCALL_I_R1:
-    case OP_TAILCALL_C:
-    case OP_TAILCALL_M:
+    case CASE_OP_CALL_LABEL:
       exp->kind = ECALL;
       exp->u.call.op = o;
       exp->u.call.nret = c-1;
@@ -6860,26 +6848,24 @@ static int addstore2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
                       int a, int b, int c, int bx) {
   ExpNode *exp;
   OpCode rootop;
-  int srcreg;
-  int info;
-  int aux1, aux2;
+  int srcreg, info, aux1, aux2;
+  int isfield = 0;
   switch (o) {
-    case OP_SETFIELD: case OP_SETFIELD_R1:
-      /* OP_SETFIELD is used as the root if it should be written as a field */
-      if (!isfieldname(rawtsvalue(&fs->f->k[b])))
-        rootop = OP_SETTABLE;
-      else
-        rootop = OP_SETFIELD;
-      b = RKASK(b);
-      goto addstoretable;
-    case OP_SETTABLE:
+#ifdef HKSC_VERSION
+    case CASE_OP_R1_LABEL(OP_SETFIELD):
+      goto calcisfield;
     case OP_SETTABLE_BK:
     case OP_SETTABLE_S:
     case OP_SETTABLE_S_BK:
     case OP_SETTABLE_N:
     case OP_SETTABLE_N_BK:
+#endif /* HKSC_VERSION */
+    case OP_SETTABLE:
+      if (ISK(b) && ttisstring(&fs->f->k[b])) {
+        goto calcisfield;
+        calcisfield: isfield = isfieldname(rawtsvalue(&fs->f->k[b]));
+      }
       rootop = OP_SETTABLE;
-      addstoretable:
       srcreg = c;
       info = a;
       aux1 = a;  /* table register */
@@ -6894,8 +6880,7 @@ static int addstore2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
       aux1 = bx;
       aux2 = 0;
       break;
-    case OP_SETUPVAL:
-    case OP_SETUPVAL_R1:
+    case CASE_OP_R1_LABEL(OP_SETUPVAL):
       CHECK(fs, isregvalid(fs, a),
             "invalid register referenced in OP_SETUPVAL");
       srcreg = a;
@@ -6918,6 +6903,7 @@ static int addstore2 (StackAnalyzer *sa, FuncState *fs, int pc, OpCode o,
   exp->u.store.aux1 = aux1;
   exp->u.store.aux2 = aux2;
   exp->u.store.rootop = rootop;
+  exp->u.store.isfield = isfield;
   if (!istempreg(fs, srcreg))
     exp->aux = 0;
   else
@@ -6938,23 +6924,23 @@ static ExpNode *addhashitem2 (FuncState *fs, int pc, OpCode o, int a, int b,
   ExpNode *exp;
   OpCode rootop;
   int info, aux1, aux2, srcreg;
+  int isfield = 0;
   switch (o) {
-    case OP_SETFIELD: case OP_SETFIELD_R1:
-      /* OP_SETFIELD is used as the root if it should be written as a field */
-      if (!isfieldname(rawtsvalue(&fs->f->k[b])))
-        rootop = OP_SETTABLE;
-      else
-        rootop = OP_SETFIELD;
-      b = RKASK(b);
-      goto addstoretable;
-    case OP_SETTABLE:
+#ifdef HKSC_VERSION
+    case CASE_OP_R1_LABEL(OP_SETFIELD):
+      goto calcisfield;
     case OP_SETTABLE_BK:
     case OP_SETTABLE_S:
     case OP_SETTABLE_S_BK:
     case OP_SETTABLE_N:
     case OP_SETTABLE_N_BK:
+#endif /* HKSC_VERSION */
+    case OP_SETTABLE:
+      if (ISK(b) && ttisstring(&fs->f->k[b])) {
+        goto calcisfield;
+        calcisfield: isfield = isfieldname(rawtsvalue(&fs->f->k[b]));
+      }
       rootop = OP_SETTABLE;
-      addstoretable:
       srcreg = c;
       info = a;
       aux1 = a;  /* table register */
@@ -6969,6 +6955,7 @@ static ExpNode *addhashitem2 (FuncState *fs, int pc, OpCode o, int a, int b,
   exp->u.store.aux1 = aux1;
   exp->u.store.aux2 = aux2;
   exp->u.store.rootop = rootop;
+  exp->u.store.isfield = isfield;
   exp->line = getline2(fs, pc);
   if (!istempreg(fs, srcreg))
     exp->aux = 0;

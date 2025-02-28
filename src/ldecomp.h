@@ -236,11 +236,13 @@ typedef struct ExpNode {
       int isfield;  /* true if the emitter should write it as a field */
     } indexed;
     struct {
-      OpCode rootop;  /* the `root' opcode (without R1, BK, S or N suffixes)
-                         ROOTOP serves as a subtype for ESTORE */
-      int srcreg;  /* the source register to store (because the source
-                      expression may be NULL in the case of OP_LOADNIL or 
-                      OP_VARARG) */
+      ENUM_BYTE(OpCode, rootop);  /* the `root' opcode (without R1, BK, S or N
+                                     suffixes) ROOTOP serves as a subtype for
+                                     ESTORE */
+      lu_byte srcreg;  /* the source register to store (because the source
+                          expression may be NULL in the case of OP_LOADNIL or 
+                          OP_VARARG) */
+      lu_byte isfield;
       int aux1;  /* table register for OP_SETTABLE family
                     upvalue index for OP_SETUPVAL
                     K index for OP_SETGLOBAL */
@@ -299,6 +301,9 @@ typedef struct SlotDesc {
 #define IS_OP_GETTABLE(o)  ((o) == OP_GETTABLE)
 #define IS_OP_SETTABLE(o)  ((o) == OP_SETTABLE)
 #define IS_OP_SETSLOT(o)  0
+#define CASE_OP_R1_LABEL(o) o
+#define IS_OP_R1(o, op) ((o) == op)
 #endif /* HKSC_VERSION */
+
 
 #endif
