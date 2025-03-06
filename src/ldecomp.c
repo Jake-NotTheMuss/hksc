@@ -784,17 +784,6 @@ static void debugexp (const FuncState *fs, const ExpNode *exp, int indent) {
 #define debugexp(fs,exp,indent) ((void)0)
 #endif /* LUA_DEBUG */
 
-
-/*
-** get the pc of the last encountered closure in the function FS
-*/
-static int getlastclosurepc (const DecompState *D, const FuncState *fs) {
-  int lastclpc = D->lastcl.pc;
-  lua_assert(ispcvalid(fs, lastclpc));
-  lua_assert(GET_OPCODE(fs->f->code[lastclpc]) == OP_CLOSURE);
-  return lastclpc;
-}
-
 #endif /* HKSC_DECOMP_HAVE_PASS2 */
 
 enum {
@@ -837,8 +826,10 @@ static int isloadupval (const FuncState *fs, int pc, int *upval, int *type) {
 */
 static void initupvalues (FuncState *fs, const FuncState *parent) {
   DecompState *D = fs->D;
-  int upval, type, nupn = fs->sizeupvalues;
-  const int pc = getlastclosurepc(D, parent)+1;
+  const int pc = D->lastcl.pc, nupn = fs->sizeupvalues;
+  int upval, type;
+  lua_assert(ispcvalid(parent, pc));
+  lua_assert(GET_OPCODE(parent->f->code[pc]) == OP_CLOSURE);
   lua_assert(D->usedebuginfo == 0);
   while (--nupn >= 0 && isloadupval(parent, pc+nupn, &upval, &type)) {
     /* check which kind of upvalue is encoded */
