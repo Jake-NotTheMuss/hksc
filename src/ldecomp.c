@@ -826,8 +826,8 @@ static int isloadupval (const FuncState *fs, int pc, int *upval, int *type) {
 */
 static void initupvalues (FuncState *fs, const FuncState *parent) {
   DecompState *D = fs->D;
-  const int pc = D->lastcl.pc, nupn = fs->sizeupvalues;
-  int upval, type;
+  const int pc = D->lastcl.pc;
+  int upval, type, nupn = fs->sizeupvalues;
   lua_assert(ispcvalid(parent, pc));
   lua_assert(GET_OPCODE(parent->f->code[pc]) == OP_CLOSURE);
   lua_assert(D->usedebuginfo == 0);
@@ -1239,11 +1239,9 @@ static void updateline2 (FuncState *fs, int line, DecompState *D) {
 
 #if !defined(LUA_COMPAT_LSTR) || LUA_COMPAT_LSTR != 2
 static size_t getlstrlevel (const TString *ts) {
-  int inbracket = 0;
-  size_t count = 0;
-  size_t level = 0;
   const char *str = check_exp(ts, getstr(ts));
-  size_t len = ts->tsv.len;
+  size_t count = 0, level = 0, len = ts->tsv.len;
+  int inbracket = 0;
   for (; len; str++, len--) {
     if (inbracket) {
       if (*str == '=')
