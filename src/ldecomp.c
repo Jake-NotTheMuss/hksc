@@ -2491,16 +2491,13 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   initbitmaps(D, fs);
 }
 
-static void parser_reset (DecompState *D) {
+
+static void parser_advance (DecompState *D, FuncState *fs) {
+  if (D->parser->token != DEFAULT_TOKEN)
+    fs->pc = getnextpc(fs, fs->pc);
   D->parser->token = DEFAULT_TOKEN;
   D->parser->base = D->parser->top = D->parser->actualtop = NO_REG;
   D->parser->status = PARSER_STATUS_INITIAL;
-}
-
-
-static void parser_advance (DecompState *D, FuncState *fs) {
-  fs->pc = getnextpc(fs, fs->pc);
-  parser_reset(D);
 }
 
 
@@ -3185,7 +3182,7 @@ static int parseexpression (DecompState *D, FuncState *fs) {
       return D->parser->token;
     }
   }
-  return TOKEN_ENDOFCODE;
+  return D->parser->token = TOKEN_ENDOFCODE;
 }
 
 
@@ -3565,10 +3562,7 @@ static void parseassignments (DecompState *D, FuncState *fs) {
         buffer.n = 0;
       if (token == TOKEN_STORE)
         break;
-      if (token != DEFAULT_TOKEN)
-        parser_advance(D, fs);
-      else
-        parser_reset(D);
+      parser_advance(D, fs);
     }
     parseassignment(D, fs, &buffer);
   } done:
