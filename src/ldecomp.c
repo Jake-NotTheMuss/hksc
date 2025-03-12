@@ -423,17 +423,14 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
   nodesetflagval(node, EMPTY, endpc < startpc);
 }
 
-
 static int isloopnode(const BlockNode *node) {
   int k = node->kind;
   return (k == BL_WHILE || k == BL_REPEAT || k == BL_FORNUM ||k == BL_FORLIST);
 }
 
-
 static void recalcemptiness(BlockNode *node) {
   nodesetflagval(node, EMPTY, node->endpc < node->startpc);
 }
-
 
 /*
 ** true if the if-block represented by NODE has en else-part
@@ -442,7 +439,6 @@ static int haselsepart (const BlockNode *node) {
   lua_assert(node != NULL && node->kind == BL_IF);
   return (node->nextsibling != NULL && node->nextsibling->kind == BL_ELSE);
 }
-
 
 /*
 ** returns the pc where a natural OP_CLOSE would occur within NODE, natural
@@ -457,7 +453,6 @@ static int getnaturalclosepc (const BlockNode *node) {
     default: return node->endpc-1;
   }
 }
-
 
 /*
 ** returns the natural endpc for local variables declared inside NODE
@@ -480,7 +475,6 @@ static int getnaturalvarendpc (const BlockNode *node) {
   return pc - nodegetflag(node, UPVAL);
 }
 
-
 /*
 ** returns the first pc that would be in the indented part of a block in the
 ** source code
@@ -502,7 +496,6 @@ static int getfirstindentedpc (const FuncState *fs, const BlockNode *node) {
   }
   return lastpossiblestart;
 }
-
 
 /*
 ** get the `follow block' pc, which is the pc where a `return' or `break' can
@@ -565,18 +558,14 @@ static int getforloopbase (const Instruction *code, const BlockNode *node) {
   return GETARG_A(code[endfor]);
 }
 
-
 static int getnumforloopvars (const Instruction *code, const BlockNode *node) {
   lua_assert(isforloop(node));
   return node->kind == BL_FORNUM ? 1 : GETARG_C(code[getendfor(node)]);
 }
 
-
 static SlotDesc *getslotdesc (const FuncState *fs, int reg) {
-  SlotDesc *slot = check_exp(isregvalid(fs, reg), &fs->regproperties[reg]);
-  return slot;
+  return check_exp(isregvalid(fs, reg), &fs->regproperties[reg]);
 }
-
 
 #ifdef HKSC_DECOMP_HAVE_PASS2
 
@@ -602,48 +591,21 @@ static int exp2index (const FuncState *fs, const ExpNode *exp) {
 }
 
 static ExpNode *index2exp (const FuncState *fs, int index) {
-  if (index == 0)
-    return NULL;
-  else
-    return fs->expstack.s+(index-1);
+  return index == 0 ? NULL : fs->expstack.s + (index - 1);
 }
-
-
-#define checkfirstexp(fs) check_exp(getfirstexp(fs) != NULL, getfirstexp(fs))
-#define checktopexp(fs) check_exp(gettopexp(fs) != NULL, gettopexp(fs))
-
-static ExpNode *getfirstexp (const FuncState *fs) {
-  int used = fs->expstack.used;
-  if (used == 0)
-    return NULL;
-  else {
-    lua_assert(used > 0);
-    return &fs->expstack.s[0];
-  }
-}
-
 
 static ExpNode *gettopexp (const FuncState *fs) {
-  int used = fs->expstack.used;
-  if (used == 0)
-    return NULL;
-  else {
-    lua_assert(used > 0);
-    return &fs->expstack.s[used-1];
-  }
+  return fs->expstack.used == 0 ? NULL : &fs->expstack.s[fs->expstack.used-1];
 }
-
 
 static int hasmultret (const ExpNode *exp) {
   return (exp->kind == ECALL || exp->kind == EVARARG);
 }
 
-
 static int ishashtable (const ExpNode *exp) {
   lua_assert(exp->kind == ECONSTRUCTOR);
   return (exp->u.cons.narray == 0 &&  exp->u.cons.nhash != 0);
 }
-
 
 static int getexpline (const ExpNode *exp) {
   int line = exp->line;
@@ -652,14 +614,12 @@ static int getexpline (const ExpNode *exp) {
   return line;
 }
 
-
 static int gethighestexpreg (const ExpNode *exp) {
   int numextraregs = 0;
   if (hasmultret(exp))
     numextraregs = exp->kind == ECALL ? exp->u.call.nret-1 : exp->aux-2;
   return exp->info + numextraregs;
 }
-
 
 /*
 ** check if an expression returns multiple values REG is the last one clobbered
@@ -669,7 +629,6 @@ static int hasmultretuptoreg (const ExpNode *exp, int reg) {
     return gethighestexpreg(exp) == reg;
   return 0;
 }
-
 
 /*
 ** returns true if EXP is a multret expression but only uses a single value
@@ -684,7 +643,6 @@ static int hasmultretsinglereg (const ExpNode *exp) {
   }
   return 0;
 }
-
 
 #ifdef LUA_DEBUG
 static const char *getunoprstring (UnOpr op);
@@ -7864,7 +7822,6 @@ static void blnode2 (StackAnalyzer *sa, FuncState *fs, BlockNode *node) {
         if (numvars > 0) {
           checkdischargestores2(sa, fs);
           D(printf("NEW LOCAL VARIABLE\n"));
-          (void)getfirstexp;
           emitlocalstat2(fs, numvars, pc);
         }
       }
