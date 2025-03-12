@@ -2468,7 +2468,7 @@ static int stackexprisunreachable (const FuncState *fs, const StackExpr *e) {
       getjumpcontrol(fs, jumppc) == NULL) {
     /* then check if the jump skips the whole expression */
     int nextlabel = getjump(fs, jumppc);
-    if (GET_OPCODE(code[nextlabel-1]) == OP_JMP)
+    if (GET_OPCODE(code[getprevpc(fs, nextlabel)]) == OP_JMP)
       nextlabel -= 1 + (getjumpcontrol(fs, nextlabel-1) != NULL);
     return (getprevpc(fs, nextlabel) == e->endpc);
   }
