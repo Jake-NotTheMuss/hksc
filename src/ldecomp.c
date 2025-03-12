@@ -2378,8 +2378,7 @@ static void clearslotconstructor (FuncState *fs, int r) {
 static struct ConsControl *getslotconstructor (const FuncState *fs, int r) {
   SlotDesc *slot = getslotdesc(fs, r);
   int index = slot->u.s.aux;
-  lua_assert(isslotconstructor(fs, r));
-  return fs->D->cons_state.s + index;
+  return check_exp(isslotconstructor(fs, r), fs->D->cons_state.s + index);
 }
 
 
@@ -2443,10 +2442,8 @@ static void initstackexpr (StackExpr *e) {
 
 static void updatestackexpr (DecompState *D, int pc, int reg) {
   StackExpr *e = D->parser->expr;
-  if (e->startpc == -1) {
-    e->startpc = pc;
-    e->firstreg = reg;
-  }
+  if (e->startpc == -1)
+    e->startpc = pc, e->firstreg = reg;
   e->endpc = pc;
   e->lastreg = reg;
 }
@@ -2459,11 +2456,8 @@ static int parser_getendlabel (const DecompState *D) {
 
 
 static StackExpr *parser_getexpr (const DecompState *D, int n) {
-  int count = D->stackexpr.used;
-  lua_assert(n < 0);
-  if (count + n <= 0)
-    return NULL;
-  return D->parser->expr+n;
+  lua_assert(n < 0); /* indexed from the top */
+  return D->stackexpr.used + n <= 0 ? NULL : D->parser->expr + n;
 }
 
 
