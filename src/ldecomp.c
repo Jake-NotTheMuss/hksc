@@ -2250,7 +2250,7 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
   unset_ins_property(fs, fs->pc, INS_SKIPPEDREF);
   while (nk--) {
     int k = ak[nk];
-    if (luaO_bitmapsetq(&D->kmap, k)) {
+    if (!luaO_bitmapsetq(&D->kmap, k)) {
       if (!D->a.newref && !luaO_isbitconsecutive(&D->kmap, k))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
       D->a.newref |= (cast(lu_int32, k) << (2 + (D->a.newref ? SIZE_A : 0)));
@@ -2263,7 +2263,7 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
     int up = D->a.insn.b;
     /* same as with constant references, upvalue references are used to check
        if an assignment list is necessary */
-    if (luaO_bitmapsetq(&D->upvalmap, up)) {
+    if (!luaO_bitmapsetq(&D->upvalmap, up)) {
       D->a.newref = (cast(lu_int32, up) << 2) | 3;
       if (!luaO_isbitconsecutive(&D->upvalmap, up))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);

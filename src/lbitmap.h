@@ -33,10 +33,10 @@ typedef struct {
   cast(void, ((b)->blocks)[(i) >> 5] &= ~(cast(lu_int32, 1) << ((i) & 31)))
 
 /*
-** set bit I and return 0 if the bit was already set, 1 otherwise
+** set bit I and return 1 if the bit was already set, 0 otherwise
 */
 #define luaO_bitmapsetq(b,i) \
-  (luaO_bitmaptest(b,i) ? 0 : (luaO_bitmapset(b,i), 1))
+  (luaO_bitmaptest(b,i) ? 1 : (luaO_bitmapset(b,i), 0))
 
 LUAI_FUNC void luaO_bitmapalloc (hksc_State *H, Bitmap *bitmap, int n);
 LUAI_FUNC void luaO_bitmapfree (hksc_State *H, Bitmap *bitmap);
