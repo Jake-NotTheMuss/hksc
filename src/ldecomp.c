@@ -424,8 +424,7 @@ static void initblnode(BlockNode *node, int startpc, int endpc, int kind) {
 }
 
 
-static int isloopnode(const BlockNode *node)
-{
+static int isloopnode(const BlockNode *node) {
   int k = node->kind;
   return (k == BL_WHILE || k == BL_REPEAT || k == BL_FORNUM ||k == BL_FORLIST);
 }
@@ -509,8 +508,7 @@ static int getfirstindentedpc (const FuncState *fs, const BlockNode *node) {
 ** get the `follow block' pc, which is the pc where a `return' or `break' can
 ** exist without needing to augment a do-block around it
 */
-static int getblockfollowpc(const BlockNode *node)
-{
+static int getblockfollowpc(const BlockNode *node) {
   int pc;
   switch (node->kind) {
     /* for REPEAT, it needs to be calculated with stack analysis */
@@ -588,11 +586,8 @@ static SlotDesc *getslotdesc (const FuncState *fs, int reg) {
 /*****************************************************************************/
 
 static ExpNode *newexp (FuncState *fs) {
-  hksc_State *H = fs->H;
-  lua_assert(fs->expstack.used >= 0 && fs->expstack.used <=fs->expstack.alloc);
-  return VEC_NEWELT(H, fs->expstack);
+  return VEC_NEWELT(fs->H, fs->expstack);
 }
-
 
 #define prevexp(fs,exp) index2exp(fs, exp->previndex)
 
@@ -605,7 +600,6 @@ static int exp2index (const FuncState *fs, const ExpNode *exp) {
     return exp-fs->expstack.s+1;
   }
 }
-
 
 static ExpNode *index2exp (const FuncState *fs, int index) {
   if (index == 0)
