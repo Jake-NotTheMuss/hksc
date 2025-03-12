@@ -27,6 +27,7 @@
 #include "lobject.h"
 #include "lopcodes.h"
 #include "lparser.h"
+#include "lprintk.h"
 #include "lstate.h"
 #include "lstring.h"
 #ifdef HKSC_VERSION
@@ -47,16 +48,6 @@
 #else /* !HKSC_DECOMP_DEBUG_PASS1 */
 #define HKSC_DECOMP_HAVE_PASS2
 #endif /* HKSC_DECOMP_DEBUG_PASS1 */
-
-#ifndef HKSC_VERSION
-#define hksc_State lua_State
-void luaO_printstring (const TString *ts,
-                       void (*pfn) (const char *s, size_t l, void *ud),
-                       void *ud, int quote);
-void luaO_printk (const TValue *o,
-                  void (*pfn) (const char *s, size_t l, void *ud),
-                  void *ud, int quote);
-#endif /* HKSC_VERSION */
 
 /*
 ** additional reserved values for TStrings to resolve conflicts between global
@@ -8142,104 +8133,3 @@ int luaU_decompile (hksc_State *H, const Proto *f, lua_Writer w, void *data) {
 }
 
 #endif /* HKSC_DECOMPILER */
-
-
-/* print a string as it would appear in Lua code */
-void luaO_printstring (const TString *ts,
-                       void (*pfn) (const char *s, size_t l, void *ud),
-                       void *ud, int quote) {
-  char buff[64];
-  size_t bufflen = 0;
-  size_t i, n = ts->tsv.len;
-#define PUTCHAR(c) do { \
-  if (bufflen == sizeof(buff)) { \
-    (*pfn)(buff, sizeof(buff), ud); \
-    bufflen = 0; \
-  } \
-  buff[bufflen++] = (c); \
-  buff[bufflen] = 0; \
-} while (0)
-  PUTCHAR(quote);
-  for (i = 0; i < n; i++) {
-    int c = getstr(ts)[i];
-    if (c != quote && c != '\\' && isprint(c))
-      PUTCHAR(c);
-    else {
-      PUTCHAR('\\');
-      if (c == quote)
-        PUTCHAR(quote);
-      else switch (c) {
-        case '\\': PUTCHAR('\\'); break;
-        case '\a': PUTCHAR('a'); break;
-        case '\b': PUTCHAR('b'); break;
-        case '\f': PUTCHAR('f'); break;
-        case '\n': PUTCHAR('n'); break;
-        case '\r': PUTCHAR('r'); break;
-        case '\t': PUTCHAR('t'); break;
-        case '\v': PUTCHAR('v'); break;
-        default:
-          if (bufflen + 4 > sizeof(buff)) {
-            (*pfn)(buff, bufflen, ud);
-            bufflen = 0;
-          }
-          bufflen += sprintf(buff + bufflen, "%03u", cast(unsigned char, c));
-      }
-    }
-  }
-  PUTCHAR(quote);
-  if (bufflen)
-    (*pfn)(buff, bufflen, ud);
-#undef PUTCHAR
-}
-
-/* print a constant value as it would appear in Lua code */
-void luaO_printk (const TValue *o,
-                  void (*pfn) (const char *s, size_t l, void *ud),
-                  void *ud, int quote) {
-  switch (ttype(o)) {
-    char buff[LUAI_MAXNUMBER2STR+LUAI_MAXUI642STR+1];
-    int n;
-    char lsuf;
-    lu_int64 ui64;
-    case LUA_TNIL: (*pfn)("nil", 3, ud); break;
-    case LUA_TBOOLEAN:
-      if (bvalue(o)) (*pfn)("true", 4, ud);
-      else (*pfn)("false", 5, ud);
-      break;
-#ifdef HKSC_VERSION
-    case LUA_TLIGHTUSERDATA: {
-      size_t hl = hlvalue(o);
-      lsuf = 'i';
-#ifndef LUA_UI64_S
-      ui64 = cast(lu_int64, hl);
-#else
-      ui64.lo = hl & 0xffffffff;
-      if (sizeof(size_t) * CHAR_BIT > 32)
-        ui64.hi = hl >> 32;
-      else
-        ui64.hi = 0;
-#endif /* LUA_UI64_S */
-      goto printui64;
-    }
-#endif /* HKSC_VERSION */
-    case LUA_TNUMBER:
-      n = lua_number2str(buff, nvalue(o));
-      (*pfn)(buff, n, ud);
-      break;
-    case LUA_TSTRING:
-      luaO_printstring(rawtsvalue(o), pfn, ud, quote);
-      break;
-#ifdef HKSC_VERSION
-    case LUA_TUI64:
-      lsuf = 'l';
-      ui64 = ui64value(o);
-      printui64: n = lua_ui642str(buff + 2, ui64) + 2;
-      buff[0] = '0', buff[1] = 'x';
-      buff[n++] = 'h', buff[n++] = lsuf;
-      buff[n] = 0;
-      (*pfn)(buff, n, ud);
-      break;
-#endif /* HKSC_VERSION */
-    default: lua_assert(0);
-  }
-}

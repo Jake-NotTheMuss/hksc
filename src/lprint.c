@@ -266,17 +266,12 @@ void luaU_printcode (hksc_State *H, const Proto *f, int pc,
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
 #ifdef LUA_CODIW6
     case OP_DELETE: case OP_DELETE_BK:
-      if (c == DELETE_UPVAL) {
-        Print(P, CM "%s",(f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
-      }
-      else if (c == DELETE_GLOBAL) {
-        Print(P, CM "%s",svalue(&f->k[INDEXK(b)]));
-      }
-      else if (c == DELETE_INDEXED) {
-        if (ISK(b)) {
-          Print(P, CM); PrintK(INDEXK(b));
-        }
-      }
+      if (c == DELETE_UPVAL)
+        Print(P, CM "%s", (f->sizeupvalues>0) ? getstr(f->upvalues[b]) : "-");
+      else if (c == DELETE_GLOBAL)
+        Print(P, CM "%s", svalue(&f->k[INDEXK(b)]));
+      else if (c == DELETE_INDEXED && ISK(b))
+        Print(P, CM); PrintK(INDEXK(b));
       break;
 #endif /* LUA_CODIW6 */
     default:

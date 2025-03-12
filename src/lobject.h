@@ -508,14 +508,6 @@ LUAI_FUNC void luaO_chunkid (char *out, const char *source, size_t len);
 LUAI_FUNC const char *luaO_generatechunkname(hksc_State *H,
                                              const char *filename);
 
-LUAI_FUNC void luaO_printstring (const TString *ts,
-                       void (*pfn) (const char *s, size_t l, void *ud),
-                       void *ud, int quote);
-
-LUAI_FUNC void luaO_printk (const TValue *o,
-                  void (*pfn) (const char *s, size_t l, void *ud),
-                  void *ud, int quote);
-
 #ifdef HKSC_TESTING
 LUAI_FUNC void luaO_cmp (hksc_State *H, const Proto *p1, const Proto *p2,
                          const char *name1, const char *name2, int strip,
@@ -523,7 +515,7 @@ LUAI_FUNC void luaO_cmp (hksc_State *H, const Proto *p1, const Proto *p2,
                          void *ud);
 #endif /* HKSC_TESTING */
 
-typedef void (*l_PFN) (const char *s, size_t n, void *ud);
+#include "lprintk.h"
 
 LUAI_FUNC int luaO_vprintf (l_PFN pfn, void *ud, const char *fmt, va_list ap);
 LUAI_FUNC int luaO_printf (l_PFN pfn, void *ud, const char *fmt, ...);
