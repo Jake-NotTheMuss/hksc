@@ -2255,15 +2255,22 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
       D->a.newref |= (cast(lu_int32, k) << (2 + (D->a.newref ? SIZE_A : 0)));
       D->a.newref++;
+      /* bits 1-2 encode what is referenced in the current instruction:
+         - 0 indicates that nothing is referenced
+         - 1 or 2 indicates that 1 or 2 constants are referenced
+         - 3 indicates that an upvalue is referenced
+         This works because an instruction cannot reference both a constant
+         and an upvalue
+         The assertion ensures that no more than 2 constants were referenced */
       lua_assert((D->a.newref & 3) < 3);
     }
   }
-  /* update the highest upvalue referenced */
+  /* same as with constant references, upvalue references are used to check if
+     an assignment list is necessary */
   if (o == OP_GETUPVAL || IS_OP_R1(o, OP_SETUPVAL)) {
     int up = D->a.insn.b;
-    /* same as with constant references, upvalue references are used to check
-       if an assignment list is necessary */
     if (!luaO_bitmapsetq(&D->upvalmap, up)) {
+      /* a value of 3 in first 2 bits indicates an upvalue reference */
       D->a.newref = (cast(lu_int32, up) << 2) | 3;
       if (!luaO_isbitconsecutive(&D->upvalmap, up))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
