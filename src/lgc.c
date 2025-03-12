@@ -134,12 +134,9 @@ static void markstructprotos (GCState *st) {
   int i;
   for (i = 0; i < g->protolist.nuse; i++) {
     StructProto *p = g->protolist.list[i];
-    int j, n = p->nslots;
+    size_t n = p->nslots;
     stringmark(p->name);
-    for (j = 0; j < n; j++) {
-      StructSlot *slot = &p->slots[j];
-      stringmark(slot->name);
-    }
+    while (n--) stringmark(p->slots[n].name);
   }
 }
 #endif /* HKSC_STRUCTURE_EXTENSION_ON */
