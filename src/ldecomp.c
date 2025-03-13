@@ -2623,17 +2623,13 @@ static int isloadsubexpr (const DecompState *D, const FuncState *fs,
   return 1;
 }
 
-
-static void markdischargedexp (FuncState *fs, int from, int to) {
-  int pc;
-  for (pc = from; pc < to; pc++) {
+static void markdischargedexp (FuncState *fs, int pc, int endpc) {
+  for (; pc < endpc; pc++)
     if (test_ins_property(fs, pc, INS_LOCVAREXPR)) {
       unset_ins_property(fs, pc, INS_LOCVAREXPR);
       set_ins_property(fs, pc, INS_DISCHARGEDLOCVAREXPR);
     }
-  }
 }
-
 
 static void parser_dischargeload (DecompState *D, FuncState *fs,
                                   const OperandDesc *l, const OperandDesc *r) {
@@ -2649,7 +2645,6 @@ static void parser_dischargeread (DecompState *D, FuncState *fs, OperandDesc o)
 {
   while (D->parser->top > o.r)
     clearslotconstructor(fs, --D->parser->top);
-  (void)fs;
 }
 
 
@@ -2662,8 +2657,7 @@ static void parser_fullexpr (DecompState *D, FuncState *fs,
     return;
   }
   while (noperands--) {
-    int r = operands[noperands].r;
-    if (r >= D->parser->base) {
+    if (operands[noperands].r >= D->parser->base) {
       endexpr(D, DEFAULT_TOKEN);
       return;
     }
