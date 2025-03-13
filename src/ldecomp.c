@@ -2183,7 +2183,7 @@ static int isloadkfullexpr (DecompState *D, FuncState *fs) {
        subexpression */
     return D->a.insn.bx <= MAXINDEXRK;
   if (o == OP_LOADBOOL && !test_ins_property(fs, fs->pc, INS_BOOLLABEL))
-    return (D->a.insn.b && D->a.istruerk) || (!D->a.insn.b && D->a.isfalserk);
+    return D->a.insn.b ? D->a.istruerk : D->a.isfalserk;
   if (o == OP_LOADNIL)
     return D->a.isnilrk;
   return 0;
