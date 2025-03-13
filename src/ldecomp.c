@@ -2558,9 +2558,13 @@ static int parser_mergeexpr (DecompState *D, FuncState *fs) {
   return 0;
 }
 
-
+/* check if LASTREG is lower than it should be; it may have been changed in
+   parser_onjump() to allow this expression to be merged with the next one (see
+   the comment in that function); but now that the expressions were not merged,
+   LASTREG needs to be corrected */
 static void restorelastreg (const FuncState *fs, StackExpr *e) {
   Instruction jc = fs->f->code[getnextpc(fs, e->endpc)];
+  /* check if next opcode is a comparison comparison */
   if (testTMode(GET_OPCODE(jc)) && !testAMode(GET_OPCODE(jc))) {
     int b = GETARG_B(jc), c = GETARG_C(jc);
     if (!ISK(c) && c > e->lastreg)
@@ -2569,7 +2573,6 @@ static void restorelastreg (const FuncState *fs, StackExpr *e) {
       e->lastreg = b;
   }
 }
-
 
 static void parser_checklabel (DecompState *D, FuncState *fs) {
   while (fs->pc == parser_getendlabel(D)) {
@@ -2746,6 +2749,12 @@ static void parser_onjump (DecompState *D, FuncState *fs) {
      the same expression, LASTREG will be reverted back */
   if (lastbb != NULL && jc != NULL && !testAMode(GET_OPCODE(*jc))) {
     int b = GETARG_B(*jc), c = GETARG_C(*jc);
+    /* example: 'local _ = (a == b) and c or d'
+       LASTBB would be (REG 0-1) (GETGLOBAL a, GETGLOBAL b)
+       The next expression would be for 'c': (REG 0) (GETGLOBAL c),
+       and in order to merge the 2 expressions, they must have the same
+       register range; therefore, it is fixed here, and corrected back later if
+       the 2 expressions are not merged */
     if (D->parser->actualtop == D->parser->top+2 && !ISK(b) && !ISK(c))
       lastbb->lastreg = D->parser->top;
   }
