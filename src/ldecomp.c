@@ -3365,6 +3365,13 @@ static void parseconstructors (DecompState *D, FuncState *fs) {
 /*****************************************************************************/
 
 
+/* Storage for expressions parsed by the parser; store lists use at most 2
+   expressions, so that many expressions are needed to detect a store list;
+   A store list would use 2 expressions when the final expression on the RHS
+   of the assignment can be loaded directly into the destination register, i.e.
+   a local variable; in this case, the final load to the local variable would
+   yield a separate expression by the parser because it would not be loading to
+   the next consecutive open register as usual */
 typedef struct ExprBuffer {
   StackExpr b[2];
   lu_byte open[2];
@@ -3502,7 +3509,7 @@ static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer){
   /* any new constant/upvalue references must allow for an assignment list */
   if (store.skippedref == -1 && store.noskippedref != -1)
     goto nostorelist;
-  /* if part of th assignment list has regularly ordered references, than
+  /* if part of the assignment list has regularly ordered references, than
      exclude that part from the list */
   if (store.noskippedref != -1) {
     int pc;
@@ -3540,36 +3547,41 @@ static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer){
 
 static void parseassignments (DecompState *D, FuncState *fs) {
   ExpressionParser parser = {0};
-  ExprBuffer buffer;
+  ExprBuffer buffer = {0};
   assertphase(D, DECOMP_PHASE_PARSE_ASSIGNMENTS);
   fs->pc = 0;
   D->parser = &parser;
   initparser(D, fs, NO_REG, PARSER_MODE_ASSIGNMENTS);
   for (;;) {
-    buffer.n = 0;
     /* parse until encountering an assignment */
-    for (;;) {
-      enum ParserToken token = parseexpression(D, fs);
-      if (token == TOKEN_ENDOFCODE)
-        goto done;
-      if ((token == TOKEN_STORE || token == DEFAULT_TOKEN) &&
-          D->parser->expr->startpc != -1) {
-        if (buffer.n >= 2) {
-          buffer.n = 1;
-          buffer.b[0] = buffer.b[1];
-          buffer.open[0] = buffer.open[1];
-        }
-        buffer.open[buffer.n] = D->parser->lastopen == D->parser->expr->endpc;
-        buffer.b[buffer.n++] = *D->parser->expr;
+    enum ParserToken token = parseexpression(D, fs);
+    if (token == TOKEN_ENDOFCODE)
+      break;
+    /* store: [DEFAULT_TOKEN] TOKEN_STORE
+       TOKEN_STORE will only yield 1 expression (the one preceding the store
+       instruction), but 2 preceding expressions are needed to detect the
+       store properly, so checking DEFAULT_TOKEN will give you the expression
+       before the TOKEN_STORE expression */
+    if ((token == TOKEN_STORE || token == DEFAULT_TOKEN) &&
+        D->parser->expr->startpc != -1) {
+      /* slide the elements over to make room; only 2 are needed at a time */
+      if (buffer.n >= 2) {
+        buffer.n = 1;
+        buffer.b[0] = buffer.b[1];
+        buffer.open[0] = buffer.open[1];
       }
-      else
-        buffer.n = 0;
-      if (token == TOKEN_STORE)
-        break;
-      parser_advance(D, fs);
+      /* save the parsed expression in case a store follows */
+      buffer.open[buffer.n] = D->parser->lastopen == D->parser->expr->endpc;
+      buffer.b[buffer.n++] = *D->parser->expr;
     }
-    parseassignment(D, fs, &buffer);
-  } done:
+    else buffer.n = 0; /* not a store, reset state */
+    if (token == TOKEN_STORE) {
+      parseassignment(D, fs, &buffer);
+      buffer.n = 0; /* store complete, reset state */
+      continue;
+    }
+    parser_advance(D, fs); /* no store to parse, advance over token */
+  }
   D->parser = NULL;
 }
 
