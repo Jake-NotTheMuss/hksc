@@ -2848,6 +2848,9 @@ static void parser_trimtop (DecompState *D, FuncState *fs, int newtop) {
 static void parser_onconstructor (DecompState *D, FuncState *fs) {
   struct ConsControl *cc;
   int index, reg = D->a.insn.a;
+  /* if in constructor mode, and another constructor is encountered that has
+     the same register or lower than the current one, the current constructor
+     must end here */
   if (D->parser->mode == PARSER_MODE_CONSTRUCTOR &&
       fs->pc > D->parser->startpc && reg <= D->parser->base) {
     D->parser->actualtop = D->parser->top = reg;
@@ -3160,6 +3163,11 @@ static void parser_dispatch (DecompState *D, FuncState *fs) {
 }
 
 
+/*
+** parse a single token, returning it, possibly yielding a StackExpr in
+** D->parser->expr, which describes a sequence of pushes to the stack
+** preceding the token
+*/
 static int parse_exp (DecompState *D, FuncState *fs) {
   lua_assert(fs->pc >= 0);
   initstackexpr(D->parser->expr);
@@ -3175,6 +3183,10 @@ static int parse_exp (DecompState *D, FuncState *fs) {
       const enum ParserToken token = D->parser->token;
       D->parser->expr = D->stackexpr.s;
       D->stackexpr.used = 1;
+      /* the parser may have parsed later basic blocks that are not part of the
+         resulting expression, because at the time they may have been part of
+         the same expression; those blocks should be re-processed next parse,
+         so ensure pc is corrected to just after the resulting expression */
       if (D->parser->expr->endpc != -1)
         fs->pc = getnextpc(fs, D->parser->expr->endpc);
       if (fs->pc == D->parser->startpc && token == DEFAULT_TOKEN)
@@ -3183,7 +3195,7 @@ static int parse_exp (DecompState *D, FuncState *fs) {
          blocks, reset it */
       if (D->parser->expr->firstreg == NO_REG && token == DEFAULT_TOKEN)
         initstackexpr(D->parser->expr);
-      return D->parser->token;
+      return token;
     }
   }
   return D->parser->token = TOKEN_ENDOFCODE;
@@ -3320,8 +3332,7 @@ static void parse_constructor (DecompState *D, FuncState *fs, int startpc) {
 
 
 static void fix_constructor_properties (DecompState *D, FuncState *fs) {
-  const int count = D->cons_state.used;
-  const struct ConsControl *cc = check_exp(count > 0, D->cons_state.s);
+  const struct ConsControl *cc = D->cons_state.s;
   int pc = check_exp(cc != NULL, cc->startpc);
   do {
     lua_assert(cc->startpc <= cc->endpc);
@@ -3336,7 +3347,7 @@ static void fix_constructor_properties (DecompState *D, FuncState *fs) {
       /* fix current pc for next parse session */
       fs->pc = limitpc;
     }
-  } while (++cc < D->cons_state.s+count);
+  } while (++cc < D->cons_state.s + D->cons_state.used);
   D->cons_state.used = 0;  /* reset constructor stack */
 }
 
@@ -3348,9 +3359,11 @@ static void parse_constructors (DecompState *D, FuncState *fs) {
   D->parser = &parser;
   while (D->cons_pc.used > 0) {
     int startpc = D->cons_pc.s[--D->cons_pc.used];
+    /* if startpc is before the current pc, it has already been parsed */
     if (startpc < fs->pc)
       continue;
     parse_constructor(D, fs, startpc);
+    /* unmark all INS_LOCVAREXPR instructions inside the constructor */
     fix_constructor_properties(D, fs);
   }
   VEC_FREE(D->H, D->cons_pc);
