@@ -30,6 +30,6 @@
 
 /* free a vector */
 #define VEC_FREE(H, v) \
-  cast(void, luaM_freemem(H, (v).s, (v).alloc * sizeof((v).s[0])))
+  cast(void, (luaM_freemem(H, (v).s, (v).alloc*sizeof((v).s[0])), VEC_INIT(v)))
 
 #endif /* lvec_H */
