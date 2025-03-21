@@ -2406,6 +2406,7 @@ enum ParserToken {
   TOKEN_FORPREP,  /* a for-loop preparation instruction */
   TOKEN_ENDSCOPE,  /* a scope-ending instruction (JMP or CLOSE) */
   TOKEN_ENDOFCODE,  /* end of code */
+  TOKEN_ERROR,
   TOKEN_COUNT
 };
 
@@ -3158,7 +3159,7 @@ static void parser_dispatch (DecompState *D, FuncState *fs) {
     else if (o == OP_RETURN)
       parser_onreturn(D, fs);
     else
-      endexpr(D, DEFAULT_TOKEN);
+      endexpr(D, TOKEN_ERROR);
   }
 }
 
@@ -3189,8 +3190,10 @@ static int parse_exp (DecompState *D, FuncState *fs) {
          so ensure pc is corrected to just after the resulting expression */
       if (D->parser->expr->endpc != -1)
         fs->pc = getnextpc(fs, D->parser->expr->endpc);
+      /* this prevents an infinite loop in the special case where the parser
+         does not advance the pc and returns DEFAULT_TOKEN */
       if (fs->pc == D->parser->startpc && token == DEFAULT_TOKEN)
-        fs->pc = getnextpc(fs, fs->pc);
+        parser_advance(D, fs); /* reset the state, keep the same pc */
       /* if the first expression is a fake one pushed to assist merging basic
          blocks, reset it */
       if (D->parser->expr->firstreg == NO_REG && token == DEFAULT_TOKEN)
