@@ -60,7 +60,7 @@
 enum DecompPhase {
   DECOMP_PHASE_INITIAL,
   DECOMP_PHASE_DETECT_LOOPS,
-  DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION,
+  DECOMP_PHASE_MARK_SEQUENCE_POINTS,
   DECOMP_PHASE_PARSE_CONSTRUCTORS,
   DECOMP_PHASE_PARSE_ASSIGNMENTS,
   DECOMP_PHASE_PARSE_EXPRESSIONS,
@@ -2156,7 +2156,7 @@ static void detectloops (DecompState *D, FuncState *fs) {
 */
 static void updateisrk (DecompState *D, FuncState *fs) {
   int nk, k[2];
-  assertphase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
+  assertphase(D, DECOMP_PHASE_MARK_SEQUENCE_POINTS);
   nk = getkoperands(D->a.insn.o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, k);
   /* check if true, false, or nil exist within MAXINDEXRK; for each of these
      values, if it does not exist within MAXINDEXRK, than the corresponding
@@ -2215,7 +2215,6 @@ static int isunaryfullexpr (DecompState *D, FuncState *fs) {
 ** called by pass1 for marking non-obvious sequence points
 */
 static void checkloadoptimization (DecompState *D, FuncState *fs) {
-  assertphase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
   /* initially, use values that make `isloadfullexpr' correct, until the nil
      and boolean constants are encountered, where the actual value will be set
      */
@@ -2228,6 +2227,17 @@ static void checkloadoptimization (DecompState *D, FuncState *fs) {
     else if (isunarycode(D->a.insn.o) && isunaryfullexpr(D, fs))
       set_ins_property(fs, fs->pc, INS_SEQPT);
   }
+}
+
+static void markseqpt (DecompState *D, FuncState *fs) {
+  assertphase(D, DECOMP_PHASE_MARK_SEQUENCE_POINTS);
+  if (D->usedebuginfo) {
+    int i;
+    for (i = 0; i < fs->sizelocvars; i++)
+      set_ins_property(fs, fs->locvars[i].startpc, INS_SEQPT);
+  }
+  else
+    checkloadoptimization(D, fs);
 }
 
 
@@ -3615,11 +3625,10 @@ static void pass1 (DecompState *D, FuncState *fs) {
   /* without debug info, the decompiler needs to detect lack of optimization,
      which depends on what is in the constants array; nil, true, and false may
      be encoded as RK values in instructions if they exist in the constants
-     array within the range of MAXINDEXRK */
-  if (nodebug) {
-    changephase(D, DECOMP_PHASE_CHECK_LOAD_OPTIMIZATION);
-    checkloadoptimization(D, fs);
-  }
+     array within the range of MAXINDEXRK
+     with debug info, every variable startpc will be marked as SEQPT */
+  changephase(D, DECOMP_PHASE_MARK_SEQUENCE_POINTS);
+  markseqpt(D, fs);
   /* first, constructors are parsed to determine their lifetimes in the code;
      then, the constructors are treated atomically in subsequent parse sessions
      */
