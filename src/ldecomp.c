@@ -3160,7 +3160,7 @@ static void parser_dispatch (DecompState *D, FuncState *fs) {
 }
 
 
-static int parseexpression (DecompState *D, FuncState *fs) {
+static int parse_exp (DecompState *D, FuncState *fs) {
   lua_assert(fs->pc >= 0);
   initstackexpr(D->parser->expr);
   D->parser->lastopen = -1;
@@ -3190,8 +3190,8 @@ static int parseexpression (DecompState *D, FuncState *fs) {
 }
 
 
-static void scanpostconstructor (DecompState *D, FuncState *fs, int startpc,
-                                 int ndischarged, int constructorbase) {
+static void scan_post_constructor (DecompState *D, FuncState *fs, int startpc,
+                                   int ndischarged, int constructorbase) {
   struct ConsControl *cc = &D->cons_state.s[D->cons_state.used-1];
   OperandDesc operands[3];
   int noperands, lowestdischargepc = fs->f->sizecode;
@@ -3290,12 +3290,11 @@ static void scanpostconstructor (DecompState *D, FuncState *fs, int startpc,
 }
 
 
-
-static void parseconstructor (DecompState *D, FuncState *fs, int startpc) {
+static void parse_constructor (DecompState *D, FuncState *fs, int startpc) {
   int i, ndischarged = 0, reg, base = GETARG_A(fs->f->code[startpc]);
   fs->pc = startpc;
   initparser(D, fs, base, PARSER_MODE_CONSTRUCTOR);
-  parseexpression(D, fs);
+  parse_exp(D, fs);
   for (i = 0; i < D->cons_state.used; i++) {
     struct ConsControl *cc = &D->cons_state.s[i];
     if (cc->setlist != -1) {
@@ -3316,11 +3315,11 @@ static void parseconstructor (DecompState *D, FuncState *fs, int startpc) {
     return;
   /* ensure the endpc is correct by checking for later references to discharged
      registers used by the constructor */
-  scanpostconstructor(D, fs, startpc, ndischarged, base+1);
+  scan_post_constructor(D, fs, startpc, ndischarged, base+1);
 }
 
 
-static void finalizeconstructor (DecompState *D, FuncState *fs) {
+static void fix_constructor_properties (DecompState *D, FuncState *fs) {
   const int count = D->cons_state.used;
   const struct ConsControl *cc = check_exp(count > 0, D->cons_state.s);
   int pc = check_exp(cc != NULL, cc->startpc);
@@ -3342,7 +3341,7 @@ static void finalizeconstructor (DecompState *D, FuncState *fs) {
 }
 
 
-static void parseconstructors (DecompState *D, FuncState *fs) {
+static void parse_constructors (DecompState *D, FuncState *fs) {
   ExpressionParser parser = {0};
   assertphase(D, DECOMP_PHASE_PARSE_CONSTRUCTORS);
   fs->pc = 0;
@@ -3351,8 +3350,8 @@ static void parseconstructors (DecompState *D, FuncState *fs) {
     int startpc = D->cons_pc.s[--D->cons_pc.used];
     if (startpc < fs->pc)
       continue;
-    parseconstructor(D, fs, startpc);
-    finalizeconstructor(D, fs);
+    parse_constructor(D, fs, startpc);
+    fix_constructor_properties(D, fs);
   }
   VEC_FREE(D->H, D->cons_pc);
   D->parser = NULL;
@@ -3391,7 +3390,7 @@ typedef struct StoreList {
 } StoreList;
 
 
-static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer){
+static int parse_store (DecompState *D, FuncState *fs, ExprBuffer *buffer) {
   StoreList store = {0};
   const StackExpr *RHS = NULL;
   int src = getstoresource(D->a.insn.o, D->a.insn.a, D->a.insn.b, D->a.insn.c);
@@ -3544,7 +3543,7 @@ static int parseassignment (DecompState *D, FuncState *fs, ExprBuffer *buffer){
 }
 
 
-static void parseassignments (DecompState *D, FuncState *fs) {
+static void parse_stores (DecompState *D, FuncState *fs) {
   ExpressionParser parser = {0};
   ExprBuffer buffer = {0};
   assertphase(D, DECOMP_PHASE_PARSE_ASSIGNMENTS);
@@ -3553,7 +3552,7 @@ static void parseassignments (DecompState *D, FuncState *fs) {
   initparser(D, fs, NO_REG, PARSER_MODE_ASSIGNMENTS);
   for (;;) {
     /* parse until encountering an assignment */
-    enum ParserToken token = parseexpression(D, fs);
+    enum ParserToken token = parse_exp(D, fs);
     if (token == TOKEN_ENDOFCODE)
       break;
     /* store: [DEFAULT_TOKEN] TOKEN_STORE
@@ -3575,7 +3574,7 @@ static void parseassignments (DecompState *D, FuncState *fs) {
     }
     else buffer.n = 0; /* not a store, reset state */
     if (token == TOKEN_STORE) {
-      parseassignment(D, fs, &buffer);
+      parse_store(D, fs, &buffer);
       buffer.n = 0; /* store complete, reset state */
       continue;
     }
@@ -3610,13 +3609,13 @@ static void pass1 (DecompState *D, FuncState *fs) {
      */
   if (nodebug) {
     changephase(D, DECOMP_PHASE_PARSE_CONSTRUCTORS);
-    parseconstructors(D, fs);
+    parse_constructors(D, fs);
   }
   /* second, assignment lists are parsed to determine which blocks of store
      instructions may be grouped as a list in the generated source code */
   if (nodebug) {
     changephase(D, DECOMP_PHASE_PARSE_ASSIGNMENTS);
-    parseassignments(D, fs);
+    parse_stores(D, fs);
   }
   /* lexical analysis will provide information about how registers are used
      within each lexical scope, which is only needed if not using debug info */
