@@ -2482,7 +2482,7 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
   initregproperties(fs);
   D->parser->status =(base==NO_REG)?PARSER_STATUS_INITIAL:PARSER_STATUS_ACTIVE;
   D->parser->mode = mode;
-  D->parser->token = DEFAULT_TOKEN;
+  D->parser->token = -1;
   D->parser->base = D->parser->top = D->parser->actualtop = base;
   D->parser->startpc = check_exp(ispcvalid(fs, fs->pc), fs->pc);
   D->parser->prevpc = -1;
@@ -2497,7 +2497,7 @@ static void initparser (DecompState *D, FuncState *fs, int base, int mode) {
 static void parser_advance (DecompState *D, FuncState *fs) {
   if (D->parser->token != DEFAULT_TOKEN)
     fs->pc = getnextpc(fs, fs->pc);
-  D->parser->token = DEFAULT_TOKEN;
+  D->parser->token = -1;
   D->parser->base = D->parser->top = D->parser->actualtop = NO_REG;
   D->parser->status = PARSER_STATUS_INITIAL;
 }
