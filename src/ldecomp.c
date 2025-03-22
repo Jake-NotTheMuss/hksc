@@ -2240,6 +2240,8 @@ static void markseqpt (DecompState *D, FuncState *fs) {
     checkloadoptimization(D, fs);
 }
 
+#define is_seqpt(fs, pc) test_ins_property(fs, pc, INS_SEQPT)
+
 
 /*****************************************************************************/
 /* Expression parser - scans basic blocks for expression list sequences */
@@ -2612,7 +2614,7 @@ static int isloadsubexpr (const DecompState *D, const FuncState *fs,
   int l_init, r_init, l_active, r_active;
   if (D->parser->status != PARSER_STATUS_ACTIVE)
     return 0;
-  if (test_ins_property(fs, fs->pc, INS_SEQPT))
+  if (is_seqpt(fs, fs->pc))
     return 0;
   /* must be like ADD 0 0 1 where top == 1 or UNM 0 0 where top == 0 */
   if (reg != l->r || lastonstack != r->r)
@@ -3136,8 +3138,9 @@ static void parser_dispatch (DecompState *D, FuncState *fs) {
   OpCode o = D->a.insn.o;
   unset_ins_property(fs, fs->pc, INS_LOCVAREXPR);
   D->parser->prevtop = D->parser->top;
-  if (D->parser->startpc != fs->pc && test_ins_property(fs, fs->pc, INS_SEQPT))
-  {
+  /* if this pc is a sequence point (and this is not the first pc in the parse
+     session), end the current expression */
+  if (D->parser->startpc != fs->pc && is_seqpt(fs, fs->pc)) {
     endexpr(D, DEFAULT_TOKEN);
     return;
   }
