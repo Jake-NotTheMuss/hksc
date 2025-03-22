@@ -2257,11 +2257,11 @@ static void updatebitmaps (DecompState *D, FuncState *fs) {
   int ak[2];
   OpCode o = D->a.insn.o;
   /* mark any constants referenced by the current instruction */
-  int nk = getkoperands(o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, ak);
+  int i, nk = getkoperands(o, D->a.insn.b, D->a.insn.c, D->a.insn.bx, ak);
   D->a.newref = 0;
   unset_ins_property(fs, fs->pc, INS_SKIPPEDREF);
-  while (nk--) {
-    int k = ak[nk];
+  for (i = 0; i < nk; i++) {
+    int k = ak[i];
     if (!luaO_bitmapsetq(&D->kmap, k)) {
       if (!D->a.newref && !luaO_isbitconsecutive(&D->kmap, k))
         set_ins_property(fs, fs->pc, INS_SKIPPEDREF);
