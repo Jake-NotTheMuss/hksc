@@ -994,9 +994,12 @@ static FuncState *open_func (DecompState *D, const Proto *f) {
 static void free_funcstate (DecompState *D, FuncState *fs) {
   hksc_State *H = D->H;
   lua_assert(fs->used);
-  luaM_freearray(H, fs->insproperties, fs->f->sizecode, InstructionFlags);
-  luaM_freearray(H, fs->regproperties, fs->f->maxstacksize, SlotDesc);
-  luaM_freearray(H, fs->actvar, fs->f->maxstacksize, unsigned short);
+  if (fs->insproperties)
+    luaM_freearray(H, fs->insproperties, fs->f->sizecode, InstructionFlags);
+  if (fs->regproperties)
+    luaM_freearray(H, fs->regproperties, fs->f->maxstacksize, SlotDesc);
+  if (fs->actvar)
+    luaM_freearray(H, fs->actvar, fs->f->maxstacksize, unsigned short);
   if (D->usedebuginfo == 0) {
     luaM_freearray(H, fs->locvars, fs->sizelocvars, struct LocVar);
     luaM_freearray(H, fs->upvalues, fs->sizeupvalues, TString *);
