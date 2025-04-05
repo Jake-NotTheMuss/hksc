@@ -136,19 +136,17 @@ clean:
 	-$(RM) $(ALL_T) $(ALL_O) $(ALL_PIC_O) $(SHAREDLIB)
 
 depend:
-# 	if test -f ./gen-depend && test -x ./gen-depend; then \
-# 		CC="$(CC)" ./gen-depend $(CFLAGS); \
-# 	fi
 	@if test -e './Makefile.in'; then \
 	TEMPFILE1=tmp1_$$$$; \
 	TEMPFILE2=tmp2_$$$$; \
 	$(CC) $(CFLAGS) -MM *.c > $$TEMPFILE1 && \
 	sed -e "s/^\([^. \t]*\)\.o:/\1.lo:/" $$TEMPFILE1 > $$TEMPFILE2 && \
 	$(CC) $(CFLAGS) -MM ./hksclib.c l*.c >> $$TEMPFILE1 && \
-	sed -i.bk -e "/^# DO NOT DELETE$$/,/^# (end of Makefile)$$/{ \
+	sed < Makefile.in -e "/^# DO NOT DELETE$$/,/^# (end of Makefile)$$/{ \
 		/^# DO NOT DELETE$$/{G;p;r $$TEMPFILE1" -e "r $$TEMPFILE2" -e " \
-		}; /^# (end of Makefile)$$/{H;g;p;}; d; }" Makefile.in; \
-	$(RM) $$TEMPFILE1 $$TEMPFILE2 Makefile.in.bk; \
+		}; /^# (end of Makefile)$$/{H;g;p;}; d; }" > Makefile.in-t; \
+	mv Makefile.in-t Makefile.in; \
+	$(RM) $$TEMPFILE1 $$TEMPFILE2; \
 	fi
 
 echo:
