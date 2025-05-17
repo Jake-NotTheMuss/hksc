@@ -97,7 +97,7 @@ int luaO_vprintf (l_PFN pfn, void *ud, const char *fmt, va_list ap) {
     int n;
   } spec;
   for (;;) {
-    int n, flags, width = 0, prec = -1;
+    int n = 0, flags, width = 0, prec = -1;
     char code, qual = 0;
     const char *s;
     spec.n = 0;
