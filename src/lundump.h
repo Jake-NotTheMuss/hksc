@@ -32,7 +32,7 @@ static void swapendianness(void *p, size_t n) {
   }
 }
 
-static int isbigendian() {
+static int isbigendian(void) {
   int x=1;
   return ((char)*(char *)&x == 0);
 }

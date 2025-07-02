@@ -2237,6 +2237,7 @@ static void localstat (LexState *ls) {
   int nexps;
   int seentypedvar = 0;
   expdesc e;
+  (void)seentypedvar; /* may not be used */
   lua_assert(ls->fs->nlocalslhs == 0);
   do {
     TypeInfo t;
