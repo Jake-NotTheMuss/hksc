@@ -9,12 +9,12 @@
   translation cycle or in between translation cycles. In the former, it is a
   simpler version of the Lua 5.0 collector. It marks all objects reachable from
   the root state and global state, then sweeps. In the latter, it does not
-  mark, only sweeps, and it does not collect objects marked with GC_TEMP,
-  which will typically be objects used for internal representation, i.e.
-  objects that only exist within a translation cycle, such as Proto or Table.
-  This is a simpler alternative to having a Lua stack to temporarily anchor
-  objects. GC_TEMP objects are still collected in between cycles if they are
-  unreachable, as
+  mark, only sweeps. If collecting in the middle of a translation cycle, it
+  does not collect objects marked with GC_TEMP, which will typically be objects
+  used for internal representation, i.e. objects that only exist within a
+  translation cycle, such as Proto or Table. This is a simpler alternative to
+  having a Lua stack to temporarily anchor objects. GC_TEMP objects are still
+  collected in between cycles if they are unreachable.
 
   Non-fixed strings could also be collected on each new cycle, but instead they
   are only unmarked, and then maybe collected if the total memory usage is
