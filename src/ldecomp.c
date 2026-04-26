@@ -1724,6 +1724,15 @@ static const Instruction *getjumpcontrol (const FuncState *fs, int pc) {
 }
 
 
+static int getnactvar (const FuncState *fs, int pc) {
+  int i, n = 0;
+  assert(fs->D->usedebuginfo);
+  for (i = 0; i < fs->sizelocvars; i++)
+    if (fs->locvars[i].startpc <= pc && pc <= fs->locvars[i].endpc) n++;
+  return n;
+}
+
+
 /*****************************************************************************/
 /* First bytecode scan functions */
 /*****************************************************************************/
@@ -2408,6 +2417,7 @@ enum ParserMode {
   PARSER_MODE_DEFAULT,
   PARSER_MODE_CONSTRUCTOR,  /* determine constructor lifetimes in code */
   PARSER_MODE_ASSIGNMENTS,  /* keep track of constant/upval references */
+  PARSER_MODE_GENVARS,
   PARSER_MODE_COUNT
 };
 
@@ -2719,7 +2729,10 @@ static void parser_onload (DecompState *D, FuncState *fs) {
   /* end any pending constructors that are operands */
   for (i = noperands-1; i >= 0; i--)
     clearslotconstructor(fs, operands[i].r);
-  if (noperands && isloadsubexpr(D, fs, &operands[0], &operands[noperands-1]))
+  /* when generating initial variables, treat each sub-expression as its own
+     variable assignment to be safe */
+  if (D->parser->mode != PARSER_MODE_GENVARS &&
+      noperands && isloadsubexpr(D, fs, &operands[0], &operands[noperands-1]))
     parser_dischargeload(D, fs, &operands[0], &operands[noperands-1]);
   else
     parser_fullexpr(D, fs, operands, noperands);
@@ -3621,6 +3634,109 @@ static void parse_stores (DecompState *D, FuncState *fs) {
   D->parser = NULL;
 }
 
+/*****************************************************************************/
+/* Lexical Block creation phase */
+/*****************************************************************************/
+
+#define getvar(fs, r) (&(fs)->locvars[(fs)->actvar[r]])
+
+static LocVar *newlocvar (FuncState *fs, int startpc) {
+  LocVar *var;
+  lua_assert(fs->D->usedebuginfo == 0);
+  luaM_growvector(fs->D->H, fs->locvars, fs->nlocvars, fs->sizelocvars, LocVar,
+                  INT_MAX, "");
+  var = &fs->locvars[fs->nlocvars];
+  var->startpc = startpc;
+  var->endpc = -1;
+  var->varname = NULL;
+  fs->actvar[fs->nactvar++] = fs->nlocvars++;
+  return var;
+}
+
+static void createvars (FuncState *fs, int startpc, int n) {
+  while (n--)
+    newlocvar(fs, startpc);
+}
+
+static void scanlexical (DecompState *D, FuncState *fs) {
+  ExpressionParser parser = {0};
+  enum ParserToken token;
+  int i;
+  assertphase(D, DECOMP_PHASE_SCAN_LEXICAL);
+  /* create function parameter variables */
+  for (i = 0; i < fs->f->numparams; i++)
+    newlocvar(fs, 0)->endpc = fs->f->sizecode-1;
+  fs->pc = 0;
+  D->parser = &parser;
+  initparser(D, fs, fs->f->numparams, PARSER_MODE_GENVARS);
+  do {
+    int prevactualtop = D->parser->actualtop;
+    int prevtop = D->parser->top;
+    int isopen;
+    (void)isopen; (void)prevtop; (void)prevactualtop;
+    token = parse_exp(D, fs);
+    isopen = parser_islastexpropen(D);
+    if (D->parser->expr->startpc != -1) {
+      LocVar *var;
+      int r = D->parser->expr->firstreg;
+      /* should not happen, but in case there is a gap between this clobber
+         register and the highest valid register */
+      if (r > fs->nactvar)
+        createvars(fs, fs->pc, r - fs->nactvar);
+      /* create variables up to D->parser->actualtop (so as to include the
+         discharged registers in case they are referenced again later)
+         if any register in the expression is already a variable, end that
+         variable and create a new one */
+      else {
+        int r1 = fs->nactvar - 1;
+        if (r1 > D->parser->expr->lastreg)
+          r1 = D->parser->expr->lastreg;
+        while (r1 >= r) {
+          var = getvar(fs, r1);
+          /* TODO: a more accurate endpc should be saved by the expression parser
+             when parsing the expression for this variable */
+          var->endpc = D->parser->expr->startpc;
+          r1--;
+        }
+        fs->nactvar = r;
+      }
+      for (; r <= D->parser->expr->lastreg; r++) {
+        var = newlocvar(fs, getslotactive(fs, r));
+      }
+      /*
+        This phase needs to:
+          - create temporary variables that immediately end (as if in a do block)
+          - watch for references to variables and update their endpc accordingly
+          - handle tested registers a little differently, as a tested value is
+            either a variable that lasts the duration of the if-block, or a
+            temporary value
+          And these things may need to be done within the parser, to have more
+          direct control
+      */
+      /*
+    THE PROBLEM:
+      I AM RECORDING ALL REGISTERS USED IN AN EXPRESSION AS VARIABLES (BECAUSE
+      THEY ALL MIGHT BE VARIABLES THAT GET REFERENCED LATER), BUT THE DISCHARGED
+      REGISTERS WILL HAVE A LOWER STARTPC THAN THE REGISTERS LEFT ON THE STACK,
+      I.E., FOR:
+        local a = a + b * c;
+      'a' WILL HAVE STARTPC AFTER THE END OF THE ENTIRE EXPRESSION, BUT 'b' and
+      'c' WILL START BEFORE THE END OF THE EXPRESSION, EVEN THOUGH THEY ARE AFTER
+      'a' IN THE VARIABLE INFO ARRAY.
+      POSSIBLE SOLUTION IS TO INITIALLY ASSUME ALL VARIABLES START RIGHT AFTER
+      THEIR FIRST LOAD, IGNORING THE PARSER'S ALGORITHM WHICH DETECTS THE
+      DISCHARGING OF HIGHER REGISTERS AND UPDATING THE STARTPC TO REFLECT THAT.
+      MAYBE HAVE A MODE IN THE PARSER THAT DOES NOT TRY TO DETECT SUB-EXPRESSIONS
+      AND DISCHARGES. DO 2 PASSES, THE FIRST PASS THIS WAY, AND THEN THE NEXT
+      PASS WITH DISCHARGES, THAT TIME KNOWING FOR SURE IF DISCHARGED VARIABLES
+      WILL BE REFERENCED AGAIN LATER, THUS BEING ABLE TO SAFELY OMIT THOSE
+      REGISTERS WHICH DO NOT GET REFERENCED LATER IN THE VARIABLE INFO ARRAY.
+      */
+    }
+    parser_advance(D, fs);
+  } while (token != TOKEN_ENDOFCODE);
+}
+
 
 /*
 ** pass1 is the set of all passes before the final pass, grouped together,
@@ -3658,7 +3774,7 @@ static void pass1 (DecompState *D, FuncState *fs) {
      within each lexical scope, which is only needed if not using debug info */
   if (nodebug) {
     changephase(D, DECOMP_PHASE_SCAN_LEXICAL);
-    /*scanlexical(D, fs);*/
+    scanlexical(D, fs);
   }
 #if 1
  /* goto end;*/
