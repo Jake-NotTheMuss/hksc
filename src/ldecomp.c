@@ -2448,6 +2448,12 @@ typedef struct ExpressionParser {
   lu_byte base, top, actualtop, prevtop;
 } ExpressionParser;
 
+static int parser_islastexpropen (const DecompState *D) {
+  if (D->parser->expr->startpc == -1)
+    return 0;
+  return D->parser->lastopen == D->parser->expr->endpc;
+}
+
 
 static void initstackexpr (StackExpr *e) {
   e->startpc = e->endpc = -1;
@@ -3601,7 +3607,7 @@ static void parse_stores (DecompState *D, FuncState *fs) {
         buffer.open[0] = buffer.open[1];
       }
       /* save the parsed expression in case a store follows */
-      buffer.open[buffer.n] = D->parser->lastopen == D->parser->expr->endpc;
+      buffer.open[buffer.n] = parser_islastexpropen(D);
       buffer.b[buffer.n++] = *D->parser->expr;
     }
     else buffer.n = 0; /* not a store, reset state */
