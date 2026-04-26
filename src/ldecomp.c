@@ -2476,6 +2476,8 @@ static int parser_islastexpropen (const DecompState *D) {
 
 static void initstackexpr (StackExpr *e) {
   e->startpc = e->endpc = -1;
+  /* use an initial value of 0, because NO_REG has a special meaning with basic
+     block merging (see 'parser_mergeexpr' and 'parser_checklabel') */
   e->firstreg = e->lastreg = 0;
   e->jump = 0;
 }
@@ -2693,11 +2695,17 @@ static void parser_fullexpr (DecompState *D, FuncState *fs,
                              const OperandDesc operands[2], int noperands) {
   int reg = D->a.insn.a, lastreg = reg;
   lua_assert(noperands >= 0 && noperands <= 2);
+  /* because in this context there are no discharged expressions in the clobber
+     operation, if the clobbered register is not the next free register, end the
+     expression here */
   if (reg != D->parser->top) {
     endexpr(D, DEFAULT_TOKEN);
     return;
   }
   while (noperands--) {
+    /* because in this context there are no discharged expressions like in
+       'parser_dischargeload', if any operand is higher than the base register
+       of this expression, end it here to be safe */
     if (operands[noperands].r >= D->parser->base) {
       endexpr(D, DEFAULT_TOKEN);
       return;
