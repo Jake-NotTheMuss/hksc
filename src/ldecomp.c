@@ -71,9 +71,6 @@ enum DecompPhase {
   DECOMP_PHASE_FIRST_BYTECODE_SCAN = DECOMP_PHASE_DETECT_LOOPS
 };
 
-#define changephase(D,p) ((D)->phase = (p))
-#define assertphase(D,p) lua_assert((D)->phase == (p));
-
 
 /* for formatting decimal integers in generated variable names */
 #define INT_CHAR_MAX_DEC (3 * sizeof(int) * (CHAR_BIT/8))
@@ -164,6 +161,7 @@ typedef struct {
   DEF_VEC(int, blockstk) \
   DEF_VEC(int, varnotes) \
   DEF_VEC(StackExpr, stackexpr) \
+  DEF_VEC(StackExpr, savedstackexpr) /* for the debug summary */ \
   DEF_VEC(struct ConsControl, cons) \
   DEF_VEC(BlockNode, loopnodes) \
   DEF_VEC(int, cons_pc) \
@@ -277,6 +275,17 @@ typedef struct FuncState {
   int curr_constructor;  /* exp index of current table constructor */
   unsigned int used : 1;  /* arrays need to be freed */
 } FuncState;
+
+
+#define assertphase(D,p) lua_assert((D)->phase == (p))
+
+/* everything that needs to happen before a pass1 phase goes here */
+static void changephase(DecompState *D, enum DecompPhase phase) {
+  D->phase = phase;
+  /* reset this each phase; only use the last parse session results in the
+     debug summary */
+  D->savedstackexpr.used = 0;
+}
 
 
 #ifdef LUA_DEBUG
@@ -1366,7 +1375,7 @@ static void debugblocksummary (const FuncState *fs) {
 
 
 static void debugstackexpr (const StackExpr *e) {
-  printf("%d-%d, reg %d-%d\n", e->startpc+1,e->endpc+1,e->firstreg,e->lastreg);
+  printf("pc %d-%d, reg %d-%d\n", e->startpc+1,e->endpc+1,e->firstreg,e->lastreg);
 }
 
 
@@ -1375,8 +1384,8 @@ static void debugstackexprsummary (const FuncState *fs) {
   int i;
   printf("STACK EXPRESSION SUMMARY\n"
           "-------------------\n");
-  for (i = 0; i < D->stackexpr.used; i++)
-    debugstackexpr(&D->stackexpr.s[i]);
+  for (i = 0; i < D->savedstackexpr.used; i++)
+    debugstackexpr(&D->savedstackexpr.s[i]);
   printf("-------------------\n");
 }
 
@@ -3218,6 +3227,21 @@ static int parse_exp (DecompState *D, FuncState *fs) {
     if (D->parser->status == PARSER_STATUS_ENDEXPR) {
       const enum ParserToken token = D->parser->token;
       D->parser->expr = D->stackexpr.s;
+#ifdef LUA_DEBUG
+        /* D->stackexpr will be cleared, so save it to D->savedstackexpr for
+           the debug summary */
+      if (D->parser->expr->firstreg != NO_REG &&
+          D->parser->expr->startpc >= 0) {
+        /* old size and new size for D->savedstackexpr */
+        int os = D->savedstackexpr.alloc;
+        int ns = os + D->stackexpr.used;
+        int i;
+        luaM_reallocvector(D->H, D->savedstackexpr.s, os, ns, StackExpr);
+        for (i = 0; i < D->stackexpr.used; i++)
+          D->savedstackexpr.s[D->savedstackexpr.used + i] = D->stackexpr.s[i];
+        D->savedstackexpr.used = D->savedstackexpr.alloc = ns;
+      }
+#endif /* LUA_DEBUG */
       D->stackexpr.used = 1;
       /* the parser may have parsed later basic blocks that are not part of the
          resulting expression, because at the time they may have been part of
