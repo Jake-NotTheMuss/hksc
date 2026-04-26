@@ -4,6 +4,23 @@ TODO for Hksc
 
 ------------------------------------------------------------------------------
 
+* Decompiler
+
+** Deparser machinery
+
+The deparser machinery ('parser_*') in ldecomp.c is hard to read and
+does not work correctly for the 'SCAN_LEXICAL' phase.
+
+Because I, the author, have spent so much time away from this project, the
+complexity of Lua 5.1 decompilation has become overwhelming, and before
+another rewrite/refactor is attempted, I should create some sort of document
+(decompilation bible) for this software to fully outline everything that a
+developer needs to be aware of, for example, all the information about a
+Lua program that needs to be generated, and the dependencies of different
+information (loops, constructor code, store sequences, etc., some of which
+depend on the others). Note that in the most recent rewrite of pass1, I tried
+to explain these things to some degree in the comments.
+
 * Maintainer Suggestions
 
 ** Decompiler sections
