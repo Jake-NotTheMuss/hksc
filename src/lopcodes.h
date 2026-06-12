@@ -11,20 +11,51 @@
 
 
 /*===========================================================================
+  In Havok Script, the instruction format is changed from regular Lua.
+
   We assume that instructions are unsigned numbers.
-  All instructions have an opcode in the first 6 bits.
+  All instructions have an opcode in the most significant 7 bits.
   Instructions can have the following fields:
   `A' : 8 bits
-  `B' : 9 bits
+  `B' : 8 bits
   `C' : 9 bits
-  `Bx' : 18 bits (`B' and `C' together)
+  `Bx' : 17 bits (`B' and `C' together)
   `sBx' : signed Bx
+
+  The instruction layout is as follows:
+  'x' is a bit, '|' shows where a byte ends
+  0               8               16              24
+  x x x x x x x x|x x x x x x x x|x x x x x x x x|x x x x x x x x
+ABC:
+  A A A A A A A A|C C C C C C C C|C B B B B B B B|B O O O O O O O
+                                                    ^ BK bit
+ABx/AsBx:
+  A A A A A A A A|B B B B B B B B|B B B B B B B B|B O O O O O O O
 
   A signed argument is represented in excess K; that is, the number
   value is the unsigned value minus K. K is exactly the maximum value
   for that argument (so that -max is represented by 0, and +max is
   represented by 2*max), which is half the maximum for the corresponding
   unsigned argument.
+
+  B arguments now have only 8 bits instead of 9, even though they have the same
+  properties as C arguments, which use the 9th bit to encode the RK property,
+  called the 'RK bit'. To work around this, opcodes which require the B
+  argument to have an RK bit instead encode the RK property in the opcode
+  itself. The first bit of the opcode serves as the 9th bit of argument B.
+  To make this possible, every opcode that requires B to have an RK bit has 2
+  versions, an even and an odd, where the odd version is suffixed '_BK'.
+
+  The macro 'ISBK(o)' is true for all opcodes which have a '_BK' version or are
+  a 'BK' version, and false for all other opcodes. The macro uses opcode
+  properties to determine this, but all 'BK' opcodes consist of the comparison,
+  arithmetic, and settable opcodes (as well as OP_DELETE if that opcode is
+  enabled).
+
+  When manipulating the 'B' or opcode field in an instruction, 'ISBK(o)' is
+  used to check if the first bit of the opcode encodes the RK property, which
+  tells you whether the bit needs to be included or excluded when extracting
+  the value of either field.
 ===========================================================================*/
 
 
@@ -72,7 +103,18 @@ enum OpMode {iABC, iABx, iAsBx};  /* basic instruction format */
 /* creates a mask with `n' 0 bits at position `p' */
 #define MASK0(n,p)  (~MASK1(n,p))
 
-
+/*
+** ISBK - return whether an opcode is a 'BK' opcode; all opcodes with ABC mode
+** in which B can be a register or constant are 'BK' opcodes
+**
+** This macro as defined matches Havok Script, although it is incorrect;
+** OP_SETLIST is a BK opcode according to this definition, but because
+** OP_SETLIST has an even value, it changes nothing; the macro should instead
+** be defined as follows:
+** #define ISBK(o) (getOpMode(o) == iABC && getBMode(o) == OpArgRK)
+** Leave the original definition as is because the point of this project is to
+** show Havok Script's logic, not fix it.
+*/
 #define ISBK(o) \
   (getOpMode(o) == iABC && (getBMode(o) == OpArgUK || getBMode(o) == OpArgRK))
 
